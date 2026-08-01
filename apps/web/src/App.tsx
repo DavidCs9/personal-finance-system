@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { ledgerApi, type SignInResult } from "./api/client";
+import { ledgerApi, type LedgerSession, type SignInResult } from "./api/client";
 import type { PurchaseEvent, ReviewStatus } from "./types";
 
 const dateFormatter = new Intl.DateTimeFormat("es-MX", { dateStyle: "medium", timeStyle: "short", timeZone: "America/Chihuahua" });
@@ -8,14 +8,27 @@ const statusLabel: Record<ReviewStatus, string> = { accepted: "Capturado", needs
 const formatMoney = (event: PurchaseEvent) => new Intl.NumberFormat("es-MX", { style: "currency", currency: event.amount.currency }).format(event.amount.amountMinor / 100);
 
 export function App() {
-  const [idToken, setIdToken] = useState<string>();
+  const [idToken, setIdToken] = useState<string | null>();
 
-  useEffect(() => setIdToken(ledgerApi.storedToken()), []);
-  if (!idToken) return <SignIn onSignedIn={(token) => { sessionStorage.setItem("ledger-id-token", token); setIdToken(token); }} />;
-  return <Ledger idToken={idToken} onSignOut={() => { ledgerApi.clearSession(); setIdToken(undefined); }} />;
+  useEffect(() => {
+    let active = true;
+    void ledgerApi.restoreSession().then((token) => { if (active) setIdToken(token ?? null); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    if (!idToken) return undefined;
+    const interval = window.setInterval(() => {
+      void ledgerApi.restoreSession().then((token) => setIdToken(token ?? null));
+    }, 45 * 60 * 1000);
+    return () => window.clearInterval(interval);
+  }, [idToken]);
+  const onSignedIn = (session: LedgerSession) => { ledgerApi.saveSession(session); setIdToken(session.idToken); };
+  if (idToken === undefined) return <main className="auth-shell"><section className="auth-card"><div className="brand"><span className="brand-mark">L</span><span>Ledger</span><small>personal</small></div><p>Restaurando sesión…</p></section></main>;
+  if (!idToken) return <SignIn onSignedIn={onSignedIn} />;
+  return <Ledger idToken={idToken} onSignOut={() => { ledgerApi.clearSession(); setIdToken(null); }} />;
 }
 
-function SignIn({ onSignedIn }: { onSignedIn(token: string): void }) {
+function SignIn({ onSignedIn }: { onSignedIn(session: LedgerSession): void }) {
   const [email, setEmail] = useState("davidcastro.siq@gmail.com");
   const [password, setPassword] = useState("");
   const [challenge, setChallenge] = useState<Extract<SignInResult, { kind: "new_password" }>>();
@@ -26,7 +39,7 @@ function SignIn({ onSignedIn }: { onSignedIn(token: string): void }) {
     event.preventDefault(); setBusy(true); setError(undefined);
     try {
       const result = await ledgerApi.signIn(email, password);
-      if (result.kind === "signed_in") onSignedIn(result.idToken); else setChallenge(result);
+      if (result.kind === "signed_in") onSignedIn(result); else setChallenge(result);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "No fue posible iniciar sesión."); } finally { setBusy(false); }
   };
   const complete = async (event: FormEvent) => {

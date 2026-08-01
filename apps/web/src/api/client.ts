@@ -13,7 +13,12 @@ interface CognitoChallenge {
   readonly session: string;
 }
 
-export type SignInResult = { readonly kind: "signed_in"; readonly idToken: string } | CognitoChallenge;
+export interface LedgerSession {
+  readonly idToken: string;
+  readonly refreshToken: string;
+}
+
+export type SignInResult = ({ readonly kind: "signed_in" } & LedgerSession) | CognitoChallenge;
 
 declare global {
   interface Window { __LEDGER_CONFIG__?: LedgerRuntimeConfig; }
@@ -39,9 +44,44 @@ const cognitoRequest = async (target: string, payload: Record<string, unknown>):
 const tokenFrom = (response: Record<string, unknown>): string | undefined =>
   (response.AuthenticationResult as Record<string, unknown> | undefined)?.IdToken as string | undefined;
 
+const sessionFrom = (response: Record<string, unknown>): LedgerSession | undefined => {
+  const result = response.AuthenticationResult as Record<string, unknown> | undefined;
+  const idToken = result?.IdToken;
+  const refreshToken = result?.RefreshToken;
+  return typeof idToken === "string" && typeof refreshToken === "string" ? { idToken, refreshToken } : undefined;
+};
+
+const refreshTokenKey = "ledger-refresh-token";
+const idTokenKey = "ledger-id-token";
+
 export const ledgerApi = {
-  storedToken: (): string | undefined => sessionStorage.getItem("ledger-id-token") ?? undefined,
-  clearSession: () => sessionStorage.removeItem("ledger-id-token"),
+  saveSession: ({ idToken, refreshToken }: LedgerSession) => {
+    localStorage.setItem(idTokenKey, idToken);
+    localStorage.setItem(refreshTokenKey, refreshToken);
+  },
+  clearSession: () => {
+    localStorage.removeItem(idTokenKey);
+    localStorage.removeItem(refreshTokenKey);
+  },
+  async restoreSession(): Promise<string | undefined> {
+    const refreshToken = localStorage.getItem(refreshTokenKey);
+    if (!refreshToken) return undefined;
+    try {
+      const runtime = config();
+      const result = await cognitoRequest("InitiateAuth", {
+        AuthFlow: "REFRESH_TOKEN_AUTH",
+        ClientId: runtime.cognitoUserPoolClientId,
+        AuthParameters: { REFRESH_TOKEN: refreshToken },
+      });
+      const idToken = tokenFrom(result);
+      if (!idToken) throw new Error("No se pudo renovar la sesión.");
+      localStorage.setItem(idTokenKey, idToken);
+      return idToken;
+    } catch {
+      ledgerApi.clearSession();
+      return undefined;
+    }
+  },
   async signIn(email: string, password: string): Promise<SignInResult> {
     const runtime = config();
     const result = await cognitoRequest("InitiateAuth", {
@@ -49,14 +89,14 @@ export const ledgerApi = {
       ClientId: runtime.cognitoUserPoolClientId,
       AuthParameters: { USERNAME: email, PASSWORD: password },
     });
-    const idToken = tokenFrom(result);
-    if (idToken) return { kind: "signed_in", idToken };
+    const session = sessionFrom(result);
+    if (session) return { kind: "signed_in", ...session };
     if (result.ChallengeName === "NEW_PASSWORD_REQUIRED" && typeof result.Session === "string") {
       return { kind: "new_password", email, session: result.Session };
     }
     throw new Error("Cognito devolvió una respuesta de acceso no esperada.");
   },
-  async completeNewPassword(challenge: CognitoChallenge, newPassword: string): Promise<string> {
+  async completeNewPassword(challenge: CognitoChallenge, newPassword: string): Promise<LedgerSession> {
     const runtime = config();
     const result = await cognitoRequest("RespondToAuthChallenge", {
       ClientId: runtime.cognitoUserPoolClientId,
@@ -64,9 +104,9 @@ export const ledgerApi = {
       Session: challenge.session,
       ChallengeResponses: { USERNAME: challenge.email, NEW_PASSWORD: newPassword },
     });
-    const idToken = tokenFrom(result);
-    if (!idToken) throw new Error("No se completó el cambio de contraseña.");
-    return idToken;
+    const session = sessionFrom(result);
+    if (!session) throw new Error("No se completó el cambio de contraseña.");
+    return session;
   },
   async listEvents(idToken: string): Promise<EventFeed> {
     return request<EventFeed>("/events", idToken);

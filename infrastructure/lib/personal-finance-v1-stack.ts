@@ -246,6 +246,7 @@ export class PersonalFinanceV1Stack extends Stack {
       authFlows: { userSrp: true, userPassword: true },
       preventUserExistenceErrors: true,
       generateSecret: false,
+      refreshTokenValidity: Duration.days(365),
     });
 
     const apiFunction = new NodejsFunction(this, 'ApiFunction', {
