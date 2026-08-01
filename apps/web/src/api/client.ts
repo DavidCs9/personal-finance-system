@@ -1,4 +1,5 @@
 import type { EventFeed, PurchaseEvent } from "../types";
+import type { MonthlyPlan } from "../monthly-plan";
 
 interface LedgerRuntimeConfig {
   readonly apiBaseUrl: string;
@@ -25,7 +26,7 @@ declare global {
 }
 
 const config = (): LedgerRuntimeConfig => {
-  if (!window.__LEDGER_CONFIG__) throw new Error("La configuración de Ledger no está disponible todavía.");
+  if (!window.__LEDGER_CONFIG__) throw new Error("La configuración de Olbia no está disponible todavía.");
   return window.__LEDGER_CONFIG__;
 };
 
@@ -117,6 +118,20 @@ export const ledgerApi = {
   },
   async markVerified(eventId: string, idToken: string): Promise<PurchaseEvent> {
     return request<PurchaseEvent>(`/events/${encodeURIComponent(eventId)}`, idToken, { method: "PATCH" });
+  },
+  async monthlyPlan(month: string, idToken: string): Promise<MonthlyPlan> {
+    return request<MonthlyPlan>(`/months/${encodeURIComponent(month)}`, idToken);
+  },
+  async saveMonthlyPlan(month: string, plan: MonthlyPlan, idToken: string): Promise<MonthlyPlan> {
+    return request<MonthlyPlan>(`/months/${encodeURIComponent(month)}`, idToken, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        incomeMinor: plan.incomeMinor,
+        currency: plan.currency,
+        upcomingPayments: plan.upcomingPayments,
+      }),
+    });
   },
 };
 

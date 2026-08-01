@@ -271,7 +271,7 @@ export class PersonalFinanceV1Stack extends Stack {
       createDefaultStage: true,
       corsPreflight: {
         allowHeaders: ['Authorization', 'Content-Type'],
-        allowMethods: [apigatewayv2.CorsHttpMethod.GET, apigatewayv2.CorsHttpMethod.PATCH],
+        allowMethods: [apigatewayv2.CorsHttpMethod.GET, apigatewayv2.CorsHttpMethod.PATCH, apigatewayv2.CorsHttpMethod.PUT],
         allowOrigins: [`https://${webDomainName}`],
         maxAge: Duration.hours(1),
       },
@@ -282,7 +282,14 @@ export class PersonalFinanceV1Stack extends Stack {
       { jwtAudience: [userPoolClient.userPoolClientId] },
     );
     const apiIntegration = new HttpLambdaIntegration('ApiLambdaIntegration', apiFunction);
-    for (const route of ['GET /events', 'GET /events/{eventId}', 'GET /events/{eventId}/raw', 'PATCH /events/{eventId}']) {
+    for (const route of [
+      'GET /events',
+      'GET /events/{eventId}',
+      'GET /events/{eventId}/raw',
+      'PATCH /events/{eventId}',
+      'GET /months/{month}',
+      'PUT /months/{month}',
+    ]) {
       httpApi.addRoutes({
         path: route.split(' ')[1],
         methods: [route.split(' ')[0] as apigatewayv2.HttpMethod],

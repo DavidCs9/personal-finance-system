@@ -3,6 +3,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { APIGatewayProxyHandlerV2 } from 'aws-lambda';
+import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan, type MonthlyPlanInput } from './monthly-plan.js';
 
 const database = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
@@ -13,6 +14,19 @@ type JsonObject = Record<string, unknown>;
 
 export const handler: APIGatewayProxyHandlerV2 = async (event) => {
   try {
+    const month = event.pathParameters?.month;
+    if (month !== undefined) {
+      if (!isValidMonth(month)) return response(400, { message: 'Month must use YYYY-MM format.' });
+      const owner = principal(event);
+      if (event.requestContext.http.method === 'GET') {
+        return response(200, await getMonthlyPlan(owner, month));
+      }
+      if (event.requestContext.http.method === 'PUT') {
+        const input = parseMonthlyPlan(requestBody(event));
+        return response(200, await saveMonthlyPlan(owner, month, input));
+      }
+      return response(405, { message: 'Method not allowed.' });
+    }
     const eventId = event.pathParameters?.eventId;
     if (event.requestContext.http.method === 'GET' && event.rawPath === '/events') {
       return response(200, { events: await listEvents() });
@@ -31,10 +45,49 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     }
     return response(405, { message: 'Method not allowed.' });
   } catch (error) {
+    if (error instanceof InvalidMonthlyPlanError) {
+      return response(400, { message: error.message });
+    }
     console.error('API request failed', { message: errorMessage(error) });
     return response(500, { message: 'Unable to complete this request.' });
   }
 };
+
+const getMonthlyPlan = async (owner: string, month: string): Promise<JsonObject> => {
+  const result = await database.send(new GetCommand({
+    TableName: tableName,
+    Key: monthlyPlanKey(owner, month),
+    ConsistentRead: true,
+  }));
+  const plan = result.Item?.payload as JsonObject | undefined;
+  return plan ? toPublicMonthlyPlan(month, plan, true) : toPublicMonthlyPlan(month, {}, false);
+};
+
+const saveMonthlyPlan = async (owner: string, month: string, input: MonthlyPlanInput): Promise<JsonObject> => {
+  const updatedAt = new Date().toISOString();
+  const payload = { ...input, updatedAt };
+  await database.send(new PutCommand({
+    TableName: tableName,
+    Item: {
+      ...monthlyPlanKey(owner, month),
+      entityType: 'monthly_plan',
+      month,
+      owner,
+      updatedAt,
+      payload,
+    },
+  }));
+  return toPublicMonthlyPlan(month, payload, true);
+};
+
+const toPublicMonthlyPlan = (month: string, payload: JsonObject, configured: boolean): JsonObject => ({
+  month,
+  configured,
+  incomeMinor: configured ? payload.incomeMinor : 0,
+  currency: 'MXN',
+  upcomingPayments: configured && Array.isArray(payload.upcomingPayments) ? payload.upcomingPayments : [],
+  ...(configured && typeof payload.updatedAt === 'string' ? { updatedAt: payload.updatedAt } : {}),
+});
 
 const listEvents = async (): Promise<readonly JsonObject[]> => {
   const result = await database.send(new QueryCommand({
@@ -123,7 +176,13 @@ const toPublicEvent = (payload: JsonObject, revisions: readonly JsonObject[] = [
 
 const principal = (event: Parameters<APIGatewayProxyHandlerV2>[0]): string => {
   const context = event.requestContext as typeof event.requestContext & { authorizer?: { jwt?: { claims?: { sub?: string } } } };
-  return String(context.authorizer?.jwt?.claims?.sub ?? 'authenticated-user');
+  const subject = context.authorizer?.jwt?.claims?.sub;
+  if (!subject) throw new Error('Missing authenticated principal.');
+  return subject;
+};
+const requestBody = (event: Parameters<APIGatewayProxyHandlerV2>[0]): string | undefined => {
+  if (!event.body) return undefined;
+  return event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString('utf8') : event.body;
 };
 const response = (statusCode: number, body: JsonObject) => ({
   statusCode,
