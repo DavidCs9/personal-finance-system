@@ -34,6 +34,17 @@ const createPipeline = () => {
 const amexEmail = `From: alertas@americanexpress.com.mx\nMessage-ID: <amex-1@example.com>\n\nAmerican Express\nImporte de $347.00 MXN\nEstablecimiento: UBER *TRIP\nTarjeta terminación 1234\nFecha: 2026-08-01T17:55:00Z`;
 const santanderEmail = `From: alertas@santander.com.mx\nMessage-ID: <santander-1@example.com>\n\nSantander\nCompra por $1,250.50 MXN\nEn: CAFETERIA ROMA\nTarjeta **** 5678\nFecha: 2026-08-01T17:55:00Z`;
 const santanderUniqueRewardsEmail = `From: Santander <santander@envio.santander.com.mx>\nMessage-ID: <santander-unique-1@example.com>\n\nSantander Unique Rewards\nHola, Estimado Cliente. 31/07/2026.\nRealizaste una compra con tu Tarjeta crédito terminación 6349\nTe informamos que se autorizó una compra en LIBRERIA DEL CENTRO por un monto de $52.36 M.N.`;
+const santanderQuotedPrintableHtmlEmail = `From: owner@example.com\r
+Subject: Fw: Tu compra Santander\r
+Message-ID: <santander-html-1@example.com>\r
+Content-Transfer-Encoding: quoted-printable\r
+Content-Type: text/html; charset=utf-8\r
+\r
+<html><body><div>Santander Unique Rewards</div>
+<div>Hola, Estimado Cliente. 31/07/2026.</div>
+<div>Realizaste una compra con tu Tarjeta cr=C3=A9dito terminaci=C3=B3n 6349</div>
+<div>Te informamos que se autoriz=C3=B3 una compra en LIBRERIA DEL CEN=\r
+TRO por un monto de $52.36 M.N.</div></body></html>`;
 const nuTransferEmail = `From: Nu <nu@nu.com.mx>\nSubject: Tu transferencia fue exitosa\nMessage-ID: <nu-transfer-1@example.com>\n\nTransferencia exitosa\nDetalles de la transferencia:\nMonto: $2,139.00\nFecha: 31/JUL/2026\nHora: 09:47\nTipo de transferencia: SPEI\nConcepto: Transferencia\nNúmero de referencia: 310726\nFolio: QUD7JAXQ4\nNombre: Moneypool\nEntidad: STP\nCLABE: ••••7067\nEstatus: Completada\nClave de rastreo: NU3ADJ1PN3U499UASNLP4FJDQBU9`;
 const nuQuotedPrintableHtmlEmail = `From: Nu <nu@nu.com.mx>\r
 To: owner@example.com\r
@@ -123,6 +134,38 @@ describe("IngestionPipeline", () => {
       amount: { amountMinor: 5236, currency: "MXN" },
       account: { lastFour: "6349" },
       occurredAt: "2026-07-31T12:00:00.000Z",
+    });
+  });
+
+  it("decodes a forwarded Santander quoted-printable HTML purchase", async () => {
+    const rawSources = new InMemoryRawSourceStore();
+    const ledger = new InMemoryLedgerRepository();
+    const notifier = new InMemoryNotifier();
+    const pipeline = new IngestionPipeline({
+      rawSources,
+      ledger,
+      notifier,
+      parsers: [new SantanderMxCardPurchaseParser()],
+      clock: fixedClock,
+      ids: ids("santander-html-1"),
+    });
+
+    const result = await pipeline.ingest({
+      mime: santanderQuotedPrintableHtmlEmail,
+      sourceMessageId: "<santander-html-1@example.com>",
+      receivedAt: "2026-08-01T17:56:00.000Z",
+    });
+
+    expect(result.kind).toBe("accepted");
+    if (result.kind !== "accepted") return;
+    expect(result.purchase).toMatchObject({
+      institution: "santander_mx",
+      eventType: "card_purchase",
+      merchantRaw: "LIBRERIA DEL CENTRO",
+      amount: { amountMinor: 5236, currency: "MXN" },
+      account: { lastFour: "6349" },
+      occurredAt: "2026-07-31T12:00:00.000Z",
+      parserVersion: "santander-mx-card-purchase-v2",
     });
   });
 
