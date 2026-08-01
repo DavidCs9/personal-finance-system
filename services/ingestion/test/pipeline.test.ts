@@ -32,6 +32,7 @@ const createPipeline = () => {
 
 const amexEmail = `From: alertas@americanexpress.com.mx\nMessage-ID: <amex-1@example.com>\n\nAmerican Express\nImporte de $347.00 MXN\nEstablecimiento: UBER *TRIP\nTarjeta terminación 1234\nFecha: 2026-08-01T17:55:00Z`;
 const santanderEmail = `From: alertas@santander.com.mx\nMessage-ID: <santander-1@example.com>\n\nSantander\nCompra por $1,250.50 MXN\nEn: CAFETERIA ROMA\nTarjeta **** 5678\nFecha: 2026-08-01T17:55:00Z`;
+const santanderUniqueRewardsEmail = `From: Santander <santander@envio.santander.com.mx>\nMessage-ID: <santander-unique-1@example.com>\n\nSantander Unique Rewards\nRealizaste una compra con tu Tarjeta crédito terminación 6349\nTe informamos que se autorizó una compra en LIBRERIA DEL CENTRO por un monto de $52.36 M.N.`;
 
 describe("IngestionPipeline", () => {
   it("persists, parses and notifies a valid Amex purchase", async () => {
@@ -89,6 +90,25 @@ describe("IngestionPipeline", () => {
       merchantRaw: "CAFETERIA ROMA",
       amount: { amountMinor: 125050, currency: "MXN" },
       account: { lastFour: "5678" },
+    });
+  });
+
+  it("prioritizes the Santander Unique Rewards purchase wording", async () => {
+    const { pipeline } = createPipeline();
+
+    const result = await pipeline.ingest({
+      mime: santanderUniqueRewardsEmail,
+      sourceMessageId: "<santander-unique-1@example.com>",
+      receivedAt: "2026-08-01T17:56:00.000Z",
+    });
+
+    expect(result.kind).toBe("accepted");
+    if (result.kind !== "accepted") return;
+    expect(result.purchase).toMatchObject({
+      institution: "santander_mx",
+      merchantRaw: "LIBRERIA DEL CENTRO",
+      amount: { amountMinor: 5236, currency: "MXN" },
+      account: { lastFour: "6349" },
     });
   });
 

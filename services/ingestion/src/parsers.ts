@@ -75,8 +75,9 @@ export class SantanderMxCardPurchaseParser implements CardPurchaseParser {
 
   parse(email: IncomingEmail): ParsedPurchase {
     const text = body(email.mime);
-    const amount = /(?:compra|cargo)\s*(?:por|de)\s*\$?\s*([\d,.]+)\s*(MXN|M\.N\.)/i.exec(text)?.[1];
-    const merchant = /(?:en|comercio)\s*:\s*([^\r\n]+)/i.exec(text)?.[1];
+    const uniqueRewardsPurchase = /autoriz[oó]\s+una\s+compra\s+en\s+(.+?)\s+por\s+un\s+monto\s+de\s*\$?\s*([\d,.]+)\s*(?:MXN|M\.N\.)/i.exec(text);
+    const amount = uniqueRewardsPurchase?.[2] ?? /(?:compra|cargo)\s*(?:por|de)\s*\$?\s*([\d,.]+)\s*(?:MXN|M\.N\.)/i.exec(text)?.[1];
+    const merchant = uniqueRewardsPurchase?.[1] ?? /(?:en|comercio)\s*:\s*([^\r\n]+)/i.exec(text)?.[1];
     const lastFour = /(?:tarjeta|terminaci[oó]n)\s*(?:\*+|en)?\s*(\d{4})/i.exec(text)?.[1];
     const occurredAt = /fecha\s*:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)/i.exec(text)?.[1];
 

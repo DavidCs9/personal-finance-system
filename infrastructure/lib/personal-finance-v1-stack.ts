@@ -7,6 +7,7 @@ import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as cr from 'aws-cdk-lib/custom-resources';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
@@ -15,8 +16,7 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
-import * as scheduler from 'aws-cdk-lib/aws-scheduler';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as ses from 'aws-cdk-lib/aws-ses';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53targets from 'aws-cdk-lib/aws-route53-targets';
@@ -44,10 +44,12 @@ export class PersonalFinanceV1Stack extends Stack {
       default: 'replace-with-alert-recipient@example.com',
       description: 'Primary address that receives V1 event alerts.',
     });
-    const discoveryScheduleExpression = new cdk.CfnParameter(this, 'DiscoveryScheduleExpression', {
-      type: 'String',
-      default: 'rate(5 minutes)',
-      description: 'EventBridge Scheduler expression. Update this stack parameter to change polling frequency.',
+    const webDomainName = 'finance.castrodavid.dev';
+    const inboundDomainName = 'inbound.finance.castrodavid.dev';
+    const inboundRecipientEmail = `alertas@${inboundDomainName}`;
+    const hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'CastroDavidDevZone', {
+      hostedZoneId: 'Z09057602V6K42SQPOMLC',
+      zoneName: 'castrodavid.dev',
     });
 
     const encryptionKey = new kms.Key(this, 'DataEncryptionKey', {
@@ -106,12 +108,6 @@ export class PersonalFinanceV1Stack extends Stack {
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
-    const gmailOAuthSecret = new secretsmanager.Secret(this, 'GmailOAuthSecret', {
-      secretName: 'personal-finance-system/gmail-oauth',
-      description: 'Store Gmail OAuth refresh-token configuration here after Google setup.',
-      removalPolicy: RemovalPolicy.RETAIN,
-    });
-
     const dataStorageEnvironment = {
       METADATA_TABLE_NAME: metadataTable.tableName,
       RAW_EMAIL_BUCKET_NAME: rawEmailBucket.bucketName,
@@ -123,40 +119,21 @@ export class PersonalFinanceV1Stack extends Stack {
       bundling: { minify: true, sourceMap: true, target: 'node22' },
     };
 
-    const discoveryFunction = new NodejsFunction(this, 'DiscoveryFunction', {
-      ...lambdaDefaults,
-      functionName: 'personal-finance-v1-discovery',
-      logGroup: this.createLogGroup('DiscoveryLogGroup', 'personal-finance-v1-discovery'),
-      entry: path.join(__dirname, '..', 'lambda', 'discovery.ts'),
-      handler: 'handler',
-      description: 'Discovers new Gmail messages and enqueues work for ingestion.',
-      environment: {
-        METADATA_TABLE_NAME: metadataTable.tableName,
-        GMAIL_OAUTH_SECRET_ARN: gmailOAuthSecret.secretArn,
-      },
-    });
-    gmailOAuthSecret.grantRead(discoveryFunction);
-    ingestionQueue.grantSendMessages(discoveryFunction);
-    metadataTable.grantReadWriteData(discoveryFunction);
-
     const ingestionFunction = new NodejsFunction(this, 'IngestionFunction', {
       ...lambdaDefaults,
       functionName: 'personal-finance-v1-ingestion',
       logGroup: this.createLogGroup('IngestionLogGroup', 'personal-finance-v1-ingestion'),
       entry: path.join(__dirname, '..', 'lambda', 'ingestion.ts'),
       handler: 'handler',
-      description: 'Persists raw email, performs deduplication, and creates observed events.',
+      description: 'Processes SES-received email, deduplicates it, and creates observed events.',
       environment: {
         ...dataStorageEnvironment,
-        GMAIL_OAUTH_SECRET_ARN: gmailOAuthSecret.secretArn,
         ALERT_SENDER_EMAIL: senderEmail.valueAsString,
         ALERT_RECIPIENT_EMAIL: alertRecipientEmail.valueAsString,
       },
     });
     rawEmailBucket.grantRead(ingestionFunction);
-    rawEmailBucket.grantPut(ingestionFunction);
     metadataTable.grantReadWriteData(ingestionFunction);
-    gmailOAuthSecret.grantRead(ingestionFunction);
     ingestionFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ses:SendEmail'],
       resources: ['*'],
@@ -169,21 +146,87 @@ export class PersonalFinanceV1Stack extends Stack {
     });
     ingestionQueue.grantConsumeMessages(ingestionFunction);
 
-    const schedulerRole = new iam.Role(this, 'DiscoverySchedulerRole', {
-      assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com'),
-      description: 'Allows EventBridge Scheduler to invoke the Gmail discovery Lambda.',
-    });
-    discoveryFunction.grantInvoke(schedulerRole);
-    new scheduler.CfnSchedule(this, 'DiscoverySchedule', {
-      flexibleTimeWindow: { mode: 'OFF' },
-      scheduleExpression: discoveryScheduleExpression.valueAsString,
-      state: 'ENABLED',
-      target: {
-        arn: discoveryFunction.functionArn,
-        roleArn: schedulerRole.roleArn,
-        retryPolicy: { maximumEventAgeInSeconds: 300, maximumRetryAttempts: 2 },
+    const emailReceiptFunction = new NodejsFunction(this, 'EmailReceiptFunction', {
+      ...lambdaDefaults,
+      functionName: 'personal-finance-v1-email-receipt',
+      logGroup: this.createLogGroup('EmailReceiptLogGroup', 'personal-finance-v1-email-receipt'),
+      entry: path.join(__dirname, '..', 'lambda', 'receipt.ts'),
+      handler: 'handler',
+      description: 'Receives SES mail metadata after raw MIME has been written to S3.',
+      environment: {
+        RAW_EMAIL_BUCKET_NAME: rawEmailBucket.bucketName,
+        RAW_EMAIL_PREFIX: 'inbound/',
+        INGESTION_QUEUE_URL: ingestionQueue.queueUrl,
       },
     });
+    ingestionQueue.grantSendMessages(emailReceiptFunction);
+
+    const emailIdentity = new ses.EmailIdentity(this, 'InboundEmailIdentity', {
+      identity: ses.Identity.publicHostedZone(hostedZone),
+    });
+    const emailReceiptRole = new iam.Role(this, 'SesEmailReceiptRole', {
+      assumedBy: new iam.ServicePrincipal('ses.amazonaws.com'),
+      description: 'Lets SES store received raw email using the bucket default KMS encryption.',
+    });
+    rawEmailBucket.grantPut(emailReceiptRole);
+    encryptionKey.grantEncrypt(emailReceiptRole);
+    const inboundMxRecord = new route53.MxRecord(this, 'InboundEmailMxRecord', {
+      zone: hostedZone,
+      recordName: 'inbound.finance',
+      values: [{ priority: 10, hostName: 'inbound-smtp.us-east-2.amazonaws.com' }],
+    });
+    const receiptRuleSetName = 'personal-finance-v1-inbound';
+    const receiptRuleSet = new ses.CfnReceiptRuleSet(this, 'InboundReceiptRuleSet', {
+      ruleSetName: receiptRuleSetName,
+    });
+    const receiptRule = new ses.CfnReceiptRule(this, 'InboundReceiptRule', {
+      ruleSetName: receiptRuleSetName,
+      rule: {
+        name: 'store-and-queue-finance-alerts',
+        enabled: true,
+        scanEnabled: true,
+        recipients: [inboundRecipientEmail],
+        actions: [
+          {
+            s3Action: {
+              bucketName: rawEmailBucket.bucketName,
+              iamRoleArn: emailReceiptRole.roleArn,
+              objectKeyPrefix: 'inbound/',
+            },
+          },
+          {
+            lambdaAction: {
+              functionArn: emailReceiptFunction.functionArn,
+              invocationType: 'Event',
+            },
+          },
+        ],
+      },
+    });
+    receiptRule.addResourceDependency(receiptRuleSet);
+    receiptRule.addResourceDependency(emailIdentity.node.defaultChild as cdk.CfnResource);
+    emailReceiptFunction.addPermission('AllowSesReceiptRuleInvocation', {
+      principal: new iam.ServicePrincipal('ses.amazonaws.com'),
+      sourceAccount: this.account,
+    });
+    const activeReceiptRuleSet = new cr.AwsCustomResource(this, 'ActivateInboundReceiptRuleSet', {
+      onCreate: {
+        service: 'SES',
+        action: 'setActiveReceiptRuleSet',
+        parameters: { RuleSetName: receiptRuleSetName },
+        physicalResourceId: cr.PhysicalResourceId.of(receiptRuleSetName),
+      },
+      onUpdate: {
+        service: 'SES',
+        action: 'setActiveReceiptRuleSet',
+        parameters: { RuleSetName: receiptRuleSetName },
+        physicalResourceId: cr.PhysicalResourceId.of(receiptRuleSetName),
+      },
+      policy: cr.AwsCustomResourcePolicy.fromSdkCalls({ resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE }),
+      installLatestAwsSdk: false,
+    });
+    activeReceiptRuleSet.node.addDependency(receiptRule);
+    activeReceiptRuleSet.node.addDependency(inboundMxRecord);
 
     const userPool = new cognito.UserPool(this, 'UserPool', {
       selfSignUpEnabled: false,
@@ -247,11 +290,6 @@ export class PersonalFinanceV1Stack extends Stack {
       enforceSSL: true,
       removalPolicy: RemovalPolicy.RETAIN,
     });
-    const webDomainName = 'finance.castrodavid.dev';
-    const hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'CastroDavidDevZone', {
-      hostedZoneId: 'Z09057602V6K42SQPOMLC',
-      zoneName: 'castrodavid.dev',
-    });
     const webCertificate = new acm.DnsValidatedCertificate(this, 'WebCertificate', {
       domainName: webDomainName,
       hostedZone,
@@ -287,8 +325,8 @@ export class PersonalFinanceV1Stack extends Stack {
       prune: true,
     });
 
-    const discoveryErrorAlarm = new cdk.aws_cloudwatch.Alarm(this, 'DiscoveryErrorsAlarm', {
-      metric: discoveryFunction.metricErrors({ period: Duration.minutes(5) }),
+    const receiptErrorAlarm = new cdk.aws_cloudwatch.Alarm(this, 'EmailReceiptErrorsAlarm', {
+      metric: emailReceiptFunction.metricErrors({ period: Duration.minutes(5) }),
       threshold: 1,
       evaluationPeriods: 2,
     });
@@ -306,14 +344,14 @@ export class PersonalFinanceV1Stack extends Stack {
     new cdk.CfnOutput(this, 'RawEmailBucketName', { value: rawEmailBucket.bucketName });
     new cdk.CfnOutput(this, 'MetadataTableName', { value: metadataTable.tableName });
     new cdk.CfnOutput(this, 'IngestionQueueUrl', { value: ingestionQueue.queueUrl });
-    new cdk.CfnOutput(this, 'GmailOAuthSecretArn', { value: gmailOAuthSecret.secretArn });
+    new cdk.CfnOutput(this, 'InboundEmailAddress', { value: inboundRecipientEmail });
+    new cdk.CfnOutput(this, 'InboundEmailDomain', { value: inboundDomainName });
     new cdk.CfnOutput(this, 'UserPoolId', { value: userPool.userPoolId });
     new cdk.CfnOutput(this, 'UserPoolClientId', { value: userPoolClient.userPoolClientId });
     new cdk.CfnOutput(this, 'HttpApiUrl', { value: httpApi.apiEndpoint });
     new cdk.CfnOutput(this, 'WebDistributionUrl', { value: `https://${distribution.distributionDomainName}` });
     new cdk.CfnOutput(this, 'WebCustomDomainUrl', { value: `https://${webDomainName}` });
-    new cdk.CfnOutput(this, 'ConfiguredScheduleExpression', { value: discoveryScheduleExpression.valueAsString });
-    new cdk.CfnOutput(this, 'DiscoveryErrorsAlarmName', { value: discoveryErrorAlarm.alarmName });
+    new cdk.CfnOutput(this, 'EmailReceiptErrorsAlarmName', { value: receiptErrorAlarm.alarmName });
     new cdk.CfnOutput(this, 'IngestionErrorsAlarmName', { value: ingestionErrorAlarm.alarmName });
     new cdk.CfnOutput(this, 'DeadLetterMessagesAlarmName', { value: deadLetterAlarm.alarmName });
   }

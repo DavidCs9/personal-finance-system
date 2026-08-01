@@ -4,7 +4,7 @@ Un ledger personal que observa eventos financieros desde alertas por correo, sin
 
 ## Estado
 
-El repositorio contiene el esqueleto inicial de V1. Aún no se ha creado infraestructura ni se ha conectado a Gmail o AWS.
+La V1 recibe correos reenviados a través de Amazon SES y conserva el MIME original en S3 antes de procesarlo.
 
 ## Estructura
 
@@ -12,8 +12,9 @@ El repositorio contiene el esqueleto inicial de V1. Aún no se ha creado infraes
 - `infrastructure` — aplicación CDK para los recursos de AWS.
 - `packages/domain` — tipos y reglas de dominio compartidos.
 - `services/api` — handlers de la API para la UI.
-- `services/ingestion` — descubrimiento de Gmail, persistencia y parsing de compras.
+- `services/ingestion` — persistencia y parsing de compras.
 - `tests/fixtures/email` — ejemplos anonimizados de alertas bancarias; nunca correos reales.
 - `docs` — alcance y decisiones de arquitectura.
 
 Las decisiones acordadas para V1 están en [docs/v1-decisions.md](docs/v1-decisions.md).
+La configuracion unica de reenvio esta en [docs/gmail-forwarding.md](docs/gmail-forwarding.md).

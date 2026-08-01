@@ -9,8 +9,8 @@
 
 ## Fuente y trazabilidad
 
-- Las alertas se reenvían automáticamente desde el correo principal a una cuenta dedicada de Gmail/Google Workspace.
-- Gmail se lee con OAuth de solo lectura. El token de renovación vive en AWS Secrets Manager.
+- Las alertas se reenvían automáticamente desde el correo principal a `alertas@inbound.finance.castrodavid.dev`.
+- Amazon SES recibe el correo, conserva el MIME en S3 y activa la ingesta; no se usa OAuth ni una cuenta de Gmail dedicada.
 - La deduplicación identifica el mismo mensaje o reenvío exacto mediante identidad de origen y hash; no deduplica por importe, comercio y fecha.
 - La fuente MIME/RFC 822 se guarda antes de parsear, cifrada con KMS en S3 y retenida indefinidamente.
 - DynamoDB conserva metadatos, hash y el puntero al objeto fuente.
@@ -31,10 +31,9 @@
 - DynamoDB bajo demanda es la base de datos operativa.
 - La UI es una SPA de React en S3 + CloudFront. La API es API Gateway HTTP API + Lambdas con autorización JWT de Cognito.
 - Cognito tiene un único usuario administrado, sin registro público y sin MFA por ahora.
-- EventBridge Scheduler ejecuta el sondeo incremental de Gmail cada cinco minutos. La frecuencia debe poder cambiarse operativamente.
-- El descubrimiento publica trabajos en SQS; una Lambda de ingestión persiste, deduplica y parsea. La cola tiene una DLQ.
+- Una regla de recepción de SES guarda primero el MIME y luego publica su puntero en SQS; una Lambda de ingestión persiste metadatos, deduplica y parsea. La cola tiene una DLQ.
 - Amazon SES notifica cada evento observado inicialmente. La política puede cambiar a alertas por excepción sin modificar la ingestión.
-- El monitoreo V1 se limita a fallos del sondeo, OAuth inválido, mensajes en DLQ y errores persistentes de ingestión.
+- El monitoreo V1 se limita a fallos de recepción, mensajes en DLQ y errores persistentes de ingestión.
 
 ## Calidad y salida de V1
 
