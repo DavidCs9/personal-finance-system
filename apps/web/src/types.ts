@@ -5,6 +5,7 @@ export type ReviewStatus = "accepted" | "needs_review" | "rejected";
 export interface PurchaseEvent {
   readonly id: string;
   readonly institution: Institution;
+  readonly eventType?: "card_purchase" | "outgoing_transfer";
   readonly status: ReviewStatus;
   readonly accountName: string;
   readonly amount: Money;

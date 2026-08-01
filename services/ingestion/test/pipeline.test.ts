@@ -5,6 +5,7 @@ import {
   InMemoryNotifier,
   InMemoryRawSourceStore,
   IngestionPipeline,
+  NuMxOutgoingTransferParser,
   SantanderMxCardPurchaseParser,
 } from "../src/index.js";
 
@@ -33,6 +34,7 @@ const createPipeline = () => {
 const amexEmail = `From: alertas@americanexpress.com.mx\nMessage-ID: <amex-1@example.com>\n\nAmerican Express\nImporte de $347.00 MXN\nEstablecimiento: UBER *TRIP\nTarjeta terminación 1234\nFecha: 2026-08-01T17:55:00Z`;
 const santanderEmail = `From: alertas@santander.com.mx\nMessage-ID: <santander-1@example.com>\n\nSantander\nCompra por $1,250.50 MXN\nEn: CAFETERIA ROMA\nTarjeta **** 5678\nFecha: 2026-08-01T17:55:00Z`;
 const santanderUniqueRewardsEmail = `From: Santander <santander@envio.santander.com.mx>\nMessage-ID: <santander-unique-1@example.com>\n\nSantander Unique Rewards\nHola, Estimado Cliente. 31/07/2026.\nRealizaste una compra con tu Tarjeta crédito terminación 6349\nTe informamos que se autorizó una compra en LIBRERIA DEL CENTRO por un monto de $52.36 M.N.`;
+const nuTransferEmail = `From: Nu <nu@nu.com.mx>\nSubject: Tu transferencia fue exitosa\nMessage-ID: <nu-transfer-1@example.com>\n\nTransferencia exitosa\nDetalles de la transferencia:\nMonto: $2,139.00\nFecha: 31/JUL/2026\nHora: 09:47\nTipo de transferencia: SPEI\nConcepto: Transferencia\nNúmero de referencia: 310726\nFolio: QUD7JAXQ4\nNombre: Moneypool\nEntidad: STP\nCLABE: ••••7067\nEstatus: Completada\nClave de rastreo: NU3ADJ1PN3U499UASNLP4FJDQBU9`;
 
 describe("IngestionPipeline", () => {
   it("persists, parses and notifies a valid Amex purchase", async () => {
@@ -110,6 +112,44 @@ describe("IngestionPipeline", () => {
       amount: { amountMinor: 5236, currency: "MXN" },
       account: { lastFour: "6349" },
       occurredAt: "2026-07-31T12:00:00.000Z",
+    });
+  });
+
+  it("captures a completed outgoing Nu SPEI transfer", async () => {
+    const rawSources = new InMemoryRawSourceStore();
+    const ledger = new InMemoryLedgerRepository();
+    const notifier = new InMemoryNotifier();
+    const pipeline = new IngestionPipeline({
+      rawSources,
+      ledger,
+      notifier,
+      parsers: [new NuMxOutgoingTransferParser()],
+      clock: fixedClock,
+      ids: ids("nu-transfer-1"),
+    });
+
+    const result = await pipeline.ingest({
+      mime: nuTransferEmail,
+      sourceMessageId: "<nu-transfer-1@example.com>",
+      receivedAt: "2026-08-01T15:51:00.000Z",
+    });
+
+    expect(result.kind).toBe("accepted");
+    if (result.kind !== "accepted") return;
+    expect(result.purchase).toMatchObject({
+      institution: "nu_mx",
+      eventType: "outgoing_transfer",
+      account: { accountId: "nu_mx:primary", displayName: "Cuenta Nu" },
+      merchantRaw: "Moneypool",
+      counterparty: "Moneypool",
+      amount: { amountMinor: 213900, currency: "MXN" },
+      transferType: "spei",
+      reference: "310726",
+      folio: "QUD7JAXQ4",
+      trackingKey: "NU3ADJ1PN3U499UASNLP4FJDQBU9",
+      counterpartyInstitution: "STP",
+      counterpartyAccountLastFour: "7067",
+      occurredAt: "2026-07-31T15:47:00.000Z",
     });
   });
 
