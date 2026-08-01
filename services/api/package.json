@@ -1,0 +1,17 @@
+{
+  "name": "@finance/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@finance/domain": "*",
+    "@finance/ingestion": "*"
+  }
+}

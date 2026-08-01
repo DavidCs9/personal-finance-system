@@ -1,0 +1,91 @@
+import { useEffect, useMemo, useState } from "react";
+import { ledgerApi } from "./api/client";
+import type { PurchaseEvent, ReviewStatus } from "./types";
+
+const dateFormatter = new Intl.DateTimeFormat("es-MX", { dateStyle: "medium", timeStyle: "short", timeZone: "America/Chihuahua" });
+
+const institutionLabel = (value: PurchaseEvent["institution"]) =>
+  value === "american_express_mx" ? "American Express" : "Santander";
+
+const statusLabel: Record<ReviewStatus, string> = {
+  accepted: "Capturado",
+  needs_review: "Revisar",
+  rejected: "Rechazado",
+};
+
+function formatMoney(event: PurchaseEvent) {
+  return new Intl.NumberFormat("es-MX", { style: "currency", currency: event.amount.currency }).format(event.amount.amountMinor / 100);
+}
+
+export function App() {
+  const [events, setEvents] = useState<readonly PurchaseEvent[]>([]);
+  const [activeEventId, setActiveEventId] = useState<string>();
+  const [institution, setInstitution] = useState<"all" | PurchaseEvent["institution"]>("all");
+  const [status, setStatus] = useState<"all" | ReviewStatus>("all");
+  const [isRawOpen, setRawOpen] = useState(false);
+
+  useEffect(() => {
+    void ledgerApi.listEvents().then(({ events: result }) => {
+      setEvents(result);
+      setActiveEventId(result[0]?.id);
+    });
+  }, []);
+
+  const visibleEvents = useMemo(
+    () => events.filter((event) => (institution === "all" || event.institution === institution) && (status === "all" || event.status === status)),
+    [events, institution, status],
+  );
+  const activeEvent = visibleEvents.find((event) => event.id === activeEventId) ?? visibleEvents[0];
+  const reviewCount = events.filter((event) => event.status === "needs_review").length;
+  const markVerified = (eventId: string) => {
+    setEvents((current) => current.map((event) => event.id === eventId
+      ? { ...event, status: "accepted", parseWarnings: [] }
+      : event));
+  };
+
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <div className="brand"><span className="brand-mark">L</span><span>Ledger</span><small>personal</small></div>
+        <div className="sync-state"><span className="dot" /> Última revisión hace 2 min</div>
+      </header>
+
+      <section className="hero">
+        <div><p className="eyebrow">BANDEJA DE REVISIÓN</p><h1>Tus compras, con contexto.</h1><p className="intro">Cada alerta se conserva tal como llegó. Revisa lo que necesita atención y confía en el rastro completo.</p></div>
+        <div className="review-card"><span>Requieren revisión</span><strong>{reviewCount}</strong><p>evento{reviewCount === 1 ? "" : "s"} con una advertencia de parseo.</p></div>
+      </section>
+
+      <section className="workspace" aria-label="Eventos observados">
+        <aside className="feed-panel">
+          <div className="feed-heading"><div><p className="eyebrow">EVENTOS</p><h2>Actividad reciente</h2></div><span className="count">{visibleEvents.length}</span></div>
+          <div className="filters">
+            <label>Institución<select value={institution} onChange={(event) => setInstitution(event.target.value as typeof institution)}><option value="all">Todas</option><option value="american_express_mx">American Express</option><option value="santander_mx">Santander</option></select></label>
+            <label>Estado<select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="all">Todos</option><option value="accepted">Capturado</option><option value="needs_review">Revisar</option><option value="rejected">Rechazado</option></select></label>
+          </div>
+          <div className="event-list">
+            {visibleEvents.map((event) => <button className={`event-row ${activeEvent?.id === event.id ? "selected" : ""}`} key={event.id} onClick={() => { setActiveEventId(event.id); setRawOpen(false); }}>
+              <div className="event-row-head"><span className="institution">{institutionLabel(event.institution)}</span><span className={`status ${event.status}`}>{statusLabel[event.status]}</span></div>
+              <strong>{event.merchantRaw}</strong><div className="event-row-foot"><span>{dateFormatter.format(new Date(event.occurredAt ?? event.receivedAt))}</span><b>{formatMoney(event)}</b></div>
+            </button>)}
+            {visibleEvents.length === 0 && <p className="empty">No hay eventos para estos filtros.</p>}
+          </div>
+        </aside>
+
+        {activeEvent ? <EventDetail event={activeEvent} rawOpen={isRawOpen} onToggleRaw={() => setRawOpen((value) => !value)} onMarkVerified={() => markVerified(activeEvent.id)} /> : <section className="detail-panel empty-detail">Selecciona un evento para verlo aquí.</section>}
+      </section>
+    </main>
+  );
+}
+
+function EventDetail({ event, rawOpen, onToggleRaw, onMarkVerified }: { event: PurchaseEvent; rawOpen: boolean; onToggleRaw(): void; onMarkVerified(): void }) {
+  const hasWarning = event.parseWarnings.length > 0;
+  return <section className="detail-panel">
+    <div className="detail-top"><div><p className="eyebrow">COMPRA OBSERVADA</p><div className="title-line"><h2>{event.merchantRaw}</h2><span className={`status ${event.status}`}>{statusLabel[event.status]}</span></div><p className="subtle">{institutionLabel(event.institution)} · {event.accountName}</p></div><strong className="amount">{formatMoney(event)}</strong></div>
+    {hasWarning && <div className="warning"><span>!</span><div><strong>Revisión recomendada</strong><p>{event.parseWarnings[0]}</p></div><button onClick={onMarkVerified}>Marcar como verificado</button></div>}
+    <dl className="facts"><div><dt>Fecha de compra</dt><dd>{dateFormatter.format(new Date(event.occurredAt ?? event.receivedAt))}</dd></div><div><dt>Recibido en Gmail</dt><dd>{dateFormatter.format(new Date(event.receivedAt))}</dd></div><div><dt>Procesado</dt><dd>{dateFormatter.format(new Date(event.ingestedAt))}</dd></div><div><dt>Parser</dt><dd>{event.parserVersion}</dd></div></dl>
+    <div className="section-title"><div><p className="eyebrow">FUENTE</p><h3>Correo original</h3></div><button className="secondary" onClick={onToggleRaw}>{rawOpen ? "Ocultar fuente" : "Ver fuente cruda"}</button></div>
+    {rawOpen ? <pre className="raw-source">{event.rawEmail}</pre> : <div className="source-summary"><span className="file-icon">↳</span><div><strong>Mensaje RFC 822 conservado</strong><p>{event.source.key} · cifrado en S3 con KMS</p></div></div>}
+    <div className="section-title revisions-title"><div><p className="eyebrow">AUDITORÍA</p><h3>Historial de revisiones</h3></div></div>
+    {event.revisions.length ? <ol className="revisions">{event.revisions.map((revision) => <li key={revision.id}><span className="timeline-dot" /><div><strong>Corrección registrada</strong><p>{revision.reason ?? "Sin nota."}</p><small>{dateFormatter.format(new Date(revision.createdAt))} · {revision.changedBy}</small></div></li>)}</ol> : <p className="no-revisions">Aún no hay correcciones. El parseo original permanece intacto.</p>}
+  </section>;
+}
