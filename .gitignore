@@ -1,0 +1,19 @@
+# Dependencies and build outputs
+node_modules/
+dist/
+coverage/
+.cache/
+
+# CDK outputs
+cdk.out/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+cdk.context.json
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
