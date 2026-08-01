@@ -22,7 +22,7 @@ export class GitHubCiBootstrapStack extends Stack {
       assumedBy: new iam.WebIdentityPrincipal(githubActionsOidcProvider.openIdConnectProviderArn, {
         StringEquals: {
           'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-          'token.actions.githubusercontent.com:sub': 'repo:DavidCs9/personal-finance-system:ref:refs/heads/main',
+          'token.actions.githubusercontent.com:sub': 'repo:DavidCs9@105255351/personal-finance-system@1319548923:ref:refs/heads/main',
         },
       }),
     });
