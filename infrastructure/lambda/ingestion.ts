@@ -182,6 +182,26 @@ const notifyObservedPurchase = async (purchase: { readonly institution: string; 
 const header = (mime: string, name: string): string | undefined => new RegExp(`^${name}:\\s*(.+)$`, 'im').exec(mime)?.[1]?.trim();
 const body = (mime: string): string => mime.split(/\r?\n\r?\n/, 2)[1] ?? mime;
 const compact = (value: string): string => value.replace(/\s+/g, ' ').trim();
+const decodeQuotedPrintable = (value: string): string => {
+  const bytes = value
+    .replace(/=\r?\n/g, '')
+    .replace(/=([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+  return Buffer.from(bytes, 'binary').toString('utf8');
+};
+const readableBody = (mime: string): string => {
+  const raw = body(mime);
+  const decoded = /quoted-printable/i.test(header(mime, 'content-transfer-encoding') ?? '')
+    ? decodeQuotedPrintable(raw)
+    : raw;
+  return decoded
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:div|p|td|tr|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;|&#160;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"');
+};
 const dateOnlyToIso = (value: string | undefined): string | undefined => {
   if (!value) return undefined;
   const [, day, month, year] = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value) ?? [];
@@ -218,10 +238,14 @@ const emailParsers: readonly EmailParser[] = [
   },
   {
     institution: 'santander_mx',
-    version: 'santander-mx-card-purchase-v1',
-    matches: (mime) => (header(mime, 'from')?.toLowerCase() ?? '').includes('santander') || /santander/i.test(body(mime)),
+    version: 'santander-mx-card-purchase-v2',
+    matches: (mime) => {
+      const from = (header(mime, 'from') ?? '').toLowerCase();
+      const text = readableBody(mime);
+      return from.includes('santander') || (/santander/i.test(text) && /\b(?:compra|cargo)\b/i.test(text));
+    },
     parse: (mime) => {
-      const text = body(mime);
+      const text = readableBody(mime);
       const uniqueRewardsPurchase = /autoriz[oó]\s+una\s+compra\s+en\s+(.+?)\s+por\s+un\s+monto\s+de\s*\$?\s*([\d,.]+)\s*(?:MXN|M\.N\.)/i.exec(text);
       const amount = uniqueRewardsPurchase?.[2] ?? /(?:compra|cargo)\s*(?:por|de)\s*\$?\s*([\d,.]+)\s*(?:MXN|M\.N\.)/i.exec(text)?.[1];
       const merchant = uniqueRewardsPurchase?.[1] ?? /(?:en|comercio)\s*:\s*([^\r\n]+)/i.exec(text)?.[1];
@@ -235,17 +259,17 @@ const emailParsers: readonly EmailParser[] = [
   },
   {
     institution: 'nu_mx',
-    version: 'nu-mx-outgoing-transfer-v1',
+    version: 'nu-mx-outgoing-transfer-v2',
     matches: (mime) => {
       const from = (header(mime, 'from') ?? '').toLowerCase();
       const subject = (header(mime, 'subject') ?? '').toLowerCase();
-      const text = body(mime);
+      const text = readableBody(mime);
       return (from.includes('nu@nu.com.mx') || from.includes('nu.com.mx'))
         && /transferencia\s+fue\s+exitosa/i.test(`${subject} ${text}`)
         && /(?:monto|nombre|estatus)\s*:/i.test(text);
     },
     parse: (mime) => {
-      const text = body(mime);
+      const text = readableBody(mime);
       const amount = /(?:^|\n)\s*monto\s*:\s*\$?\s*([\d,.]+)/im.exec(text)?.[1];
       const date = /(?:^|\n)\s*fecha\s*:\s*(\d{1,2})\/(ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|OCT|NOV|DIC)\/(\d{4})/im.exec(text);
       const time = /(?:^|\n)\s*hora\s*:\s*(\d{1,2}):(\d{2})/im.exec(text);

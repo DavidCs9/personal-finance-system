@@ -9,6 +9,28 @@ const body = (mime: string): string => mime.split(/\r?\n\r?\n/, 2)[1] ?? mime;
 
 const compact = (value: string): string => value.replace(/\s+/g, " ").trim();
 
+const decodeQuotedPrintable = (value: string): string => {
+  const bytes = value
+    .replace(/=\r?\n/g, "")
+    .replace(/=([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+  return Buffer.from(bytes, "binary").toString("utf8");
+};
+
+const readableBody = (mime: string): string => {
+  const raw = body(mime);
+  const decoded = /quoted-printable/i.test(header(mime, "content-transfer-encoding") ?? "")
+    ? decodeQuotedPrintable(raw)
+    : raw;
+  return decoded
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:div|p|td|tr|h[1-6])>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"');
+};
+
 const dateOnlyToIso = (value: string | undefined): string | undefined => {
   if (!value) return undefined;
   const [, day, month, year] = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value) ?? [];
@@ -80,15 +102,16 @@ export class AmexMxCardPurchaseParser implements CardPurchaseParser {
 /** Deterministic parser for the fixture-like Santander MX purchase alert format. */
 export class SantanderMxCardPurchaseParser implements CardPurchaseParser {
   readonly institution = "santander_mx" as const;
-  readonly version = "santander-mx-card-purchase-v1";
+  readonly version = "santander-mx-card-purchase-v2";
 
   matches(email: IncomingEmail): boolean {
     const from = header(email.mime, "from")?.toLowerCase() ?? "";
-    return from.includes("santander") || /santander/i.test(body(email.mime));
+    const text = readableBody(email.mime);
+    return from.includes("santander") || (/santander/i.test(text) && /\b(?:compra|cargo)\b/i.test(text));
   }
 
   parse(email: IncomingEmail): ParsedPurchase {
-    const text = body(email.mime);
+    const text = readableBody(email.mime);
     const uniqueRewardsPurchase = /autoriz[oó]\s+una\s+compra\s+en\s+(.+?)\s+por\s+un\s+monto\s+de\s*\$?\s*([\d,.]+)\s*(?:MXN|M\.N\.)/i.exec(text);
     const amount = uniqueRewardsPurchase?.[2] ?? /(?:compra|cargo)\s*(?:por|de)\s*\$?\s*([\d,.]+)\s*(?:MXN|M\.N\.)/i.exec(text)?.[1];
     const merchant = uniqueRewardsPurchase?.[1] ?? /(?:en|comercio)\s*:\s*([^\r\n]+)/i.exec(text)?.[1];
@@ -114,19 +137,19 @@ export class SantanderMxCardPurchaseParser implements CardPurchaseParser {
 /** Deterministic parser for Nu's "Tu transferencia fue exitosa" SPEI alert. */
 export class NuMxOutgoingTransferParser implements CardPurchaseParser {
   readonly institution = "nu_mx" as const;
-  readonly version = "nu-mx-outgoing-transfer-v1";
+  readonly version = "nu-mx-outgoing-transfer-v2";
 
   matches(email: IncomingEmail): boolean {
     const from = header(email.mime, "from")?.toLowerCase() ?? "";
     const subject = header(email.mime, "subject")?.toLowerCase() ?? "";
-    const text = body(email.mime);
+    const text = readableBody(email.mime);
     return (from.includes("nu@nu.com.mx") || from.includes("nu.com.mx"))
       && /transferencia\s+fue\s+exitosa/i.test(`${subject} ${text}`)
       && /(?:monto|nombre|estatus)\s*:/i.test(text);
   }
 
   parse(email: IncomingEmail): ParsedPurchase {
-    const text = body(email.mime);
+    const text = readableBody(email.mime);
     const amount = /(?:^|\n)\s*monto\s*:\s*\$?\s*([\d,.]+)/im.exec(text)?.[1];
     const date = /(?:^|\n)\s*fecha\s*:\s*(\d{1,2})\/(ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|OCT|NOV|DIC)\/(\d{4})/im.exec(text);
     const time = /(?:^|\n)\s*hora\s*:\s*(\d{1,2}):(\d{2})/im.exec(text);
@@ -174,6 +197,6 @@ export class NuMxOutgoingTransferParser implements CardPurchaseParser {
 
 export const defaultCardPurchaseParsers = (): readonly CardPurchaseParser[] => [
   new AmexMxCardPurchaseParser(),
-  new SantanderMxCardPurchaseParser(),
   new NuMxOutgoingTransferParser(),
+  new SantanderMxCardPurchaseParser(),
 ];

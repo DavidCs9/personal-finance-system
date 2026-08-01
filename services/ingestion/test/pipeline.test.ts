@@ -35,6 +35,17 @@ const amexEmail = `From: alertas@americanexpress.com.mx\nMessage-ID: <amex-1@exa
 const santanderEmail = `From: alertas@santander.com.mx\nMessage-ID: <santander-1@example.com>\n\nSantander\nCompra por $1,250.50 MXN\nEn: CAFETERIA ROMA\nTarjeta **** 5678\nFecha: 2026-08-01T17:55:00Z`;
 const santanderUniqueRewardsEmail = `From: Santander <santander@envio.santander.com.mx>\nMessage-ID: <santander-unique-1@example.com>\n\nSantander Unique Rewards\nHola, Estimado Cliente. 31/07/2026.\nRealizaste una compra con tu Tarjeta crédito terminación 6349\nTe informamos que se autorizó una compra en LIBRERIA DEL CENTRO por un monto de $52.36 M.N.`;
 const nuTransferEmail = `From: Nu <nu@nu.com.mx>\nSubject: Tu transferencia fue exitosa\nMessage-ID: <nu-transfer-1@example.com>\n\nTransferencia exitosa\nDetalles de la transferencia:\nMonto: $2,139.00\nFecha: 31/JUL/2026\nHora: 09:47\nTipo de transferencia: SPEI\nConcepto: Transferencia\nNúmero de referencia: 310726\nFolio: QUD7JAXQ4\nNombre: Moneypool\nEntidad: STP\nCLABE: ••••7067\nEstatus: Completada\nClave de rastreo: NU3ADJ1PN3U499UASNLP4FJDQBU9`;
+const nuQuotedPrintableHtmlEmail = `From: Nu <nu@nu.com.mx>\r
+To: owner@example.com\r
+Subject: Tu transferencia fue exitosa\r
+Message-ID: <nu-transfer-html-1@example.com>\r
+Content-Transfer-Encoding: quoted-printable\r
+Content-Type: text/html; charset=utf-8\r
+\r
+<html><body><div>Te confirmamos que tu transferencia fue realizada</div>
+<div>Detalles de la transferencia:</div>
+<div>Monto: $0.01<br>Fecha: 01/AGO/2026<br>Hora: 16:06<br>Tipo de transferencia: SPEI<br>Concepto: prueba<br>N=C3=BAmero de referencia: 10826<br>Folio: QUFAS5PYN<br>Nombre: PERSONA DESTINATA=\r
+RIA<br>Entidad: SANTANDER<br>CLABE: =E2=80=A2=E2=80=A2=E2=80=A2=E2=80=A23649<br>Estatus: Completada<br>Clave de rastreo: NU3TESTTRACKINGKEY</div></body></html>`;
 
 describe("IngestionPipeline", () => {
   it("persists, parses and notifies a valid Amex purchase", async () => {
@@ -150,6 +161,42 @@ describe("IngestionPipeline", () => {
       counterpartyInstitution: "STP",
       counterpartyAccountLastFour: "7067",
       occurredAt: "2026-07-31T15:47:00.000Z",
+    });
+  });
+
+  it("decodes Nu's quoted-printable HTML without matching the Santander destination", async () => {
+    const rawSources = new InMemoryRawSourceStore();
+    const ledger = new InMemoryLedgerRepository();
+    const notifier = new InMemoryNotifier();
+    const pipeline = new IngestionPipeline({
+      rawSources,
+      ledger,
+      notifier,
+      parsers: [new SantanderMxCardPurchaseParser(), new NuMxOutgoingTransferParser()],
+      clock: fixedClock,
+      ids: ids("nu-transfer-html-1"),
+    });
+
+    const result = await pipeline.ingest({
+      mime: nuQuotedPrintableHtmlEmail,
+      sourceMessageId: "<nu-transfer-html-1@example.com>",
+      receivedAt: "2026-08-01T22:07:01.094Z",
+    });
+
+    expect(result.kind).toBe("accepted");
+    if (result.kind !== "accepted") return;
+    expect(result.purchase).toMatchObject({
+      institution: "nu_mx",
+      eventType: "outgoing_transfer",
+      amount: { amountMinor: 1, currency: "MXN" },
+      merchantRaw: "PERSONA DESTINATARIA",
+      counterpartyInstitution: "SANTANDER",
+      counterpartyAccountLastFour: "3649",
+      reference: "10826",
+      folio: "QUFAS5PYN",
+      trackingKey: "NU3TESTTRACKINGKEY",
+      occurredAt: "2026-08-01T22:06:00.000Z",
+      parserVersion: "nu-mx-outgoing-transfer-v2",
     });
   });
 
