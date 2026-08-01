@@ -4,6 +4,7 @@ import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SendEmailCommand, SESClient } from '@aws-sdk/client-ses';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import type { SQSHandler } from 'aws-lambda';
+import { ingestionExceptionAlert, type IngestionExceptionAlertInput } from './ingestion-notifications.js';
 
 const s3 = new S3Client({});
 const ses = new SESClient({});
@@ -134,7 +135,15 @@ const ingest = async (job: IngestionJob): Promise<void> => {
         payload: purchase,
       },
     }));
-    await notifyObservedPurchase(purchase);
+    try {
+      await notifyObservedPurchase(purchase);
+    } catch (error) {
+      console.error(JSON.stringify({
+        message: 'Unable to send observed-movement alert',
+        eventId: purchase.id,
+        error: errorMessage(error),
+      }));
+    }
   } catch (error) {
     await saveException({
       receivedAt: job.receivedAt,
@@ -146,8 +155,11 @@ const ingest = async (job: IngestionJob): Promise<void> => {
   }
 };
 
-const saveException = async (exception: Record<string, unknown>): Promise<void> => {
+type NewIngestionException = Omit<IngestionExceptionAlertInput, 'id'>;
+
+const saveException = async (exception: NewIngestionException): Promise<void> => {
   const id = randomUUID();
+  const savedException = { id, ...exception };
   await database.send(new PutCommand({
     TableName: tableName,
     Item: {
@@ -156,22 +168,55 @@ const saveException = async (exception: Record<string, unknown>): Promise<void> 
       GSI1PK: 'EXCEPTIONS',
       GSI1SK: String(exception.receivedAt),
       entityType: 'ingestion_exception',
-      payload: { id, ...exception },
+      payload: savedException,
     },
   }));
   console.warn(JSON.stringify({ message: 'SES email needs review', exception: { reason: exception.reason, institution: exception.institution } }));
+  try {
+    await notifyIngestionException(savedException);
+  } catch (error) {
+    console.error(JSON.stringify({
+      message: 'Unable to send ingestion-exception alert',
+      exceptionId: id,
+      error: errorMessage(error),
+    }));
+  }
+};
+
+const configuredAlertAddresses = (): { readonly source: string; readonly destination: string } | undefined => {
+  const source = process.env.ALERT_SENDER_EMAIL;
+  const destination = process.env.ALERT_RECIPIENT_EMAIL;
+  return source && destination && !source.startsWith('replace-with-') && !destination.startsWith('replace-with-')
+    ? { source, destination }
+    : undefined;
+};
+
+const notifyIngestionException = async (exception: IngestionExceptionAlertInput): Promise<void> => {
+  const addresses = configuredAlertAddresses();
+  if (!addresses) {
+    console.info(JSON.stringify({ message: 'Ingestion-exception alert skipped until SES sender and recipient are configured.' }));
+    return;
+  }
+  const alert = ingestionExceptionAlert(exception);
+  await ses.send(new SendEmailCommand({
+    Source: addresses.source,
+    Destination: { ToAddresses: [addresses.destination] },
+    Message: {
+      Subject: { Data: alert.subject },
+      Body: { Text: { Data: alert.body } },
+    },
+  }));
 };
 
 const notifyObservedPurchase = async (purchase: { readonly institution: string; readonly amount: { readonly amountMinor: number; readonly currency: string }; readonly merchantRaw: string }): Promise<void> => {
-  const source = process.env.ALERT_SENDER_EMAIL;
-  const destination = process.env.ALERT_RECIPIENT_EMAIL;
-  if (!source || !destination || source.startsWith('replace-with-') || destination.startsWith('replace-with-')) {
+  const addresses = configuredAlertAddresses();
+  if (!addresses) {
     console.info(JSON.stringify({ message: 'Purchase alert skipped until SES sender and recipient are configured.' }));
     return;
   }
   await ses.send(new SendEmailCommand({
-    Source: source,
-    Destination: { ToAddresses: [destination] },
+    Source: addresses.source,
+    Destination: { ToAddresses: [addresses.destination] },
     Message: {
       Subject: { Data: `Compra observada: ${purchase.institution}` },
       Body: { Text: { Data: `${purchase.merchantRaw}: ${(purchase.amount.amountMinor / 100).toFixed(2)} ${purchase.amount.currency}` } },

@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc --noEmit",
     "check": "tsc --noEmit",
-    "test": "vitest run test/monthly-plan.test.ts",
+    "test": "vitest run",
     "synth": "cdk synth",
     "diff": "cdk diff"
   },
