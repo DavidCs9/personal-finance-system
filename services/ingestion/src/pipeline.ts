@@ -58,17 +58,24 @@ export class IngestionPipeline {
     try {
       const parsed = parser.parse(email);
       if (parsed.amount.amountMinor <= 0 || !parsed.amount.currency || !parsed.merchantRaw.trim()) {
-        return this.createException(email, source, "missing_required_data", "Parser returned incomplete purchase data.", parser.institution);
+        return this.createException(email, source, "missing_required_data", "Parser returned incomplete event data.", parser.institution);
       }
 
       const purchase: ObservedPurchase = {
         id: this.ids.next(),
         institution: parsed.institution,
-        eventType: "card_purchase",
+        eventType: parsed.eventType ?? "card_purchase",
         status: "accepted",
         account: parsed.account,
         amount: parsed.amount,
         merchantRaw: parsed.merchantRaw,
+        counterparty: parsed.counterparty,
+        transferType: parsed.transferType,
+        reference: parsed.reference,
+        folio: parsed.folio,
+        trackingKey: parsed.trackingKey,
+        counterpartyInstitution: parsed.counterpartyInstitution,
+        counterpartyAccountLastFour: parsed.counterpartyAccountLastFour,
         occurredAt: parsed.occurredAt,
         receivedAt: email.receivedAt,
         ingestedAt: this.clock.now().toISOString(),

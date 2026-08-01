@@ -28,6 +28,8 @@ const mxnMinorUnits = (amount: string): number => {
   return Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
 };
 
+const nuMonthMap = { ENE: 0, FEB: 1, MAR: 2, ABR: 3, MAY: 4, JUN: 5, JUL: 6, AGO: 7, SEP: 8, OCT: 9, NOV: 10, DIC: 11 } as const;
+
 const accountFromLastFour = (institution: "american_express_mx" | "santander_mx", lastFour?: string) =>
   lastFour
     ? {
@@ -109,7 +111,69 @@ export class SantanderMxCardPurchaseParser implements CardPurchaseParser {
   }
 }
 
+/** Deterministic parser for Nu's "Tu transferencia fue exitosa" SPEI alert. */
+export class NuMxOutgoingTransferParser implements CardPurchaseParser {
+  readonly institution = "nu_mx" as const;
+  readonly version = "nu-mx-outgoing-transfer-v1";
+
+  matches(email: IncomingEmail): boolean {
+    const from = header(email.mime, "from")?.toLowerCase() ?? "";
+    const subject = header(email.mime, "subject")?.toLowerCase() ?? "";
+    const text = body(email.mime);
+    return (from.includes("nu@nu.com.mx") || from.includes("nu.com.mx"))
+      && /transferencia\s+fue\s+exitosa/i.test(`${subject} ${text}`)
+      && /(?:monto|nombre|estatus)\s*:/i.test(text);
+  }
+
+  parse(email: IncomingEmail): ParsedPurchase {
+    const text = body(email.mime);
+    const amount = /(?:^|\n)\s*monto\s*:\s*\$?\s*([\d,.]+)/im.exec(text)?.[1];
+    const date = /(?:^|\n)\s*fecha\s*:\s*(\d{1,2})\/(ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|OCT|NOV|DIC)\/(\d{4})/im.exec(text);
+    const time = /(?:^|\n)\s*hora\s*:\s*(\d{1,2}):(\d{2})/im.exec(text);
+    const transferType = /(?:^|\n)\s*tipo de transferencia\s*:\s*([^\r\n]+)/im.exec(text)?.[1]?.trim().toLowerCase();
+    const recipient = /(?:^|\n)\s*nombre\s*:\s*([^\r\n]+)/im.exec(text)?.[1];
+    const institution = /(?:^|\n)\s*entidad\s*:\s*([^\r\n]+)/im.exec(text)?.[1];
+    const counterpartyAccountLastFour = /(?:^|\n)\s*clabe\s*:\s*[^\d]*(\d{4})\s*$/im.exec(text)?.[1];
+    const reference = /(?:^|\n)\s*n[uú]mero de referencia\s*:\s*([^\r\n]+)/im.exec(text)?.[1];
+    const folio = /(?:^|\n)\s*folio\s*:\s*([^\r\n]+)/im.exec(text)?.[1];
+    const trackingKey = /(?:^|\n)\s*clave de rastreo\s*:\s*([^\r\n]+)/im.exec(text)?.[1];
+    const status = /(?:^|\n)\s*estatus\s*:\s*([^\r\n]+)/im.exec(text)?.[1]?.trim();
+
+    if (!amount || !recipient || !date || !time || transferType !== "spei" || !status || !/completada/i.test(status)) {
+      throw new Error("Nu MX outgoing-transfer alert is missing amount, recipient, date, time, SPEI type, or completed status");
+    }
+
+    const month = nuMonthMap[date[2] as keyof typeof nuMonthMap];
+    if (month === undefined) throw new Error(`Invalid Nu MX transfer month: ${date[2]}`);
+    const occurredAt = new Date(Date.UTC(Number(date[3]), month, Number(date[1]), Number(time[1]) + 6, Number(time[2])));
+    if (occurredAt.getUTCFullYear() !== Number(date[3]) || occurredAt.getUTCMonth() !== month || occurredAt.getUTCDate() !== Number(date[1])) {
+      throw new Error("Invalid Nu MX transfer date");
+    }
+
+    return {
+      institution: this.institution,
+      eventType: "outgoing_transfer",
+      account: {
+        institution: this.institution,
+        accountId: "nu_mx:primary",
+        displayName: "Cuenta Nu",
+      },
+      amount: { amountMinor: mxnMinorUnits(amount), currency: "MXN" },
+      merchantRaw: compact(recipient),
+      counterparty: compact(recipient),
+      transferType: "spei",
+      reference: reference && compact(reference),
+      folio: folio && compact(folio),
+      trackingKey: trackingKey && compact(trackingKey),
+      counterpartyInstitution: institution && compact(institution),
+      counterpartyAccountLastFour,
+      occurredAt: occurredAt.toISOString(),
+    };
+  }
+}
+
 export const defaultCardPurchaseParsers = (): readonly CardPurchaseParser[] => [
   new AmexMxCardPurchaseParser(),
   new SantanderMxCardPurchaseParser(),
+  new NuMxOutgoingTransferParser(),
 ];

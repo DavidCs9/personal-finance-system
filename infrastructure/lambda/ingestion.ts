@@ -21,10 +21,18 @@ const tableName = process.env.METADATA_TABLE_NAME;
 if (!tableName) throw new Error('Missing required environment variable: METADATA_TABLE_NAME');
 
 interface ParsedPurchase {
-  readonly institution: 'american_express_mx' | 'santander_mx';
+  readonly institution: 'american_express_mx' | 'santander_mx' | 'nu_mx';
   readonly account?: { readonly institution: string; readonly accountId: string; readonly displayName: string; readonly lastFour?: string };
   readonly amount: { readonly amountMinor: number; readonly currency: string };
   readonly merchantRaw: string;
+  readonly eventType?: 'card_purchase' | 'outgoing_transfer';
+  readonly counterparty?: string;
+  readonly transferType?: 'spei';
+  readonly reference?: string;
+  readonly folio?: string;
+  readonly trackingKey?: string;
+  readonly counterpartyInstitution?: string;
+  readonly counterpartyAccountLastFour?: string;
   readonly occurredAt?: string;
   readonly parseWarnings?: readonly string[];
 }
@@ -86,7 +94,7 @@ const ingest = async (job: IngestionJob): Promise<void> => {
   try {
     const parsed = parser.parse(mime);
     if (parsed.amount.amountMinor <= 0 || !parsed.amount.currency || !parsed.merchantRaw.trim()) {
-      throw new Error('Parser returned incomplete purchase data.');
+      throw new Error('Parser returned incomplete event data.');
     }
     const importWarning = header(mime, 'x-ledger-import-source')
       ? ['Importado desde un PDF de ejemplo; el MIME original no estaba disponible.']
@@ -95,11 +103,18 @@ const ingest = async (job: IngestionJob): Promise<void> => {
     const purchase = {
       id: randomUUID(),
       institution: parsed.institution,
-      eventType: 'card_purchase',
+      eventType: parsed.eventType ?? 'card_purchase',
       status: parseWarnings.length ? 'needs_review' : 'accepted',
       account: parsed.account,
       amount: parsed.amount,
       merchantRaw: parsed.merchantRaw,
+      counterparty: parsed.counterparty,
+      transferType: parsed.transferType,
+      reference: parsed.reference,
+      folio: parsed.folio,
+      trackingKey: parsed.trackingKey,
+      counterpartyInstitution: parsed.counterpartyInstitution,
+      counterpartyAccountLastFour: parsed.counterpartyAccountLastFour,
       occurredAt: parsed.occurredAt,
       receivedAt: job.receivedAt,
       ingestedAt: new Date().toISOString(),
@@ -181,6 +196,7 @@ const mxnMinorUnits = (amount: string): number => {
   if (!/^\d+$/.test(whole) || !/^\d{0,2}$/.test(fraction)) throw new Error(`Invalid MXN amount: ${amount}`);
   return Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
 };
+const nuMonthMap = { ENE: 0, FEB: 1, MAR: 2, ABR: 3, MAY: 4, JUN: 5, JUL: 6, AGO: 7, SEP: 8, OCT: 9, NOV: 10, DIC: 11 } as const;
 const accountFromLastFour = (institution: ParsedPurchase['institution'], lastFour?: string) => lastFour
   ? { institution, accountId: `${institution}:${lastFour}`, displayName: `Tarjeta terminada en ${lastFour}`, lastFour }
   : undefined;
@@ -215,6 +231,54 @@ const emailParsers: readonly EmailParser[] = [
           ?? /\b(\d{2}\/\d{2}\/\d{4})\b/.exec(text)?.[1]);
       if (!amount || !merchant) throw new Error('Santander MX card-purchase alert is missing amount or merchant');
       return { institution: 'santander_mx', account: accountFromLastFour('santander_mx', lastFour), amount: { amountMinor: mxnMinorUnits(amount), currency: 'MXN' }, merchantRaw: compact(merchant), occurredAt };
+    },
+  },
+  {
+    institution: 'nu_mx',
+    version: 'nu-mx-outgoing-transfer-v1',
+    matches: (mime) => {
+      const from = (header(mime, 'from') ?? '').toLowerCase();
+      const subject = (header(mime, 'subject') ?? '').toLowerCase();
+      const text = body(mime);
+      return (from.includes('nu@nu.com.mx') || from.includes('nu.com.mx'))
+        && /transferencia\s+fue\s+exitosa/i.test(`${subject} ${text}`)
+        && /(?:monto|nombre|estatus)\s*:/i.test(text);
+    },
+    parse: (mime) => {
+      const text = body(mime);
+      const amount = /(?:^|\n)\s*monto\s*:\s*\$?\s*([\d,.]+)/im.exec(text)?.[1];
+      const date = /(?:^|\n)\s*fecha\s*:\s*(\d{1,2})\/(ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|OCT|NOV|DIC)\/(\d{4})/im.exec(text);
+      const time = /(?:^|\n)\s*hora\s*:\s*(\d{1,2}):(\d{2})/im.exec(text);
+      const transferType = /(?:^|\n)\s*tipo de transferencia\s*:\s*([^\r\n]+)/im.exec(text)?.[1]?.trim().toLowerCase();
+      const recipient = /(?:^|\n)\s*nombre\s*:\s*([^\r\n]+)/im.exec(text)?.[1];
+      const counterpartyInstitution = /(?:^|\n)\s*entidad\s*:\s*([^\r\n]+)/im.exec(text)?.[1];
+      const counterpartyAccountLastFour = /(?:^|\n)\s*clabe\s*:\s*[^\d]*(\d{4})\s*$/im.exec(text)?.[1];
+      const reference = /(?:^|\n)\s*n[uú]mero de referencia\s*:\s*([^\r\n]+)/im.exec(text)?.[1];
+      const folio = /(?:^|\n)\s*folio\s*:\s*([^\r\n]+)/im.exec(text)?.[1];
+      const trackingKey = /(?:^|\n)\s*clave de rastreo\s*:\s*([^\r\n]+)/im.exec(text)?.[1];
+      const status = /(?:^|\n)\s*estatus\s*:\s*([^\r\n]+)/im.exec(text)?.[1]?.trim();
+      if (!amount || !recipient || !date || !time || transferType !== 'spei' || !status || !/completada/i.test(status)) {
+        throw new Error('Nu MX outgoing-transfer alert is missing amount, recipient, date, time, SPEI type, or completed status');
+      }
+      const month = nuMonthMap[date[2] as keyof typeof nuMonthMap];
+      if (month === undefined) throw new Error(`Invalid Nu MX transfer month: ${date[2]}`);
+      const occurredAt = new Date(Date.UTC(Number(date[3]), month, Number(date[1]), Number(time[1]) + 6, Number(time[2])));
+      if (occurredAt.getUTCFullYear() !== Number(date[3]) || occurredAt.getUTCMonth() !== month || occurredAt.getUTCDate() !== Number(date[1])) throw new Error('Invalid Nu MX transfer date');
+      return {
+        institution: 'nu_mx',
+        eventType: 'outgoing_transfer',
+        account: { institution: 'nu_mx', accountId: 'nu_mx:primary', displayName: 'Cuenta Nu' },
+        amount: { amountMinor: mxnMinorUnits(amount), currency: 'MXN' },
+        merchantRaw: compact(recipient),
+        counterparty: compact(recipient),
+        transferType: 'spei',
+        reference: reference && compact(reference),
+        folio: folio && compact(folio),
+        trackingKey: trackingKey && compact(trackingKey),
+        counterpartyInstitution: counterpartyInstitution && compact(counterpartyInstitution),
+        counterpartyAccountLastFour,
+        occurredAt: occurredAt.toISOString(),
+      };
     },
   },
 ];

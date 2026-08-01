@@ -160,6 +160,7 @@ const toPublicEvent = (payload: JsonObject, revisions: readonly JsonObject[] = [
   return {
     id: payload.id,
     institution: payload.institution,
+    eventType: payload.eventType ?? 'card_purchase',
     status: payload.status,
     accountName: account?.displayName ?? 'Tarjeta sin identificar',
     amount: payload.amount,
