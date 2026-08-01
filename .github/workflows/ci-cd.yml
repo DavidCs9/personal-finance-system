@@ -38,6 +38,9 @@ jobs:
     needs: quality
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    env:
+      SES_SENDER_EMAIL: ${{ vars.SES_SENDER_EMAIL }}
+      ALERT_RECIPIENT_EMAIL: ${{ vars.ALERT_RECIPIENT_EMAIL }}
     permissions:
       contents: read
       id-token: write
@@ -54,7 +57,16 @@ jobs:
           aws-region: us-east-2
           role-session-name: personal-finance-github-deploy
       - run: npm run build --workspace @finance/web
-      - run: npx cdk diff PersonalFinanceV1 --output cdk.out.github-diff
+      - run: >-
+          npx cdk diff PersonalFinanceV1
+          --parameters PersonalFinanceV1:SesSenderEmail="$SES_SENDER_EMAIL"
+          --parameters PersonalFinanceV1:AlertRecipientEmail="$ALERT_RECIPIENT_EMAIL"
+          --output cdk.out.github-diff
         working-directory: infrastructure
-      - run: npx cdk deploy PersonalFinanceV1 --require-approval never --output cdk.out.github-deploy
+      - run: >-
+          npx cdk deploy PersonalFinanceV1
+          --parameters PersonalFinanceV1:SesSenderEmail="$SES_SENDER_EMAIL"
+          --parameters PersonalFinanceV1:AlertRecipientEmail="$ALERT_RECIPIENT_EMAIL"
+          --require-approval never
+          --output cdk.out.github-deploy
         working-directory: infrastructure
