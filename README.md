@@ -1,6 +1,6 @@
-# Personal Finance System
+# Olbia — Personal Finance System
 
-Un ledger personal que observa eventos financieros desde alertas por correo, sin acceder a credenciales bancarias.
+Un tablero personal de gasto mensual que observa eventos financieros desde alertas por correo, sin acceder a credenciales bancarias.
 
 ## Estado
 
