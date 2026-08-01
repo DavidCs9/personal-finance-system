@@ -18,3 +18,7 @@ La V1 recibe correos reenviados a través de Amazon SES y conserva el MIME origi
 
 Las decisiones acordadas para V1 están en [docs/v1-decisions.md](docs/v1-decisions.md).
 La configuracion unica de reenvio esta en [docs/gmail-forwarding.md](docs/gmail-forwarding.md).
+
+## Entregas
+
+Los cambios llegan por pull request a `main`. GitHub Actions ejecuta tests, chequeos de tipos, build y síntesis de CDK para cada PR. Tras el merge, el mismo flujo se autentica con AWS mediante OIDC y despliega `PersonalFinanceV1`; no usa claves AWS almacenadas en GitHub. El rol de GitHub sólo puede asumir los roles de bootstrap de CDK y sólo desde `main` de este repositorio.

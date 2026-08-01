@@ -1,0 +1,61 @@
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: personal-finance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test -- --runInBand
+      - run: npm run check --workspace @finance/web
+      - run: npm run check --workspace @finance/infrastructure
+      - run: npm run build --workspace @finance/web
+      - run: npm run synth --workspace @finance/infrastructure
+        env:
+          CDK_DEFAULT_ACCOUNT: '225989371926'
+
+  deploy:
+    name: deploy-production
+    needs: quality
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::225989371926:role/personal-finance-v1-github-deploy
+          aws-region: us-east-2
+          role-session-name: personal-finance-github-deploy
+      - run: npm run build --workspace @finance/web
+      - run: npx cdk diff PersonalFinanceV1 --output cdk.out.github-diff
+        working-directory: infrastructure
+      - run: npx cdk deploy PersonalFinanceV1 --require-approval never --output cdk.out.github-deploy
+        working-directory: infrastructure
