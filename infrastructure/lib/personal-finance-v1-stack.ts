@@ -13,6 +13,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
@@ -252,6 +253,13 @@ export class PersonalFinanceV1Stack extends Stack {
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
       },
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+    });
+    new s3deploy.BucketDeployment(this, 'WebDeployment', {
+      sources: [s3deploy.Source.asset(path.join(__dirname, '..', '..', 'apps', 'web', 'dist'))],
+      destinationBucket: webBucket,
+      distribution,
+      distributionPaths: ['/*'],
+      prune: true,
     });
 
     const discoveryErrorAlarm = new cdk.aws_cloudwatch.Alarm(this, 'DiscoveryErrorsAlarm', {

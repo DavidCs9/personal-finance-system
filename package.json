@@ -16,7 +16,7 @@
     "build": "npm run build --workspaces --if-present",
     "check": "npm run check --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "synth": "npm --workspace @finance/infrastructure run synth"
+    "synth": "npm --workspace @finance/web run build && npm --workspace @finance/infrastructure run synth"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
