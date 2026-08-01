@@ -7,7 +7,9 @@ import type { SQSHandler } from 'aws-lambda';
 
 const s3 = new S3Client({});
 const ses = new SESClient({});
-const database = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const database = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
+  marshallOptions: { removeUndefinedValues: true },
+});
 
 interface IngestionJob {
   readonly receivedAt: string;
@@ -86,11 +88,15 @@ const ingest = async (job: IngestionJob): Promise<void> => {
     if (parsed.amount.amountMinor <= 0 || !parsed.amount.currency || !parsed.merchantRaw.trim()) {
       throw new Error('Parser returned incomplete purchase data.');
     }
+    const importWarning = header(mime, 'x-ledger-import-source')
+      ? ['Importado desde un PDF de ejemplo; el MIME original no estaba disponible.']
+      : [];
+    const parseWarnings = [...(parsed.parseWarnings ?? []), ...importWarning];
     const purchase = {
       id: randomUUID(),
       institution: parsed.institution,
       eventType: 'card_purchase',
-      status: 'accepted',
+      status: parseWarnings.length ? 'needs_review' : 'accepted',
       account: parsed.account,
       amount: parsed.amount,
       merchantRaw: parsed.merchantRaw,
@@ -100,7 +106,7 @@ const ingest = async (job: IngestionJob): Promise<void> => {
       sourceMessageId,
       source,
       parserVersion: parser.version,
-      parseWarnings: parsed.parseWarnings ?? [],
+      parseWarnings,
     };
     await database.send(new PutCommand({
       TableName: tableName,
@@ -161,6 +167,15 @@ const notifyObservedPurchase = async (purchase: { readonly institution: string; 
 const header = (mime: string, name: string): string | undefined => new RegExp(`^${name}:\\s*(.+)$`, 'im').exec(mime)?.[1]?.trim();
 const body = (mime: string): string => mime.split(/\r?\n\r?\n/, 2)[1] ?? mime;
 const compact = (value: string): string => value.replace(/\s+/g, ' ').trim();
+const dateOnlyToIso = (value: string | undefined): string | undefined => {
+  if (!value) return undefined;
+  const [, day, month, year] = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value) ?? [];
+  if (!day || !month || !year) return undefined;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), 12));
+  return date.getUTCFullYear() === Number(year) && date.getUTCMonth() === Number(month) - 1 && date.getUTCDate() === Number(day)
+    ? date.toISOString()
+    : undefined;
+};
 const mxnMinorUnits = (amount: string): number => {
   const [whole, fraction = ''] = amount.replace(/,/g, '').split('.');
   if (!/^\d+$/.test(whole) || !/^\d{0,2}$/.test(fraction)) throw new Error(`Invalid MXN amount: ${amount}`);
@@ -179,7 +194,8 @@ const emailParsers: readonly EmailParser[] = [
       const amount = /(?:importe|monto)\s*(?:de)?\s*\$?\s*([\d,.]+)\s*(?:MXN|M\.N\.)/i.exec(text)?.[1];
       const merchant = /(?:establecimiento|comercio)\s*:\s*(.+)/i.exec(text)?.[1];
       const lastFour = /(?:terminaci[oó]n|tarjeta)\s*(?:en)?\s*(\d{4})/i.exec(text)?.[1];
-      const occurredAt = /fecha\s*:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)/i.exec(text)?.[1];
+    const occurredAt = /fecha\s*:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)/i.exec(text)?.[1]
+      ?? dateOnlyToIso(/(?:fecha|d[ií]a)\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i.exec(text)?.[1]);
       if (!amount || !merchant) throw new Error('Amex MX card-purchase alert is missing amount or merchant');
       return { institution: 'american_express_mx', account: accountFromLastFour('american_express_mx', lastFour), amount: { amountMinor: mxnMinorUnits(amount), currency: 'MXN' }, merchantRaw: compact(merchant), occurredAt };
     },
@@ -194,7 +210,9 @@ const emailParsers: readonly EmailParser[] = [
       const amount = uniqueRewardsPurchase?.[2] ?? /(?:compra|cargo)\s*(?:por|de)\s*\$?\s*([\d,.]+)\s*(?:MXN|M\.N\.)/i.exec(text)?.[1];
       const merchant = uniqueRewardsPurchase?.[1] ?? /(?:en|comercio)\s*:\s*([^\r\n]+)/i.exec(text)?.[1];
       const lastFour = /(?:tarjeta|terminaci[oó]n)\s*(?:\*+|en)?\s*(\d{4})/i.exec(text)?.[1];
-      const occurredAt = /fecha\s*:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)/i.exec(text)?.[1];
+      const occurredAt = /fecha\s*:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)/i.exec(text)?.[1]
+        ?? dateOnlyToIso(/(?:fecha|d[ií]a)\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i.exec(text)?.[1]
+          ?? /\b(\d{2}\/\d{2}\/\d{4})\b/.exec(text)?.[1]);
       if (!amount || !merchant) throw new Error('Santander MX card-purchase alert is missing amount or merchant');
       return { institution: 'santander_mx', account: accountFromLastFour('santander_mx', lastFour), amount: { amountMinor: mxnMinorUnits(amount), currency: 'MXN' }, merchantRaw: compact(merchant), occurredAt };
     },

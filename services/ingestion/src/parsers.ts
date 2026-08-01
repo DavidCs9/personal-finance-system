@@ -9,6 +9,16 @@ const body = (mime: string): string => mime.split(/\r?\n\r?\n/, 2)[1] ?? mime;
 
 const compact = (value: string): string => value.replace(/\s+/g, " ").trim();
 
+const dateOnlyToIso = (value: string | undefined): string | undefined => {
+  if (!value) return undefined;
+  const [, day, month, year] = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value) ?? [];
+  if (!day || !month || !year) return undefined;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), 12));
+  return date.getUTCFullYear() === Number(year) && date.getUTCMonth() === Number(month) - 1 && date.getUTCDate() === Number(day)
+    ? date.toISOString()
+    : undefined;
+};
+
 const mxnMinorUnits = (amount: string): number => {
   const normalised = amount.replace(/,/g, "");
   const [whole, fraction = ""] = normalised.split(".");
@@ -47,7 +57,9 @@ export class AmexMxCardPurchaseParser implements CardPurchaseParser {
     const amount = /(?:importe|monto)\s*(?:de)?\s*\$?\s*([\d,.]+)\s*(MXN|M\.N\.)/i.exec(text)?.[1];
     const merchant = /(?:establecimiento|comercio)\s*:\s*(.+)/i.exec(text)?.[1];
     const lastFour = /(?:terminaci[oó]n|tarjeta)\s*(?:en)?\s*(\d{4})/i.exec(text)?.[1];
-    const occurredAt = /fecha\s*:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)/i.exec(text)?.[1];
+    const occurredAt = /fecha\s*:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)/i.exec(text)?.[1]
+      ?? dateOnlyToIso(/(?:fecha|d[ií]a)\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i.exec(text)?.[1]
+        ?? /\b(\d{2}\/\d{2}\/\d{4})\b/.exec(text)?.[1]);
 
     if (!amount || !merchant) {
       throw new Error("Amex MX card-purchase alert is missing amount or merchant");
@@ -79,7 +91,9 @@ export class SantanderMxCardPurchaseParser implements CardPurchaseParser {
     const amount = uniqueRewardsPurchase?.[2] ?? /(?:compra|cargo)\s*(?:por|de)\s*\$?\s*([\d,.]+)\s*(?:MXN|M\.N\.)/i.exec(text)?.[1];
     const merchant = uniqueRewardsPurchase?.[1] ?? /(?:en|comercio)\s*:\s*([^\r\n]+)/i.exec(text)?.[1];
     const lastFour = /(?:tarjeta|terminaci[oó]n)\s*(?:\*+|en)?\s*(\d{4})/i.exec(text)?.[1];
-    const occurredAt = /fecha\s*:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)/i.exec(text)?.[1];
+    const occurredAt = /fecha\s*:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)/i.exec(text)?.[1]
+      ?? dateOnlyToIso(/(?:fecha|d[ií]a)\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i.exec(text)?.[1]
+        ?? /\b(\d{2}\/\d{2}\/\d{4})\b/.exec(text)?.[1]);
 
     if (!amount || !merchant) {
       throw new Error("Santander MX card-purchase alert is missing amount or merchant");

@@ -243,7 +243,7 @@ export class PersonalFinanceV1Stack extends Stack {
       removalPolicy: RemovalPolicy.RETAIN,
     });
     const userPoolClient = userPool.addClient('WebClient', {
-      authFlows: { userSrp: true },
+      authFlows: { userSrp: true, userPassword: true },
       preventUserExistenceErrors: true,
       generateSecret: false,
     });
@@ -268,6 +268,12 @@ export class PersonalFinanceV1Stack extends Stack {
       apiName: 'personal-finance-v1',
       description: 'Authenticated personal-finance API.',
       createDefaultStage: true,
+      corsPreflight: {
+        allowHeaders: ['Authorization', 'Content-Type'],
+        allowMethods: [apigatewayv2.CorsHttpMethod.GET, apigatewayv2.CorsHttpMethod.PATCH],
+        allowOrigins: [`https://${webDomainName}`],
+        maxAge: Duration.hours(1),
+      },
     });
     const authorizer = new HttpJwtAuthorizer(
       'CognitoJwtAuthorizer',
@@ -318,7 +324,15 @@ export class PersonalFinanceV1Stack extends Stack {
       target: route53.RecordTarget.fromAlias(new route53targets.CloudFrontTarget(distribution)),
     });
     new s3deploy.BucketDeployment(this, 'WebDeployment', {
-      sources: [s3deploy.Source.asset(path.join(__dirname, '..', '..', 'apps', 'web', 'dist'))],
+      sources: [
+        s3deploy.Source.asset(path.join(__dirname, '..', '..', 'apps', 'web', 'dist')),
+        s3deploy.Source.data('runtime-config.js', `window.__LEDGER_CONFIG__ = ${JSON.stringify({
+          apiBaseUrl: httpApi.apiEndpoint.replace(/\/$/, ''),
+          cognitoUserPoolId: userPool.userPoolId,
+          cognitoUserPoolClientId: userPoolClient.userPoolClientId,
+          region: this.region,
+        })};`),
+      ],
       destinationBucket: webBucket,
       distribution,
       distributionPaths: ['/*'],

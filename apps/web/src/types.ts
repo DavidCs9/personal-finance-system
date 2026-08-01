@@ -15,7 +15,7 @@ export interface PurchaseEvent {
   readonly parserVersion: string;
   readonly source: RawSourcePointer;
   readonly parseWarnings: readonly string[];
-  readonly rawEmail: string;
+  readonly rawEmail?: string;
   readonly revisions: readonly EventRevision[];
 }
 
