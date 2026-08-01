@@ -3,6 +3,7 @@ import { Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpJwtAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
@@ -17,6 +18,8 @@ import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as route53targets from 'aws-cdk-lib/aws-route53-targets';
 import { Construct } from 'constructs';
 import * as path from 'node:path';
 
@@ -244,7 +247,19 @@ export class PersonalFinanceV1Stack extends Stack {
       enforceSSL: true,
       removalPolicy: RemovalPolicy.RETAIN,
     });
+    const webDomainName = 'finance.castrodavid.dev';
+    const hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'CastroDavidDevZone', {
+      hostedZoneId: 'Z09057602V6K42SQPOMLC',
+      zoneName: 'castrodavid.dev',
+    });
+    const webCertificate = new acm.DnsValidatedCertificate(this, 'WebCertificate', {
+      domainName: webDomainName,
+      hostedZone,
+      region: 'us-east-1',
+    });
     const distribution = new cloudfront.Distribution(this, 'WebDistribution', {
+      domainNames: [webDomainName],
+      certificate: webCertificate,
       defaultRootObject: 'index.html',
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(webBucket),
@@ -253,6 +268,16 @@ export class PersonalFinanceV1Stack extends Stack {
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
       },
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+    });
+    new route53.ARecord(this, 'WebAliasRecord', {
+      zone: hostedZone,
+      recordName: webDomainName,
+      target: route53.RecordTarget.fromAlias(new route53targets.CloudFrontTarget(distribution)),
+    });
+    new route53.AaaaRecord(this, 'WebAliasIpv6Record', {
+      zone: hostedZone,
+      recordName: webDomainName,
+      target: route53.RecordTarget.fromAlias(new route53targets.CloudFrontTarget(distribution)),
     });
     new s3deploy.BucketDeployment(this, 'WebDeployment', {
       sources: [s3deploy.Source.asset(path.join(__dirname, '..', '..', 'apps', 'web', 'dist'))],
@@ -286,6 +311,7 @@ export class PersonalFinanceV1Stack extends Stack {
     new cdk.CfnOutput(this, 'UserPoolClientId', { value: userPoolClient.userPoolClientId });
     new cdk.CfnOutput(this, 'HttpApiUrl', { value: httpApi.apiEndpoint });
     new cdk.CfnOutput(this, 'WebDistributionUrl', { value: `https://${distribution.distributionDomainName}` });
+    new cdk.CfnOutput(this, 'WebCustomDomainUrl', { value: `https://${webDomainName}` });
     new cdk.CfnOutput(this, 'ConfiguredScheduleExpression', { value: discoveryScheduleExpression.valueAsString });
     new cdk.CfnOutput(this, 'DiscoveryErrorsAlarmName', { value: discoveryErrorAlarm.alarmName });
     new cdk.CfnOutput(this, 'IngestionErrorsAlarmName', { value: ingestionErrorAlarm.alarmName });
