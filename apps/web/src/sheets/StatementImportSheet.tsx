@@ -146,7 +146,12 @@ export function StatementImportSheet({
       : undefined;
 
   return (
-    <Sheet eyebrow={`ESTADO ${label.toUpperCase()}`} title="Conciliar periodo" onClose={onClose}>
+    <Sheet
+      eyebrow={`ESTADO ${label.toUpperCase()}`}
+      title="Conciliar periodo"
+      onClose={onClose}
+      className={readyPreview ? "sheet-split" : undefined}
+    >
       {!readyPreview ? (
         <form className="sheet-form" onSubmit={(event) => void inspect(event)}>
           <p>
@@ -171,79 +176,81 @@ export function StatementImportSheet({
         </form>
       ) : (
         <div className="import-preview">
-          <p>
-            {readyPreview.product} · {readyPreview.accountLastFour} · {readyPreview.period?.from} a{" "}
-            {readyPreview.period?.to}
-          </p>
-          <div className="import-summary">
-            <div>
-              <strong>{readyPreview.summary?.new ?? 0}</strong>
-              <span>Nuevos</span>
-            </div>
-            <div>
-              <strong>{readyPreview.summary?.matched ?? 0}</strong>
-              <span>Conciliados</span>
-            </div>
-            <div>
-              <strong>{readyPreview.summary?.unplanned ?? 0}</strong>
-              <span>MSI sin plan</span>
-            </div>
-            <div className={readyPreview.summary?.ambiguous ? "attention" : ""}>
-              <strong>{readyPreview.summary?.ambiguous ?? 0}</strong>
-              <span>Por decidir</span>
-            </div>
-          </div>
-          {(readyPreview.summary?.excluded ?? 0) > 0 && (
-            <p className="import-note">
-              {readyPreview.summary?.excluded} pago o abono queda fuera del gasto.
+          <div className="import-preview-head">
+            <p className="import-account">
+              {readyPreview.product} · {readyPreview.accountLastFour} · {readyPreview.period?.from} a{" "}
+              {readyPreview.period?.to}
             </p>
-          )}
-          {ambiguous.length > 0 && (
-            <section className="ambiguous-list">
-              <p className="eyebrow">DECISIONES NECESARIAS</p>
-              {ambiguous.map((row) => (
-                <div className="ambiguous-row" key={row.identity}>
-                  <div>
-                    <strong>{row.merchantRaw}</strong>
-                    <small>
-                      {row.occurredOn} · {money(row.amountMinor)}
-                    </small>
-                  </div>
-                  <select
-                    aria-label={`Decisión para ${row.merchantRaw}`}
-                    value={
-                      decisions[row.identity]?.action === "create"
-                        ? "create"
-                        : decisions[row.identity]?.eventId ?? ""
-                    }
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      setDecisions((current) => ({
-                        ...current,
-                        [row.identity]:
-                          value === "create"
-                            ? { action: "create" }
-                            : { action: "link", eventId: value },
-                      }));
-                    }}
-                  >
-                    <option value="" disabled>
-                      Elegir…
-                    </option>
-                    {(row.candidates ?? []).map((candidate) => (
-                      <option value={candidate.id} key={candidate.id}>
-                        Vincular: {candidate.merchantRaw}
+            <div className="import-summary">
+              <div>
+                <strong>{readyPreview.summary?.new ?? 0}</strong>
+                <span>Nuevos</span>
+              </div>
+              <div>
+                <strong>{readyPreview.summary?.matched ?? 0}</strong>
+                <span>Conciliados</span>
+              </div>
+              <div>
+                <strong>{readyPreview.summary?.unplanned ?? 0}</strong>
+                <span>MSI sin plan</span>
+              </div>
+              <div className={readyPreview.summary?.ambiguous ? "attention" : ""}>
+                <strong>{readyPreview.summary?.ambiguous ?? 0}</strong>
+                <span>Por decidir</span>
+              </div>
+            </div>
+            {(readyPreview.summary?.excluded ?? 0) > 0 && (
+              <p className="import-note">
+                {readyPreview.summary?.excluded} pago o abono queda fuera del gasto.
+              </p>
+            )}
+            {ambiguous.length > 0 && (
+              <section className="ambiguous-list">
+                <p className="eyebrow">DECISIONES NECESARIAS</p>
+                {ambiguous.map((row) => (
+                  <div className="ambiguous-row" key={row.identity}>
+                    <div>
+                      <strong>{row.merchantRaw}</strong>
+                      <small>
+                        {row.occurredOn} · {money(row.amountMinor)}
+                      </small>
+                    </div>
+                    <select
+                      aria-label={`Decisión para ${row.merchantRaw}`}
+                      value={
+                        decisions[row.identity]?.action === "create"
+                          ? "create"
+                          : decisions[row.identity]?.eventId ?? ""
+                      }
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setDecisions((current) => ({
+                          ...current,
+                          [row.identity]:
+                            value === "create"
+                              ? { action: "create" }
+                              : { action: "link", eventId: value },
+                        }));
+                      }}
+                    >
+                      <option value="" disabled>
+                        Elegir…
                       </option>
-                    ))}
-                    <option value="create">Importar como nuevo</option>
-                  </select>
-                </div>
-              ))}
-            </section>
-          )}
-          <div className="payment-list">
-            {(readyPreview.rows ?? []).slice(0, 40).map((row) => (
-              <div key={row.identity} className="payment-row" style={{ cursor: "default" }}>
+                      {(row.candidates ?? []).map((candidate) => (
+                        <option value={candidate.id} key={candidate.id}>
+                          Vincular: {candidate.merchantRaw}
+                        </option>
+                      ))}
+                      <option value="create">Importar como nuevo</option>
+                    </select>
+                  </div>
+                ))}
+              </section>
+            )}
+          </div>
+          <div className="import-preview-list payment-list" role="list">
+            {(readyPreview.rows ?? []).map((row) => (
+              <div key={row.identity} className="payment-row" style={{ cursor: "default" }} role="listitem">
                 <span className="date-block">
                   <small>{row.kind === "msi" ? "MSI" : "CMP"}</small>
                   <strong>
@@ -276,19 +283,21 @@ export function StatementImportSheet({
               </div>
             ))}
           </div>
-          {error && <p className="form-error">{error}</p>}
-          <button
-            className="primary-button"
-            type="button"
-            disabled={busy || unresolved > 0}
-            onClick={() => void apply()}
-          >
-            {busy
-              ? "Aplicando…"
-              : unresolved > 0
-                ? `Faltan ${unresolved} decisiones`
-                : "Aplicar conciliación"}
-          </button>
+          <div className="import-preview-footer">
+            {error && <p className="form-error">{error}</p>}
+            <button
+              className="primary-button"
+              type="button"
+              disabled={busy || unresolved > 0}
+              onClick={() => void apply()}
+            >
+              {busy
+                ? "Aplicando…"
+                : unresolved > 0
+                  ? `Faltan ${unresolved} decisiones`
+                  : "Aplicar conciliación"}
+            </button>
+          </div>
         </div>
       )}
     </Sheet>

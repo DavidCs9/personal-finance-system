@@ -20,6 +20,7 @@ import {
   type MsiPlan,
 } from '@finance/domain';
 import {
+  amexMsiEvidenceLines,
   InvalidAmexStatementError,
   parseAmexStatementExtraction,
   type AmexStatementDocument,
@@ -1578,39 +1579,7 @@ const buildAmexPreviewRows = async (
     localDate,
   }));
 
-  const msiLines: EvidenceLine[] = [
-    ...document.msiPlans.map((plan, index) => ({
-      merchantRaw: plan.merchantRaw,
-      amountMinor: plan.cuotaMinor,
-      occurredOn: document.period.to,
-      installmentIndex: plan.installmentIndex,
-      installmentMonths: plan.installmentMonths,
-      originalAmountMinor: plan.originalAmountMinor,
-      identity: `amex_plan:${document.accountLastFour}:${plan.originalAmountMinor}:${plan.installmentIndex}/${plan.installmentMonths}:${index}`,
-    })),
-    ...document.charges.filter((charge) => charge.msi).map((charge) => ({
-      merchantRaw: charge.merchantRaw,
-      amountMinor: charge.amountMinor,
-      occurredOn: charge.occurredOn,
-      installmentIndex: charge.installmentIndex,
-      installmentMonths: charge.installmentMonths,
-      identity: charge.identity,
-    })),
-  ];
-  const seen = new Set<string>();
-  const uniqueMsi = msiLines.filter((line) => {
-    const key = [
-      line.installmentIndex ?? '',
-      line.installmentMonths ?? '',
-      line.amountMinor,
-      line.originalAmountMinor ?? '',
-      line.merchantRaw,
-    ].join(':');
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  const msiRows = uniqueMsi.map((line) => classifyMsiEvidenceRow(line, events));
+  const msiRows = amexMsiEvidenceLines(document).map((line) => classifyMsiEvidenceRow(line, events));
   return [...purchaseRows, ...msiRows];
 };
 

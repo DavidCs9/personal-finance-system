@@ -64,6 +64,7 @@ const monthNames: Readonly<Record<string, string>> = {
 };
 
 const moneyPattern = /^-?\d{1,3}(?:,\d{3})*(?:\.\d{2})?$|^-?\d+(?:\.\d{2})?$/;
+const trailingMoneyPattern = /(-?\d{1,3}(?:,\d{3})*\.\d{2}|-?\d+\.\d{2})\s*$/;
 
 const parseMoneyMinor = (raw: string): number | undefined => {
   const cleaned = raw.replace(/\$/g, "").replace(/,/g, "").trim();
@@ -71,6 +72,33 @@ const parseMoneyMinor = (raw: string): number | undefined => {
   const amountMinor = Math.round(Number(cleaned) * 100);
   return Number.isSafeInteger(amountMinor) ? amountMinor : undefined;
 };
+
+const cleanMerchant = (raw: string): string =>
+  raw
+    .replace(/CARGO\s+\d{1,2}\s+DE\s+\d{1,2}/ig, " ")
+    .replace(/Mensualidad\s*=\s*\([^)]*\)/ig, " ")
+    .replace(/\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2}/g, " ")
+    .replace(/\bCR\b/ig, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const splitTrailingAmount = (
+  raw: string,
+): { readonly merchantRaw: string; readonly amountMinor?: number } => {
+  const match = trailingMoneyPattern.exec(raw.trim());
+  if (!match || match.index === undefined) return { merchantRaw: raw.trim() };
+  const amountMinor = parseMoneyMinor(match[1]);
+  if (amountMinor === undefined) return { merchantRaw: raw.trim() };
+  return {
+    merchantRaw: raw.slice(0, match.index).trim(),
+    amountMinor: Math.abs(amountMinor),
+  };
+};
+
+const isPlanSummaryNoise = (line: string): boolean =>
+  /Mensualidad\s*=/i.test(line)
+  || /\d+\.\d{2}\s*%/.test(line)
+  || /Consolidado de compras|Resumen de Meses|Total de Plan/i.test(line);
 
 const resolveYear = (month: string, periodTo: string): string => {
   const periodYear = Number(periodTo.slice(0, 4));
@@ -161,9 +189,10 @@ const msiFromTables = (
   for (const table of tables) {
     for (const row of table.rows) {
       const joined = row.join(" ").replace(/\s+/g, " ").trim();
-      if (!joined) continue;
+      if (!joined || isPlanSummaryNoise(joined)) continue;
       const installment = installmentFrom(joined);
-      if (!installment && !/MESES EN AUTOM/i.test(joined)) continue;
+      // Table MSI evidence needs an explicit CARGO N DE M; plan-summary rows are handled separately.
+      if (!installment) continue;
       const moneyMatches = [...joined.matchAll(/(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})/g)];
       const amountRaw = moneyMatches.at(-1)?.[1];
       const amountMinor = amountRaw ? parseMoneyMinor(amountRaw) : undefined;
@@ -173,12 +202,9 @@ const msiFromTables = (
         ? parseSpanishDate(dated[1], dated[2], periodTo)
         : periodTo;
       if (!occurredOn) continue;
-      let merchantRaw = joined
-        .replace(/CARGO\s+\d{1,2}\s+DE\s+\d{1,2}/ig, " ")
-        .replace(/\d{1,3}(?:,\d{3})*\.\d{2}/g, " ")
-        .replace(/\d{1,2}\s+de\s+[A-Za-zÁÉÍÓÚáéíóú]+/ig, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+      let merchantRaw = cleanMerchant(
+        joined.replace(/\d{1,2}\s+de\s+[A-Za-zÁÉÍÓÚáéíóú]+/ig, " "),
+      );
       if (!merchantRaw || merchantRaw.length < 3) {
         merchantRaw = /MESES EN AUTOM/i.test(joined) ? "MESES EN AUTOMÁTICO NACIONAL" : "MSI";
       }
@@ -187,8 +213,8 @@ const msiFromTables = (
         merchantRaw,
         amountMinor: Math.abs(amountMinor),
         credit: false,
-        installmentIndex: installment?.index,
-        installmentMonths: installment?.months,
+        installmentIndex: installment.index,
+        installmentMonths: installment.months,
         msi: true,
         identity: [
           "amex_statement_table",
@@ -196,7 +222,7 @@ const msiFromTables = (
           occurredOn,
           merchantRaw,
           String(Math.abs(amountMinor)),
-          installment ? `${installment.index}/${installment.months}` : "msi",
+          `${installment.index}/${installment.months}`,
           String(charges.length + 1),
         ].join(":"),
       });
@@ -218,6 +244,7 @@ const parseChargesAndPlansFromLines = (
 
   for (let index = scanStart; index < scanEnd; index += 1) {
     const line = lines[index];
+    if (isPlanSummaryNoise(line)) continue;
     const dated = /^(\d{1,2})\s+de\s+([A-Za-zÁÉÍÓÚáéíóú]+)\s+(.+)$/i.exec(line);
     if (!dated) continue;
     const occurredOn = parseSpanishDate(dated[1], dated[2], period.to);
@@ -225,31 +252,46 @@ const parseChargesAndPlansFromLines = (
     let merchantRaw = dated[3].trim();
     if (/^GRACIAS POR SU PAGO/i.test(merchantRaw)) continue;
 
-    let installment: { index: number; months: number } | undefined;
-    let amountMinor: number | undefined;
+    let installment = installmentFrom(merchantRaw);
+    const inline = splitTrailingAmount(merchantRaw);
+    merchantRaw = cleanMerchant(inline.merchantRaw);
+    let amountMinor = inline.amountMinor;
     let credit = false;
-    for (let look = 1; look <= 4 && index + look < scanEnd; look += 1) {
+
+    for (let look = 1; look <= 6 && index + look < scanEnd; look += 1) {
       const next = lines[index + look];
-      if (!next || isNoiseLine(next) && !installmentFrom(next) && parseMoneyMinor(next) === undefined) {
-        if (/^CR$/i.test(next)) {
-          credit = true;
-          continue;
-        }
+      if (!next) continue;
+      if (/^CR$/i.test(next)) {
+        credit = true;
+        continue;
       }
+      if (/^RFC/i.test(next) || /^D[oó]lar U\.S\.A\./i.test(next) || /^TC:/i.test(next)) continue;
       const maybeInstallment = installmentFrom(next);
       if (maybeInstallment) {
         installment = maybeInstallment;
         continue;
       }
+      if (amountMinor !== undefined) {
+        if (/^\d{1,2}\s+de\s+/i.test(next)) break;
+        continue;
+      }
       const money = parseMoneyMinor(next);
       if (money !== undefined && moneyPattern.test(next.replace(/\$/g, "").trim())) {
         amountMinor = Math.abs(money);
-        break;
+        continue;
+      }
+      const nextInline = splitTrailingAmount(next);
+      if (nextInline.amountMinor !== undefined && !/^\d{1,2}\s+de\s+/i.test(next)) {
+        amountMinor = nextInline.amountMinor;
+        continue;
       }
       if (/^\d{1,2}\s+de\s+/i.test(next)) break;
+      if (isNoiseLine(next)) continue;
     }
+    if (!merchantRaw || merchantRaw.length < 3) continue;
     if (amountMinor === undefined || amountMinor <= 0) continue;
     const msi = Boolean(installment) || /MESES EN AUTOM[AÁ]TICO/i.test(merchantRaw);
+    if (msi && !installment) continue;
     charges.push({
       occurredOn,
       merchantRaw,
@@ -273,21 +315,39 @@ const parseChargesAndPlansFromLines = (
   if (msiSectionStart >= 0) {
     for (let index = msiSectionStart; index < lines.length; index += 1) {
       const line = lines[index];
+      if (/Resumen de Meses/i.test(line) || /Consolidado de compras/i.test(line)) break;
+      if (isPlanSummaryNoise(line)) continue;
       const dated = /^(\d{1,2})\s+de\s+([A-Za-zÁÉÍÓÚáéíóú]+)\s+(.+)$/i.exec(line);
       if (!dated) continue;
-      if (/Resumen de Meses/i.test(line) || /Consolidado de compras/i.test(line)) break;
       const occurredOn = parseSpanishDate(dated[1], dated[2], period.to);
       if (!occurredOn) continue;
-      const merchantRaw = dated[3].trim();
-      const installmentLine = lines[index + 1] ?? "";
-      const installment = installmentFrom(installmentLine);
-      const amountLine = lines[index + 2] ?? lines[index + 1] ?? "";
-      const amountMinor = parseMoneyMinor(amountLine);
+      const inline = splitTrailingAmount(dated[3]);
+      let merchantRaw = cleanMerchant(inline.merchantRaw);
+      let installment = installmentFrom(dated[3]) ?? installmentFrom(lines[index + 1] ?? "");
+      let amountMinor = inline.amountMinor;
+      if (amountMinor === undefined) {
+        for (let look = 1; look <= 3; look += 1) {
+          const next = lines[index + look] ?? "";
+          const maybeInstallment = installmentFrom(next);
+          if (maybeInstallment) {
+            installment = maybeInstallment;
+            continue;
+          }
+          const money = parseMoneyMinor(next);
+          if (money !== undefined && moneyPattern.test(next.replace(/\$/g, "").trim())) {
+            amountMinor = Math.abs(money);
+            break;
+          }
+        }
+      }
       if (!installment || amountMinor === undefined) continue;
+      if (!merchantRaw || merchantRaw.length < 3) {
+        merchantRaw = "MESES EN AUTOMÁTICO NACIONAL";
+      }
       charges.push({
         occurredOn,
         merchantRaw,
-        amountMinor: Math.abs(amountMinor),
+        amountMinor,
         credit: false,
         installmentIndex: installment.index,
         installmentMonths: installment.months,
@@ -297,7 +357,7 @@ const parseChargesAndPlansFromLines = (
           accountLastFour,
           occurredOn,
           merchantRaw,
-          String(Math.abs(amountMinor)),
+          String(amountMinor),
           `${installment.index}/${installment.months}`,
           String(charges.length + 1),
         ].join(":"),
@@ -307,15 +367,18 @@ const parseChargesAndPlansFromLines = (
 
   const msiPlans: AmexMsiPlanSummary[] = [];
   const detailPattern =
-    /^(\d{1,2})\s+de\s+([A-Za-zÁÉÍÓÚáéíóú]+)\s+([\d,]+\.\d{2})\s+([\d.]+)%\s+([\d,]+\.\d{2})\s+(\d{1,2})\s+de\s+(\d{1,2})\s+([\d,]+\.\d{2})/i;
+    /(\d{1,2})\s+de\s+([A-Za-zÁÉÍÓÚáéíóú]+)\s+([\d,]+\.\d{2})\s+([\d.]+)%\s+([\d,]+\.\d{2})\s+(\d{1,2})\s+de\s+(\d{1,2})\s+([\d,]+\.\d{2})/i;
   for (let index = 0; index < lines.length; index += 1) {
-    if (!/Mensualidad=\(Pago a capital/i.test(lines[index] ?? "")) continue;
-    const merchantRaw = (lines[index - 1] ?? "").trim();
-    if (!merchantRaw) continue;
-    let detailMatch: RegExpExecArray | null = null;
-    for (let look = 1; look <= 3; look += 1) {
+    if (!/Mensualidad\s*=\s*\(Pago a capital/i.test(lines[index] ?? "")) continue;
+    const current = lines[index] ?? "";
+    const merchantRaw = cleanMerchant(
+      /MESES EN AUTOM/i.test(current)
+        ? current
+        : (lines[index - 1] ?? ""),
+    ) || "MESES EN AUTOMÁTICO NACIONAL";
+    let detailMatch: RegExpExecArray | null = detailPattern.exec(current);
+    for (let look = 1; !detailMatch && look <= 3; look += 1) {
       detailMatch = detailPattern.exec(lines[index + look] ?? "");
-      if (detailMatch) break;
     }
     if (!detailMatch) continue;
     const originalOn = parseSpanishDate(detailMatch[1], detailMatch[2], period.to);
@@ -355,6 +418,7 @@ export const parseAmexStatementExtraction = (
   const charges: AmexStatementCharge[] = [];
   for (const charge of [...fromLines.charges, ...fromTables]) {
     if (charge.credit) continue;
+    if (charge.msi && charge.installmentIndex === undefined) continue;
     const key = [
       charge.occurredOn,
       charge.merchantRaw,
@@ -380,4 +444,61 @@ export const parseAmexStatementExtraction = (
     charges,
     msiPlans: fromLines.msiPlans,
   };
+};
+
+export interface AmexMsiEvidenceLine {
+  readonly merchantRaw: string;
+  readonly amountMinor: number;
+  readonly occurredOn: string;
+  readonly installmentIndex: number;
+  readonly installmentMonths: number;
+  readonly originalAmountMinor?: number;
+  readonly identity: string;
+}
+
+/** One MSI evidence row per cuota: prefer charge lines, enrich with plan principal. */
+export const amexMsiEvidenceLines = (
+  document: AmexStatementDocument,
+): readonly AmexMsiEvidenceLine[] => {
+  const msiCharges = document.charges.filter(
+    (charge): charge is AmexStatementCharge & { readonly installmentIndex: number; readonly installmentMonths: number } =>
+      Boolean(charge.msi && charge.installmentIndex !== undefined && charge.installmentMonths !== undefined),
+  );
+
+  const usedPlans = new Set<string>();
+  const fromCharges = msiCharges.map((charge, index) => {
+    const plan = document.msiPlans.find((candidate) => {
+      const key = `${candidate.installmentIndex}/${candidate.installmentMonths}:${candidate.cuotaMinor}`;
+      if (usedPlans.has(key)) return false;
+      return (
+        candidate.installmentIndex === charge.installmentIndex
+        && candidate.installmentMonths === charge.installmentMonths
+        && candidate.cuotaMinor === charge.amountMinor
+      );
+    });
+    if (plan) usedPlans.add(`${plan.installmentIndex}/${plan.installmentMonths}:${plan.cuotaMinor}`);
+    return {
+      merchantRaw: charge.merchantRaw,
+      amountMinor: charge.amountMinor,
+      occurredOn: charge.occurredOn,
+      installmentIndex: charge.installmentIndex,
+      installmentMonths: charge.installmentMonths,
+      originalAmountMinor: plan?.originalAmountMinor,
+      identity: charge.identity || `amex_msi:${document.accountLastFour}:${charge.amountMinor}:${charge.installmentIndex}/${charge.installmentMonths}:${index}`,
+    };
+  });
+
+  const fromPlansOnly = document.msiPlans
+    .filter((plan) => !usedPlans.has(`${plan.installmentIndex}/${plan.installmentMonths}:${plan.cuotaMinor}`))
+    .map((plan, index) => ({
+      merchantRaw: plan.merchantRaw,
+      amountMinor: plan.cuotaMinor,
+      occurredOn: document.period.to,
+      installmentIndex: plan.installmentIndex,
+      installmentMonths: plan.installmentMonths,
+      originalAmountMinor: plan.originalAmountMinor,
+      identity: `amex_plan:${document.accountLastFour}:${plan.originalAmountMinor}:${plan.installmentIndex}/${plan.installmentMonths}:${index}`,
+    }));
+
+  return [...fromCharges, ...fromPlansOnly];
 };
