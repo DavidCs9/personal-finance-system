@@ -19,6 +19,7 @@ import { ManualEntrySheet } from "../sheets/ManualEntrySheet";
 import { PaymentSheet } from "../sheets/PaymentSheet";
 import { AmexImportSheet } from "../sheets/AmexImportSheet";
 import { SantanderImportSheet } from "../sheets/SantanderImportSheet";
+import { SantanderStatementImportSheet } from "../sheets/SantanderStatementImportSheet";
 import type { IngestionException, PurchaseEvent } from "../types";
 import { MovementsView } from "../views/MovementsView";
 import { SummaryView } from "../views/SummaryView";
@@ -45,6 +46,7 @@ export function Dashboard({
   const [movementSort, setMovementSort] = useState<"recent" | "largest">("recent");
   const [importOpen, setImportOpen] = useState(false);
   const [amexImportOpen, setAmexImportOpen] = useState(false);
+  const [santanderStatementOpen, setSantanderStatementOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
 
   const eventsQuery = useQuery({
@@ -221,6 +223,7 @@ export function Dashboard({
             onReadExceptionRaw={readExceptionRaw}
             onImport={() => setImportOpen(true)}
             onImportAmex={() => setAmexImportOpen(true)}
+            onImportSantanderStatement={() => setSantanderStatementOpen(true)}
             onRegisterCharge={() => setManualOpen(true)}
           />
         )}
@@ -290,6 +293,16 @@ export function Dashboard({
           onClose={() => setAmexImportOpen(false)}
           onApplied={() => {
             setAmexImportOpen(false);
+            void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+          }}
+        />
+      )}
+      {santanderStatementOpen && (
+        <SantanderStatementImportSheet
+          idToken={idToken}
+          onClose={() => setSantanderStatementOpen(false)}
+          onApplied={() => {
+            setSantanderStatementOpen(false);
             void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
           }}
         />

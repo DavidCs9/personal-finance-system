@@ -42,7 +42,13 @@ export interface ManualEntrySourcePointer {
 }
 
 export type ObservedSourcePointer = RawSourcePointer | ApplePayShortcutSourcePointer | ManualEntrySourcePointer;
-export type CaptureSource = "email" | "apple_pay_shortcut" | "santander_csv" | "manual" | "amex_statement";
+export type CaptureSource =
+  | "email"
+  | "apple_pay_shortcut"
+  | "santander_csv"
+  | "manual"
+  | "amex_statement"
+  | "santander_statement";
 
 export interface ObservedPurchase {
   readonly id: string;

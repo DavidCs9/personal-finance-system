@@ -2,22 +2,25 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { ledgerApi } from "../api/client";
 import { Sheet } from "../components/Sheet";
 import { money } from "../lib/format";
-import type { AmexImportPreview, AmexImportResult } from "../types";
+import type {
+  SantanderStatementImportPreview,
+  SantanderStatementImportResult,
+} from "../types";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-export function AmexImportSheet({
+export function SantanderStatementImportSheet({
   idToken,
   onClose,
   onApplied,
 }: {
   idToken: string;
   onClose(): void;
-  onApplied(result: AmexImportResult): void;
+  onApplied(result: SantanderStatementImportResult): void;
 }) {
   const [file, setFile] = useState<File>();
-  const [preview, setPreview] = useState<AmexImportPreview>();
-  const [result, setResult] = useState<AmexImportResult>();
+  const [preview, setPreview] = useState<SantanderStatementImportPreview>();
+  const [result, setResult] = useState<SantanderStatementImportResult>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const cancelledRef = useRef(false);
@@ -29,10 +32,12 @@ export function AmexImportSheet({
     };
   }, []);
 
-  const waitUntilReady = async (importId: string): Promise<AmexImportPreview> => {
+  const waitUntilReady = async (
+    importId: string,
+  ): Promise<SantanderStatementImportPreview> => {
     for (let attempt = 0; attempt < 45; attempt += 1) {
       if (cancelledRef.current) throw new Error("Importación cancelada.");
-      const status = await ledgerApi.getAmexStatementImport(importId, idToken);
+      const status = await ledgerApi.getSantanderStatementImport(importId, idToken);
       if (status.status === "ready" && status.rows) return status;
       await sleep(2_000);
     }
@@ -45,7 +50,7 @@ export function AmexImportSheet({
     setBusy(true);
     setError(undefined);
     try {
-      const started = await ledgerApi.previewAmexStatement(file, idToken);
+      const started = await ledgerApi.previewSantanderStatement(file, idToken);
       if (started.status === "ready" && started.rows) {
         setPreview(started);
         return;
@@ -54,7 +59,11 @@ export function AmexImportSheet({
       const ready = await waitUntilReady(started.importId);
       if (!cancelledRef.current) setPreview(ready);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "No se pudo analizar el estado Amex.");
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "No se pudo analizar el estado Santander.",
+      );
       setPreview(undefined);
     } finally {
       if (!cancelledRef.current) setBusy(false);
@@ -66,9 +75,13 @@ export function AmexImportSheet({
     setBusy(true);
     setError(undefined);
     try {
-      setResult(await ledgerApi.applyAmexStatement(preview.importId, idToken));
+      setResult(await ledgerApi.applySantanderStatement(preview.importId, idToken));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "No se pudo aplicar la conciliación Amex.");
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "No se pudo aplicar la conciliación Santander.",
+      );
     } finally {
       setBusy(false);
     }
@@ -76,7 +89,11 @@ export function AmexImportSheet({
 
   if (result) {
     return (
-      <Sheet eyebrow="CONCILIACIÓN TERMINADA" title="Estado Amex aplicado" onClose={() => onApplied(result)}>
+      <Sheet
+        eyebrow="CONCILIACIÓN TERMINADA"
+        title="Estado Santander aplicado"
+        onClose={() => onApplied(result)}
+      >
         <div className="import-result">
           <span className="result-mark">✓</span>
           <p>
@@ -102,12 +119,12 @@ export function AmexImportSheet({
       : undefined;
 
   return (
-    <Sheet eyebrow="ESTADO AMEX" title="Reconciliar MSI" onClose={onClose}>
+    <Sheet eyebrow="ESTADO SANTANDER" title="Reconciliar MSI" onClose={onClose}>
       {!readyPreview ? (
         <form className="sheet-form" onSubmit={(event) => void inspect(event)}>
           <p>
-            Sube el PDF del estado de cuenta. Lo leemos con Textract y confirmamos las cuotas MSI
-            del periodo.
+            Sube el PDF del estado de cuenta. Lo leemos con Textract y confirmamos las
+            cuotas A MESES del periodo.
           </p>
           <label className="file-field">
             <span>Archivo PDF</span>
@@ -141,7 +158,9 @@ export function AmexImportSheet({
                 <span className="date-block">
                   <small>MSI</small>
                   <strong>
-                    {row.installmentIndex ? String(row.installmentIndex).padStart(2, "0") : "--"}
+                    {row.installmentIndex
+                      ? String(row.installmentIndex).padStart(2, "0")
+                      : "--"}
                   </strong>
                 </span>
                 <span className="payment-name">

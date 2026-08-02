@@ -2,14 +2,21 @@ import { randomUUID } from 'node:crypto';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { GetCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 
-export type CaptureSource = 'email' | 'apple_pay_shortcut' | 'santander_csv' | 'manual' | 'amex_statement';
+export type CaptureSource =
+  | 'email'
+  | 'apple_pay_shortcut'
+  | 'santander_csv'
+  | 'manual'
+  | 'amex_statement'
+  | 'santander_statement';
 
 const isCaptureSource = (value: unknown): value is CaptureSource =>
   value === 'email'
   || value === 'apple_pay_shortcut'
   || value === 'santander_csv'
   || value === 'manual'
-  || value === 'amex_statement';
+  || value === 'amex_statement'
+  || value === 'santander_statement';
 
 export interface ObservedEventInput {
   readonly id: string;
@@ -120,6 +127,7 @@ const findCandidates = async (input: SaveObservedEventInput): Promise<readonly C
   if (!Number.isFinite(center)) throw new Error('Invalid reconciliation timestamp.');
   // CSV and manual entries often lack precise clock times, so automatic sources query a same-day window.
   const couldMatchDayLevel = input.captureSource === 'santander_csv'
+    || input.captureSource === 'santander_statement'
     || input.captureSource === 'manual'
     || input.captureSource === 'email'
     || (input.captureSource === 'apple_pay_shortcut');
@@ -147,8 +155,9 @@ const findCandidates = async (input: SaveObservedEventInput): Promise<readonly C
       ? payload.captureSources.filter(isCaptureSource)
       : [];
     const involvesCsv = input.captureSource === 'santander_csv' || sources.includes('santander_csv');
+    const involvesStatement = input.captureSource === 'santander_statement' || sources.includes('santander_statement');
     const involvesManual = input.captureSource === 'manual' || sources.includes('manual');
-    const dayLevelMatch = involvesCsv || involvesManual;
+    const dayLevelMatch = involvesCsv || involvesStatement || involvesManual;
     if (!merchantsMatch(input.event.merchantRaw, String(payload.merchantRaw ?? ''), dayLevelMatch)) return [];
     if (!dayLevelMatch && Math.abs(Date.parse(reconciliationAt) - center) > RECONCILIATION_WINDOW_MS) return [];
     if (dayLevelMatch) {

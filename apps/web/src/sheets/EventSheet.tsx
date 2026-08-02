@@ -184,8 +184,14 @@ export function EventSheet({
   const isManualCapture = event.source.kind === "manual_entry" || event.captureSource === "manual";
   const isCsvCapture = !isApplePayCapture && !isManualCapture && event.source.contentType === "text/csv";
   const isAmexStatement = event.captureSource === "amex_statement";
+  const isSantanderStatement = event.captureSource === "santander_statement";
   const hasRawSource =
-    isManualCapture || isCsvCapture || isAmexStatement || !isApplePayCapture || event.hasRawEmail === true;
+    isManualCapture
+    || isCsvCapture
+    || isAmexStatement
+    || isSantanderStatement
+    || !isApplePayCapture
+    || event.hasRawEmail === true;
   const sources = event.captureSources ?? (event.captureSource ? [event.captureSource] : []);
   const hasLinkedEmail = sources.includes("email") || event.hasRawEmail === true;
   const evidenceTitle = isManualCapture
@@ -198,14 +204,16 @@ export function EventSheet({
         ? "CSV de Santander"
         : isAmexStatement
           ? "Estado de cuenta Amex"
-          : "Correo original";
+          : isSantanderStatement
+            ? "Estado de cuenta Santander"
+            : "Correo original";
   const evidenceSummary = isManualCapture
     ? "Alta manual conservada"
     : isApplePayCapture
       ? "Observación automática conservada"
       : isCsvCapture
         ? "CSV original conservado"
-        : isAmexStatement
+        : isAmexStatement || isSantanderStatement
           ? "Estado de cuenta conservado"
           : "Mensaje original conservado";
   const evidenceDetail = isApplePayCapture
