@@ -333,6 +333,26 @@ export class PersonalFinanceV1Stack extends Stack {
       actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'],
       resources: [metadataTable.tableArn, `${metadataTable.tableArn}/index/*`],
     }));
+    apiFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['textract:StartDocumentTextDetection', 'textract:GetDocumentTextDetection'],
+      resources: ['*'],
+    }));
+    // Textract reads statement PDFs from the KMS-encrypted raw bucket.
+    rawEmailBucket.addToResourcePolicy(new iam.PolicyStatement({
+      sid: 'AllowTextractReadSantanderStatements',
+      principals: [new iam.ServicePrincipal('textract.amazonaws.com')],
+      actions: ['s3:GetObject'],
+      resources: [rawEmailBucket.arnForObjects('manual-imports/santander-statement/*')],
+    }));
+    encryptionKey.addToResourcePolicy(new iam.PolicyStatement({
+      sid: 'AllowTextractDecryptSantanderStatements',
+      principals: [new iam.ServicePrincipal('textract.amazonaws.com')],
+      actions: ['kms:Decrypt', 'kms:DescribeKey', 'kms:GenerateDataKey'],
+      resources: ['*'],
+      conditions: {
+        StringEquals: { 'kms:ViaService': `s3.${this.region}.amazonaws.com` },
+      },
+    }));
 
     const applePayCaptureSecret = new secretsmanager.Secret(this, 'ApplePayCaptureSecret', {
       description: 'Bearer token used only by the personal Apple Pay Shortcut capture endpoint.',
@@ -441,6 +461,9 @@ export class PersonalFinanceV1Stack extends Stack {
       'POST /imports/santander/{importId}/apply',
       'POST /imports/amex/preview',
       'POST /imports/amex/{importId}/apply',
+      'POST /imports/santander-statement/preview',
+      'GET /imports/santander-statement/{importId}',
+      'POST /imports/santander-statement/{importId}/apply',
       'GET /push/subscriptions',
       'PUT /push/subscriptions/{subscriptionId}',
       'DELETE /push/subscriptions/{subscriptionId}',

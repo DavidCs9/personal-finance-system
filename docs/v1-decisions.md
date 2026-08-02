@@ -24,10 +24,10 @@
 - MSI (meses sin intereses) vive en el evento observado como `msi` (schedule multi-mes). No se guarda en `MonthlyPlan`.
 - Amex con importe **> $2,500.00** asume 3 MSI al crear el evento (`amex_auto`); el usuario puede overridear meses/cuota en la UI.
 - El ciclo de cada cuota es `committed` → `spent` (nunca ambos). Hasta reconciliar, la cuota resta de “Te quedan” vía dinero comprometido; al confirmar evidencia pasa a “Has gastado”.
-- Evidencia MSI: CSV Santander con conceptos tipo `A MESES`, y estado de cuenta Amex (PDF→texto en cliente, parseo semántico en API). Coincidencia con tolerancia de $2.00; gana el monto del estado.
+- Evidencia MSI: CSV Santander con conceptos tipo `A MESES`, estado de cuenta Amex (PDF→texto en cliente), y estado de cuenta Santander (PDF imagen → Amazon Textract async → parseo en API). Coincidencia con tolerancia de $2.00; gana el monto del estado.
 - Una cuota del estado sin plan previo crea un MSI `statement_unplanned` que exige completar N meses/cuota.
 - Liquidación anticipada de MSI es manual (cancelar cuotas restantes + registrar el cargo de cierre si aplica).
-- El PDF de estado Santander es imagen; en V1 la evidencia Santander MSI sigue el CSV de movimientos, no OCR del PDF.
+- El PDF de estado Santander es imagen: `POST /imports/santander-statement/preview` sube el PDF, arranca Textract y responde `processing`; el cliente hace poll a `GET …/{importId}` hasta `ready` y luego `POST …/apply`. El CSV de movimientos sigue disponible como respaldo.
 
 ## Modelo de datos
 

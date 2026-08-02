@@ -20,13 +20,14 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
-    "@finance/domain": "*",
     "@aws-sdk/client-dynamodb": "^3.883.0",
     "@aws-sdk/client-s3": "^3.883.0",
     "@aws-sdk/client-secrets-manager": "^3.1101.0",
     "@aws-sdk/client-ses": "^3.883.0",
     "@aws-sdk/client-sqs": "^3.883.0",
+    "@aws-sdk/client-textract": "^3.1101.0",
     "@aws-sdk/lib-dynamodb": "^3.883.0",
+    "@finance/domain": "*",
     "aws-cdk-lib": "^2.181.0",
     "constructs": "^10.4.2",
     "web-push": "^3.6.7"

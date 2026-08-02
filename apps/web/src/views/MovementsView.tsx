@@ -25,6 +25,7 @@ export function MovementsView({
   onReadExceptionRaw,
   onImport,
   onImportAmex,
+  onImportSantanderStatement,
   onRegisterCharge,
 }: {
   events: readonly PurchaseEvent[];
@@ -40,6 +41,7 @@ export function MovementsView({
   onReadExceptionRaw(id: string): Promise<string>;
   onImport(): void;
   onImportAmex(): void;
+  onImportSantanderStatement(): void;
   onRegisterCharge(): void;
 }) {
   const [activeException, setActiveException] = useState<IngestionException>();
@@ -94,6 +96,10 @@ export function MovementsView({
           onImportAmex={() => {
             setCaptureOpen(false);
             onImportAmex();
+          }}
+          onImportSantanderStatement={() => {
+            setCaptureOpen(false);
+            onImportSantanderStatement();
           }}
         />
       )}

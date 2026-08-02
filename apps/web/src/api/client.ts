@@ -7,6 +7,8 @@ import type {
   SantanderImportDecision,
   SantanderImportPreview,
   SantanderImportResult,
+  SantanderStatementImportPreview,
+  SantanderStatementImportResult,
 } from "../types";
 import type { MonthlyPlan } from "../monthly-plan";
 
@@ -277,6 +279,35 @@ export const ledgerApi = {
     return request<AmexImportResult>(`/imports/amex/${encodeURIComponent(importId)}/apply`, idToken, {
       method: "POST",
     });
+  },
+  async previewSantanderStatement(file: File, idToken: string): Promise<SantanderStatementImportPreview> {
+    const isText = file.type.includes("text") || /\.txt$/i.test(file.name);
+    return request<SantanderStatementImportPreview>("/imports/santander-statement/preview", idToken, {
+      method: "POST",
+      headers: {
+        "Content-Type": isText ? "text/plain; charset=utf-8" : "application/pdf",
+      },
+      body: isText ? await file.text() : await file.arrayBuffer(),
+    });
+  },
+  async getSantanderStatementImport(
+    importId: string,
+    idToken: string,
+  ): Promise<SantanderStatementImportPreview> {
+    return request<SantanderStatementImportPreview>(
+      `/imports/santander-statement/${encodeURIComponent(importId)}`,
+      idToken,
+    );
+  },
+  async applySantanderStatement(
+    importId: string,
+    idToken: string,
+  ): Promise<SantanderStatementImportResult> {
+    return request<SantanderStatementImportResult>(
+      `/imports/santander-statement/${encodeURIComponent(importId)}/apply`,
+      idToken,
+      { method: "POST" },
+    );
   },
   async updateEventMsi(
     eventId: string,

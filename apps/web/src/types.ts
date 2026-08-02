@@ -143,3 +143,31 @@ export interface AmexImportResult {
     readonly skipped: number;
   };
 }
+
+export type SantanderStatementImportStatus = "processing" | "ready";
+
+export interface SantanderStatementImportPreview {
+  readonly importId: string;
+  readonly status: SantanderStatementImportStatus;
+  readonly message?: string;
+  readonly accountLastFour?: string;
+  readonly product?: string;
+  readonly period?: { readonly from: string; readonly to: string };
+  readonly summary?: {
+    readonly total: number;
+    readonly matched: number;
+    readonly unplanned: number;
+    readonly skipped: number;
+  };
+  readonly rows?: readonly AmexImportRow[];
+}
+
+export interface SantanderStatementImportResult {
+  readonly importId: string;
+  readonly created: readonly PurchaseEvent[];
+  readonly summary: {
+    readonly confirmed: number;
+    readonly createdUnplanned: number;
+    readonly skipped: number;
+  };
+}

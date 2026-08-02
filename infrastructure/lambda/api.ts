@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { TextractClient } from '@aws-sdk/client-textract';
 import { BatchGetCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import {
@@ -30,6 +31,17 @@ import {
   savePushSubscription,
 } from './push-subscriptions.js';
 import { InvalidSantanderCsvError, merchantsMatch, parseSantanderCsv, santanderApplyAction, santanderImportCompletionUpdate, type SantanderCsvDocument, type SantanderCsvRow, type SantanderReconciliationDecision, type SantanderReconciliationStatus } from './santander-csv.js';
+import {
+  InvalidSantanderStatementError,
+  parseSantanderStatementText,
+  santanderStatementImportCompletionUpdate,
+} from './santander-statement.js';
+import {
+  fetchTextractDocumentText,
+  getTextractJobStatus,
+  startTextractTextDetection,
+  TextractDocumentError,
+} from './textract-document.js';
 
 class InvalidMsiError extends Error {}
 
@@ -37,6 +49,7 @@ const database = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
 });
 const s3 = new S3Client({});
+const textract = new TextractClient({});
 const tableName = process.env.METADATA_TABLE_NAME;
 if (!tableName) throw new Error('Missing required environment variable: METADATA_TABLE_NAME');
 const rawSourceBucketName = process.env.RAW_EMAIL_BUCKET_NAME;
@@ -104,10 +117,21 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     if (event.requestContext.http.method === 'POST' && event.rawPath === '/imports/santander/preview') {
       return response(200, await previewSantanderImport(requestBody(event), principal(event)));
     }
+    if (event.requestContext.http.method === 'POST' && event.rawPath === '/imports/santander-statement/preview') {
+      return response(200, await previewSantanderStatementImport(event, principal(event)));
+    }
     if (event.requestContext.http.method === 'POST' && event.rawPath === '/imports/amex/preview') {
       return response(200, await previewAmexImport(requestBody(event), principal(event)));
     }
     const importId = event.pathParameters?.importId;
+    if (importId && event.rawPath.includes('/imports/santander-statement/')) {
+      if (event.requestContext.http.method === 'GET') {
+        return response(200, await getSantanderStatementImport(importId, principal(event)));
+      }
+      if (event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/apply')) {
+        return response(200, await applySantanderStatementImport(importId, principal(event)));
+      }
+    }
     if (importId && event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/apply')) {
       if (event.rawPath.includes('/imports/amex/')) {
         return response(200, await applyAmexImport(importId, principal(event)));
@@ -161,7 +185,9 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     if (
       error instanceof InvalidMonthlyPlanError
       || error instanceof InvalidSantanderCsvError
+      || error instanceof InvalidSantanderStatementError
       || error instanceof InvalidAmexStatementError
+      || error instanceof TextractDocumentError
       || error instanceof InvalidPushSubscriptionError
       || error instanceof InvalidManualEntryError
       || error instanceof InvalidMsiError
@@ -787,6 +813,444 @@ const applySantanderImport = async (importId: string, owner: string, decisionBod
 };
 
 const amexSourceKey = (owner: string, sha256: string): string => `manual-imports/amex/${owner}/${sha256}.txt`;
+const santanderStatementSourceKey = (
+  owner: string,
+  sha256: string,
+  extension: 'pdf' | 'txt',
+): string => `manual-imports/santander-statement/${owner}/${sha256}.${extension}`;
+
+const headerValue = (event: { readonly headers?: Record<string, string | undefined> }, name: string): string | undefined => {
+  if (!event.headers) return undefined;
+  const wanted = name.toLowerCase();
+  for (const [key, value] of Object.entries(event.headers)) {
+    if (key.toLowerCase() === wanted && value) return value;
+  }
+  return undefined;
+};
+
+const requestBinaryBody = (event: {
+  readonly body?: string | null;
+  readonly isBase64Encoded?: boolean;
+}): Buffer => {
+  if (!event.body) throw new InvalidSantanderStatementError('El estado de cuenta Santander está vacío.');
+  return event.isBase64Encoded ? Buffer.from(event.body, 'base64') : Buffer.from(event.body, 'utf8');
+};
+
+const buildSantanderStatementPreviewRows = async (
+  document: ReturnType<typeof parseSantanderStatementText>,
+): Promise<readonly (EvidenceLine & { readonly status: string; readonly eventId?: string })[]> => {
+  const events = await allStoredEvents();
+  return document.msiCharges.map((charge) => {
+    const line: EvidenceLine = {
+      merchantRaw: charge.merchantRaw,
+      amountMinor: charge.amountMinor,
+      occurredOn: charge.occurredOn,
+      identity: charge.identity,
+    };
+    const match = matchEvidenceLine(line, events);
+    return {
+      ...line,
+      status: match.kind === 'confirm' ? 'matched' : match.kind === 'unplanned' ? 'unplanned' : 'skipped',
+      eventId: match.kind === 'confirm' ? match.eventId : undefined,
+    };
+  });
+};
+
+const santanderStatementPreviewResponse = (
+  importId: string,
+  document: Pick<ReturnType<typeof parseSantanderStatementText>, 'accountLastFour' | 'product' | 'period'>,
+  rows: readonly { readonly status: string }[],
+): JsonObject => ({
+  importId,
+  status: 'ready',
+  accountLastFour: document.accountLastFour,
+  product: document.product,
+  period: document.period,
+  summary: {
+    total: rows.length,
+    matched: rows.filter((row) => row.status === 'matched').length,
+    unplanned: rows.filter((row) => row.status === 'unplanned').length,
+    skipped: rows.filter((row) => row.status === 'skipped').length,
+  },
+  rows,
+});
+
+const previewSantanderStatementImport = async (
+  event: {
+    readonly body?: string | null;
+    readonly isBase64Encoded?: boolean;
+    readonly headers?: Record<string, string | undefined>;
+  },
+  owner: string,
+): Promise<JsonObject> => {
+  const contentType = (headerValue(event, 'content-type') ?? 'application/pdf').toLowerCase();
+  const isText = contentType.includes('text/plain');
+  const bytes = requestBinaryBody(event);
+  if (bytes.length === 0) throw new InvalidSantanderStatementError('El estado de cuenta Santander está vacío.');
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+
+  if (isText) {
+    const body = bytes.toString('utf8');
+    const document = parseSantanderStatementText(body);
+    const source = {
+      bucket: rawSourceBucketName,
+      key: santanderStatementSourceKey(owner, sha256, 'txt'),
+      sha256,
+      contentType: 'text/plain' as const,
+    };
+    await s3.send(new PutObjectCommand({
+      Bucket: rawSourceBucketName,
+      Key: source.key,
+      Body: body,
+      ContentType: 'text/plain; charset=utf-8',
+    }));
+    const rows = await buildSantanderStatementPreviewRows(document);
+    await database.send(new PutCommand({
+      TableName: tableName,
+      Item: {
+        PK: `USER#${owner}`,
+        SK: `IMPORT#SANTANDER_STATEMENT#${sha256}`,
+        entityType: 'santander_statement_import',
+        owner,
+        status: 'previewed',
+        createdAt: new Date().toISOString(),
+        source,
+        accountLastFour: document.accountLastFour,
+        product: document.product,
+        period: document.period,
+        rows,
+      },
+    }));
+    return santanderStatementPreviewResponse(sha256, document, rows);
+  }
+
+  if (!contentType.includes('pdf') && !contentType.includes('octet-stream')) {
+    throw new InvalidSantanderStatementError('Sube el PDF del estado de cuenta Santander (o texto OCR para pruebas).');
+  }
+
+  const source = {
+    bucket: rawSourceBucketName,
+    key: santanderStatementSourceKey(owner, sha256, 'pdf'),
+    sha256,
+    contentType: 'application/pdf' as const,
+  };
+  await s3.send(new PutObjectCommand({
+    Bucket: rawSourceBucketName,
+    Key: source.key,
+    Body: bytes,
+    ContentType: 'application/pdf',
+  }));
+  const textractJobId = await startTextractTextDetection(textract, rawSourceBucketName, source.key);
+  await database.send(new PutCommand({
+    TableName: tableName,
+    Item: {
+      PK: `USER#${owner}`,
+      SK: `IMPORT#SANTANDER_STATEMENT#${sha256}`,
+      entityType: 'santander_statement_import',
+      owner,
+      status: 'processing',
+      createdAt: new Date().toISOString(),
+      source,
+      textractJobId,
+    },
+  }));
+  return {
+    importId: sha256,
+    status: 'processing',
+    message: 'Leyendo el PDF con Textract. Consulta el estado en unos segundos.',
+  };
+};
+
+const getSantanderStatementImport = async (importId: string, owner: string): Promise<JsonObject> => {
+  if (!/^[a-f0-9]{64}$/.test(importId)) {
+    throw new InvalidSantanderStatementError('Identificador de importación inválido.');
+  }
+  const stored = await database.send(new GetCommand({
+    TableName: tableName,
+    Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
+    ConsistentRead: true,
+  }));
+  if (!stored.Item || stored.Item.owner !== owner) {
+    throw new InvalidSantanderStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
+  }
+  if (stored.Item.status === 'previewed' || stored.Item.status === 'applied') {
+    const rows = Array.isArray(stored.Item.rows) ? stored.Item.rows as readonly { readonly status: string }[] : [];
+    return santanderStatementPreviewResponse(
+      importId,
+      {
+        accountLastFour: String(stored.Item.accountLastFour ?? ''),
+        product: String(stored.Item.product ?? 'Santander'),
+        period: stored.Item.period as { readonly from: string; readonly to: string },
+      },
+      rows,
+    );
+  }
+  if (stored.Item.status === 'failed') {
+    throw new InvalidSantanderStatementError(
+      typeof stored.Item.errorMessage === 'string'
+        ? stored.Item.errorMessage
+        : 'No se pudo leer el estado Santander.',
+    );
+  }
+
+  const jobId = typeof stored.Item.textractJobId === 'string' ? stored.Item.textractJobId : undefined;
+  if (!jobId) throw new InvalidSantanderStatementError('Falta el trabajo de Textract para este import.');
+
+  const job = await getTextractJobStatus(textract, jobId);
+  if (job.status === 'IN_PROGRESS') {
+    return {
+      importId,
+      status: 'processing',
+      message: 'Textract sigue leyendo el PDF…',
+    };
+  }
+  if (job.status === 'FAILED') {
+    const message = job.statusMessage ?? 'Textract falló al leer el PDF.';
+    await database.send(new UpdateCommand({
+      TableName: tableName,
+      Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
+      UpdateExpression: 'SET #status = :status, #errorMessage = :errorMessage',
+      ExpressionAttributeNames: { '#status': 'status', '#errorMessage': 'errorMessage' },
+      ExpressionAttributeValues: { ':status': 'failed', ':errorMessage': message },
+    }));
+    throw new TextractDocumentError(message);
+  }
+
+  try {
+    const text = await fetchTextractDocumentText(textract, jobId);
+    const document = parseSantanderStatementText(text);
+    const rows = await buildSantanderStatementPreviewRows(document);
+    const source = stored.Item.source as JsonObject;
+    const ocrKey = typeof source.key === 'string'
+      ? source.key.replace(/\.pdf$/i, '.ocr.txt')
+      : santanderStatementSourceKey(owner, importId, 'txt');
+    await s3.send(new PutObjectCommand({
+      Bucket: rawSourceBucketName,
+      Key: ocrKey,
+      Body: text,
+      ContentType: 'text/plain; charset=utf-8',
+    }));
+    await database.send(new UpdateCommand({
+      TableName: tableName,
+      Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
+      UpdateExpression: 'SET #status = :status, #accountLastFour = :accountLastFour, #product = :product, #period = :period, #rows = :rows, #ocrKey = :ocrKey',
+      ExpressionAttributeNames: {
+        '#status': 'status',
+        '#accountLastFour': 'accountLastFour',
+        '#product': 'product',
+        '#period': 'period',
+        '#rows': 'rows',
+        '#ocrKey': 'ocrKey',
+      },
+      ExpressionAttributeValues: {
+        ':status': 'previewed',
+        ':accountLastFour': document.accountLastFour,
+        ':product': document.product,
+        ':period': document.period,
+        ':rows': rows,
+        ':ocrKey': ocrKey,
+      },
+    }));
+    return santanderStatementPreviewResponse(importId, document, rows);
+  } catch (error) {
+    const message = errorMessage(error);
+    await database.send(new UpdateCommand({
+      TableName: tableName,
+      Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
+      UpdateExpression: 'SET #status = :status, #errorMessage = :errorMessage',
+      ExpressionAttributeNames: { '#status': 'status', '#errorMessage': 'errorMessage' },
+      ExpressionAttributeValues: { ':status': 'failed', ':errorMessage': message },
+    }));
+    if (
+      error instanceof InvalidSantanderStatementError
+      || error instanceof TextractDocumentError
+    ) {
+      throw error;
+    }
+    throw new InvalidSantanderStatementError(message);
+  }
+};
+
+const applySantanderStatementImport = async (importId: string, owner: string): Promise<JsonObject> => {
+  if (!/^[a-f0-9]{64}$/.test(importId)) {
+    throw new InvalidSantanderStatementError('Identificador de importación inválido.');
+  }
+  const stored = await database.send(new GetCommand({
+    TableName: tableName,
+    Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
+    ConsistentRead: true,
+  }));
+  const source = stored.Item?.source as JsonObject | undefined;
+  if (!stored.Item || stored.Item.owner !== owner || typeof source?.key !== 'string') {
+    throw new InvalidSantanderStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
+  }
+  if (stored.Item.status === 'processing') {
+    throw new InvalidSantanderStatementError('El PDF aún se está leyendo. Espera a que termine Textract.');
+  }
+  if (stored.Item.status === 'failed') {
+    throw new InvalidSantanderStatementError(
+      typeof stored.Item.errorMessage === 'string'
+        ? stored.Item.errorMessage
+        : 'No se pudo leer el estado Santander.',
+    );
+  }
+  if (stored.Item.status === 'applied') {
+    const previous = stored.Item.result as JsonObject | undefined;
+    return {
+      importId,
+      created: [],
+      summary: previous ?? { confirmed: 0, createdUnplanned: 0, skipped: 0 },
+      alreadyApplied: true,
+    };
+  }
+  if (stored.Item.status !== 'previewed' || !Array.isArray(stored.Item.rows)) {
+    throw new InvalidSantanderStatementError('La previsualización aún no está lista.');
+  }
+
+  const accountLastFour = String(stored.Item.accountLastFour ?? '');
+  const previewRows = stored.Item.rows as readonly (EvidenceLine & { status?: string })[];
+  const appliedAt = new Date().toISOString();
+  let eventsSnapshot = await allStoredEvents();
+  let confirmed = 0;
+  let createdUnplanned = 0;
+  let skipped = 0;
+  const created: JsonObject[] = [];
+
+  for (const row of previewRows) {
+    if (row.status === 'skipped') {
+      skipped += 1;
+      continue;
+    }
+    const match = matchEvidenceLine(row, eventsSnapshot);
+    if (match.kind === 'skip') {
+      skipped += 1;
+      continue;
+    }
+    if (match.kind === 'confirm') {
+      const updated = await persistEventMsi(
+        match.eventId,
+        owner,
+        match.previous,
+        match.next,
+        'Cuota MSI confirmada con estado de cuenta Santander.',
+      );
+      if (updated) {
+        confirmed += 1;
+        eventsSnapshot = eventsSnapshot.map((event) => (
+          event.id === match.eventId ? { ...event, msi: match.next } : event
+        ));
+      } else skipped += 1;
+      continue;
+    }
+    if (match.kind === 'unplanned') {
+      const id = randomUUID();
+      const observationId = randomUUID();
+      const occurredAt = `${row.occurredOn}T12:00:00.000Z`;
+      const purchase: JsonObject = {
+        id,
+        institution: 'santander_mx',
+        eventType: 'card_purchase',
+        status: 'needs_review',
+        account: {
+          institution: 'santander_mx',
+          accountId: `santander_mx:${accountLastFour}`,
+          displayName: `Santander · ${accountLastFour}`,
+          lastFour: accountLastFour,
+        },
+        amount: { amountMinor: match.plan.principalMinor, currency: 'MXN' },
+        merchantRaw: match.merchantRaw,
+        occurredAt,
+        receivedAt: appliedAt,
+        ingestedAt: appliedAt,
+        source,
+        parserVersion: 'santander-mx-statement-textract-v1',
+        parseWarnings: ['MSI sin plan completo: confirma meses y cuota.'],
+        captureSource: 'santander_statement',
+        captureSources: ['santander_statement'],
+        observationCount: 1,
+        primaryObservationId: observationId,
+        hasRawEmail: false,
+        msi: match.plan,
+      };
+      try {
+        await database.send(new TransactWriteCommand({ TransactItems: [
+          { Put: {
+            TableName: tableName,
+            Item: {
+              PK: `DEDUPE#SANTANDER_STATEMENT#${createHash('sha256').update(row.identity).digest('hex')}`,
+              SK: 'CLAIM',
+              entityType: 'santander_statement_dedupe',
+              identity: row.identity,
+              owner,
+              eventId: id,
+              createdAt: appliedAt,
+            },
+            ConditionExpression: 'attribute_not_exists(PK)',
+          } },
+          { Put: {
+            TableName: tableName,
+            Item: {
+              PK: `EVENT#${id}`,
+              SK: 'EVENT',
+              GSI1PK: 'EVENTS',
+              GSI1SK: appliedAt,
+              GSI2PK: reconciliationPartition(purchase as Parameters<typeof reconciliationPartition>[0]),
+              GSI2SK: `${occurredAt}#${id}`,
+              reconciliationAt: occurredAt,
+              entityType: 'observed_purchase',
+              payload: purchase,
+            },
+            ConditionExpression: 'attribute_not_exists(PK)',
+          } },
+          { Put: {
+            TableName: tableName,
+            Item: {
+              PK: `EVENT#${id}`,
+              SK: `OBSERVATION#${occurredAt}#${observationId}`,
+              entityType: 'event_observation',
+              payload: {
+                id: observationId,
+                eventId: id,
+                captureSource: 'santander_statement',
+                observedAt: appliedAt,
+                reconciliationAt: occurredAt,
+                institution: 'santander_mx',
+                eventType: 'card_purchase',
+                account: purchase.account,
+                amount: purchase.amount,
+                merchantRaw: match.merchantRaw,
+                occurredAt,
+                source,
+                parserVersion: 'santander-mx-statement-textract-v1',
+                parseWarnings: purchase.parseWarnings,
+              },
+            },
+            ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
+          } },
+        ] }));
+        created.push(toPublicEvent(purchase));
+        createdUnplanned += 1;
+        eventsSnapshot = [...eventsSnapshot, purchase];
+      } catch (error) {
+        if (errorName(error) === 'TransactionCanceledException') skipped += 1;
+        else throw error;
+      }
+      continue;
+    }
+    skipped += 1;
+  }
+
+  await database.send(new UpdateCommand({
+    TableName: tableName,
+    Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
+    ...santanderStatementImportCompletionUpdate(appliedAt, { confirmed, createdUnplanned, skipped }),
+  }));
+  return {
+    importId,
+    created,
+    summary: { confirmed, createdUnplanned, skipped },
+  };
+};
 
 const previewAmexImport = async (body: string | undefined, owner: string): Promise<JsonObject> => {
   if (!body?.trim()) throw new InvalidAmexStatementError('El estado de cuenta Amex está vacío.');
