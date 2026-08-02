@@ -1,3 +1,10 @@
+import {
+  extractLastFourDigits,
+  findPeriodInLooseText,
+  parseFlexibleDate,
+} from "./statement-dates.js";
+import type { TextractStatementExtraction, TextractTable } from "./textract-document.js";
+
 export class InvalidAmexStatementError extends Error {}
 
 export interface AmexStatementCharge {
@@ -90,34 +97,57 @@ const normalizeLines = (input: string): string[] =>
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter((line) => line.length > 0 && !/^--- page \d+ ---$/i.test(line));
 
-const parsePeriod = (text: string): { from: string; to: string } => {
-  const match =
-    /Per[ií]odo de Facturaci[oó]n Del\s+(\d{1,2})\s+de\s+([A-Za-zÁÉÍÓÚáéíóú]+)\s+al\s+(\d{1,2})\s+de\s+([A-Za-zÁÉÍÓÚáéíóú]+)\s+de\s+(\d{4})/i
-      .exec(text);
-  if (!match) throw new InvalidAmexStatementError("No se encontró el periodo de facturación Amex.");
-  const year = match[5];
-  const fromMonth = monthNames[match[2].toLowerCase()];
-  const toMonth = monthNames[match[4].toLowerCase()];
-  if (!fromMonth || !toMonth) throw new InvalidAmexStatementError("El periodo de facturación Amex es inválido.");
-  const fromYear = Number(fromMonth) > Number(toMonth) ? String(Number(year) - 1) : year;
-  return {
-    from: `${fromYear}-${fromMonth}-${match[1].padStart(2, "0")}`,
-    to: `${year}-${toMonth}-${match[3].padStart(2, "0")}`,
-  };
+const parsePeriod = (
+  text: string,
+  answers: Readonly<Record<string, string>> = {},
+): { from: string; to: string } => {
+  const fromAnswer = parseFlexibleDate(answers.PERIOD_FROM);
+  const toAnswer = parseFlexibleDate(answers.PERIOD_TO);
+  if (fromAnswer && toAnswer) return { from: fromAnswer, to: toAnswer };
+
+  const fromPeriodText = findPeriodInLooseText(answers.PERIOD_TEXT ?? "");
+  if (fromPeriodText) return fromPeriodText;
+
+  const loose = findPeriodInLooseText(text);
+  if (loose) return loose;
+
+  // Header often shows "Fecha de Corte" as DD-Mon-YYYY; previous corte ≈ period start+1 month back is weak,
+  // but end-of-period = corte date is reliable enough when billing text is mangled by OCR.
+  const corte = /(\d{1,2})-([A-Za-z]{3})-(\d{4})/i.exec(text);
+  if (corte) {
+    const to = parseFlexibleDate(`${corte[1]}-${corte[2]}-${corte[3]}`);
+    if (to) {
+      const end = new Date(`${to}T12:00:00Z`);
+      const start = new Date(end);
+      start.setUTCDate(start.getUTCDate() - 29);
+      const from = start.toISOString().slice(0, 10);
+      return { from, to };
+    }
+  }
+
+  throw new InvalidAmexStatementError("No se encontró el periodo de facturación Amex.");
 };
 
-const parseAccountLastFour = (text: string): string => {
+const parseAccountLastFour = (
+  text: string,
+  answers: Readonly<Record<string, string>> = {},
+): string => {
+  const fromAnswer = extractLastFourDigits(answers.ACCOUNT_LAST_FOUR);
+  if (fromAnswer) return fromAnswer;
   const match = /N[uú]mero de Cuenta:\s*[\d-]*(\d{4})\b/i.exec(text)
-    ?? /Tarjetahabiente\s+[\d-]*(\d{4})\b/i.exec(text);
+    ?? /Tarjetahabiente\s+[\d-]*(\d{4})\b/i.exec(text)
+    ?? /\b(?:3401|3717)[\d-]*(\d{4})\b/.exec(text)
+    ?? /\b(\d{4})\b/.exec(answers.ACCOUNT_LAST_FOUR ?? "");
   if (!match) throw new InvalidAmexStatementError("No se encontró el número de cuenta Amex.");
   return match[1];
 };
 
-const parseProduct = (text: string): string => {
-  if (/Aerom[eé]xico/i.test(text)) return "American Express Aeroméxico";
-  if (/Gold Elite/i.test(text)) return "The Gold Elite Credit Card American Express";
-  if (/American Express/i.test(text)) return "American Express";
-  return "American Express";
+const parseProduct = (text: string, answers: Readonly<Record<string, string>> = {}): string => {
+  const hinted = `${answers.PRODUCT ?? ""} ${text}`;
+  if (/Aerom[eé]xico/i.test(hinted)) return "American Express Aeroméxico";
+  if (/Gold Elite/i.test(hinted)) return "The Gold Elite Credit Card American Express";
+  if (/American Express/i.test(hinted)) return "American Express";
+  return answers.PRODUCT?.trim() || "American Express";
 };
 
 const installmentFrom = (line: string): { index: number; months: number } | undefined => {
@@ -130,13 +160,64 @@ const isNoiseLine = (line: string): boolean =>
   /^(RFC|D[oó]lar U\.S\.A\.|TC:|Total de|Este no es|Estado de Cuenta|N[uú]mero de Cuenta|Fecha y Detalle|P[aá]gina|Nuevos cargos|GRACIAS POR SU PAGO)/i
     .test(line);
 
-export const parseAmexStatementText = (input: string): AmexStatementDocument => {
-  const lines = normalizeLines(input);
-  const text = lines.join("\n");
-  const period = parsePeriod(text);
-  const accountLastFour = parseAccountLastFour(text);
-  const product = parseProduct(text);
+const msiFromTables = (
+  tables: readonly TextractTable[],
+  accountLastFour: string,
+  periodTo: string,
+): readonly AmexStatementCharge[] => {
+  const charges: AmexStatementCharge[] = [];
+  for (const table of tables) {
+    for (const row of table.rows) {
+      const joined = row.join(" ").replace(/\s+/g, " ").trim();
+      if (!joined) continue;
+      const installment = installmentFrom(joined);
+      if (!installment && !/MESES EN AUTOM/i.test(joined)) continue;
+      const moneyMatches = [...joined.matchAll(/(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})/g)];
+      const amountRaw = moneyMatches.at(-1)?.[1];
+      const amountMinor = amountRaw ? parseMoneyMinor(amountRaw) : undefined;
+      if (amountMinor === undefined || amountMinor <= 0) continue;
+      const dated = /(\d{1,2})\s+de\s+([A-Za-zÁÉÍÓÚáéíóú]+)/i.exec(joined);
+      const occurredOn = dated
+        ? parseSpanishDate(dated[1], dated[2], periodTo)
+        : periodTo;
+      if (!occurredOn) continue;
+      let merchantRaw = joined
+        .replace(/CARGO\s+\d{1,2}\s+DE\s+\d{1,2}/ig, " ")
+        .replace(/\d{1,3}(?:,\d{3})*\.\d{2}/g, " ")
+        .replace(/\d{1,2}\s+de\s+[A-Za-zÁÉÍÓÚáéíóú]+/ig, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!merchantRaw || merchantRaw.length < 3) {
+        merchantRaw = /MESES EN AUTOM/i.test(joined) ? "MESES EN AUTOMÁTICO NACIONAL" : "MSI";
+      }
+      charges.push({
+        occurredOn,
+        merchantRaw,
+        amountMinor: Math.abs(amountMinor),
+        credit: false,
+        installmentIndex: installment?.index,
+        installmentMonths: installment?.months,
+        msi: true,
+        identity: [
+          "amex_statement_table",
+          accountLastFour,
+          occurredOn,
+          merchantRaw,
+          String(Math.abs(amountMinor)),
+          installment ? `${installment.index}/${installment.months}` : "msi",
+          String(charges.length + 1),
+        ].join(":"),
+      });
+    }
+  }
+  return charges;
+};
 
+const parseChargesAndPlansFromLines = (
+  lines: readonly string[],
+  accountLastFour: string,
+  period: { readonly from: string; readonly to: string },
+): { charges: AmexStatementCharge[]; msiPlans: AmexMsiPlanSummary[] } => {
   const charges: AmexStatementCharge[] = [];
   const msiSectionStart = lines.findIndex((line) => /Transacciones de Meses sin Intereses/i.test(line));
   const detailStart = lines.findIndex((line) => /Fecha y Detalle de las operaciones/i.test(line));
@@ -177,15 +258,6 @@ export const parseAmexStatementText = (input: string): AmexStatementDocument => 
     }
     if (amountMinor === undefined || amountMinor <= 0) continue;
     const msi = Boolean(installment) || /MESES EN AUTOM[AÁ]TICO/i.test(merchantRaw);
-    const identity = [
-      "amex_statement",
-      accountLastFour,
-      occurredOn,
-      merchantRaw,
-      String(amountMinor),
-      installment ? `${installment.index}/${installment.months}` : "full",
-      String(charges.length + 1),
-    ].join(":");
     charges.push({
       occurredOn,
       merchantRaw,
@@ -194,7 +266,15 @@ export const parseAmexStatementText = (input: string): AmexStatementDocument => 
       installmentIndex: installment?.index,
       installmentMonths: installment?.months,
       msi,
-      identity,
+      identity: [
+        "amex_statement",
+        accountLastFour,
+        occurredOn,
+        merchantRaw,
+        String(amountMinor),
+        installment ? `${installment.index}/${installment.months}` : "full",
+        String(charges.length + 1),
+      ].join(":"),
     });
   }
 
@@ -262,19 +342,60 @@ export const parseAmexStatementText = (input: string): AmexStatementDocument => 
     });
   }
 
-  const msiCharges = charges.filter((charge) => charge.msi && !charge.credit);
-  if (msiCharges.length === 0 && msiPlans.length === 0) {
-    // Still valid statement; MSI may be absent this period.
+  return { charges, msiPlans };
+};
+
+/**
+ * Preferred path: map Textract AnalyzeDocument (queries + tables + lines)
+ * into the Amex statement document. Queries own metadata; tables/lines own MSI rows.
+ */
+export const parseAmexStatementExtraction = (
+  extraction: TextractStatementExtraction,
+): AmexStatementDocument => {
+  const text = extraction.text;
+  const period = parsePeriod(text, extraction.answers);
+  const accountLastFour = parseAccountLastFour(text, extraction.answers);
+  const product = parseProduct(text, extraction.answers);
+  const fromLines = parseChargesAndPlansFromLines(extraction.lines, accountLastFour, period);
+  const fromTables = msiFromTables(extraction.tables, accountLastFour, period.to);
+
+  const seen = new Set<string>();
+  const charges: AmexStatementCharge[] = [];
+  for (const charge of [...fromLines.charges, ...fromTables]) {
+    if (charge.credit) continue;
+    const key = [
+      charge.occurredOn,
+      charge.merchantRaw,
+      charge.amountMinor,
+      charge.installmentIndex ?? "",
+      charge.installmentMonths ?? "",
+    ].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    charges.push(charge);
   }
 
   return {
     accountLastFour,
     product,
     period,
-    charges: charges.filter((charge) => !charge.credit),
-    msiPlans,
+    charges,
+    msiPlans: fromLines.msiPlans,
   };
 };
+
+/** Text/fixture path — same mapper with empty Textract answers/tables. */
+export const parseAmexStatementText = (input: string): AmexStatementDocument =>
+  parseAmexStatementExtraction({
+    provider: "amex",
+    jobId: "local-text",
+    status: "SUCCEEDED",
+    lines: normalizeLines(input),
+    text: normalizeLines(input).join("\n"),
+    answers: {},
+    queryAnswers: [],
+    tables: [],
+  });
 
 export const amexImportCompletionUpdate = (
   appliedAt: string,

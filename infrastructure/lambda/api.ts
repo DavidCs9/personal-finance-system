@@ -19,7 +19,12 @@ import {
   replaceMsiSchedule,
   type MsiPlan,
 } from '@finance/domain';
-import { amexImportCompletionUpdate, InvalidAmexStatementError, parseAmexStatementText } from './amex-statement.js';
+import {
+  amexImportCompletionUpdate,
+  InvalidAmexStatementError,
+  parseAmexStatementExtraction,
+  parseAmexStatementText,
+} from './amex-statement.js';
 import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan, type MonthlyPlanInput } from './monthly-plan.js';
 import { isSantanderMsiRow, matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
 import { reconciliationPartition } from './observed-events.js';
@@ -33,14 +38,16 @@ import {
 import { InvalidSantanderCsvError, merchantsMatch, parseSantanderCsv, santanderApplyAction, santanderImportCompletionUpdate, type SantanderCsvDocument, type SantanderCsvRow, type SantanderReconciliationDecision, type SantanderReconciliationStatus } from './santander-csv.js';
 import {
   InvalidSantanderStatementError,
+  parseSantanderStatementExtraction,
   parseSantanderStatementText,
   santanderStatementImportCompletionUpdate,
 } from './santander-statement.js';
 import {
-  fetchTextractDocumentText,
-  getTextractJobStatus,
-  startTextractTextDetection,
+  fetchTextractStatementExtraction,
+  getTextractAnalysisJobStatus,
+  startTextractDocumentAnalysis,
   TextractDocumentError,
+  type TextractStatementExtraction,
 } from './textract-document.js';
 
 class InvalidMsiError extends Error {}
@@ -951,7 +958,12 @@ const previewSantanderStatementImport = async (
     Body: bytes,
     ContentType: 'application/pdf',
   }));
-  const textractJobId = await startTextractTextDetection(textract, rawSourceBucketName, source.key);
+  const textractJobId = await startTextractDocumentAnalysis(
+    textract,
+    rawSourceBucketName,
+    source.key,
+    'santander',
+  );
   await database.send(new PutCommand({
     TableName: tableName,
     Item: {
@@ -963,6 +975,7 @@ const previewSantanderStatementImport = async (
       createdAt: new Date().toISOString(),
       source,
       textractJobId,
+      textractMode: 'analyze_queries_tables',
     },
   }));
   return {
@@ -970,6 +983,37 @@ const previewSantanderStatementImport = async (
     status: 'processing',
     message: 'Leyendo el PDF con Textract. Consulta el estado en unos segundos.',
   };
+};
+
+const persistTextractExtraction = async (
+  sourceKey: string,
+  extraction: TextractStatementExtraction,
+): Promise<{ readonly ocrKey: string; readonly extractionKey: string }> => {
+  const ocrKey = sourceKey.replace(/\.pdf$/i, '.ocr.txt');
+  const extractionKey = sourceKey.replace(/\.pdf$/i, '.textract.json');
+  await Promise.all([
+    s3.send(new PutObjectCommand({
+      Bucket: rawSourceBucketName,
+      Key: ocrKey,
+      Body: extraction.text,
+      ContentType: 'text/plain; charset=utf-8',
+    })),
+    s3.send(new PutObjectCommand({
+      Bucket: rawSourceBucketName,
+      Key: extractionKey,
+      Body: JSON.stringify({
+        provider: extraction.provider,
+        jobId: extraction.jobId,
+        status: extraction.status,
+        answers: extraction.answers,
+        queryAnswers: extraction.queryAnswers,
+        tables: extraction.tables,
+        lineCount: extraction.lines.length,
+      }),
+      ContentType: 'application/json; charset=utf-8',
+    })),
+  ]);
+  return { ocrKey, extractionKey };
 };
 
 const getSantanderStatementImport = async (importId: string, owner: string): Promise<JsonObject> => {
@@ -1007,7 +1051,7 @@ const getSantanderStatementImport = async (importId: string, owner: string): Pro
   const jobId = typeof stored.Item.textractJobId === 'string' ? stored.Item.textractJobId : undefined;
   if (!jobId) throw new InvalidSantanderStatementError('Falta el trabajo de Textract para este import.');
 
-  const job = await getTextractJobStatus(textract, jobId);
+  const job = await getTextractAnalysisJobStatus(textract, jobId);
   if (job.status === 'IN_PROGRESS') {
     return {
       importId,
@@ -1027,24 +1071,22 @@ const getSantanderStatementImport = async (importId: string, owner: string): Pro
     throw new TextractDocumentError(message);
   }
 
+  const source = stored.Item.source as JsonObject;
+  const sourceKey = typeof source.key === 'string'
+    ? source.key
+    : santanderStatementSourceKey(owner, importId, 'pdf');
+  let artifacts: { readonly ocrKey: string; readonly extractionKey: string } | undefined;
+  let answers: Readonly<Record<string, string>> = {};
   try {
-    const text = await fetchTextractDocumentText(textract, jobId);
-    const document = parseSantanderStatementText(text);
+    const extraction = await fetchTextractStatementExtraction(textract, jobId, 'santander');
+    answers = extraction.answers;
+    artifacts = await persistTextractExtraction(sourceKey, extraction);
+    const document = parseSantanderStatementExtraction(extraction);
     const rows = await buildSantanderStatementPreviewRows(document);
-    const source = stored.Item.source as JsonObject;
-    const ocrKey = typeof source.key === 'string'
-      ? source.key.replace(/\.pdf$/i, '.ocr.txt')
-      : santanderStatementSourceKey(owner, importId, 'txt');
-    await s3.send(new PutObjectCommand({
-      Bucket: rawSourceBucketName,
-      Key: ocrKey,
-      Body: text,
-      ContentType: 'text/plain; charset=utf-8',
-    }));
     await database.send(new UpdateCommand({
       TableName: tableName,
       Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
-      UpdateExpression: 'SET #status = :status, #accountLastFour = :accountLastFour, #product = :product, #period = :period, #rows = :rows, #ocrKey = :ocrKey',
+      UpdateExpression: 'SET #status = :status, #accountLastFour = :accountLastFour, #product = :product, #period = :period, #rows = :rows, #ocrKey = :ocrKey, #extractionKey = :extractionKey, #textractAnswers = :textractAnswers',
       ExpressionAttributeNames: {
         '#status': 'status',
         '#accountLastFour': 'accountLastFour',
@@ -1052,6 +1094,8 @@ const getSantanderStatementImport = async (importId: string, owner: string): Pro
         '#period': 'period',
         '#rows': 'rows',
         '#ocrKey': 'ocrKey',
+        '#extractionKey': 'extractionKey',
+        '#textractAnswers': 'textractAnswers',
       },
       ExpressionAttributeValues: {
         ':status': 'previewed',
@@ -1059,7 +1103,9 @@ const getSantanderStatementImport = async (importId: string, owner: string): Pro
         ':product': document.product,
         ':period': document.period,
         ':rows': rows,
-        ':ocrKey': ocrKey,
+        ':ocrKey': artifacts.ocrKey,
+        ':extractionKey': artifacts.extractionKey,
+        ':textractAnswers': extraction.answers,
       },
     }));
     return santanderStatementPreviewResponse(importId, document, rows);
@@ -1068,9 +1114,27 @@ const getSantanderStatementImport = async (importId: string, owner: string): Pro
     await database.send(new UpdateCommand({
       TableName: tableName,
       Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
-      UpdateExpression: 'SET #status = :status, #errorMessage = :errorMessage',
-      ExpressionAttributeNames: { '#status': 'status', '#errorMessage': 'errorMessage' },
-      ExpressionAttributeValues: { ':status': 'failed', ':errorMessage': message },
+      UpdateExpression: artifacts
+        ? 'SET #status = :status, #errorMessage = :errorMessage, #ocrKey = :ocrKey, #extractionKey = :extractionKey, #textractAnswers = :textractAnswers'
+        : 'SET #status = :status, #errorMessage = :errorMessage',
+      ExpressionAttributeNames: {
+        '#status': 'status',
+        '#errorMessage': 'errorMessage',
+        ...(artifacts
+          ? { '#ocrKey': 'ocrKey', '#extractionKey': 'extractionKey', '#textractAnswers': 'textractAnswers' }
+          : {}),
+      },
+      ExpressionAttributeValues: {
+        ':status': 'failed',
+        ':errorMessage': message,
+        ...(artifacts
+          ? {
+              ':ocrKey': artifacts.ocrKey,
+              ':extractionKey': artifacts.extractionKey,
+              ':textractAnswers': answers,
+            }
+          : {}),
+      },
     }));
     if (
       error instanceof InvalidSantanderStatementError
@@ -1396,7 +1460,12 @@ const previewAmexImport = async (
     Body: bytes,
     ContentType: 'application/pdf',
   }));
-  const textractJobId = await startTextractTextDetection(textract, rawSourceBucketName, source.key);
+  const textractJobId = await startTextractDocumentAnalysis(
+    textract,
+    rawSourceBucketName,
+    source.key,
+    'amex',
+  );
   await database.send(new PutCommand({
     TableName: tableName,
     Item: {
@@ -1408,6 +1477,7 @@ const previewAmexImport = async (
       createdAt: new Date().toISOString(),
       source,
       textractJobId,
+      textractMode: 'analyze_queries_tables',
     },
   }));
   return {
@@ -1452,7 +1522,7 @@ const getAmexImport = async (importId: string, owner: string): Promise<JsonObjec
   const jobId = typeof stored.Item.textractJobId === 'string' ? stored.Item.textractJobId : undefined;
   if (!jobId) throw new InvalidAmexStatementError('Falta el trabajo de Textract para este import.');
 
-  const job = await getTextractJobStatus(textract, jobId);
+  const job = await getTextractAnalysisJobStatus(textract, jobId);
   if (job.status === 'IN_PROGRESS') {
     return {
       importId,
@@ -1472,24 +1542,22 @@ const getAmexImport = async (importId: string, owner: string): Promise<JsonObjec
     throw new TextractDocumentError(message);
   }
 
+  const source = stored.Item.source as JsonObject;
+  const sourceKey = typeof source.key === 'string'
+    ? source.key
+    : amexSourceKey(owner, importId, 'pdf');
+  let artifacts: { readonly ocrKey: string; readonly extractionKey: string } | undefined;
+  let answers: Readonly<Record<string, string>> = {};
   try {
-    const text = await fetchTextractDocumentText(textract, jobId);
-    const document = parseAmexStatementText(text);
+    const extraction = await fetchTextractStatementExtraction(textract, jobId, 'amex');
+    answers = extraction.answers;
+    artifacts = await persistTextractExtraction(sourceKey, extraction);
+    const document = parseAmexStatementExtraction(extraction);
     const rows = await buildAmexPreviewRows(document);
-    const source = stored.Item.source as JsonObject;
-    const ocrKey = typeof source.key === 'string'
-      ? source.key.replace(/\.pdf$/i, '.ocr.txt')
-      : amexSourceKey(owner, importId, 'txt');
-    await s3.send(new PutObjectCommand({
-      Bucket: rawSourceBucketName,
-      Key: ocrKey,
-      Body: text,
-      ContentType: 'text/plain; charset=utf-8',
-    }));
     await database.send(new UpdateCommand({
       TableName: tableName,
       Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
-      UpdateExpression: 'SET #status = :status, #accountLastFour = :accountLastFour, #product = :product, #period = :period, #rows = :rows, #ocrKey = :ocrKey',
+      UpdateExpression: 'SET #status = :status, #accountLastFour = :accountLastFour, #product = :product, #period = :period, #rows = :rows, #ocrKey = :ocrKey, #extractionKey = :extractionKey, #textractAnswers = :textractAnswers',
       ExpressionAttributeNames: {
         '#status': 'status',
         '#accountLastFour': 'accountLastFour',
@@ -1497,6 +1565,8 @@ const getAmexImport = async (importId: string, owner: string): Promise<JsonObjec
         '#period': 'period',
         '#rows': 'rows',
         '#ocrKey': 'ocrKey',
+        '#extractionKey': 'extractionKey',
+        '#textractAnswers': 'textractAnswers',
       },
       ExpressionAttributeValues: {
         ':status': 'previewed',
@@ -1504,7 +1574,9 @@ const getAmexImport = async (importId: string, owner: string): Promise<JsonObjec
         ':product': document.product,
         ':period': document.period,
         ':rows': rows,
-        ':ocrKey': ocrKey,
+        ':ocrKey': artifacts.ocrKey,
+        ':extractionKey': artifacts.extractionKey,
+        ':textractAnswers': extraction.answers,
       },
     }));
     return amexPreviewResponse(importId, document, rows);
@@ -1513,9 +1585,27 @@ const getAmexImport = async (importId: string, owner: string): Promise<JsonObjec
     await database.send(new UpdateCommand({
       TableName: tableName,
       Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
-      UpdateExpression: 'SET #status = :status, #errorMessage = :errorMessage',
-      ExpressionAttributeNames: { '#status': 'status', '#errorMessage': 'errorMessage' },
-      ExpressionAttributeValues: { ':status': 'failed', ':errorMessage': message },
+      UpdateExpression: artifacts
+        ? 'SET #status = :status, #errorMessage = :errorMessage, #ocrKey = :ocrKey, #extractionKey = :extractionKey, #textractAnswers = :textractAnswers'
+        : 'SET #status = :status, #errorMessage = :errorMessage',
+      ExpressionAttributeNames: {
+        '#status': 'status',
+        '#errorMessage': 'errorMessage',
+        ...(artifacts
+          ? { '#ocrKey': 'ocrKey', '#extractionKey': 'extractionKey', '#textractAnswers': 'textractAnswers' }
+          : {}),
+      },
+      ExpressionAttributeValues: {
+        ':status': 'failed',
+        ':errorMessage': message,
+        ...(artifacts
+          ? {
+              ':ocrKey': artifacts.ocrKey,
+              ':extractionKey': artifacts.extractionKey,
+              ':textractAnswers': answers,
+            }
+          : {}),
+      },
     }));
     if (error instanceof InvalidAmexStatementError || error instanceof TextractDocumentError) {
       throw error;

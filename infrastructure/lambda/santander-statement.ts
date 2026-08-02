@@ -1,3 +1,10 @@
+import {
+  extractLastFourDigits,
+  findPeriodInLooseText,
+  parseFlexibleDate,
+} from "./statement-dates.js";
+import type { TextractStatementExtraction, TextractTable } from "./textract-document.js";
+
 export class InvalidSantanderStatementError extends Error {}
 
 export interface SantanderStatementCharge {
@@ -68,18 +75,29 @@ const parseDayMonthYear = (raw: string): string | undefined => {
   return parsed.toISOString().slice(0, 10) === date ? date : undefined;
 };
 
-const parsePeriod = (text: string): { from: string; to: string } => {
-  const match =
-    /Periodo:\s*(\d{1,2})[-\/.]([A-Za-z]{3})[-\/.](\d{4})\s+al\s+(\d{1,2})[-\/.]([A-Za-z]{3})[-\/.](\d{4})/i
-      .exec(text);
-  if (!match) throw new InvalidSantanderStatementError("No se encontró el periodo del estado Santander.");
-  const from = parseDayMonthYear(`${match[1]}-${match[2]}-${match[3]}`);
-  const to = parseDayMonthYear(`${match[4]}-${match[5]}-${match[6]}`);
-  if (!from || !to) throw new InvalidSantanderStatementError("El periodo del estado Santander es inválido.");
-  return { from, to };
+const parsePeriod = (
+  text: string,
+  answers: Readonly<Record<string, string>> = {},
+): { from: string; to: string } => {
+  const fromAnswer = parseFlexibleDate(answers.PERIOD_FROM);
+  const toAnswer = parseFlexibleDate(answers.PERIOD_TO);
+  if (fromAnswer && toAnswer) return { from: fromAnswer, to: toAnswer };
+
+  const fromPeriodText = findPeriodInLooseText(answers.PERIOD_TEXT ?? "");
+  if (fromPeriodText) return fromPeriodText;
+
+  const loose = findPeriodInLooseText(text);
+  if (loose) return loose;
+
+  throw new InvalidSantanderStatementError("No se encontró el periodo del estado Santander.");
 };
 
-const parseAccountLastFour = (text: string): string => {
+const parseAccountLastFour = (
+  text: string,
+  answers: Readonly<Record<string, string>> = {},
+): string => {
+  const fromAnswer = extractLastFourDigits(answers.ACCOUNT_LAST_FOUR);
+  if (fromAnswer) return fromAnswer;
   const match =
     /N[uú]mero de tarjeta:\s*[\d\s]*(\d{4})\b/i.exec(text)
     ?? /N[uú]mero de cuenta:\s*[\d\s]*(\d{4})\b/i.exec(text)
@@ -98,19 +116,60 @@ const cleanMerchant = (raw: string): string =>
     .replace(/\bMOM\b.*$/i, "")
     .trim();
 
-/**
- * Parse OCR/Textract plain text from a Santander MX credit-card statement.
- * Tolerates noisy separators from image OCR (`_`, `[`, `|`, `$`/`S` confusion).
- */
-export const parseSantanderStatementText = (input: string): SantanderStatementDocument => {
-  const lines = normalizeLines(input);
-  const text = lines.join("\n");
-  const period = parsePeriod(text);
-  const accountLastFour = parseAccountLastFour(text);
-  const product = /UNIQUE REWARDS|PLATINUM|PLATINO/i.test(text)
-    ? "Santander Unique Rewards Platinum"
-    : "Santander";
+const chargesFromTables = (
+  tables: readonly TextractTable[],
+  accountLastFour: string,
+): readonly SantanderStatementCharge[] => {
+  const charges: SantanderStatementCharge[] = [];
+  for (const table of tables) {
+    for (const row of table.rows) {
+      const cells = row.map((cell) => cell.trim()).filter(Boolean);
+      if (cells.length < 2) continue;
+      const joined = cells.join(" ");
+      const dateCell = cells.find((cell) => parseDayMonthYear(cell) || parseFlexibleDate(cell));
+      const occurredOn = dateCell
+        ? (parseDayMonthYear(dateCell) ?? parseFlexibleDate(dateCell))
+        : undefined;
+      if (!occurredOn) continue;
+      const amountCell = [...cells].reverse().find((cell) => parseMoneyMinor(cell) !== undefined);
+      const amountMinor = amountCell ? parseMoneyMinor(amountCell) : undefined;
+      if (amountMinor === undefined) continue;
+      const merchantRaw = cleanMerchant(
+        cells
+          .filter((cell) => cell !== dateCell && cell !== amountCell)
+          .join(" ")
+          || joined,
+      );
+      if (!merchantRaw || merchantRaw.length < 3) continue;
+      if (/^Fecha\b/i.test(merchantRaw) || /^Tarjeta\b/i.test(merchantRaw)) continue;
+      const credit = amountMinor < 0 || /\bPAGO\b|\bABONO\b|\bCASH BACK\b/i.test(merchantRaw);
+      const absolute = Math.abs(amountMinor);
+      const msi = isMsiMerchant(merchantRaw);
+      charges.push({
+        occurredOn,
+        merchantRaw,
+        amountMinor: absolute,
+        credit,
+        msi,
+        identity: [
+          "santander_statement_table",
+          accountLastFour,
+          occurredOn,
+          merchantRaw.toUpperCase(),
+          String(absolute),
+          msi ? "msi" : "full",
+          String(charges.length + 1),
+        ].join(":"),
+      });
+    }
+  }
+  return charges;
+};
 
+const chargesFromLines = (
+  lines: readonly string[],
+  accountLastFour: string,
+): readonly SantanderStatementCharge[] => {
   const charges: SantanderStatementCharge[] = [];
   const rowPattern =
     /(\d{1,2}[-\/.][A-Za-z0-9]{2,3}[-\/.]\d{2,4})\s*[\[|_]?\s*(\d{1,2}[-\/.][A-Za-z0-9]{2,3}[-\/.]\d{2,4})?\s*[\[|_]?\s*(.+?)\s+(-?\s*[\$S]?\s*[\d,]+\.\d{2})\s*$/i;
@@ -133,15 +192,6 @@ export const parseSantanderStatementText = (input: string): SantanderStatementDo
     const credit = amountMinor < 0 || /\bPAGO\b|\bABONO\b|\bCASH BACK\b/i.test(merchantRaw);
     const absolute = Math.abs(amountMinor);
     const msi = isMsiMerchant(merchantRaw);
-    const identity = [
-      "santander_statement",
-      accountLastFour,
-      occurredOn,
-      merchantRaw.toUpperCase(),
-      String(absolute),
-      msi ? "msi" : "full",
-      String(charges.length + 1),
-    ].join(":");
     charges.push({
       occurredOn,
       postedOn,
@@ -149,11 +199,49 @@ export const parseSantanderStatementText = (input: string): SantanderStatementDo
       amountMinor: absolute,
       credit,
       msi,
-      identity,
+      identity: [
+        "santander_statement",
+        accountLastFour,
+        occurredOn,
+        merchantRaw.toUpperCase(),
+        String(absolute),
+        msi ? "msi" : "full",
+        String(charges.length + 1),
+      ].join(":"),
     });
   }
+  return charges;
+};
 
-  const msiCharges = charges.filter((charge) => charge.msi && !charge.credit);
+/**
+ * Preferred path: map Textract AnalyzeDocument (queries + tables + lines).
+ * Queries own period/account; tables/lines own movement rows.
+ */
+export const parseSantanderStatementExtraction = (
+  extraction: TextractStatementExtraction,
+): SantanderStatementDocument => {
+  const text = extraction.text;
+  const period = parsePeriod(text, extraction.answers);
+  const accountLastFour = parseAccountLastFour(text, extraction.answers);
+  const productHint = `${extraction.answers.PRODUCT ?? ""} ${text}`;
+  const product = /UNIQUE REWARDS|PLATINUM|PLATINO/i.test(productHint)
+    ? "Santander Unique Rewards Platinum"
+    : (extraction.answers.PRODUCT?.trim() || "Santander");
+
+  const seen = new Set<string>();
+  const charges: SantanderStatementCharge[] = [];
+  for (const charge of [
+    ...chargesFromTables(extraction.tables, accountLastFour),
+    ...chargesFromLines(extraction.lines, accountLastFour),
+  ]) {
+    if (charge.credit) continue;
+    const key = [charge.occurredOn, charge.merchantRaw, charge.amountMinor, charge.msi].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    charges.push(charge);
+  }
+
+  const msiCharges = charges.filter((charge) => charge.msi);
   if (msiCharges.length === 0 && charges.length === 0) {
     throw new InvalidSantanderStatementError(
       "No se pudieron leer movimientos del estado Santander. Revisa que el PDF sea el estado de cuenta de la tarjeta.",
@@ -164,10 +252,23 @@ export const parseSantanderStatementText = (input: string): SantanderStatementDo
     accountLastFour,
     product,
     period,
-    charges: charges.filter((charge) => !charge.credit),
+    charges,
     msiCharges,
   };
 };
+
+/** Text/fixture path — same mapper with empty Textract answers/tables. */
+export const parseSantanderStatementText = (input: string): SantanderStatementDocument =>
+  parseSantanderStatementExtraction({
+    provider: "santander",
+    jobId: "local-text",
+    status: "SUCCEEDED",
+    lines: normalizeLines(input),
+    text: normalizeLines(input).join("\n"),
+    answers: {},
+    queryAnswers: [],
+    tables: [],
+  });
 
 export const santanderStatementImportCompletionUpdate = (
   appliedAt: string,
