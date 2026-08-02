@@ -33,7 +33,7 @@
 
 ## Infraestructura
 
-- Toda la infraestructura vive en AWS, en `us-east-2`, definida con CDK y TypeScript.
+- Toda la infraestructura vive en AWS, definida con CDK y TypeScript. El stack operativo está en `us-east-2`; el certificado ACM de CloudFront vive en `us-east-1` (requisito de CloudFront).
 - Se usa la cuenta personal de AWS y tags consistentes para atribuir costes.
 - DynamoDB bajo demanda es la base de datos operativa.
 - La UI es una SPA de React en S3 + CloudFront. La API es API Gateway HTTP API + Lambdas con autorización JWT de Cognito.

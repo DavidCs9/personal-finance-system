@@ -61,13 +61,13 @@ jobs:
           role-session-name: personal-finance-github-deploy
       - run: npm run build --workspace @finance/web
       - run: >-
-          npx cdk diff PersonalFinanceV1
+          npx cdk diff PersonalFinanceWebCertificate PersonalFinanceV1
           --parameters PersonalFinanceV1:SesSenderEmail="$SES_SENDER_EMAIL"
           --parameters PersonalFinanceV1:AlertRecipientEmail="$ALERT_RECIPIENT_EMAIL"
           --output cdk.out.github-diff
         working-directory: infrastructure
       - run: >-
-          npx cdk deploy PersonalFinanceV1
+          npx cdk deploy PersonalFinanceWebCertificate PersonalFinanceV1
           --parameters PersonalFinanceV1:SesSenderEmail="$SES_SENDER_EMAIL"
           --parameters PersonalFinanceV1:AlertRecipientEmail="$ALERT_RECIPIENT_EMAIL"
           --require-approval never

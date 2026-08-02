@@ -1,3 +1,6 @@
 {
-  "app": "npx tsx bin/personal-finance-system.ts"
+  "app": "npx tsx bin/personal-finance-system.ts",
+  "context": {
+    "@aws-cdk/core:defaultCrossStackReferences": "strong"
+  }
 }
