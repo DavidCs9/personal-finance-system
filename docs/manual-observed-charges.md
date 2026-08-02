@@ -31,11 +31,11 @@ Un cobro manual es un **movimiento observado** creado por el usuario. Entra al l
 
 ### Entrada
 
-En **Movimientos**, acción secundaria al mismo nivel que “Conciliar CSV”:
+En **Movimientos**, un solo control **Añadir** abre un sheet de captura. Ahí viven “Registrar cobro”, “Conciliar CSV” y futuras vías de entrada:
 
-- Etiqueta: **Registrar cobro**
+- No apila botones en el encabezado a medida que crecen las acciones.
+- “Ordenar” permanece fuera del menú: es control de vista, no de captura.
 - No compite con el total del mes en Resumen.
-- No usa tarjetas decorativas ni pasos de “wizard” innecesarios.
 
 ### Sheet: “Registrar cobro”
 
