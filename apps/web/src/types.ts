@@ -35,3 +35,49 @@ export interface IngestionException {
   readonly details: string;
   readonly retry?: { readonly status: "queued" | "completed"; readonly eventId?: string };
 }
+
+export type SantanderImportRowStatus = "new" | "matched" | "ambiguous" | "duplicate" | "excluded";
+
+export interface SantanderImportCandidate {
+  readonly id: string;
+  readonly merchantRaw: string;
+  readonly occurredAt?: string;
+}
+
+export interface SantanderImportRow {
+  readonly rowNumber: number;
+  readonly occurredOn: string;
+  readonly transactionId?: string;
+  readonly merchantRaw: string;
+  readonly amountMinor: number;
+  readonly identity: string;
+  readonly status: SantanderImportRowStatus;
+  readonly candidates: readonly SantanderImportCandidate[];
+}
+
+export interface SantanderImportPreview {
+  readonly importId: string;
+  readonly accountLastFour: string;
+  readonly product: string;
+  readonly period: { readonly from: string; readonly to: string };
+  readonly summary: {
+    readonly total: number;
+    readonly new: number;
+    readonly matched: number;
+    readonly ambiguous: number;
+    readonly duplicate: number;
+    readonly excluded: number;
+  };
+  readonly rows: readonly SantanderImportRow[];
+}
+
+export interface SantanderImportDecision {
+  readonly action: "create" | "link";
+  readonly eventId?: string;
+}
+
+export interface SantanderImportResult {
+  readonly importId: string;
+  readonly created: readonly PurchaseEvent[];
+  readonly summary: { readonly created: number; readonly linked: number; readonly skipped: number };
+}

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { GetCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 
-export type CaptureSource = 'email' | 'apple_pay_shortcut';
+export type CaptureSource = 'email' | 'apple_pay_shortcut' | 'santander_csv';
 
 export interface ObservedEventInput {
   readonly id: string;
@@ -40,6 +40,7 @@ export interface SaveObservedEventResult {
 }
 
 const RECONCILIATION_WINDOW_MS = 30 * 60 * 1000;
+const SANTANDER_CSV_WINDOW_MS = 18 * 60 * 60 * 1000;
 const SAME_SOURCE_RETRY_WINDOW_MS = 2 * 60 * 1000;
 
 export const normaliseMerchant = (merchant: string): string => merchant
@@ -48,6 +49,31 @@ export const normaliseMerchant = (merchant: string): string => merchant
   .toUpperCase()
   .replace(/[^A-Z0-9]+/g, ' ')
   .trim();
+
+const merchantsMatch = (left: string, right: string, allowTruncation: boolean): boolean => {
+  const a = normaliseMerchant(left).replace(/\s+/g, '');
+  const b = normaliseMerchant(right).replace(/\s+/g, '');
+  return a === b || (allowTruncation && Math.min(a.length, b.length) >= 8 && (a.startsWith(b) || b.startsWith(a)));
+};
+
+const accountLastFour = (account: unknown): string | undefined => {
+  if (!account || typeof account !== 'object' || !('lastFour' in account)) return undefined;
+  return typeof account.lastFour === 'string' ? account.lastFour : undefined;
+};
+
+const localCalendarDate = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'America/Chihuahua',
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((candidate) => candidate.type === type)?.value;
+  const year = part('year');
+  const month = part('month');
+  const day = part('day');
+  return year && month && day ? `${year}-${month}-${day}` : undefined;
+};
 
 export const reconciliationPartition = (event: Pick<ObservedEventInput, 'institution' | 'eventType' | 'amount'>): string =>
   `RECON#${event.institution}#${event.eventType}#${event.amount.currency}#${event.amount.amountMinor}`;
@@ -85,8 +111,11 @@ interface Candidate {
 const findCandidates = async (input: SaveObservedEventInput): Promise<readonly Candidate[]> => {
   const center = Date.parse(input.reconciliationAt);
   if (!Number.isFinite(center)) throw new Error('Invalid reconciliation timestamp.');
-  const from = new Date(center - RECONCILIATION_WINDOW_MS).toISOString();
-  const to = new Date(center + RECONCILIATION_WINDOW_MS).toISOString();
+  const couldMatchCsv = input.event.institution === 'santander_mx'
+    && (input.captureSource === 'email' || input.captureSource === 'santander_csv');
+  const queryWindow = couldMatchCsv ? SANTANDER_CSV_WINDOW_MS : RECONCILIATION_WINDOW_MS;
+  const from = new Date(center - queryWindow).toISOString();
+  const to = new Date(center + queryWindow).toISOString();
   const result = await input.database.send(new QueryCommand({
     TableName: input.tableName,
     IndexName: 'GSI2',
@@ -98,16 +127,26 @@ const findCandidates = async (input: SaveObservedEventInput): Promise<readonly C
     },
     ConsistentRead: false,
   }));
-  const merchant = normaliseMerchant(input.event.merchantRaw);
   return (result.Items ?? []).flatMap((item) => {
     const payload = item.payload as Record<string, unknown> | undefined;
-    if (!payload || normaliseMerchant(String(payload.merchantRaw ?? '')) !== merchant) return [];
+    if (!payload) return [];
     const eventId = typeof payload.id === 'string' ? payload.id : undefined;
     const reconciliationAt = typeof item.reconciliationAt === 'string' ? item.reconciliationAt : undefined;
     if (!eventId || !reconciliationAt) return [];
     const sources = Array.isArray(payload.captureSources)
-      ? payload.captureSources.filter((value): value is CaptureSource => value === 'email' || value === 'apple_pay_shortcut')
+      ? payload.captureSources.filter((value): value is CaptureSource => value === 'email' || value === 'apple_pay_shortcut' || value === 'santander_csv')
       : [];
+    const involvesCsv = input.captureSource === 'santander_csv' || sources.includes('santander_csv');
+    if (!merchantsMatch(input.event.merchantRaw, String(payload.merchantRaw ?? ''), involvesCsv)) return [];
+    if (!involvesCsv && Math.abs(Date.parse(reconciliationAt) - center) > RECONCILIATION_WINDOW_MS) return [];
+    if (involvesCsv) {
+      const inputDate = localCalendarDate(input.event.occurredAt ?? input.reconciliationAt);
+      const candidateDate = localCalendarDate(payload.occurredAt ?? reconciliationAt);
+      if (!inputDate || inputDate !== candidateDate) return [];
+      const inputLastFour = accountLastFour(input.event.account);
+      const candidateLastFour = accountLastFour(payload.account);
+      if (inputLastFour && candidateLastFour && inputLastFour !== candidateLastFour) return [];
+    }
     const primaryObservationId = typeof payload.primaryObservationId === 'string' ? payload.primaryObservationId : undefined;
     return [{ eventId, reconciliationAt, captureSources: sources, primaryObservationId }];
   });

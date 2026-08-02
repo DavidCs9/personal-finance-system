@@ -85,6 +85,69 @@ describe('observed event persistence', () => {
     expect(update.ExpressionAttributeValues[':true']).toBe(true);
   });
 
+  it('reconciles a delayed Santander email with a same-day CSV observation', async () => {
+    const send = vi.fn()
+      .mockResolvedValueOnce({ Items: [{
+        reconciliationAt: '2026-08-02T12:00:00.000Z',
+        payload: {
+          id: 'csv-event-1',
+          merchantRaw: 'AMAZON WEB SERV',
+          occurredAt: '2026-08-02T12:00:00.000Z',
+          account: { lastFour: '6349' },
+          captureSources: ['santander_csv'],
+        },
+      }] })
+      .mockResolvedValueOnce({});
+    const emailInput: SaveObservedEventInput = {
+      ...inputWith(send),
+      dedupeKey: 'email:delayed-message',
+      captureSource: 'email',
+      reconciliationAt: '2026-08-03T01:45:00.000Z',
+      event: {
+        ...event,
+        id: 'email-event-delayed',
+        merchantRaw: 'AMAZON WEB SERVICES',
+        occurredAt: '2026-08-02T12:00:00.000Z',
+        account: { lastFour: '6349' },
+        source: { bucket: 'raw-email', key: 'inbound/delayed', contentType: 'message/rfc822' },
+        parserVersion: 'santander-email-v1',
+      },
+    };
+    await expect(saveObservedEvent(emailInput)).resolves.toMatchObject({
+      eventId: 'csv-event-1', created: false, reconciled: true,
+    });
+    const query = send.mock.calls[0][0].input;
+    const to = String(query.ExpressionAttributeValues[':to']).replace('\uffff', '');
+    expect(Date.parse(to) - Date.parse(query.ExpressionAttributeValues[':from'])).toBe(36 * 60 * 60 * 1000);
+  });
+
+  it('does not reconcile a CSV observation from a different calendar day', async () => {
+    const send = vi.fn()
+      .mockResolvedValueOnce({ Items: [{
+        reconciliationAt: '2026-08-01T12:00:00.000Z',
+        payload: {
+          id: 'csv-event-previous-day',
+          merchantRaw: 'AMAZON WEB SERV',
+          occurredAt: '2026-08-01T12:00:00.000Z',
+          account: { lastFour: '6349' },
+          captureSources: ['santander_csv'],
+        },
+      }] })
+      .mockResolvedValueOnce({});
+    const csvInput: SaveObservedEventInput = {
+      ...inputWith(send),
+      captureSource: 'santander_csv',
+      reconciliationAt: '2026-08-02T12:00:00.000Z',
+      event: {
+        ...event,
+        account: { lastFour: '6349' },
+        merchantRaw: 'AMAZON WEB SERVICES',
+        occurredAt: '2026-08-02T12:00:00.000Z',
+      },
+    };
+    await expect(saveObservedEvent(csvInput)).resolves.toMatchObject({ created: true, reconciled: false });
+  });
+
   it('does not infer a match when multiple cross-source candidates are plausible', async () => {
     const candidate = (id: string) => ({
       reconciliationAt: '2026-08-02T01:31:00.000Z',

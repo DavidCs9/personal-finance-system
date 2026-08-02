@@ -1,19 +1,36 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { BatchGetCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan, type MonthlyPlanInput } from './monthly-plan.js';
+import { reconciliationPartition } from './observed-events.js';
+import { InvalidSantanderCsvError, merchantsMatch, parseSantanderCsv, santanderApplyAction, type SantanderCsvDocument, type SantanderCsvRow, type SantanderReconciliationDecision, type SantanderReconciliationStatus } from './santander-csv.js';
 
 const database = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
 const tableName = process.env.METADATA_TABLE_NAME;
 if (!tableName) throw new Error('Missing required environment variable: METADATA_TABLE_NAME');
+const rawSourceBucketName = process.env.RAW_EMAIL_BUCKET_NAME;
+if (!rawSourceBucketName) throw new Error('Missing required environment variable: RAW_EMAIL_BUCKET_NAME');
 
 type JsonObject = Record<string, unknown>;
 
+interface SantanderPreviewRow extends SantanderCsvRow {
+  readonly status: SantanderReconciliationStatus;
+  readonly candidateEventIds: readonly string[];
+  readonly candidates: readonly { readonly id: string; readonly merchantRaw: string; readonly occurredAt?: string }[];
+}
+
 export const handler: APIGatewayProxyHandlerV2 = async (event) => {
   try {
+    if (event.requestContext.http.method === 'POST' && event.rawPath === '/imports/santander/preview') {
+      return response(200, await previewSantanderImport(requestBody(event), principal(event)));
+    }
+    const importId = event.pathParameters?.importId;
+    if (importId && event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/apply')) {
+      return response(200, await applySantanderImport(importId, principal(event), requestBody(event)));
+    }
     const month = event.pathParameters?.month;
     if (month !== undefined) {
       if (!isValidMonth(month)) return response(400, { message: 'Month must use YYYY-MM format.' });
@@ -58,12 +75,390 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     }
     return response(405, { message: 'Method not allowed.' });
   } catch (error) {
-    if (error instanceof InvalidMonthlyPlanError) {
+    if (error instanceof InvalidMonthlyPlanError || error instanceof InvalidSantanderCsvError) {
       return response(400, { message: error.message });
     }
     console.error('API request failed', { message: errorMessage(error) });
     return response(500, { message: 'Unable to complete this request.' });
   }
+};
+
+const csvSourceKey = (owner: string, sha256: string): string => `manual-imports/santander/${owner}/${sha256}.csv`;
+const rowClaimKey = (identity: string): { readonly PK: string; readonly SK: string } => ({
+  PK: `DEDUPE#SANTANDER_CSV#${createHash('sha256').update(identity).digest('hex')}`,
+  SK: 'CLAIM',
+});
+
+const localDate = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'America/Chihuahua',
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((candidate) => candidate.type === type)?.value;
+  return `${part('year')}-${part('month')}-${part('day')}`;
+};
+
+const allStoredEvents = async (): Promise<readonly JsonObject[]> => {
+  const events: JsonObject[] = [];
+  let exclusiveStartKey: Record<string, unknown> | undefined;
+  do {
+    const result = await database.send(new QueryCommand({
+      TableName: tableName,
+      IndexName: 'GSI1',
+      KeyConditionExpression: 'GSI1PK = :partition',
+      ExpressionAttributeValues: { ':partition': 'EVENTS' },
+      ExclusiveStartKey: exclusiveStartKey,
+    }));
+    for (const item of result.Items ?? []) {
+      if (item.payload) events.push(item.payload as JsonObject);
+    }
+    exclusiveStartKey = result.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+  return events;
+};
+
+const claimedRowIdentities = async (rows: readonly SantanderCsvRow[]): Promise<ReadonlySet<string>> => {
+  const claimed = new Set<string>();
+  for (let offset = 0; offset < rows.length; offset += 100) {
+    let requestKeys: Record<string, unknown>[] = rows.slice(offset, offset + 100).map((row) => rowClaimKey(row.identity));
+    let attempts = 0;
+    do {
+      if (attempts > 0) await new Promise((resolve) => setTimeout(resolve, 25 * (2 ** attempts)));
+      const result = await database.send(new BatchGetCommand({
+        RequestItems: { [tableName]: { Keys: requestKeys, ProjectionExpression: 'PK' } },
+      }));
+      for (const item of result.Responses?.[tableName] ?? []) claimed.add(String(item.PK));
+      requestKeys = result.UnprocessedKeys?.[tableName]?.Keys ?? [];
+      attempts += 1;
+      if (attempts >= 6 && requestKeys.length > 0) throw new Error('Unable to verify Santander CSV dedupe keys after multiple attempts.');
+    } while (requestKeys.length > 0);
+  }
+  return claimed;
+};
+
+const candidateEvents = (document: SantanderCsvDocument, row: SantanderCsvRow, events: readonly JsonObject[]): readonly JsonObject[] =>
+  events.filter((event) => {
+    const account = event.account as JsonObject | undefined;
+    const amount = event.amount as JsonObject | undefined;
+    return account?.lastFour === document.accountLastFour
+      && amount?.currency === 'MXN'
+      && amount.amountMinor === row.amountMinor
+      && localDate(event.occurredAt ?? event.receivedAt) === row.occurredOn
+      && typeof event.merchantRaw === 'string'
+      && merchantsMatch(event.merchantRaw, row.merchantRaw);
+  });
+
+const classifySantanderRows = async (document: SantanderCsvDocument): Promise<readonly SantanderPreviewRow[]> => {
+  const [events, claims] = await Promise.all([allStoredEvents(), claimedRowIdentities(document.rows)]);
+  return document.rows.map((row): SantanderPreviewRow => {
+    if (claims.has(rowClaimKey(row.identity).PK)) return { ...row, status: 'duplicate', candidateEventIds: [], candidates: [] };
+    if (row.amountMinor < 0) return { ...row, status: 'excluded', candidateEventIds: [], candidates: [] };
+    const candidates = candidateEvents(document, row, events);
+    const candidateSummaries = candidates.map((candidate) => ({
+      id: String(candidate.id),
+      merchantRaw: String(candidate.merchantRaw),
+      ...(typeof candidate.occurredAt === 'string' ? { occurredAt: candidate.occurredAt } : {}),
+    }));
+    if (!row.transactionId) return { ...row, status: 'ambiguous', candidateEventIds: candidates.map((candidate) => String(candidate.id)), candidates: candidateSummaries };
+    if (candidates.length === 1) return { ...row, status: 'matched', candidateEventIds: [String(candidates[0].id)], candidates: candidateSummaries };
+    if (candidates.length > 1) return { ...row, status: 'ambiguous', candidateEventIds: candidates.map((candidate) => String(candidate.id)), candidates: candidateSummaries };
+    return { ...row, status: 'new', candidateEventIds: [], candidates: [] };
+  });
+};
+
+const previewPayload = (importId: string, document: SantanderCsvDocument, rows: readonly SantanderPreviewRow[]): JsonObject => {
+  const count = (status: SantanderReconciliationStatus) => rows.filter((row) => row.status === status).length;
+  return {
+    importId,
+    accountLastFour: document.accountLastFour,
+    product: document.product,
+    period: document.period,
+    summary: {
+      total: rows.length,
+      new: count('new'),
+      matched: count('matched'),
+      ambiguous: count('ambiguous'),
+      duplicate: count('duplicate'),
+      excluded: count('excluded'),
+    },
+    rows,
+  };
+};
+
+const previewSantanderImport = async (body: string | undefined, owner: string): Promise<JsonObject> => {
+  if (!body) throw new InvalidSantanderCsvError('Selecciona un archivo CSV de Santander.');
+  if (Buffer.byteLength(body, 'utf8') > 2_000_000) throw new InvalidSantanderCsvError('El CSV excede el límite de 2 MB.');
+  const document = parseSantanderCsv(body);
+  const sourceHash = createHash('sha256').update(body, 'utf8').digest('hex');
+  const importId = sourceHash;
+  const source = {
+    bucket: rawSourceBucketName,
+    key: csvSourceKey(owner, sourceHash),
+    sha256: sourceHash,
+    contentType: 'text/csv',
+  };
+  await s3.send(new PutObjectCommand({
+    Bucket: rawSourceBucketName,
+    Key: source.key,
+    Body: body,
+    ContentType: 'text/csv; charset=utf-8',
+  }));
+  const rows = await classifySantanderRows(document);
+  const previewedAt = new Date().toISOString();
+  await database.send(new PutCommand({
+    TableName: tableName,
+    Item: {
+      PK: `USER#${owner}`,
+      SK: `IMPORT#SANTANDER#${importId}`,
+      entityType: 'santander_csv_import',
+      owner,
+      importId,
+      status: 'previewed',
+      previewedAt,
+      source,
+      accountLastFour: document.accountLastFour,
+      rows,
+    },
+  }));
+  return previewPayload(importId, document, rows);
+};
+
+const claimAndCreateCsvEvent = async (
+  owner: string,
+  document: SantanderCsvDocument,
+  row: SantanderPreviewRow,
+  source: JsonObject,
+  appliedAt: string,
+): Promise<JsonObject | undefined> => {
+  const id = randomUUID();
+  const observationId = randomUUID();
+  const occurredAt = `${row.occurredOn}T12:00:00.000Z`;
+  const purchase: JsonObject = {
+    id,
+    institution: 'santander_mx',
+    eventType: 'card_purchase',
+    status: 'accepted',
+    account: {
+      institution: 'santander_mx',
+      accountId: `santander_mx:${document.accountLastFour}`,
+      displayName: `Tarjeta terminada en ${document.accountLastFour}`,
+      lastFour: document.accountLastFour,
+    },
+    amount: { amountMinor: row.amountMinor, currency: 'MXN' },
+    merchantRaw: row.merchantRaw,
+    bankTransactionId: row.transactionId,
+    occurredAt,
+    receivedAt: appliedAt,
+    ingestedAt: appliedAt,
+    source,
+    parserVersion: 'santander-mx-csv-v1',
+    parseWarnings: [],
+    captureSource: 'santander_csv',
+    captureSources: ['santander_csv'],
+    observationCount: 1,
+    primaryObservationId: observationId,
+    hasRawEmail: false,
+  };
+  const observation = {
+    id: observationId,
+    eventId: id,
+    captureSource: 'santander_csv',
+    observedAt: appliedAt,
+    reconciliationAt: occurredAt,
+    institution: 'santander_mx',
+    eventType: 'card_purchase',
+    account: purchase.account,
+    amount: purchase.amount,
+    merchantRaw: row.merchantRaw,
+    occurredAt,
+    source,
+    parserVersion: 'santander-mx-csv-v1',
+    parseWarnings: [],
+    rowNumber: row.rowNumber,
+    bankTransactionId: row.transactionId,
+  };
+  try {
+    await database.send(new TransactWriteCommand({ TransactItems: [
+      { Put: {
+        TableName: tableName,
+        Item: { ...rowClaimKey(row.identity), entityType: 'santander_csv_dedupe', identity: row.identity, owner, createdAt: appliedAt },
+        ConditionExpression: 'attribute_not_exists(PK)',
+      } },
+      { Put: {
+        TableName: tableName,
+        Item: {
+          PK: `EVENT#${id}`,
+          SK: 'EVENT',
+          GSI1PK: 'EVENTS',
+          GSI1SK: appliedAt,
+          GSI2PK: reconciliationPartition(purchase as Parameters<typeof reconciliationPartition>[0]),
+          GSI2SK: `${occurredAt}#${id}`,
+          reconciliationAt: occurredAt,
+          entityType: 'observed_purchase',
+          payload: purchase,
+        },
+        ConditionExpression: 'attribute_not_exists(PK)',
+      } },
+      { Put: {
+        TableName: tableName,
+        Item: {
+          PK: `EVENT#${id}`,
+          SK: `OBSERVATION#${occurredAt}#${observationId}`,
+          entityType: 'event_observation',
+          payload: observation,
+        },
+        ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
+      } },
+    ] }));
+    return purchase;
+  } catch (error) {
+    if (errorName(error) === 'TransactionCanceledException') return undefined;
+    throw error;
+  }
+};
+
+const claimAndLinkCsvEvidence = async (
+  owner: string,
+  eventId: string,
+  row: SantanderPreviewRow,
+  source: JsonObject,
+  appliedAt: string,
+): Promise<boolean> => {
+  const revisionId = randomUUID();
+  const observationId = randomUUID();
+  const reconciliationAt = `${row.occurredOn}T12:00:00.000Z`;
+  const reconciliation = { source, rowNumber: row.rowNumber, transactionId: row.transactionId, reconciledAt: appliedAt };
+  const observation = {
+    id: observationId,
+    eventId,
+    captureSource: 'santander_csv',
+    observedAt: appliedAt,
+    reconciliationAt,
+    institution: 'santander_mx',
+    eventType: 'card_purchase',
+    amount: { amountMinor: row.amountMinor, currency: 'MXN' },
+    merchantRaw: row.merchantRaw,
+    occurredAt: reconciliationAt,
+    source,
+    parserVersion: 'santander-mx-csv-v1',
+    parseWarnings: [],
+    rowNumber: row.rowNumber,
+    bankTransactionId: row.transactionId,
+  };
+  const revision = {
+    id: revisionId,
+    observedPurchaseId: eventId,
+    createdAt: appliedAt,
+    changedBy: owner,
+    reason: 'Conciliado con un CSV de movimientos Santander.',
+    changes: { reconciliation: { previous: null, next: reconciliation } },
+  };
+  try {
+    await database.send(new TransactWriteCommand({ TransactItems: [
+      { Put: {
+        TableName: tableName,
+        Item: { ...rowClaimKey(row.identity), entityType: 'santander_csv_dedupe', identity: row.identity, owner, createdAt: appliedAt, eventId },
+        ConditionExpression: 'attribute_not_exists(PK)',
+      } },
+      { Update: {
+        TableName: tableName,
+        Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
+        UpdateExpression: 'SET #payload.#count = if_not_exists(#payload.#count, :one) + :one, #payload.#sources = list_append(if_not_exists(#payload.#sources, :empty), :source), #payload.#reconciledAt = :reconciledAt, #payload.#bankTransactionId = :transactionId',
+        ConditionExpression: 'attribute_exists(PK)',
+        ExpressionAttributeNames: { '#payload': 'payload', '#count': 'observationCount', '#sources': 'captureSources', '#reconciledAt': 'reconciledAt', '#bankTransactionId': 'bankTransactionId' },
+        ExpressionAttributeValues: { ':one': 1, ':empty': [], ':source': ['santander_csv'], ':reconciledAt': appliedAt, ':transactionId': row.transactionId ?? row.identity },
+      } },
+      { Put: {
+        TableName: tableName,
+        Item: {
+          PK: `EVENT#${eventId}`,
+          SK: `OBSERVATION#${reconciliationAt}#${observationId}`,
+          entityType: 'event_observation',
+          payload: observation,
+        },
+        ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
+      } },
+      { Put: {
+        TableName: tableName,
+        Item: { PK: `EVENT#${eventId}`, SK: `REVISION#${appliedAt}#${revisionId}`, entityType: 'event_revision', payload: revision },
+      } },
+    ] }));
+    return true;
+  } catch (error) {
+    if (errorName(error) === 'TransactionCanceledException') return false;
+    throw error;
+  }
+};
+
+const parseImportDecisions = (body: string | undefined): Readonly<Record<string, SantanderReconciliationDecision>> => {
+  if (!body) return {};
+  try {
+    const parsed = JSON.parse(body) as { decisions?: unknown };
+    if (!parsed.decisions || typeof parsed.decisions !== 'object' || Array.isArray(parsed.decisions)) return {};
+    const decisions: Record<string, SantanderReconciliationDecision> = {};
+    for (const [identity, raw] of Object.entries(parsed.decisions as Record<string, unknown>)) {
+      if (!raw || typeof raw !== 'object') throw new InvalidSantanderCsvError('Una decisión de conciliación no es válida.');
+      const decision = raw as { action?: unknown; eventId?: unknown };
+      if (decision.action !== 'create' && decision.action !== 'link') throw new InvalidSantanderCsvError('Una decisión de conciliación no es válida.');
+      if (decision.action === 'link' && typeof decision.eventId !== 'string') throw new InvalidSantanderCsvError('Falta el movimiento elegido para una conciliación.');
+      decisions[identity] = decision.action === 'create' ? { action: 'create' } : { action: 'link', eventId: String(decision.eventId) };
+    }
+    return decisions;
+  } catch (error) {
+    if (error instanceof InvalidSantanderCsvError) throw error;
+    throw new InvalidSantanderCsvError('Las decisiones de conciliación no tienen un formato válido.');
+  }
+};
+
+const applySantanderImport = async (importId: string, owner: string, decisionBody: string | undefined): Promise<JsonObject> => {
+  if (!/^[a-f0-9]{64}$/.test(importId)) throw new InvalidSantanderCsvError('Identificador de importación inválido.');
+  const stored = await database.send(new GetCommand({
+    TableName: tableName,
+    Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER#${importId}` },
+    ConsistentRead: true,
+  }));
+  const source = stored.Item?.source as JsonObject | undefined;
+  if (!stored.Item || stored.Item.owner !== owner || typeof source?.key !== 'string') {
+    throw new InvalidSantanderCsvError('La previsualización ya no está disponible. Vuelve a seleccionar el CSV.');
+  }
+  const object = await s3.send(new GetObjectCommand({ Bucket: rawSourceBucketName, Key: source.key }));
+  if (!object.Body) throw new Error('The Santander CSV source did not contain a body.');
+  const sourceBody = await object.Body.transformToString('utf8');
+  const actualHash = createHash('sha256').update(sourceBody, 'utf8').digest('hex');
+  if (actualHash !== importId) throw new Error('The stored Santander CSV hash does not match the import identifier.');
+
+  const decisions = parseImportDecisions(decisionBody);
+  const document = parseSantanderCsv(sourceBody);
+  const rows = await classifySantanderRows(document);
+  const previewRows = Array.isArray(stored.Item.rows) ? stored.Item.rows as readonly SantanderPreviewRow[] : [];
+  const previewByIdentity = new Map(previewRows.map((row) => [row.identity, row]));
+  const appliedAt = new Date().toISOString();
+  const created: JsonObject[] = [];
+  let linked = 0;
+  let skipped = 0;
+  for (const row of rows) {
+    const previewRow = previewByIdentity.get(row.identity);
+    const action = santanderApplyAction(row, previewRow, decisions[row.identity]);
+    if (action.kind === 'create') {
+      const purchase = await claimAndCreateCsvEvent(owner, document, row, source, appliedAt);
+      if (purchase) created.push(toPublicEvent(purchase)); else skipped += 1;
+    } else if (action.kind === 'link') {
+      if (await claimAndLinkCsvEvidence(owner, action.eventId, row, source, appliedAt)) linked += 1;
+      else skipped += 1;
+    } else {
+      skipped += 1;
+    }
+  }
+  await database.send(new UpdateCommand({
+    TableName: tableName,
+    Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER#${importId}` },
+    UpdateExpression: 'SET #status = :status, appliedAt = :appliedAt, result = :result',
+    ExpressionAttributeNames: { '#status': 'status' },
+    ExpressionAttributeValues: { ':status': 'applied', ':appliedAt': appliedAt, ':result': { created: created.length, linked, skipped } },
+  }));
+  return { importId, created, summary: { created: created.length, linked, skipped } };
 };
 
 const getMonthlyPlan = async (owner: string, month: string): Promise<JsonObject> => {
@@ -290,4 +685,5 @@ const response = (statusCode: number, body: JsonObject) => ({
   headers: { 'content-type': 'application/json; charset=utf-8' },
   body: JSON.stringify(body),
 });
+const errorName = (error: unknown): string | undefined => error && typeof error === 'object' && 'name' in error ? String(error.name) : undefined;
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : 'Unknown error';

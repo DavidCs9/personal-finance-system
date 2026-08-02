@@ -21,7 +21,7 @@ export interface RawSourcePointer {
   readonly bucket: string;
   readonly key: string;
   readonly sha256: string;
-  readonly contentType: "message/rfc822";
+  readonly contentType: "message/rfc822" | "text/csv";
 }
 
 export interface ApplePayShortcutSourcePointer {
@@ -32,7 +32,7 @@ export interface ApplePayShortcutSourcePointer {
 }
 
 export type ObservedSourcePointer = RawSourcePointer | ApplePayShortcutSourcePointer;
-export type CaptureSource = "email" | "apple_pay_shortcut";
+export type CaptureSource = "email" | "apple_pay_shortcut" | "santander_csv";
 
 export interface ObservedPurchase {
   readonly id: string;
@@ -63,6 +63,7 @@ export interface ObservedPurchase {
   readonly primaryObservationId?: string;
   readonly reconciledAt?: string;
   readonly hasRawEmail?: boolean;
+  readonly bankTransactionId?: string;
   readonly parserVersion: string;
   readonly parseWarnings: readonly string[];
 }
