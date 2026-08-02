@@ -5,11 +5,13 @@ export function Sheet({
   eyebrow,
   onClose,
   children,
+  className,
 }: {
   title: string;
   eyebrow: string;
   onClose(): void;
   children: ReactNode;
+  className?: string;
 }) {
   return (
     <div
@@ -18,7 +20,12 @@ export function Sheet({
         if (event.currentTarget === event.target) onClose();
       }}
     >
-      <section className="sheet" role="dialog" aria-modal="true" aria-label={title}>
+      <section
+        className={["sheet", className].filter(Boolean).join(" ")}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
         <div className="sheet-handle" />
         <header>
           <div>
