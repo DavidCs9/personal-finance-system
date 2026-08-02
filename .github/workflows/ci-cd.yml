@@ -54,7 +54,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::225989371926:role/personal-finance-v1-github-deploy
           aws-region: us-east-2
