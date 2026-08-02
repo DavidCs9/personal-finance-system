@@ -26,8 +26,13 @@ import type { IConstruct } from 'constructs';
 import { Construct } from 'constructs';
 import * as path from 'node:path';
 
+export interface PersonalFinanceV1StackProps extends StackProps {
+  webCertificate: acm.ICertificate;
+  webDomainName: string;
+}
+
 export class PersonalFinanceV1Stack extends Stack {
-  public constructor(scope: Construct, id: string, props?: StackProps) {
+  public constructor(scope: Construct, id: string, props: PersonalFinanceV1StackProps) {
     super(scope, id, props);
 
     cdk.Aspects.of(this).add({
@@ -55,7 +60,7 @@ export class PersonalFinanceV1Stack extends Stack {
       default: 'replace-with-alert-recipient@example.com',
       description: 'Primary address that receives V1 event alerts.',
     });
-    const webDomainName = 'finance.castrodavid.dev';
+    const webDomainName = props.webDomainName;
     const inboundDomainName = 'inbound.finance.castrodavid.dev';
     const inboundRecipientEmail = `alertas@${inboundDomainName}`;
     const hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'CastroDavidDevZone', {
@@ -420,14 +425,9 @@ export class PersonalFinanceV1Stack extends Stack {
       enforceSSL: true,
       removalPolicy: RemovalPolicy.RETAIN,
     });
-    const webCertificate = new acm.DnsValidatedCertificate(this, 'WebCertificate', {
-      domainName: webDomainName,
-      hostedZone,
-      region: 'us-east-1',
-    });
     const distribution = new cloudfront.Distribution(this, 'WebDistribution', {
       domainNames: [webDomainName],
-      certificate: webCertificate,
+      certificate: props.webCertificate,
       defaultRootObject: 'index.html',
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(webBucket),

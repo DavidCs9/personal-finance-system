@@ -17,7 +17,7 @@ export class GitHubCiBootstrapStack extends Stack {
     );
     const deployRole = new iam.Role(this, 'GitHubDeployRole', {
       roleName: 'personal-finance-v1-github-deploy',
-      description: 'Allows GitHub Actions from the protected main branch to deploy PersonalFinanceV1.',
+      description: 'Allows GitHub Actions from the protected main branch to deploy PersonalFinance stacks.',
       maxSessionDuration: Duration.hours(1),
       assumedBy: new iam.WebIdentityPrincipal(githubActionsOidcProvider.openIdConnectProviderArn, {
         StringEquals: {
@@ -26,18 +26,22 @@ export class GitHubCiBootstrapStack extends Stack {
         },
       }),
     });
+    // us-east-1 hosts the CloudFront ACM certificate stack and cross-region reference support.
+    const bootstrapRegions = [this.region, 'us-east-1'];
     deployRole.addToPolicy(new iam.PolicyStatement({
       actions: ['sts:AssumeRole', 'sts:TagSession'],
-      resources: [
-        `arn:${this.partition}:iam::${this.account}:role/cdk-hnb659fds-deploy-role-${this.account}-${this.region}`,
-        `arn:${this.partition}:iam::${this.account}:role/cdk-hnb659fds-file-publishing-role-${this.account}-${this.region}`,
-        `arn:${this.partition}:iam::${this.account}:role/cdk-hnb659fds-image-publishing-role-${this.account}-${this.region}`,
-        `arn:${this.partition}:iam::${this.account}:role/cdk-hnb659fds-lookup-role-${this.account}-${this.region}`,
-      ],
+      resources: bootstrapRegions.flatMap((region) => [
+        `arn:${this.partition}:iam::${this.account}:role/cdk-hnb659fds-deploy-role-${this.account}-${region}`,
+        `arn:${this.partition}:iam::${this.account}:role/cdk-hnb659fds-file-publishing-role-${this.account}-${region}`,
+        `arn:${this.partition}:iam::${this.account}:role/cdk-hnb659fds-image-publishing-role-${this.account}-${region}`,
+        `arn:${this.partition}:iam::${this.account}:role/cdk-hnb659fds-lookup-role-${this.account}-${region}`,
+      ]),
     }));
     deployRole.addToPolicy(new iam.PolicyStatement({
       actions: ['ssm:GetParameter'],
-      resources: [`arn:${this.partition}:ssm:${this.region}:${this.account}:parameter/cdk-bootstrap/hnb659fds/version`],
+      resources: bootstrapRegions.map(
+        (region) => `arn:${this.partition}:ssm:${region}:${this.account}:parameter/cdk-bootstrap/hnb659fds/version`,
+      ),
     }));
 
     new cdk.CfnOutput(this, 'GitHubDeployRoleArn', { value: deployRole.roleArn });
