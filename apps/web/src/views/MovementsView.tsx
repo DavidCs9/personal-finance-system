@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { computeMonthSummary, monthKeyInZone } from "@finance/domain";
 import { RecoveryNotice } from "../components/RecoveryNotice";
 import {
   dateFormatter,
@@ -23,6 +24,7 @@ export function MovementsView({
   onDiscardException,
   onReadExceptionRaw,
   onImport,
+  onImportAmex,
   onRegisterCharge,
 }: {
   events: readonly PurchaseEvent[];
@@ -35,6 +37,7 @@ export function MovementsView({
   onDiscardException(id: string): Promise<void>;
   onReadExceptionRaw(id: string): Promise<string>;
   onImport(): void;
+  onImportAmex(): void;
   onRegisterCharge(): void;
 }) {
   const [activeException, setActiveException] = useState<IngestionException>();
@@ -44,9 +47,22 @@ export function MovementsView({
       ? b.amount.amountMinor - a.amount.amountMinor
       : eventDate(b).getTime() - eventDate(a).getTime(),
   );
-  const total = events
-    .filter((event) => event.status !== "rejected")
-    .reduce((sum, event) => sum + event.amount.amountMinor, 0);
+  const month = events[0] ? monthKeyInZone(eventDate(events[0])) : monthKeyInZone(new Date());
+  const total = computeMonthSummary({
+    events: events.map((event) => ({
+      amountMinor: event.amount.amountMinor,
+      status: event.status,
+      occurredAt: event.occurredAt,
+      receivedAt: event.receivedAt,
+      merchantRaw: event.merchantRaw,
+      msi: event.msi,
+    })),
+    month,
+    incomeMinor: 0,
+    incomeConfigured: false,
+    upcomingPaymentsMinor: 0,
+    now: new Date(),
+  }).spentMinor;
 
   return (
     <section className="movements-view">
@@ -89,6 +105,10 @@ export function MovementsView({
             setCaptureOpen(false);
             onImport();
           }}
+          onImportAmex={() => {
+            setCaptureOpen(false);
+            onImportAmex();
+          }}
         />
       )}
       {exceptions.length > 0 && (
@@ -115,9 +135,13 @@ export function MovementsView({
               {event.status === "needs_review" ? "!" : event.merchantRaw.slice(0, 1)}
             </span>
             <span className="movement-main">
-              <strong>{event.merchantRaw}</strong>
+              <strong>
+                {event.merchantRaw}
+                {event.msi ? <span className="msi-badge">MSI {event.msi.months}</span> : null}
+              </strong>
               <small>
                 {institutionLabel(event.institution)} · {dateFormatter.format(eventDate(event))}
+                {event.msi?.needsScheduleCompletion ? " · sin plan" : ""}
               </small>
             </span>
             <span className="movement-value">

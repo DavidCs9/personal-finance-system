@@ -17,6 +17,7 @@ import { EventSheet } from "../sheets/EventSheet";
 import { IncomeSheet } from "../sheets/IncomeSheet";
 import { ManualEntrySheet } from "../sheets/ManualEntrySheet";
 import { PaymentSheet } from "../sheets/PaymentSheet";
+import { AmexImportSheet } from "../sheets/AmexImportSheet";
 import { SantanderImportSheet } from "../sheets/SantanderImportSheet";
 import type { IngestionException, PurchaseEvent } from "../types";
 import { MovementsView } from "../views/MovementsView";
@@ -43,6 +44,7 @@ export function Dashboard({
   const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
   const [movementSort, setMovementSort] = useState<"recent" | "largest">("recent");
   const [importOpen, setImportOpen] = useState(false);
+  const [amexImportOpen, setAmexImportOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
 
   const eventsQuery = useQuery({
@@ -217,6 +219,7 @@ export function Dashboard({
             onDiscardException={discardException}
             onReadExceptionRaw={readExceptionRaw}
             onImport={() => setImportOpen(true)}
+            onImportAmex={() => setAmexImportOpen(true)}
             onRegisterCharge={() => setManualOpen(true)}
           />
         )}
@@ -275,6 +278,16 @@ export function Dashboard({
           onClose={() => setImportOpen(false)}
           onApplied={() => {
             setImportOpen(false);
+            void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+          }}
+        />
+      )}
+      {amexImportOpen && (
+        <AmexImportSheet
+          idToken={idToken}
+          onClose={() => setAmexImportOpen(false)}
+          onApplied={() => {
+            setAmexImportOpen(false);
             void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
           }}
         />

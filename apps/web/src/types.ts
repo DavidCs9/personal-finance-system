@@ -98,5 +98,48 @@ export interface SantanderImportDecision {
 export interface SantanderImportResult {
   readonly importId: string;
   readonly created: readonly PurchaseEvent[];
-  readonly summary: { readonly created: number; readonly linked: number; readonly skipped: number };
+  readonly summary: {
+    readonly created: number;
+    readonly linked: number;
+    readonly skipped: number;
+    readonly msiConfirmed?: number;
+  };
+}
+
+export type AmexImportRowStatus = "matched" | "unplanned" | "skipped";
+
+export interface AmexImportRow {
+  readonly identity: string;
+  readonly merchantRaw: string;
+  readonly amountMinor: number;
+  readonly occurredOn: string;
+  readonly installmentIndex?: number;
+  readonly installmentMonths?: number;
+  readonly originalAmountMinor?: number;
+  readonly status: AmexImportRowStatus;
+  readonly eventId?: string;
+}
+
+export interface AmexImportPreview {
+  readonly importId: string;
+  readonly accountLastFour: string;
+  readonly product: string;
+  readonly period: { readonly from: string; readonly to: string };
+  readonly summary: {
+    readonly total: number;
+    readonly matched: number;
+    readonly unplanned: number;
+    readonly skipped: number;
+  };
+  readonly rows: readonly AmexImportRow[];
+}
+
+export interface AmexImportResult {
+  readonly importId: string;
+  readonly created: readonly PurchaseEvent[];
+  readonly summary: {
+    readonly confirmed: number;
+    readonly createdUnplanned: number;
+    readonly skipped: number;
+  };
 }

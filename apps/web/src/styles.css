@@ -236,6 +236,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .auth-card > p:not(.eyebrow):not(.loading-copy) { color: var(--muted); margin: 13px 0 24px; font-size: 13px; line-height: 1.5; }
 .auth-card form, .sheet-form { display: grid; gap: 15px; }
 .loading-copy { margin: 36px 0 5px; color: var(--muted); font-size: 12px; }
+.checkbox-row { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--ink); }
+.checkbox-row input { width: 18px; height: 18px; }
+.msi-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid #d7cfc4; border-radius: 999px; font-size: 10px; letter-spacing: .04em; color: var(--ink-soft); }
 .field { display: grid; gap: 7px; }
 .field > span { color: var(--ink-soft); font-size: 9px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
 .field > input, .field > select, .sheet-form input, .sheet-form select { width: 100%; border: 1px solid #d7cfc4; border-radius: 10px; color: var(--ink); background: #f8f4ed; padding: 12px; font-size: 14px; }
