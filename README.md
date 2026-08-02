@@ -1,27 +1,74 @@
-# Olbia — Personal Finance System
+# Olbia
 
-Un tablero personal de gasto mensual que observa eventos financieros desde alertas por correo, sin acceder a credenciales bancarias.
+A personal monthly spending ledger. It observes real purchases from bank email alerts and Apple Pay, keeps source evidence for every signal, and answers clearly how much has been spent, what pace the month is on, and what remains after upcoming commitments.
 
-## Estado
+It never asks for bank credentials. It works from notifications already arriving by email and from authenticated observations on the phone.
 
-La V1 recibe correos reenviados a través de Amazon SES y observaciones automáticas de Apple Pay mediante Shortcuts. Conserva cada fuente antes de reconciliar observaciones de una misma compra. Como respaldo, la UI también puede conciliar CSVs de movimientos de tarjeta Santander mediante una previsualización que evita duplicados y propone vínculos con observaciones ya registradas.
+## Design idea
 
-## Estructura
+The primary unit is not a final accounting transaction — it is an **observed event**.
 
-- `apps/web` — UI de revisión personal.
-- `infrastructure` — aplicación CDK para los recursos de AWS.
-- `packages/domain` — tipos y reglas de dominio compartidos.
-- `services/api` — handlers de la API para la UI.
-- `services/ingestion` — persistencia y parsing de compras.
-- `tests/fixtures/email` — ejemplos anonimizados de alertas bancarias; nunca correos reales.
-- `docs` — alcance y decisiones de arquitectura.
+- Every alert or automation leaves an immutable observation with its source.
+- Multiple observations of the same purchase can be reconciled; none are deleted.
+- Ambiguous cases stay for human review. A purchase is never invented by inference.
+- Original MIME, Apple Pay payloads, and fallback CSVs are retained encrypted before parsing.
 
-Las decisiones acordadas para V1 están en [docs/v1-decisions.md](docs/v1-decisions.md).
-La configuracion unica de reenvio esta en [docs/gmail-forwarding.md](docs/gmail-forwarding.md).
-La automatizacion de Apple Pay esta en [docs/apple-pay-shortcut.md](docs/apple-pay-shortcut.md).
+That separates capture, evidence, reconciliation, and presentation — production-grade financial system discipline, applied to a single-user product.
 
-El comportamiento de Olbia instalada en iOS esta documentado en [docs/ios-home-screen-web-app.md](docs/ios-home-screen-web-app.md).
+## Architecture
 
-## Entregas
+```text
+Gmail forward ──► SES inbound ──► S3 (MIME/KMS) ──► SQS ──► Lambda ingest
+                                                              │
+Apple Pay Shortcut ───────────────────────────► authenticated API ┤
+                                                              │
+Santander CSV (UI) ───────────────────────────► preview/apply ────┤
+                                                              ▼
+                                                    DynamoDB ledger
+                                                              │
+                                              API Gateway + Cognito JWT
+                                                              │
+                                              React SPA · CloudFront
+```
 
-Los cambios llegan por pull request a `main`. GitHub Actions ejecuta tests, chequeos de tipos, build y síntesis de CDK para cada PR. Tras el merge, el mismo flujo se autentica con AWS mediante OIDC y despliega `PersonalFinanceV1`; no usa claves AWS almacenadas en GitHub. El rol de GitHub sólo puede asumir los roles de bootstrap de CDK y sólo desde `main` de este repositorio.
+Everything runs on AWS (`us-east-2`), defined with CDK in TypeScript. Deploys from `main` via GitHub Actions with OIDC — no AWS keys stored in the repository.
+
+| Layer | Responsibility |
+| --- | --- |
+| Ingestion | Deduplicate, parse, persist metadata, and link evidence |
+| Domain | Shared types, minor-unit money, cross-service rules |
+| API | Ledger, monthly plan, CSV reconciliation, Apple Pay observations |
+| Web | Mobile-first summary and movements with evidence |
+| Infrastructure | SES, S3, SQS, Lambda, DynamoDB, Cognito, CloudFront |
+
+## Monorepo
+
+```text
+apps/web              Review UI (React + Vite)
+services/api          HTTP handlers for the ledger
+services/ingestion    Email pipeline and bank parsers
+packages/domain       Shared contract across services
+infrastructure        CDK: product stack + CI bootstrap
+docs                  Product, UI, and operational decisions
+tests/fixtures/email  Anonymized .eml fixtures — never real mail
+```
+
+npm workspaces, strict TypeScript, and Vitest. Parsers are tested against real American Express and Santander México formats.
+
+## Decisions that matter
+
+- **Traceability over convenience** — the full source is retained; parsing is reviewable and never rewrites the original.
+- **Idempotency per source** — forwards and retries do not duplicate the ledger.
+- **Explicit reconciliation** — a unique high-confidence match links; ambiguity requires a decision.
+- **Closed auth** — Cognito with a single user; no public signup.
+- **Linear history on `main`** — PRs with a quality gate (tests, types, build, `cdk synth`) and automatic deploy.
+
+## Documentation
+
+- [V1 decisions](docs/v1-decisions.md) — scope, data model, and infrastructure
+- [UI direction](docs/ui-design-brief.md) — hierarchy, personality, and mobile navigation
+- [Gmail → SES forwarding](docs/gmail-forwarding.md)
+- [Apple Pay Shortcut](docs/apple-pay-shortcut.md)
+- [iOS home-screen web app](docs/ios-home-screen-web-app.md)
+
+Personal project in production. The code is public as a sample of how I structure an end-to-end system.
