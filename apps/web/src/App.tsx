@@ -302,8 +302,15 @@ function RecoveryNotice({ exception, onRetry, onDiscard, onReadRaw }: { exceptio
   const [rawEmail, setRawEmail] = useState<string>();
   const run = (action: () => Promise<void>) => { setBusy(true); setError(undefined); void action().catch((reason) => setError(reason instanceof Error ? reason.message : "No se pudo actualizar este correo.")).finally(() => setBusy(false)); };
   const review = () => { if (rawEmail) { setRawEmail(undefined); return; } setBusy(true); setError(undefined); void onReadRaw().then(setRawEmail).catch((reason) => setError(reason instanceof Error ? reason.message : "No se pudo leer la fuente.")).finally(() => setBusy(false)); };
-  return <article className="recovery-item"><div className="recovery-row"><span className="recovery-dot">!</span><div><strong>{exception.institution ?? "Origen por identificar"}</strong><small>{exception.retry?.status === "queued" ? "Reintento en proceso" : exception.details}</small>{error && <p className="form-error">{error}</p>}</div><div className="recovery-actions"><button disabled={busy} onClick={review}>{busy ? "Cargando…" : rawEmail ? "Ocultar fuente" : "Revisar correo"}</button></div></div>{rawEmail && <div className="recovery-evidence"><pre className="raw-source">{rawEmail}</pre><div className="recovery-actions">{!exception.retry && <button disabled={busy} onClick={() => run(onRetry)}>Reintentar</button>}<button className="discard-action" disabled={busy} onClick={() => { if (window.confirm("¿Descartar este correo pendiente? La fuente original se conservará.")) run(onDiscard); }}>Descartar</button></div></div>}</article>;
+  return <article className="recovery-item"><div className="recovery-row"><span className="recovery-dot">!</span><div><strong>{exception.institution ?? "Origen por identificar"}</strong><small>{exception.retry?.status === "queued" ? "Estamos analizando nuevamente este correo." : recoveryMessage(exception)}</small>{error && <p className="form-error">{error}</p>}</div><div className="recovery-actions"><button disabled={busy} onClick={review}>{busy ? "Cargando…" : rawEmail ? "Ocultar fuente" : "Revisar correo"}</button></div></div>{rawEmail && <div className="recovery-evidence"><div><p className="eyebrow">EVIDENCIA CONSERVADA</p><pre className="raw-source">{rawEmail}</pre></div><div className="recovery-actions">{!exception.retry && <button disabled={busy} onClick={() => run(onRetry)}>Reintentar</button>}<button className="discard-action" disabled={busy} onClick={() => { if (window.confirm("¿Descartar este correo pendiente? La fuente original se conservará.")) run(onDiscard); }}>Descartar</button></div></div>}</article>;
 }
+
+const recoveryMessage = (exception: IngestionException): string => {
+  if (exception.reason === "unsupported_source") return "No reconocimos el origen o formato. Revisa el correo antes de decidir.";
+  if (exception.reason === "parser_failed") return "Reconocimos el origen, pero faltaron datos para crear el movimiento.";
+  if (exception.reason === "missing_required_data") return "El correo no contiene todos los datos necesarios.";
+  return "Este correo necesita revisión antes de convertirse en movimiento.";
+};
 
 function MonthSelector({ value, onChange }: { value: string; onChange(value: string): void }) {
   const shift = (delta: number) => {
