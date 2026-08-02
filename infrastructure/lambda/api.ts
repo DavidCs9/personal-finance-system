@@ -38,6 +38,9 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     if (exceptionId && event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/retry')) {
       return response(202, await requestRetry(exceptionId, principal(event)));
     }
+    if (exceptionId && event.requestContext.http.method === 'GET' && event.rawPath.endsWith('/raw')) {
+      return response(200, { rawEmail: await readExceptionRawEmail(exceptionId) });
+    }
     if (exceptionId && event.requestContext.http.method === 'DELETE') {
       return response(200, await discardException(exceptionId, principal(event)));
     }
@@ -161,6 +164,15 @@ const discardException = async (exceptionId: string, discardedBy: string): Promi
   return { id: exceptionId, discarded };
 };
 
+const readExceptionRawEmail = async (exceptionId: string): Promise<string> => {
+  const record = await database.send(new GetCommand({
+    TableName: tableName, Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' }, ConsistentRead: true,
+  }));
+  const source = (record.Item?.payload as JsonObject | undefined)?.source as { bucket?: string; key?: string } | undefined;
+  if (!source?.bucket || !source.key) throw new Error(`Missing raw source for exception ${exceptionId}`);
+  return readSource({ bucket: source.bucket, key: source.key }, `exception ${exceptionId}`);
+};
+
 const getEventDetail = async (eventId: string): Promise<JsonObject | undefined> => {
   const record = await database.send(new GetCommand({
     TableName: tableName,
@@ -180,8 +192,12 @@ const readRawEmail = async (eventId: string): Promise<string> => {
   const detail = await getEventDetail(eventId);
   const source = detail?.source as { bucket?: string; key?: string } | undefined;
   if (!source?.bucket || !source.key) throw new Error(`Missing raw source for event ${eventId}`);
+  return readSource({ bucket: source.bucket, key: source.key }, `event ${eventId}`);
+};
+
+const readSource = async (source: { bucket: string; key: string }, label: string): Promise<string> => {
   const object = await s3.send(new GetObjectCommand({ Bucket: source.bucket, Key: source.key }));
-  if (!object.Body) throw new Error(`Raw source for event ${eventId} did not contain a body`);
+  if (!object.Body) throw new Error(`Raw source for ${label} did not contain a body`);
   return object.Body.transformToString();
 };
 

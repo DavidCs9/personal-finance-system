@@ -169,6 +169,7 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
     await ledgerApi.discardException(exceptionId, idToken);
     setExceptions((current) => current.filter((item) => item.id !== exceptionId));
   };
+  const readExceptionRaw = (exceptionId: string) => ledgerApi.rawException(exceptionId, idToken);
 
   useEffect(() => {
     if (demoMode) return;
@@ -258,6 +259,7 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
       exceptions={exceptions}
       onRetryException={retryException}
       onDiscardException={discardException}
+      onReadExceptionRaw={readExceptionRaw}
     />}
 
     <nav className="mobile-tabs" aria-label="Navegación principal">
@@ -285,11 +287,13 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
   </main>;
 }
 
-function RecoveryNotice({ exception, onRetry, onDiscard }: { exception: IngestionException; onRetry(): Promise<void>; onDiscard(): Promise<void> }) {
+function RecoveryNotice({ exception, onRetry, onDiscard, onReadRaw }: { exception: IngestionException; onRetry(): Promise<void>; onDiscard(): Promise<void>; onReadRaw(): Promise<string> }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [rawEmail, setRawEmail] = useState<string>();
   const run = (action: () => Promise<void>) => { setBusy(true); setError(undefined); void action().catch((reason) => setError(reason instanceof Error ? reason.message : "No se pudo actualizar este correo.")).finally(() => setBusy(false)); };
-  return <article className="recovery-row"><span className="recovery-dot">!</span><div><strong>{exception.institution ?? "Origen por identificar"}</strong><small>{exception.retry?.status === "queued" ? "Reintento en proceso" : exception.details}</small>{error && <p className="form-error">{error}</p>}</div><div className="recovery-actions">{!exception.retry && <button disabled={busy} onClick={() => run(onRetry)}>Reintentar</button>}<button className="discard-action" disabled={busy} onClick={() => { if (window.confirm("¿Descartar este correo pendiente? La fuente original se conservará.")) run(onDiscard); }}>Descartar</button></div></article>;
+  const review = () => { if (rawEmail) { setRawEmail(undefined); return; } setBusy(true); setError(undefined); void onReadRaw().then(setRawEmail).catch((reason) => setError(reason instanceof Error ? reason.message : "No se pudo leer la fuente.")).finally(() => setBusy(false)); };
+  return <article className="recovery-item"><div className="recovery-row"><span className="recovery-dot">!</span><div><strong>{exception.institution ?? "Origen por identificar"}</strong><small>{exception.retry?.status === "queued" ? "Reintento en proceso" : exception.details}</small>{error && <p className="form-error">{error}</p>}</div><div className="recovery-actions"><button disabled={busy} onClick={review}>{busy ? "Cargando…" : rawEmail ? "Ocultar fuente" : "Revisar correo"}</button></div></div>{rawEmail && <div className="recovery-evidence"><pre className="raw-source">{rawEmail}</pre><div className="recovery-actions">{!exception.retry && <button disabled={busy} onClick={() => run(onRetry)}>Reintentar</button>}<button className="discard-action" disabled={busy} onClick={() => { if (window.confirm("¿Descartar este correo pendiente? La fuente original se conservará.")) run(onDiscard); }}>Descartar</button></div></div>}</article>;
 }
 
 function MonthSelector({ value, onChange }: { value: string; onChange(value: string): void }) {
@@ -406,7 +410,7 @@ function Summary(props: SummaryProps) {
   </section>;
 }
 
-function Movements({ month, onMonthChange, events, exceptions, loading, sort, onSortChange, onOpen, onRetryException, onDiscardException }: {
+function Movements({ month, onMonthChange, events, exceptions, loading, sort, onSortChange, onOpen, onRetryException, onDiscardException, onReadExceptionRaw }: {
   month: string;
   onMonthChange(value: string): void;
   events: readonly PurchaseEvent[];
@@ -417,6 +421,7 @@ function Movements({ month, onMonthChange, events, exceptions, loading, sort, on
   onOpen(event: PurchaseEvent): void;
   onRetryException(id: string): Promise<void>;
   onDiscardException(id: string): Promise<void>;
+  onReadExceptionRaw(id: string): Promise<string>;
 }) {
   const sorted = [...events].sort((a, b) => sort === "largest" ? b.amount.amountMinor - a.amount.amountMinor : eventDate(b).getTime() - eventDate(a).getTime());
   const total = events.filter((event) => event.status !== "rejected").reduce((sum, event) => sum + event.amount.amountMinor, 0);
@@ -426,7 +431,7 @@ function Movements({ month, onMonthChange, events, exceptions, loading, sort, on
       <div><p className="eyebrow">TRAZABILIDAD</p><h1>Movimientos</h1><p>{events.length} registros · {money(total)}</p></div>
       <label className="sort-control"><span>Ordenar</span><select value={sort} onChange={(event) => onSortChange(event.target.value as "recent" | "largest")}><option value="recent">Más recientes</option><option value="largest">Mayor gasto</option></select></label>
     </header>
-    {exceptions.length > 0 && <details className="recovery-section"><summary><span>Correos por revisar</span><small>{exceptions.length}</small></summary><div>{exceptions.map((exception) => <RecoveryNotice key={exception.id} exception={exception} onRetry={() => onRetryException(exception.id)} onDiscard={() => onDiscardException(exception.id)} />)}</div></details>}
+    {exceptions.length > 0 && <details className="recovery-section"><summary><span>Correos por revisar</span><small>{exceptions.length}</small></summary><div>{exceptions.map((exception) => <RecoveryNotice key={exception.id} exception={exception} onRetry={() => onRetryException(exception.id)} onDiscard={() => onDiscardException(exception.id)} onReadRaw={() => onReadExceptionRaw(exception.id)} />)}</div></details>}
     <div className="movement-list">
       {sorted.map((event) => <button className="movement-row" key={event.id} onClick={() => onOpen(event)}>
         <span className={`movement-icon ${event.status}`} aria-hidden="true">{event.status === "needs_review" ? "!" : event.merchantRaw.slice(0, 1)}</span>

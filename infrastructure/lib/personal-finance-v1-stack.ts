@@ -298,6 +298,7 @@ export class PersonalFinanceV1Stack extends Stack {
     for (const route of [
       'GET /events',
       'GET /exceptions',
+      'GET /exceptions/{exceptionId}/raw',
       'POST /exceptions/{exceptionId}/retry',
       'DELETE /exceptions/{exceptionId}',
       'GET /events/{eventId}',
