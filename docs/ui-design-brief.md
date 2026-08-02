@@ -6,11 +6,11 @@ Las reglas operativas que deben seguir futuras implementaciones del frontend est
 
 ## Jerarquía de información
 
-1. **Has gastado** — la cifra dominante.
-2. **A este ritmo** — proyección de cierre y advertencia cuando el ingreso no alcanzará.
-3. **Te quedan** — disponible después de compras observadas y pagos próximos.
+1. **Has gastado** — la cifra dominante. Para MSI cuenta solo la cuota ya reconciliada del mes, no el ticket completo.
+2. **A este ritmo** — proyección de cierre; el ritmo diario usa gasto discrecional (no MSI) y suma cuotas/compromisos pendientes.
+3. **Te quedan** — disponible después de gasto realizado y dinero comprometido (bills + cuotas MSI aún no reconciliadas).
 4. **Incluye por confirmar** — incertidumbre del parser expuesta dentro del total.
-5. **Próximos pagos** — compromisos visibles debajo del resumen.
+5. **Dinero comprometido** — pagos próximos fijos y cuotas MSI del mes en estado `committed`, con etiqueta `Merchant · MSI i/N`.
 
 El ingreso mensual se captura manualmente como una sola cifra, aunque provenga de dos depósitos de nómina. El periodo siempre es un mes calendario.
 
