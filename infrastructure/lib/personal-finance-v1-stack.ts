@@ -125,10 +125,10 @@ export class PersonalFinanceV1Stack extends Stack {
       RAW_EMAIL_BUCKET_NAME: rawEmailBucket.bucketName,
     };
     const lambdaDefaults = {
-      runtime: lambda.Runtime.NODEJS_22_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       timeout: Duration.seconds(30),
       memorySize: 256,
-      bundling: { minify: true, sourceMap: true, target: 'node22' },
+      bundling: { minify: true, sourceMap: true, target: 'node24' },
     };
 
     const ingestionFunction = new NodejsFunction(this, 'IngestionFunction', {
