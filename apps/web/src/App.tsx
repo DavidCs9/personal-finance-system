@@ -295,13 +295,33 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
   </main>;
 }
 
-function RecoveryNotice({ exception, onRetry, onDiscard, onReadRaw }: { exception: IngestionException; onRetry(): Promise<void>; onDiscard(): Promise<void>; onReadRaw(): Promise<string> }) {
+function RecoveryNotice({ exception, onReview }: { exception: IngestionException; onReview(): void }) {
+  return <article className="recovery-item"><div className="recovery-row"><span className="recovery-dot">!</span><div><strong>{exception.institution ?? "Origen por identificar"}</strong><small>{exception.retry?.status === "queued" ? "Estamos analizando nuevamente este correo." : recoveryMessage(exception)}</small></div><button className="recovery-review-button" onClick={onReview}>Revisar correo</button></div></article>;
+}
+
+function RecoveryReviewSheet({ exception, onClose, onRetry, onDiscard, onReadRaw }: { exception: IngestionException; onClose(): void; onRetry(): Promise<void>; onDiscard(): Promise<void>; onReadRaw(): Promise<string> }) {
+  const [rawEmail, setRawEmail] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const [rawEmail, setRawEmail] = useState<string>();
-  const run = (action: () => Promise<void>) => { setBusy(true); setError(undefined); void action().catch((reason) => setError(reason instanceof Error ? reason.message : "No se pudo actualizar este correo.")).finally(() => setBusy(false)); };
-  const review = () => { if (rawEmail) { setRawEmail(undefined); return; } setBusy(true); setError(undefined); void onReadRaw().then(setRawEmail).catch((reason) => setError(reason instanceof Error ? reason.message : "No se pudo leer la fuente.")).finally(() => setBusy(false)); };
-  return <article className="recovery-item"><div className="recovery-row"><span className="recovery-dot">!</span><div><strong>{exception.institution ?? "Origen por identificar"}</strong><small>{exception.retry?.status === "queued" ? "Estamos analizando nuevamente este correo." : recoveryMessage(exception)}</small>{error && <p className="form-error">{error}</p>}</div><div className="recovery-actions"><button disabled={busy} onClick={review}>{busy ? "Cargando…" : rawEmail ? "Ocultar fuente" : "Revisar correo"}</button></div></div>{rawEmail && <div className="recovery-evidence"><div><p className="eyebrow">EVIDENCIA CONSERVADA</p><pre className="raw-source">{rawEmail}</pre></div><div className="recovery-actions">{!exception.retry && <button disabled={busy} onClick={() => run(onRetry)}>Reintentar</button>}<button className="discard-action" disabled={busy} onClick={() => { if (window.confirm("¿Descartar este correo pendiente? La fuente original se conservará.")) run(onDiscard); }}>Descartar</button></div></div>}</article>;
+  const loadRaw = () => {
+    setBusy(true);
+    setError(undefined);
+    void onReadRaw().then(setRawEmail).catch((reason) => setError(reason instanceof Error ? reason.message : "No se pudo leer la fuente.")).finally(() => setBusy(false));
+  };
+  useEffect(loadRaw, [exception.id]);
+  const run = (action: () => Promise<void>) => {
+    setBusy(true);
+    setError(undefined);
+    void action().then(onClose).catch((reason) => setError(reason instanceof Error ? reason.message : "No se pudo actualizar este correo.")).finally(() => setBusy(false));
+  };
+  return <Sheet eyebrow="CORREO POR REVISAR" title={exception.institution ?? "Origen por identificar"} onClose={onClose}>
+    <div className="recovery-review">
+      <p>{recoveryMessage(exception)}</p>
+      {error && <div className="recovery-load-error" role="alert"><p>{error}</p>{!rawEmail && <button onClick={loadRaw} disabled={busy}>Intentar de nuevo</button>}</div>}
+      {!rawEmail && !error && <div className="recovery-loading" aria-live="polite">Cargando correo original…</div>}
+      {rawEmail && <><div className="recovery-source"><p className="eyebrow">EVIDENCIA CONSERVADA</p><pre className="raw-source">{rawEmail}</pre></div><div className="recovery-review-actions">{!exception.retry && <button className="primary-button" disabled={busy} onClick={() => run(onRetry)}>{busy ? "Procesando…" : "Reintentar análisis"}</button>}<button className="discard-action" disabled={busy} onClick={() => { if (window.confirm("¿Descartar este correo pendiente? La fuente original se conservará.")) run(onDiscard); }}>Descartar correo</button></div></>}
+    </div>
+  </Sheet>;
 }
 
 const recoveryMessage = (exception: IngestionException): string => {
@@ -438,6 +458,7 @@ function Movements({ month, onMonthChange, events, exceptions, loading, sort, on
   onDiscardException(id: string): Promise<void>;
   onReadExceptionRaw(id: string): Promise<string>;
 }) {
+  const [activeException, setActiveException] = useState<IngestionException>();
   const sorted = [...events].sort((a, b) => sort === "largest" ? b.amount.amountMinor - a.amount.amountMinor : eventDate(b).getTime() - eventDate(a).getTime());
   const total = events.filter((event) => event.status !== "rejected").reduce((sum, event) => sum + event.amount.amountMinor, 0);
   return <section className="movements-view">
@@ -446,7 +467,7 @@ function Movements({ month, onMonthChange, events, exceptions, loading, sort, on
       <div><p className="eyebrow">TRAZABILIDAD</p><h1>Movimientos</h1><p>{events.length} registros · {money(total)}</p></div>
       <label className="sort-control"><span>Ordenar</span><select value={sort} onChange={(event) => onSortChange(event.target.value as "recent" | "largest")}><option value="recent">Más recientes</option><option value="largest">Mayor gasto</option></select></label>
     </header>
-    {exceptions.length > 0 && <details className="recovery-section"><summary><span>Correos por revisar</span><small>{exceptions.length}</small></summary><div>{exceptions.map((exception) => <RecoveryNotice key={exception.id} exception={exception} onRetry={() => onRetryException(exception.id)} onDiscard={() => onDiscardException(exception.id)} onReadRaw={() => onReadExceptionRaw(exception.id)} />)}</div></details>}
+    {exceptions.length > 0 && <details className="recovery-section"><summary><span>Correos por revisar</span><small>{exceptions.length}</small></summary><div>{exceptions.map((exception) => <RecoveryNotice key={exception.id} exception={exception} onReview={() => setActiveException(exception)} />)}</div></details>}
     <div className="movement-list">
       {sorted.map((event) => <button className="movement-row" key={event.id} onClick={() => onOpen(event)}>
         <span className={`movement-icon ${event.status}`} aria-hidden="true">{event.status === "needs_review" ? "!" : event.merchantRaw.slice(0, 1)}</span>
@@ -457,6 +478,7 @@ function Movements({ month, onMonthChange, events, exceptions, loading, sort, on
       {!loading && sorted.length === 0 && <div className="empty-state"><span>—</span><h2>No hay movimientos</h2><p>Cuando llegue una alerta bancaria, aparecerá aquí.</p></div>}
       {loading && <div className="empty-state"><p>Cargando movimientos…</p></div>}
     </div>
+    {activeException && <RecoveryReviewSheet exception={activeException} onClose={() => setActiveException(undefined)} onRetry={() => onRetryException(activeException.id)} onDiscard={() => onDiscardException(activeException.id)} onReadRaw={() => onReadExceptionRaw(activeException.id)} />}
   </section>;
 }
 
