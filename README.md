@@ -17,19 +17,39 @@ That separates capture, evidence, reconciliation, and presentation — productio
 
 ## Architecture
 
-```text
-Gmail forward ──► SES inbound ──► S3 (MIME/KMS) ──► SQS ──► Lambda ingest
-                                                              │
-Apple Pay Shortcut ───────────────────────────► authenticated API ┤
-                                                              │
-Santander CSV (UI) ───────────────────────────► preview/apply ────┤
-                                                              ▼
-                                                    DynamoDB ledger
-                                                              │
-                                              API Gateway + Cognito JWT
-                                                              │
-                                              React SPA · CloudFront
+System context ([C4](https://c4model.com/) level 1). Container and component diagrams live in [docs/architecture.md](docs/architecture.md).
+
+```mermaid
+flowchart TB
+  classDef person fill:#08427B,stroke:#052E56,color:#fff,stroke-width:1px
+  classDef system fill:#1168BD,stroke:#0B4884,color:#fff,stroke-width:1px
+  classDef external fill:#999999,stroke:#6B6B6B,color:#fff,stroke-width:1px
+
+  owner["Owner<br/><i>Person</i><br/>Reviews spend, recovers failures,<br/>reconciles statements"]
+  olbia["Olbia<br/><i>Software System</i><br/>Personal monthly spending ledger.<br/>Observes purchases without bank credentials"]
+  issuers["Card and billing alerts<br/><i>Software System</i><br/>Amex, Santander, Nu, AWS Billing"]
+  gmail["Gmail<br/><i>Software System</i><br/>Forwards matching alerts to Olbia"]
+  shortcuts["Apple Shortcuts<br/><i>Software System</i><br/>Posts Apple Pay captures"]
+  webpush["Web Push network<br/><i>Software System</i><br/>Delivers browser notifications"]
+
+  issuers -->|"Sends alerts"| gmail
+  gmail -->|"Forwards matching alerts"| olbia
+  shortcuts -->|"Posts Apple Pay observations"| olbia
+  owner -->|"Signs in, reviews, reconciles"| olbia
+  olbia -->|"Emails ingestion exceptions"| owner
+  olbia -->|"Sends optional push notices"| webpush
+  webpush -->|"Delivers notifications"| owner
+
+  class owner person
+  class olbia system
+  class issuers,gmail,shortcuts,webpush external
 ```
+
+| Colour | Meaning |
+| --- | --- |
+| Dark blue | Person |
+| Mid blue | Software system in scope |
+| Grey | External software system |
 
 Everything runs on AWS (`us-east-2`), defined with CDK in TypeScript. Deploys from `main` via GitHub Actions with OIDC — no AWS keys stored in the repository.
 
@@ -65,6 +85,7 @@ npm workspaces, strict TypeScript, and Vitest. Parsers are tested against real A
 
 ## Documentation
 
+- [Architecture (C4)](docs/architecture.md) — containers and components
 - [V1 decisions](docs/v1-decisions.md) — scope, data model, and infrastructure
 - [UI direction](docs/ui-design-brief.md) — hierarchy, personality, and mobile navigation
 - [Gmail → SES forwarding](docs/gmail-forwarding.md)
