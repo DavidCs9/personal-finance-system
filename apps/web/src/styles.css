@@ -121,6 +121,32 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .empty-action strong { font-size: 12px; }
 .empty-action small { color: var(--muted); font-size: 10px; }
 
+.push-preference {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 28px 0 12px;
+  padding: 16px 0 4px;
+  border-top: 1px solid var(--line);
+}
+.push-preference > div { display: grid; gap: 4px; min-width: 0; }
+.push-preference strong { font-size: 13px; }
+.push-preference small { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.push-preference-message { margin: 4px 0 0; color: var(--ink-soft); font-size: 11px; }
+.push-preference-button {
+  flex: 0 0 auto;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  background: #f7f2ea;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.push-preference-button:disabled { opacity: .55; }
+
 .movements-view { padding-bottom: 20px; }
 .summary-active .summary-view { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; width: 100%; }
 .summary-active .summary-scroll { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }

@@ -182,6 +182,8 @@ export function Dashboard({
             onAddPayment={() => setEditingPayment(null)}
             onEditPayment={(payment) => setEditingPayment(payment)}
             onReviewLargest={reviewLargest}
+            idToken={idToken}
+            demoMode={demoMode}
           />
         ) : (
           <MovementsView

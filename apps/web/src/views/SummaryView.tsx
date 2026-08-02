@@ -1,5 +1,6 @@
 import { money, monthDate } from "../lib/format";
 import type { MonthlyPlan, PlannedPayment } from "../monthly-plan";
+import { PushPreference } from "../components/PushPreference";
 
 export interface SummaryViewProps {
   readonly month: string;
@@ -19,6 +20,8 @@ export interface SummaryViewProps {
   readonly onAddPayment: () => void;
   readonly onEditPayment: (payment: PlannedPayment) => void;
   readonly onReviewLargest: () => void;
+  readonly idToken: string;
+  readonly demoMode: boolean;
 }
 
 export function SummaryView(props: SummaryViewProps) {
@@ -164,6 +167,10 @@ export function SummaryView(props: SummaryViewProps) {
               </button>
             )}
           </section>
+        )}
+
+        {!props.loading && !props.loadError && (
+          <PushPreference idToken={props.idToken} demoMode={props.demoMode} />
         )}
       </div>
     </section>

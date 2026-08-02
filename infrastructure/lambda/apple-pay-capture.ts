@@ -5,6 +5,7 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import { InvalidApplePayCaptureError, parseApplePayCapture } from './apple-pay-input.js';
 import { saveObservedEvent } from './observed-events.js';
+import { notifyObservedPurchasePush } from './push-notify.js';
 
 const database = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -27,37 +28,54 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     const now = new Date().toISOString();
     const eventId = randomUUID();
     const cardKey = createHash('sha256').update(input.cardRaw.trim().toLowerCase()).digest('hex').slice(0, 16);
+    const purchase = {
+      id: eventId,
+      institution: input.institution,
+      eventType: 'card_purchase' as const,
+      status: 'accepted' as const,
+      account: {
+        institution: input.institution,
+        accountId: `${input.institution}:apple-pay:${cardKey}`,
+        displayName: input.cardRaw,
+      },
+      amount: { amountMinor: input.amountMinor, currency: input.currency },
+      merchantRaw: input.merchantRaw,
+      occurredAt: input.occurredAt,
+      receivedAt: now,
+      ingestedAt: now,
+      source: {
+        kind: 'apple_pay_shortcut' as const,
+        requestId: input.requestId,
+        cardRaw: input.cardRaw,
+        nameRaw: input.nameRaw,
+      },
+      parserVersion: 'apple-pay-shortcut-v1',
+      parseWarnings: [] as string[],
+    };
     const saved = await saveObservedEvent({
       database,
       tableName,
       dedupeKey: `apple_pay_shortcut:${input.requestId}`,
       captureSource: 'apple_pay_shortcut',
       reconciliationAt: input.occurredAt,
-      event: {
-        id: eventId,
-        institution: input.institution,
-        eventType: 'card_purchase',
-        status: 'accepted',
-        account: {
-          institution: input.institution,
-          accountId: `${input.institution}:apple-pay:${cardKey}`,
-          displayName: input.cardRaw,
-        },
-        amount: { amountMinor: input.amountMinor, currency: input.currency },
-        merchantRaw: input.merchantRaw,
-        occurredAt: input.occurredAt,
-        receivedAt: now,
-        ingestedAt: now,
-        source: {
-          kind: 'apple_pay_shortcut',
-          requestId: input.requestId,
-          cardRaw: input.cardRaw,
-          nameRaw: input.nameRaw,
-        },
-        parserVersion: 'apple-pay-shortcut-v1',
-        parseWarnings: [],
-      },
+      event: purchase,
     });
+    if (saved.created) {
+      try {
+        await notifyApplePayPush({
+          id: saved.eventId,
+          merchantRaw: purchase.merchantRaw,
+          amount: purchase.amount,
+          institution: purchase.institution,
+        });
+      } catch (error) {
+        console.error(JSON.stringify({
+          message: 'Unable to send Apple Pay observed-purchase push',
+          eventId: saved.eventId,
+          error: errorMessage(error),
+        }));
+      }
+    }
     return response(saved.duplicate ? 200 : 201, {
       accepted: true,
       eventId: saved.eventId,
@@ -70,6 +88,35 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     console.error('Apple Pay capture failed', { error: errorMessage(error) });
     return response(500, { message: 'Unable to save Apple Pay capture.' });
   }
+};
+
+const notifyApplePayPush = async (purchase: {
+  readonly id: string;
+  readonly merchantRaw: string;
+  readonly amount: { readonly amountMinor: number; readonly currency: string };
+  readonly institution: string;
+}): Promise<void> => {
+  const vapidSecretArn = process.env.VAPID_SECRET_ARN;
+  const navigateUrl = process.env.WEB_APP_URL;
+  if (!vapidSecretArn || !navigateUrl) {
+    console.info(JSON.stringify({ message: 'Apple Pay push skipped until VAPID secret and web app URL are configured.' }));
+    return;
+  }
+  const result = await notifyObservedPurchasePush({
+    database,
+    tableName,
+    secrets,
+    vapidSecretArn,
+    navigateUrl,
+    purchase,
+  });
+  console.info(JSON.stringify({
+    message: 'Apple Pay observed-purchase push finished',
+    eventId: purchase.id,
+    sent: result.sent,
+    expired: result.expired,
+    failed: result.failed,
+  }));
 };
 
 const captureToken = (): Promise<string> => {
