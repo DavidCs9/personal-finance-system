@@ -386,6 +386,7 @@ export class PersonalFinanceV1Stack extends Stack {
     const applePayCaptureIntegration = new HttpLambdaIntegration('ApplePayCaptureIntegration', applePayCaptureFunction);
     for (const route of [
       'GET /events',
+      'POST /events/manual',
       'GET /exceptions',
       'GET /exceptions/{exceptionId}/raw',
       'POST /exceptions/{exceptionId}/retry',

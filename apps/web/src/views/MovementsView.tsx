@@ -8,6 +8,7 @@ import {
   money,
   statusLabel,
 } from "../lib/format";
+import { CaptureActionsSheet } from "../sheets/CaptureActionsSheet";
 import { RecoveryReviewSheet } from "../sheets/RecoveryReviewSheet";
 import type { IngestionException, PurchaseEvent } from "../types";
 
@@ -22,6 +23,7 @@ export function MovementsView({
   onDiscardException,
   onReadExceptionRaw,
   onImport,
+  onRegisterCharge,
 }: {
   events: readonly PurchaseEvent[];
   exceptions: readonly IngestionException[];
@@ -33,8 +35,10 @@ export function MovementsView({
   onDiscardException(id: string): Promise<void>;
   onReadExceptionRaw(id: string): Promise<string>;
   onImport(): void;
+  onRegisterCharge(): void;
 }) {
   const [activeException, setActiveException] = useState<IngestionException>();
+  const [captureOpen, setCaptureOpen] = useState(false);
   const sorted = [...events].sort((a, b) =>
     sort === "largest"
       ? b.amount.amountMinor - a.amount.amountMinor
@@ -55,8 +59,12 @@ export function MovementsView({
           </p>
         </div>
         <div className="movement-actions">
-          <button className="secondary-button import-button" onClick={onImport}>
-            Conciliar CSV
+          <button
+            type="button"
+            className="secondary-button import-button"
+            onClick={() => setCaptureOpen(true)}
+          >
+            Añadir
           </button>
           <label className="sort-control">
             <span>Ordenar</span>
@@ -70,6 +78,19 @@ export function MovementsView({
           </label>
         </div>
       </header>
+      {captureOpen && (
+        <CaptureActionsSheet
+          onClose={() => setCaptureOpen(false)}
+          onRegisterCharge={() => {
+            setCaptureOpen(false);
+            onRegisterCharge();
+          }}
+          onImport={() => {
+            setCaptureOpen(false);
+            onImport();
+          }}
+        />
+      )}
       {exceptions.length > 0 && (
         <details className="recovery-section">
           <summary>

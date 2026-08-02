@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { GetCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 
-export type CaptureSource = 'email' | 'apple_pay_shortcut' | 'santander_csv';
+export type CaptureSource = 'email' | 'apple_pay_shortcut' | 'santander_csv' | 'manual';
+
+const isCaptureSource = (value: unknown): value is CaptureSource =>
+  value === 'email' || value === 'apple_pay_shortcut' || value === 'santander_csv' || value === 'manual';
 
 export interface ObservedEventInput {
   readonly id: string;
@@ -111,9 +114,12 @@ interface Candidate {
 const findCandidates = async (input: SaveObservedEventInput): Promise<readonly Candidate[]> => {
   const center = Date.parse(input.reconciliationAt);
   if (!Number.isFinite(center)) throw new Error('Invalid reconciliation timestamp.');
-  const couldMatchCsv = input.event.institution === 'santander_mx'
-    && (input.captureSource === 'email' || input.captureSource === 'santander_csv');
-  const queryWindow = couldMatchCsv ? SANTANDER_CSV_WINDOW_MS : RECONCILIATION_WINDOW_MS;
+  // CSV and manual entries often lack precise clock times, so automatic sources query a same-day window.
+  const couldMatchDayLevel = input.captureSource === 'santander_csv'
+    || input.captureSource === 'manual'
+    || input.captureSource === 'email'
+    || (input.captureSource === 'apple_pay_shortcut');
+  const queryWindow = couldMatchDayLevel ? SANTANDER_CSV_WINDOW_MS : RECONCILIATION_WINDOW_MS;
   const from = new Date(center - queryWindow).toISOString();
   const to = new Date(center + queryWindow).toISOString();
   const result = await input.database.send(new QueryCommand({
@@ -134,12 +140,14 @@ const findCandidates = async (input: SaveObservedEventInput): Promise<readonly C
     const reconciliationAt = typeof item.reconciliationAt === 'string' ? item.reconciliationAt : undefined;
     if (!eventId || !reconciliationAt) return [];
     const sources = Array.isArray(payload.captureSources)
-      ? payload.captureSources.filter((value): value is CaptureSource => value === 'email' || value === 'apple_pay_shortcut' || value === 'santander_csv')
+      ? payload.captureSources.filter(isCaptureSource)
       : [];
     const involvesCsv = input.captureSource === 'santander_csv' || sources.includes('santander_csv');
-    if (!merchantsMatch(input.event.merchantRaw, String(payload.merchantRaw ?? ''), involvesCsv)) return [];
-    if (!involvesCsv && Math.abs(Date.parse(reconciliationAt) - center) > RECONCILIATION_WINDOW_MS) return [];
-    if (involvesCsv) {
+    const involvesManual = input.captureSource === 'manual' || sources.includes('manual');
+    const dayLevelMatch = involvesCsv || involvesManual;
+    if (!merchantsMatch(input.event.merchantRaw, String(payload.merchantRaw ?? ''), dayLevelMatch)) return [];
+    if (!dayLevelMatch && Math.abs(Date.parse(reconciliationAt) - center) > RECONCILIATION_WINDOW_MS) return [];
+    if (dayLevelMatch) {
       const inputDate = localCalendarDate(input.event.occurredAt ?? input.reconciliationAt);
       const candidateDate = localCalendarDate(payload.occurredAt ?? reconciliationAt);
       if (!inputDate || inputDate !== candidateDate) return [];

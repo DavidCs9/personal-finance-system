@@ -30,23 +30,33 @@ export function EventSheet({
   const [rawEmail, setRawEmail] = useState<string>();
   const [error, setError] = useState<string>();
 
+  const updateCache = (updated: PurchaseEvent) => {
+    queryClient.setQueryData<{ events: readonly PurchaseEvent[] }>(eventsQueryKey, (current) =>
+      current
+        ? {
+            ...current,
+            events: current.events.map((item) => (item.id === updated.id ? updated : item)),
+          }
+        : current,
+    );
+    void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+    onVerified(updated);
+  };
+
   const verifyMutation = useMutation({
     mutationFn: () =>
       demoMode
         ? Promise.resolve({ ...event, status: "accepted" as const, parseWarnings: [] })
         : ledgerApi.markVerified(event.id, idToken),
-    onSuccess: (updated) => {
-      queryClient.setQueryData<{ events: readonly PurchaseEvent[] }>(eventsQueryKey, (current) =>
-        current
-          ? {
-              ...current,
-              events: current.events.map((item) => (item.id === updated.id ? updated : item)),
-            }
-          : current,
-      );
-      void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
-      onVerified(updated);
-    },
+    onSuccess: updateCache,
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: () =>
+      demoMode
+        ? Promise.resolve({ ...event, status: "rejected" as const })
+        : ledgerApi.markRejected(event.id, idToken),
+    onSuccess: updateCache,
   });
 
   const toggleRaw = async () => {
@@ -69,9 +79,41 @@ export function EventSheet({
     }
   };
 
+  const reject = async () => {
+    try {
+      await rejectMutation.mutateAsync();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "No se pudo rechazar el movimiento.");
+    }
+  };
+
   const isApplePayCapture = event.source.kind === "apple_pay_shortcut";
-  const isCsvCapture = !isApplePayCapture && event.source.contentType === "text/csv";
-  const hasRawSource = isCsvCapture || !isApplePayCapture || event.hasRawEmail === true;
+  const isManualCapture = event.source.kind === "manual_entry" || event.captureSource === "manual";
+  const isCsvCapture = !isApplePayCapture && !isManualCapture && event.source.contentType === "text/csv";
+  const hasRawSource = isManualCapture || isCsvCapture || !isApplePayCapture || event.hasRawEmail === true;
+  const sources = event.captureSources ?? (event.captureSource ? [event.captureSource] : []);
+  const hasLinkedEmail = sources.includes("email") || event.hasRawEmail === true;
+  const evidenceTitle = isManualCapture
+    ? hasLinkedEmail
+      ? "Registro manual · también correo"
+      : "Registro manual"
+    : isApplePayCapture
+      ? "Captura de Apple Pay"
+      : isCsvCapture
+        ? "CSV de Santander"
+        : "Correo original";
+  const evidenceSummary = isManualCapture
+    ? "Alta manual conservada"
+    : isApplePayCapture
+      ? "Observación automática conservada"
+      : isCsvCapture
+        ? "CSV original conservado"
+        : "Mensaje original conservado";
+  const evidenceDetail = isApplePayCapture
+    ? event.source.cardRaw
+    : "key" in event.source
+      ? event.source.key
+      : event.id;
 
   return (
     <Sheet eyebrow="MOVIMIENTO OBSERVADO" title={event.merchantRaw} onClose={onClose}>
@@ -115,13 +157,7 @@ export function EventSheet({
         <div className="detail-section-heading">
           <div>
             <p className="eyebrow">EVIDENCIA</p>
-            <h3>
-              {isApplePayCapture
-                ? "Captura de Apple Pay"
-                : isCsvCapture
-                  ? "CSV de Santander"
-                  : "Correo original"}
-            </h3>
+            <h3>{evidenceTitle}</h3>
           </div>
           {hasRawSource && (
             <button className="secondary-button" onClick={toggleRaw}>
@@ -135,16 +171,20 @@ export function EventSheet({
           <div className="source-summary">
             <Mark />
             <div>
-              <strong>
-                {isApplePayCapture
-                  ? "Observación automática conservada"
-                  : isCsvCapture
-                    ? "CSV original conservado"
-                    : "Mensaje original conservado"}
-              </strong>
-              <p>{isApplePayCapture ? event.source.cardRaw : event.source.key}</p>
+              <strong>{evidenceSummary}</strong>
+              <p>{evidenceDetail}</p>
             </div>
           </div>
+        )}
+        {event.status !== "rejected" && (
+          <button
+            className="delete-button"
+            type="button"
+            disabled={rejectMutation.isPending}
+            onClick={() => void reject()}
+          >
+            {rejectMutation.isPending ? "Rechazando…" : "No cuenta en el mes"}
+          </button>
         )}
       </div>
     </Sheet>

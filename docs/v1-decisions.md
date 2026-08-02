@@ -20,6 +20,7 @@
 - La identidad `tarjeta + consecutivo` evita repetir operaciones entre CSVs. Las filas sin consecutivo usan fecha, concepto normalizado, importe y ordinal de aparición dentro del extracto, y siempre exigen confirmación explícita antes de su primera importación.
 - La conciliación del CSV compara tarjeta, fecha, importe y concepto normalizado contra observaciones de correo o Apple Pay. Una coincidencia única enlaza el CSV como evidencia del evento existente; múltiples coincidencias exigen una decisión explícita antes de aplicar.
 - Los pagos y abonos negativos del CSV no se incorporan al gasto mensual.
+- Los cobros que no llegan por automatismo (p. ej. Amex sin alerta) se registran como eventos observados con fuente `manual`, no como pagos próximos. Detalle en [Cobros manuales](manual-observed-charges.md).
 
 ## Modelo de datos
 
