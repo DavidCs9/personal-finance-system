@@ -9,6 +9,7 @@ import type {
   SantanderImportResult,
   SantanderStatementImportPreview,
   SantanderStatementImportResult,
+  StatementImportDecision,
 } from "../types";
 import type { MonthlyPlan } from "../monthly-plan";
 
@@ -269,31 +270,31 @@ export const ledgerApi = {
     });
   },
   async previewAmexStatement(file: File, idToken: string): Promise<AmexImportPreview> {
-    const isText = file.type.includes("text") || /\.txt$/i.test(file.name);
     return request<AmexImportPreview>("/imports/amex/preview", idToken, {
       method: "POST",
-      headers: {
-        "Content-Type": isText ? "text/plain; charset=utf-8" : "application/pdf",
-      },
-      body: isText ? await file.text() : await file.arrayBuffer(),
+      headers: { "Content-Type": "application/pdf" },
+      body: await file.arrayBuffer(),
     });
   },
   async getAmexStatementImport(importId: string, idToken: string): Promise<AmexImportPreview> {
     return request<AmexImportPreview>(`/imports/amex/${encodeURIComponent(importId)}`, idToken);
   },
-  async applyAmexStatement(importId: string, idToken: string): Promise<AmexImportResult> {
+  async applyAmexStatement(
+    importId: string,
+    decisions: Readonly<Record<string, StatementImportDecision>>,
+    idToken: string,
+  ): Promise<AmexImportResult> {
     return request<AmexImportResult>(`/imports/amex/${encodeURIComponent(importId)}/apply`, idToken, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decisions }),
     });
   },
   async previewSantanderStatement(file: File, idToken: string): Promise<SantanderStatementImportPreview> {
-    const isText = file.type.includes("text") || /\.txt$/i.test(file.name);
     return request<SantanderStatementImportPreview>("/imports/santander-statement/preview", idToken, {
       method: "POST",
-      headers: {
-        "Content-Type": isText ? "text/plain; charset=utf-8" : "application/pdf",
-      },
-      body: isText ? await file.text() : await file.arrayBuffer(),
+      headers: { "Content-Type": "application/pdf" },
+      body: await file.arrayBuffer(),
     });
   },
   async getSantanderStatementImport(
@@ -307,12 +308,17 @@ export const ledgerApi = {
   },
   async applySantanderStatement(
     importId: string,
+    decisions: Readonly<Record<string, StatementImportDecision>>,
     idToken: string,
   ): Promise<SantanderStatementImportResult> {
     return request<SantanderStatementImportResult>(
       `/imports/santander-statement/${encodeURIComponent(importId)}/apply`,
       idToken,
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decisions }),
+      },
     );
   },
   async updateEventMsi(

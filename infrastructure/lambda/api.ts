@@ -19,7 +19,11 @@ import {
   replaceMsiSchedule,
   type MsiPlan,
 } from '@finance/domain';
-import { amexImportCompletionUpdate, InvalidAmexStatementError, parseAmexStatementText } from './amex-statement.js';
+import {
+  InvalidAmexStatementError,
+  parseAmexStatementExtraction,
+  type AmexStatementDocument,
+} from './amex-statement.js';
 import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan, type MonthlyPlanInput } from './monthly-plan.js';
 import { isSantanderMsiRow, matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
 import { reconciliationPartition } from './observed-events.js';
@@ -33,14 +37,25 @@ import {
 import { InvalidSantanderCsvError, merchantsMatch, parseSantanderCsv, santanderApplyAction, santanderImportCompletionUpdate, type SantanderCsvDocument, type SantanderCsvRow, type SantanderReconciliationDecision, type SantanderReconciliationStatus } from './santander-csv.js';
 import {
   InvalidSantanderStatementError,
-  parseSantanderStatementText,
-  santanderStatementImportCompletionUpdate,
+  parseSantanderStatementExtraction,
+  type SantanderStatementDocument,
 } from './santander-statement.js';
 import {
-  fetchTextractDocumentText,
-  getTextractJobStatus,
-  startTextractTextDetection,
+  classifyPurchaseCharge,
+  statementClaimKey,
+  statementImportCompletionUpdate,
+  statementPreviewSummary,
+  statementPurchaseApplyAction,
+  type StatementDecision,
+  type StatementPreviewRow,
+  type StatementProvider,
+} from './statement-reconciliation.js';
+import {
+  fetchTextractStatementExtraction,
+  getTextractAnalysisJobStatus,
+  startTextractDocumentAnalysis,
   TextractDocumentError,
+  type TextractStatementExtraction,
 } from './textract-document.js';
 
 class InvalidMsiError extends Error {}
@@ -129,7 +144,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
         return response(200, await getSantanderStatementImport(importId, principal(event)));
       }
       if (event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/apply')) {
-        return response(200, await applySantanderStatementImport(importId, principal(event)));
+        return response(200, await applySantanderStatementImport(importId, principal(event), requestBody(event)));
       }
     }
     if (importId && event.rawPath.includes('/imports/amex/')) {
@@ -137,7 +152,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
         return response(200, await getAmexImport(importId, principal(event)));
       }
       if (event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/apply')) {
-        return response(200, await applyAmexImport(importId, principal(event)));
+        return response(200, await applyAmexImport(importId, principal(event), requestBody(event)));
       }
     }
     if (importId && event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/apply')) {
@@ -817,16 +832,10 @@ const applySantanderImport = async (importId: string, owner: string, decisionBod
   };
 };
 
-const amexSourceKey = (
-  owner: string,
-  sha256: string,
-  extension: 'pdf' | 'txt',
-): string => `manual-imports/amex/${owner}/${sha256}.${extension}`;
-const santanderStatementSourceKey = (
-  owner: string,
-  sha256: string,
-  extension: 'pdf' | 'txt',
-): string => `manual-imports/santander-statement/${owner}/${sha256}.${extension}`;
+const amexSourceKey = (owner: string, sha256: string): string =>
+  `manual-imports/amex/${owner}/${sha256}.pdf`;
+const santanderStatementSourceKey = (owner: string, sha256: string): string =>
+  `manual-imports/santander-statement/${owner}/${sha256}.pdf`;
 
 const headerValue = (event: { readonly headers?: Record<string, string | undefined> }, name: string): string | undefined => {
   if (!event.headers) return undefined;
@@ -845,42 +854,91 @@ const requestBinaryBody = (event: {
   return event.isBase64Encoded ? Buffer.from(event.body, 'base64') : Buffer.from(event.body, 'utf8');
 };
 
-const buildSantanderStatementPreviewRows = async (
-  document: ReturnType<typeof parseSantanderStatementText>,
-): Promise<readonly (EvidenceLine & { readonly status: string; readonly eventId?: string })[]> => {
-  const events = await allStoredEvents();
-  return document.msiCharges.map((charge) => {
-    const line: EvidenceLine = {
-      merchantRaw: charge.merchantRaw,
-      amountMinor: charge.amountMinor,
-      occurredOn: charge.occurredOn,
-      identity: charge.identity,
-    };
-    const match = matchEvidenceLine(line, events);
-    return {
-      ...line,
-      status: match.kind === 'confirm' ? 'matched' : match.kind === 'unplanned' ? 'unplanned' : 'skipped',
-      eventId: match.kind === 'confirm' ? match.eventId : undefined,
-    };
-  });
+const claimedStatementIdentities = async (
+  provider: StatementProvider,
+  identities: readonly string[],
+): Promise<ReadonlySet<string>> => {
+  const claimed = new Set<string>();
+  for (let offset = 0; offset < identities.length; offset += 100) {
+    let requestKeys: Record<string, unknown>[] = identities
+      .slice(offset, offset + 100)
+      .map((identity) => statementClaimKey(provider, identity));
+    let attempts = 0;
+    do {
+      if (attempts > 0) await new Promise((resolve) => setTimeout(resolve, 25 * (2 ** attempts)));
+      const result = await database.send(new BatchGetCommand({
+        RequestItems: { [tableName]: { Keys: requestKeys, ProjectionExpression: 'PK' } },
+      }));
+      for (const item of result.Responses?.[tableName] ?? []) claimed.add(String(item.PK));
+      requestKeys = result.UnprocessedKeys?.[tableName]?.Keys ?? [];
+      attempts += 1;
+      if (attempts >= 6 && requestKeys.length > 0) {
+        throw new Error('Unable to verify statement dedupe keys after multiple attempts.');
+      }
+    } while (requestKeys.length > 0);
+  }
+  return claimed;
 };
 
-const santanderStatementPreviewResponse = (
+const classifyMsiEvidenceRow = (
+  line: EvidenceLine,
+  events: readonly JsonObject[],
+): StatementPreviewRow => {
+  const match = matchEvidenceLine(line, events);
+  return {
+    identity: line.identity,
+    kind: 'msi',
+    merchantRaw: line.merchantRaw,
+    amountMinor: line.amountMinor,
+    occurredOn: line.occurredOn,
+    msi: true,
+    installmentIndex: line.installmentIndex,
+    installmentMonths: line.installmentMonths,
+    originalAmountMinor: line.originalAmountMinor,
+    status: match.kind === 'confirm' ? 'matched' : match.kind === 'unplanned' ? 'unplanned' : 'skipped',
+    eventId: match.kind === 'confirm' ? match.eventId : undefined,
+    candidateEventIds: match.kind === 'confirm' ? [match.eventId] : [],
+    candidates: [],
+  };
+};
+
+const buildSantanderStatementPreviewRows = async (
+  document: SantanderStatementDocument,
+): Promise<readonly StatementPreviewRow[]> => {
+  const events = await allStoredEvents();
+  const identities = document.charges.map((charge) => charge.identity);
+  const claimed = await claimedStatementIdentities('santander', identities);
+  const purchaseRows = document.charges
+    .filter((charge) => !charge.msi)
+    .map((charge) => classifyPurchaseCharge({
+      provider: 'santander',
+      accountLastFour: document.accountLastFour,
+      institution: 'santander_mx',
+      charge,
+      events,
+      claimed,
+      localDate,
+    }));
+  const msiRows = document.msiCharges.map((charge) => classifyMsiEvidenceRow({
+    merchantRaw: charge.merchantRaw,
+    amountMinor: charge.amountMinor,
+    occurredOn: charge.occurredOn,
+    identity: charge.identity,
+  }, events));
+  return [...purchaseRows, ...msiRows];
+};
+
+const statementPreviewResponse = (
   importId: string,
-  document: Pick<ReturnType<typeof parseSantanderStatementText>, 'accountLastFour' | 'product' | 'period'>,
-  rows: readonly { readonly status: string }[],
+  document: { readonly accountLastFour: string; readonly product: string; readonly period: { readonly from: string; readonly to: string } },
+  rows: readonly StatementPreviewRow[],
 ): JsonObject => ({
   importId,
   status: 'ready',
   accountLastFour: document.accountLastFour,
   product: document.product,
   period: document.period,
-  summary: {
-    total: rows.length,
-    matched: rows.filter((row) => row.status === 'matched').length,
-    unplanned: rows.filter((row) => row.status === 'unplanned').length,
-    skipped: rows.filter((row) => row.status === 'skipped').length,
-  },
+  summary: statementPreviewSummary(rows),
   rows,
 });
 
@@ -893,55 +951,17 @@ const previewSantanderStatementImport = async (
   owner: string,
 ): Promise<JsonObject> => {
   const contentType = (headerValue(event, 'content-type') ?? 'application/pdf').toLowerCase();
-  const isText = contentType.includes('text/plain');
   const bytes = requestBinaryBody(event);
   if (!bytes || bytes.length === 0) {
     throw new InvalidSantanderStatementError('El estado de cuenta Santander está vacío.');
   }
-  const sha256 = createHash('sha256').update(bytes).digest('hex');
-
-  if (isText) {
-    const body = bytes.toString('utf8');
-    const document = parseSantanderStatementText(body);
-    const source = {
-      bucket: rawSourceBucketName,
-      key: santanderStatementSourceKey(owner, sha256, 'txt'),
-      sha256,
-      contentType: 'text/plain' as const,
-    };
-    await s3.send(new PutObjectCommand({
-      Bucket: rawSourceBucketName,
-      Key: source.key,
-      Body: body,
-      ContentType: 'text/plain; charset=utf-8',
-    }));
-    const rows = await buildSantanderStatementPreviewRows(document);
-    await database.send(new PutCommand({
-      TableName: tableName,
-      Item: {
-        PK: `USER#${owner}`,
-        SK: `IMPORT#SANTANDER_STATEMENT#${sha256}`,
-        entityType: 'santander_statement_import',
-        owner,
-        status: 'previewed',
-        createdAt: new Date().toISOString(),
-        source,
-        accountLastFour: document.accountLastFour,
-        product: document.product,
-        period: document.period,
-        rows,
-      },
-    }));
-    return santanderStatementPreviewResponse(sha256, document, rows);
-  }
-
   if (!contentType.includes('pdf') && !contentType.includes('octet-stream')) {
-    throw new InvalidSantanderStatementError('Sube el PDF del estado de cuenta Santander (o texto OCR para pruebas).');
+    throw new InvalidSantanderStatementError('Sube el PDF del estado de cuenta Santander.');
   }
-
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
   const source = {
     bucket: rawSourceBucketName,
-    key: santanderStatementSourceKey(owner, sha256, 'pdf'),
+    key: santanderStatementSourceKey(owner, sha256),
     sha256,
     contentType: 'application/pdf' as const,
   };
@@ -951,7 +971,12 @@ const previewSantanderStatementImport = async (
     Body: bytes,
     ContentType: 'application/pdf',
   }));
-  const textractJobId = await startTextractTextDetection(textract, rawSourceBucketName, source.key);
+  const textractJobId = await startTextractDocumentAnalysis(
+    textract,
+    rawSourceBucketName,
+    source.key,
+    'santander',
+  );
   await database.send(new PutCommand({
     TableName: tableName,
     Item: {
@@ -972,6 +997,37 @@ const previewSantanderStatementImport = async (
   };
 };
 
+const persistTextractExtraction = async (
+  sourceKey: string,
+  extraction: TextractStatementExtraction,
+): Promise<string> => {
+  const extractionKey = sourceKey.replace(/\.pdf$/i, '.textract.json');
+  await s3.send(new PutObjectCommand({
+    Bucket: rawSourceBucketName,
+    Key: extractionKey,
+    Body: JSON.stringify(extraction),
+    ContentType: 'application/json; charset=utf-8',
+  }));
+  return extractionKey;
+};
+
+const loadStatementTextractExtraction = async (item: JsonObject): Promise<TextractStatementExtraction> => {
+  const source = item.source as JsonObject | undefined;
+  const extractionKey = typeof item.extractionKey === 'string'
+    ? item.extractionKey
+    : typeof source?.key === 'string'
+      ? source.key.replace(/\.pdf$/i, '.textract.json')
+      : undefined;
+  if (!extractionKey) throw new Error('Missing Textract extraction for statement import apply.');
+  const object = await s3.send(new GetObjectCommand({ Bucket: rawSourceBucketName, Key: extractionKey }));
+  if (!object.Body) throw new Error('Statement Textract extraction did not contain a body.');
+  const parsed = JSON.parse(await object.Body.transformToString('utf8')) as TextractStatementExtraction;
+  if (!parsed?.answers || !Array.isArray(parsed.tables)) {
+    throw new Error('Invalid Textract extraction payload.');
+  }
+  return parsed;
+};
+
 const getSantanderStatementImport = async (importId: string, owner: string): Promise<JsonObject> => {
   if (!/^[a-f0-9]{64}$/.test(importId)) {
     throw new InvalidSantanderStatementError('Identificador de importación inválido.');
@@ -985,8 +1041,8 @@ const getSantanderStatementImport = async (importId: string, owner: string): Pro
     throw new InvalidSantanderStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
   }
   if (stored.Item.status === 'previewed' || stored.Item.status === 'applied') {
-    const rows = Array.isArray(stored.Item.rows) ? stored.Item.rows as readonly { readonly status: string }[] : [];
-    return santanderStatementPreviewResponse(
+    const rows = Array.isArray(stored.Item.rows) ? stored.Item.rows as readonly StatementPreviewRow[] : [];
+    return statementPreviewResponse(
       importId,
       {
         accountLastFour: String(stored.Item.accountLastFour ?? ''),
@@ -1007,7 +1063,7 @@ const getSantanderStatementImport = async (importId: string, owner: string): Pro
   const jobId = typeof stored.Item.textractJobId === 'string' ? stored.Item.textractJobId : undefined;
   if (!jobId) throw new InvalidSantanderStatementError('Falta el trabajo de Textract para este import.');
 
-  const job = await getTextractJobStatus(textract, jobId);
+  const job = await getTextractAnalysisJobStatus(textract, jobId);
   if (job.status === 'IN_PROGRESS') {
     return {
       importId,
@@ -1027,31 +1083,30 @@ const getSantanderStatementImport = async (importId: string, owner: string): Pro
     throw new TextractDocumentError(message);
   }
 
+  const source = stored.Item.source as JsonObject;
+  const sourceKey = typeof source.key === 'string'
+    ? source.key
+    : santanderStatementSourceKey(owner, importId);
+  let extractionKey: string | undefined;
+  let answers: Readonly<Record<string, string>> = {};
   try {
-    const text = await fetchTextractDocumentText(textract, jobId);
-    const document = parseSantanderStatementText(text);
+    const extraction = await fetchTextractStatementExtraction(textract, jobId, 'santander');
+    answers = extraction.answers;
+    extractionKey = await persistTextractExtraction(sourceKey, extraction);
+    const document = parseSantanderStatementExtraction(extraction);
     const rows = await buildSantanderStatementPreviewRows(document);
-    const source = stored.Item.source as JsonObject;
-    const ocrKey = typeof source.key === 'string'
-      ? source.key.replace(/\.pdf$/i, '.ocr.txt')
-      : santanderStatementSourceKey(owner, importId, 'txt');
-    await s3.send(new PutObjectCommand({
-      Bucket: rawSourceBucketName,
-      Key: ocrKey,
-      Body: text,
-      ContentType: 'text/plain; charset=utf-8',
-    }));
     await database.send(new UpdateCommand({
       TableName: tableName,
       Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
-      UpdateExpression: 'SET #status = :status, #accountLastFour = :accountLastFour, #product = :product, #period = :period, #rows = :rows, #ocrKey = :ocrKey',
+      UpdateExpression: 'SET #status = :status, #accountLastFour = :accountLastFour, #product = :product, #period = :period, #rows = :rows, #extractionKey = :extractionKey, #textractAnswers = :textractAnswers',
       ExpressionAttributeNames: {
         '#status': 'status',
         '#accountLastFour': 'accountLastFour',
         '#product': 'product',
         '#period': 'period',
         '#rows': 'rows',
-        '#ocrKey': 'ocrKey',
+        '#extractionKey': 'extractionKey',
+        '#textractAnswers': 'textractAnswers',
       },
       ExpressionAttributeValues: {
         ':status': 'previewed',
@@ -1059,18 +1114,36 @@ const getSantanderStatementImport = async (importId: string, owner: string): Pro
         ':product': document.product,
         ':period': document.period,
         ':rows': rows,
-        ':ocrKey': ocrKey,
+        ':extractionKey': extractionKey,
+        ':textractAnswers': extraction.answers,
       },
     }));
-    return santanderStatementPreviewResponse(importId, document, rows);
+    return statementPreviewResponse(importId, document, rows);
   } catch (error) {
     const message = errorMessage(error);
     await database.send(new UpdateCommand({
       TableName: tableName,
       Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
-      UpdateExpression: 'SET #status = :status, #errorMessage = :errorMessage',
-      ExpressionAttributeNames: { '#status': 'status', '#errorMessage': 'errorMessage' },
-      ExpressionAttributeValues: { ':status': 'failed', ':errorMessage': message },
+      UpdateExpression: extractionKey
+        ? 'SET #status = :status, #errorMessage = :errorMessage, #extractionKey = :extractionKey, #textractAnswers = :textractAnswers'
+        : 'SET #status = :status, #errorMessage = :errorMessage',
+      ExpressionAttributeNames: {
+        '#status': 'status',
+        '#errorMessage': 'errorMessage',
+        ...(extractionKey
+          ? { '#extractionKey': 'extractionKey', '#textractAnswers': 'textractAnswers' }
+          : {}),
+      },
+      ExpressionAttributeValues: {
+        ':status': 'failed',
+        ':errorMessage': message,
+        ...(extractionKey
+          ? {
+              ':extractionKey': extractionKey,
+              ':textractAnswers': answers,
+            }
+          : {}),
+      },
     }));
     if (
       error instanceof InvalidSantanderStatementError
@@ -1082,191 +1155,422 @@ const getSantanderStatementImport = async (importId: string, owner: string): Pro
   }
 };
 
-const applySantanderStatementImport = async (importId: string, owner: string): Promise<JsonObject> => {
-  if (!/^[a-f0-9]{64}$/.test(importId)) {
-    throw new InvalidSantanderStatementError('Identificador de importación inválido.');
+
+const parseStatementDecisions = (body: string | undefined): Readonly<Record<string, StatementDecision>> => {
+  const parsed = parseImportDecisions(body);
+  const decisions: Record<string, StatementDecision> = {};
+  for (const [identity, decision] of Object.entries(parsed)) {
+    decisions[identity] = decision.action === 'create'
+      ? { action: 'create' }
+      : { action: 'link', eventId: decision.eventId };
   }
+  return decisions;
+};
+
+const claimAndCreateStatementEvent = async (input: {
+  readonly provider: StatementProvider;
+  readonly owner: string;
+  readonly accountLastFour: string;
+  readonly row: StatementPreviewRow;
+  readonly source: JsonObject;
+  readonly appliedAt: string;
+  readonly msi?: MsiPlan;
+}): Promise<JsonObject | undefined> => {
+  const institution = input.provider === 'amex' ? 'american_express_mx' : 'santander_mx';
+  const captureSource = input.provider === 'amex' ? 'amex_statement' : 'santander_statement';
+  const parserVersion = input.provider === 'amex'
+    ? 'amex-mx-statement-textract-v1'
+    : 'santander-mx-statement-textract-v1';
+  const id = randomUUID();
+  const observationId = randomUUID();
+  const occurredAt = `${input.row.occurredOn}T12:00:00.000Z`;
+  const amountMinor = input.msi?.principalMinor ?? input.row.amountMinor;
+  const purchase: JsonObject = {
+    id,
+    institution,
+    eventType: 'card_purchase',
+    status: input.msi?.needsScheduleCompletion ? 'needs_review' : 'accepted',
+    account: {
+      institution,
+      accountId: `${institution}:${input.accountLastFour}`,
+      displayName: input.provider === 'amex'
+        ? `American Express · ${input.accountLastFour}`
+        : `Santander · ${input.accountLastFour}`,
+      lastFour: input.accountLastFour,
+    },
+    amount: { amountMinor, currency: 'MXN' },
+    merchantRaw: input.row.merchantRaw,
+    occurredAt,
+    receivedAt: input.appliedAt,
+    ingestedAt: input.appliedAt,
+    source: input.source,
+    parserVersion,
+    parseWarnings: input.msi?.needsScheduleCompletion
+      ? ['MSI sin plan completo: confirma meses y cuota.']
+      : [],
+    captureSource,
+    captureSources: [captureSource],
+    observationCount: 1,
+    primaryObservationId: observationId,
+    hasRawEmail: false,
+    ...(input.msi ? { msi: input.msi } : {}),
+  };
+  const claim = statementClaimKey(input.provider, input.row.identity);
+  try {
+    await database.send(new TransactWriteCommand({ TransactItems: [
+      { Put: {
+        TableName: tableName,
+        Item: {
+          ...claim,
+          entityType: `${captureSource}_dedupe`,
+          identity: input.row.identity,
+          owner: input.owner,
+          eventId: id,
+          createdAt: input.appliedAt,
+        },
+        ConditionExpression: 'attribute_not_exists(PK)',
+      } },
+      { Put: {
+        TableName: tableName,
+        Item: {
+          PK: `EVENT#${id}`,
+          SK: 'EVENT',
+          GSI1PK: 'EVENTS',
+          GSI1SK: input.appliedAt,
+          GSI2PK: reconciliationPartition(purchase as Parameters<typeof reconciliationPartition>[0]),
+          GSI2SK: `${occurredAt}#${id}`,
+          reconciliationAt: occurredAt,
+          entityType: 'observed_purchase',
+          payload: purchase,
+        },
+        ConditionExpression: 'attribute_not_exists(PK)',
+      } },
+      { Put: {
+        TableName: tableName,
+        Item: {
+          PK: `EVENT#${id}`,
+          SK: `OBSERVATION#${occurredAt}#${observationId}`,
+          entityType: 'event_observation',
+          payload: {
+            id: observationId,
+            eventId: id,
+            captureSource,
+            observedAt: input.appliedAt,
+            reconciliationAt: occurredAt,
+            institution,
+            eventType: 'card_purchase',
+            account: purchase.account,
+            amount: purchase.amount,
+            merchantRaw: input.row.merchantRaw,
+            occurredAt,
+            source: input.source,
+            parserVersion,
+            parseWarnings: purchase.parseWarnings,
+          },
+        },
+        ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
+      } },
+    ] }));
+    return purchase;
+  } catch (error) {
+    if (errorName(error) === 'TransactionCanceledException') return undefined;
+    throw error;
+  }
+};
+
+const claimAndLinkStatementEvidence = async (input: {
+  readonly provider: StatementProvider;
+  readonly owner: string;
+  readonly eventId: string;
+  readonly row: StatementPreviewRow;
+  readonly source: JsonObject;
+  readonly appliedAt: string;
+}): Promise<boolean> => {
+  const institution = input.provider === 'amex' ? 'american_express_mx' : 'santander_mx';
+  const captureSource = input.provider === 'amex' ? 'amex_statement' : 'santander_statement';
+  const parserVersion = input.provider === 'amex'
+    ? 'amex-mx-statement-textract-v1'
+    : 'santander-mx-statement-textract-v1';
+  const revisionId = randomUUID();
+  const observationId = randomUUID();
+  const reconciliationAt = `${input.row.occurredOn}T12:00:00.000Z`;
+  const claim = statementClaimKey(input.provider, input.row.identity);
+  try {
+    await database.send(new TransactWriteCommand({ TransactItems: [
+      { Put: {
+        TableName: tableName,
+        Item: {
+          ...claim,
+          entityType: `${captureSource}_dedupe`,
+          identity: input.row.identity,
+          owner: input.owner,
+          createdAt: input.appliedAt,
+          eventId: input.eventId,
+        },
+        ConditionExpression: 'attribute_not_exists(PK)',
+      } },
+      { Update: {
+        TableName: tableName,
+        Key: { PK: `EVENT#${input.eventId}`, SK: 'EVENT' },
+        UpdateExpression: 'SET #payload.#count = if_not_exists(#payload.#count, :one) + :one, #payload.#sources = list_append(if_not_exists(#payload.#sources, :empty), :source), #payload.#reconciledAt = :reconciledAt',
+        ConditionExpression: 'attribute_exists(PK)',
+        ExpressionAttributeNames: {
+          '#payload': 'payload',
+          '#count': 'observationCount',
+          '#sources': 'captureSources',
+          '#reconciledAt': 'reconciledAt',
+        },
+        ExpressionAttributeValues: {
+          ':one': 1,
+          ':empty': [],
+          ':source': [captureSource],
+          ':reconciledAt': input.appliedAt,
+        },
+      } },
+      { Put: {
+        TableName: tableName,
+        Item: {
+          PK: `EVENT#${input.eventId}`,
+          SK: `OBSERVATION#${reconciliationAt}#${observationId}`,
+          entityType: 'event_observation',
+          payload: {
+            id: observationId,
+            eventId: input.eventId,
+            captureSource,
+            observedAt: input.appliedAt,
+            reconciliationAt,
+            institution,
+            eventType: 'card_purchase',
+            amount: { amountMinor: input.row.amountMinor, currency: 'MXN' },
+            merchantRaw: input.row.merchantRaw,
+            occurredAt: reconciliationAt,
+            source: input.source,
+            parserVersion,
+            parseWarnings: [],
+          },
+        },
+        ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
+      } },
+      { Put: {
+        TableName: tableName,
+        Item: {
+          PK: `EVENT#${input.eventId}`,
+          SK: `REVISION#${input.appliedAt}#${revisionId}`,
+          entityType: 'event_revision',
+          payload: {
+            id: revisionId,
+            observedPurchaseId: input.eventId,
+            createdAt: input.appliedAt,
+            changedBy: input.owner,
+            reason: input.provider === 'amex'
+              ? 'Conciliado con estado de cuenta Amex.'
+              : 'Conciliado con estado de cuenta Santander.',
+            changes: { reconciliation: { previous: null, next: { source: input.source, reconciledAt: input.appliedAt } } },
+          },
+        },
+      } },
+    ] }));
+    return true;
+  } catch (error) {
+    if (errorName(error) === 'TransactionCanceledException') return false;
+    throw error;
+  }
+};
+
+const applyStatementImport = async (input: {
+  readonly provider: StatementProvider;
+  readonly importId: string;
+  readonly owner: string;
+  readonly decisionBody: string | undefined;
+  readonly rebuildRows: () => Promise<readonly StatementPreviewRow[]>;
+}): Promise<JsonObject> => {
+  const invalid = input.provider === 'amex' ? InvalidAmexStatementError : InvalidSantanderStatementError;
+  const sk = input.provider === 'amex'
+    ? `IMPORT#AMEX#${input.importId}`
+    : `IMPORT#SANTANDER_STATEMENT#${input.importId}`;
+  if (!/^[a-f0-9]{64}$/.test(input.importId)) throw new invalid('Identificador de importación inválido.');
   const stored = await database.send(new GetCommand({
     TableName: tableName,
-    Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
+    Key: { PK: `USER#${input.owner}`, SK: sk },
     ConsistentRead: true,
   }));
   const source = stored.Item?.source as JsonObject | undefined;
-  if (!stored.Item || stored.Item.owner !== owner || typeof source?.key !== 'string') {
-    throw new InvalidSantanderStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
+  if (!stored.Item || stored.Item.owner !== input.owner || typeof source?.key !== 'string') {
+    throw new invalid('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
   }
   if (stored.Item.status === 'processing') {
-    throw new InvalidSantanderStatementError('El PDF aún se está leyendo. Espera a que termine Textract.');
+    throw new invalid('El PDF aún se está leyendo. Espera a que termine Textract.');
   }
   if (stored.Item.status === 'failed') {
-    throw new InvalidSantanderStatementError(
+    throw new invalid(
       typeof stored.Item.errorMessage === 'string'
         ? stored.Item.errorMessage
-        : 'No se pudo leer el estado Santander.',
+        : 'No se pudo leer el estado de cuenta.',
     );
   }
   if (stored.Item.status === 'applied') {
     const previous = stored.Item.result as JsonObject | undefined;
     return {
-      importId,
+      importId: input.importId,
       created: [],
-      summary: previous ?? { confirmed: 0, createdUnplanned: 0, skipped: 0 },
+      summary: previous ?? { created: 0, linked: 0, skipped: 0, msiConfirmed: 0, createdUnplanned: 0 },
       alreadyApplied: true,
     };
   }
   if (stored.Item.status !== 'previewed' || !Array.isArray(stored.Item.rows)) {
-    throw new InvalidSantanderStatementError('La previsualización aún no está lista.');
+    throw new invalid('La previsualización aún no está lista.');
   }
 
   const accountLastFour = String(stored.Item.accountLastFour ?? '');
-  const previewRows = stored.Item.rows as readonly (EvidenceLine & { status?: string })[];
+  const previewRows = stored.Item.rows as readonly StatementPreviewRow[];
+  const previewByIdentity = new Map(previewRows.map((row) => [row.identity, row]));
+  const decisions = parseStatementDecisions(input.decisionBody);
+  const currentRows = await input.rebuildRows();
   const appliedAt = new Date().toISOString();
   let eventsSnapshot = await allStoredEvents();
-  let confirmed = 0;
-  let createdUnplanned = 0;
+  let createdCount = 0;
+  let linked = 0;
   let skipped = 0;
+  let msiConfirmed = 0;
+  let createdUnplanned = 0;
   const created: JsonObject[] = [];
 
-  for (const row of previewRows) {
-    if (row.status === 'skipped') {
-      skipped += 1;
-      continue;
-    }
-    const match = matchEvidenceLine(row, eventsSnapshot);
-    if (match.kind === 'skip') {
-      skipped += 1;
-      continue;
-    }
-    if (match.kind === 'confirm') {
-      const updated = await persistEventMsi(
-        match.eventId,
-        owner,
-        match.previous,
-        match.next,
-        'Cuota MSI confirmada con estado de cuenta Santander.',
-      );
-      if (updated) {
-        confirmed += 1;
-        eventsSnapshot = eventsSnapshot.map((event) => (
-          event.id === match.eventId ? { ...event, msi: match.next } : event
-        ));
-      } else skipped += 1;
-      continue;
-    }
-    if (match.kind === 'unplanned') {
-      const id = randomUUID();
-      const observationId = randomUUID();
-      const occurredAt = `${row.occurredOn}T12:00:00.000Z`;
-      const purchase: JsonObject = {
-        id,
-        institution: 'santander_mx',
-        eventType: 'card_purchase',
-        status: 'needs_review',
-        account: {
-          institution: 'santander_mx',
-          accountId: `santander_mx:${accountLastFour}`,
-          displayName: `Santander · ${accountLastFour}`,
-          lastFour: accountLastFour,
-        },
-        amount: { amountMinor: match.plan.principalMinor, currency: 'MXN' },
-        merchantRaw: match.merchantRaw,
-        occurredAt,
-        receivedAt: appliedAt,
-        ingestedAt: appliedAt,
-        source,
-        parserVersion: 'santander-mx-statement-textract-v1',
-        parseWarnings: ['MSI sin plan completo: confirma meses y cuota.'],
-        captureSource: 'santander_statement',
-        captureSources: ['santander_statement'],
-        observationCount: 1,
-        primaryObservationId: observationId,
-        hasRawEmail: false,
-        msi: match.plan,
-      };
-      try {
-        await database.send(new TransactWriteCommand({ TransactItems: [
-          { Put: {
-            TableName: tableName,
-            Item: {
-              PK: `DEDUPE#SANTANDER_STATEMENT#${createHash('sha256').update(row.identity).digest('hex')}`,
-              SK: 'CLAIM',
-              entityType: 'santander_statement_dedupe',
-              identity: row.identity,
-              owner,
-              eventId: id,
-              createdAt: appliedAt,
-            },
-            ConditionExpression: 'attribute_not_exists(PK)',
-          } },
-          { Put: {
-            TableName: tableName,
-            Item: {
-              PK: `EVENT#${id}`,
-              SK: 'EVENT',
-              GSI1PK: 'EVENTS',
-              GSI1SK: appliedAt,
-              GSI2PK: reconciliationPartition(purchase as Parameters<typeof reconciliationPartition>[0]),
-              GSI2SK: `${occurredAt}#${id}`,
-              reconciliationAt: occurredAt,
-              entityType: 'observed_purchase',
-              payload: purchase,
-            },
-            ConditionExpression: 'attribute_not_exists(PK)',
-          } },
-          { Put: {
-            TableName: tableName,
-            Item: {
-              PK: `EVENT#${id}`,
-              SK: `OBSERVATION#${occurredAt}#${observationId}`,
-              entityType: 'event_observation',
-              payload: {
-                id: observationId,
-                eventId: id,
-                captureSource: 'santander_statement',
-                observedAt: appliedAt,
-                reconciliationAt: occurredAt,
-                institution: 'santander_mx',
-                eventType: 'card_purchase',
-                account: purchase.account,
-                amount: purchase.amount,
-                merchantRaw: match.merchantRaw,
-                occurredAt,
-                source,
-                parserVersion: 'santander-mx-statement-textract-v1',
-                parseWarnings: purchase.parseWarnings,
-              },
-            },
-            ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
-          } },
-        ] }));
-        created.push(toPublicEvent(purchase));
-        createdUnplanned += 1;
-        eventsSnapshot = [...eventsSnapshot, purchase];
-      } catch (error) {
-        if (errorName(error) === 'TransactionCanceledException') skipped += 1;
-        else throw error;
+  for (const row of currentRows) {
+    const preview = previewByIdentity.get(row.identity);
+    if (row.kind === 'msi') {
+      if (row.status === 'skipped' || preview?.status === 'skipped') {
+        skipped += 1;
+        continue;
       }
+      const evidence: EvidenceLine = {
+        merchantRaw: row.merchantRaw,
+        amountMinor: row.amountMinor,
+        occurredOn: row.occurredOn,
+        identity: row.identity,
+        installmentIndex: row.installmentIndex,
+        installmentMonths: row.installmentMonths,
+        originalAmountMinor: row.originalAmountMinor,
+      };
+      const match = matchEvidenceLine(evidence, eventsSnapshot);
+      if (match.kind === 'confirm') {
+        const updated = await persistEventMsi(
+          match.eventId,
+          input.owner,
+          match.previous,
+          match.next,
+          input.provider === 'amex'
+            ? 'Cuota MSI confirmada con estado de cuenta Amex.'
+            : 'Cuota MSI confirmada con estado de cuenta Santander.',
+        );
+        if (updated) {
+          msiConfirmed += 1;
+          linked += 1;
+          eventsSnapshot = eventsSnapshot.map((event) => (
+            event.id === match.eventId ? { ...event, msi: match.next } : event
+          ));
+        } else skipped += 1;
+        continue;
+      }
+      if (match.kind === 'unplanned') {
+        const purchase = await claimAndCreateStatementEvent({
+          provider: input.provider,
+          owner: input.owner,
+          accountLastFour,
+          row,
+          source,
+          appliedAt,
+          msi: match.plan,
+        });
+        if (purchase) {
+          created.push(toPublicEvent(purchase));
+          createdCount += 1;
+          createdUnplanned += 1;
+          eventsSnapshot = [...eventsSnapshot, purchase];
+        } else skipped += 1;
+        continue;
+      }
+      skipped += 1;
       continue;
     }
-    skipped += 1;
+
+    const action = statementPurchaseApplyAction(row, preview, decisions[row.identity]);
+    if (action.kind === 'create') {
+      const purchase = await claimAndCreateStatementEvent({
+        provider: input.provider,
+        owner: input.owner,
+        accountLastFour,
+        row,
+        source,
+        appliedAt,
+      });
+      if (purchase) {
+        created.push(toPublicEvent(purchase));
+        createdCount += 1;
+        eventsSnapshot = [...eventsSnapshot, purchase];
+      } else skipped += 1;
+    } else if (action.kind === 'link') {
+      if (await claimAndLinkStatementEvidence({
+        provider: input.provider,
+        owner: input.owner,
+        eventId: action.eventId,
+        row,
+        source,
+        appliedAt,
+      })) linked += 1;
+      else skipped += 1;
+    } else {
+      skipped += 1;
+    }
   }
 
+  const summary = { created: createdCount, linked, skipped, msiConfirmed, createdUnplanned };
   await database.send(new UpdateCommand({
     TableName: tableName,
-    Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
-    ...santanderStatementImportCompletionUpdate(appliedAt, { confirmed, createdUnplanned, skipped }),
+    Key: { PK: `USER#${input.owner}`, SK: sk },
+    ...statementImportCompletionUpdate(appliedAt, summary),
   }));
-  return {
-    importId,
-    created,
-    summary: { confirmed, createdUnplanned, skipped },
-  };
+  return { importId: input.importId, created, summary };
 };
 
+const applySantanderStatementImport = async (
+  importId: string,
+  owner: string,
+  decisionBody: string | undefined,
+): Promise<JsonObject> => applyStatementImport({
+  provider: 'santander',
+  importId,
+  owner,
+  decisionBody,
+  rebuildRows: async () => {
+    const stored = await database.send(new GetCommand({
+      TableName: tableName,
+      Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
+      ConsistentRead: true,
+    }));
+    const extraction = await loadStatementTextractExtraction(stored.Item as JsonObject);
+    return buildSantanderStatementPreviewRows(parseSantanderStatementExtraction(extraction));
+  },
+});
+
 const buildAmexPreviewRows = async (
-  document: ReturnType<typeof parseAmexStatementText>,
-): Promise<readonly (EvidenceLine & { readonly status: string; readonly eventId?: string })[]> => {
+  document: AmexStatementDocument,
+): Promise<readonly StatementPreviewRow[]> => {
   const events = await allStoredEvents();
+  const purchaseCharges = document.charges.filter((charge) => !charge.msi);
+  const claimed = await claimedStatementIdentities(
+    'amex',
+    purchaseCharges.map((charge) => charge.identity),
+  );
+  const purchaseRows = purchaseCharges.map((charge) => classifyPurchaseCharge({
+    provider: 'amex',
+    accountLastFour: document.accountLastFour,
+    institution: 'american_express_mx',
+    charge,
+    events,
+    claimed,
+    localDate,
+  }));
+
   const msiLines: EvidenceLine[] = [
     ...document.msiPlans.map((plan, index) => ({
       merchantRaw: plan.merchantRaw,
@@ -1286,10 +1590,8 @@ const buildAmexPreviewRows = async (
       identity: charge.identity,
     })),
   ];
-
-  // Prefer plan summaries; drop charge duplicates with same index+amount+months.
   const seen = new Set<string>();
-  const uniqueLines = msiLines.filter((line) => {
+  const uniqueMsi = msiLines.filter((line) => {
     const key = [
       line.installmentIndex ?? '',
       line.installmentMonths ?? '',
@@ -1301,35 +1603,9 @@ const buildAmexPreviewRows = async (
     seen.add(key);
     return true;
   });
-
-  return uniqueLines.map((line) => {
-    const match = matchEvidenceLine(line, events);
-    return {
-      ...line,
-      status: match.kind === 'confirm' ? 'matched' : match.kind === 'unplanned' ? 'unplanned' : 'skipped',
-      eventId: match.kind === 'confirm' ? match.eventId : undefined,
-    };
-  });
+  const msiRows = uniqueMsi.map((line) => classifyMsiEvidenceRow(line, events));
+  return [...purchaseRows, ...msiRows];
 };
-
-const amexPreviewResponse = (
-  importId: string,
-  document: Pick<ReturnType<typeof parseAmexStatementText>, 'accountLastFour' | 'product' | 'period'>,
-  rows: readonly { readonly status: string }[],
-): JsonObject => ({
-  importId,
-  status: 'ready',
-  accountLastFour: document.accountLastFour,
-  product: document.product,
-  period: document.period,
-  summary: {
-    total: rows.length,
-    matched: rows.filter((row) => row.status === 'matched').length,
-    unplanned: rows.filter((row) => row.status === 'unplanned').length,
-    skipped: rows.filter((row) => row.status === 'skipped').length,
-  },
-  rows,
-});
 
 const previewAmexImport = async (
   event: {
@@ -1340,53 +1616,15 @@ const previewAmexImport = async (
   owner: string,
 ): Promise<JsonObject> => {
   const contentType = (headerValue(event, 'content-type') ?? 'application/pdf').toLowerCase();
-  const isText = contentType.includes('text/plain');
   const bytes = requestBinaryBody(event);
   if (!bytes || bytes.length === 0) throw new InvalidAmexStatementError('El estado de cuenta Amex está vacío.');
-  const sha256 = createHash('sha256').update(bytes).digest('hex');
-
-  if (isText) {
-    const body = bytes.toString('utf8');
-    const document = parseAmexStatementText(body);
-    const source = {
-      bucket: rawSourceBucketName,
-      key: amexSourceKey(owner, sha256, 'txt'),
-      sha256,
-      contentType: 'text/plain' as const,
-    };
-    await s3.send(new PutObjectCommand({
-      Bucket: rawSourceBucketName,
-      Key: source.key,
-      Body: body,
-      ContentType: 'text/plain; charset=utf-8',
-    }));
-    const rows = await buildAmexPreviewRows(document);
-    await database.send(new PutCommand({
-      TableName: tableName,
-      Item: {
-        PK: `USER#${owner}`,
-        SK: `IMPORT#AMEX#${sha256}`,
-        entityType: 'amex_statement_import',
-        owner,
-        status: 'previewed',
-        createdAt: new Date().toISOString(),
-        source,
-        accountLastFour: document.accountLastFour,
-        product: document.product,
-        period: document.period,
-        rows,
-      },
-    }));
-    return amexPreviewResponse(sha256, document, rows);
-  }
-
   if (!contentType.includes('pdf') && !contentType.includes('octet-stream')) {
-    throw new InvalidAmexStatementError('Sube el PDF del estado de cuenta Amex (o texto OCR para pruebas).');
+    throw new InvalidAmexStatementError('Sube el PDF del estado de cuenta Amex.');
   }
-
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
   const source = {
     bucket: rawSourceBucketName,
-    key: amexSourceKey(owner, sha256, 'pdf'),
+    key: amexSourceKey(owner, sha256),
     sha256,
     contentType: 'application/pdf' as const,
   };
@@ -1396,7 +1634,12 @@ const previewAmexImport = async (
     Body: bytes,
     ContentType: 'application/pdf',
   }));
-  const textractJobId = await startTextractTextDetection(textract, rawSourceBucketName, source.key);
+  const textractJobId = await startTextractDocumentAnalysis(
+    textract,
+    rawSourceBucketName,
+    source.key,
+    'amex',
+  );
   await database.send(new PutCommand({
     TableName: tableName,
     Item: {
@@ -1430,8 +1673,8 @@ const getAmexImport = async (importId: string, owner: string): Promise<JsonObjec
     throw new InvalidAmexStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
   }
   if (stored.Item.status === 'previewed' || stored.Item.status === 'applied') {
-    const rows = Array.isArray(stored.Item.rows) ? stored.Item.rows as readonly { readonly status: string }[] : [];
-    return amexPreviewResponse(
+    const rows = Array.isArray(stored.Item.rows) ? stored.Item.rows as readonly StatementPreviewRow[] : [];
+    return statementPreviewResponse(
       importId,
       {
         accountLastFour: String(stored.Item.accountLastFour ?? ''),
@@ -1452,7 +1695,7 @@ const getAmexImport = async (importId: string, owner: string): Promise<JsonObjec
   const jobId = typeof stored.Item.textractJobId === 'string' ? stored.Item.textractJobId : undefined;
   if (!jobId) throw new InvalidAmexStatementError('Falta el trabajo de Textract para este import.');
 
-  const job = await getTextractJobStatus(textract, jobId);
+  const job = await getTextractAnalysisJobStatus(textract, jobId);
   if (job.status === 'IN_PROGRESS') {
     return {
       importId,
@@ -1472,31 +1715,30 @@ const getAmexImport = async (importId: string, owner: string): Promise<JsonObjec
     throw new TextractDocumentError(message);
   }
 
+  const source = stored.Item.source as JsonObject;
+  const sourceKey = typeof source.key === 'string'
+    ? source.key
+    : amexSourceKey(owner, importId);
+  let extractionKey: string | undefined;
+  let answers: Readonly<Record<string, string>> = {};
   try {
-    const text = await fetchTextractDocumentText(textract, jobId);
-    const document = parseAmexStatementText(text);
+    const extraction = await fetchTextractStatementExtraction(textract, jobId, 'amex');
+    answers = extraction.answers;
+    extractionKey = await persistTextractExtraction(sourceKey, extraction);
+    const document = parseAmexStatementExtraction(extraction);
     const rows = await buildAmexPreviewRows(document);
-    const source = stored.Item.source as JsonObject;
-    const ocrKey = typeof source.key === 'string'
-      ? source.key.replace(/\.pdf$/i, '.ocr.txt')
-      : amexSourceKey(owner, importId, 'txt');
-    await s3.send(new PutObjectCommand({
-      Bucket: rawSourceBucketName,
-      Key: ocrKey,
-      Body: text,
-      ContentType: 'text/plain; charset=utf-8',
-    }));
     await database.send(new UpdateCommand({
       TableName: tableName,
       Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
-      UpdateExpression: 'SET #status = :status, #accountLastFour = :accountLastFour, #product = :product, #period = :period, #rows = :rows, #ocrKey = :ocrKey',
+      UpdateExpression: 'SET #status = :status, #accountLastFour = :accountLastFour, #product = :product, #period = :period, #rows = :rows, #extractionKey = :extractionKey, #textractAnswers = :textractAnswers',
       ExpressionAttributeNames: {
         '#status': 'status',
         '#accountLastFour': 'accountLastFour',
         '#product': 'product',
         '#period': 'period',
         '#rows': 'rows',
-        '#ocrKey': 'ocrKey',
+        '#extractionKey': 'extractionKey',
+        '#textractAnswers': 'textractAnswers',
       },
       ExpressionAttributeValues: {
         ':status': 'previewed',
@@ -1504,18 +1746,36 @@ const getAmexImport = async (importId: string, owner: string): Promise<JsonObjec
         ':product': document.product,
         ':period': document.period,
         ':rows': rows,
-        ':ocrKey': ocrKey,
+        ':extractionKey': extractionKey,
+        ':textractAnswers': extraction.answers,
       },
     }));
-    return amexPreviewResponse(importId, document, rows);
+    return statementPreviewResponse(importId, document, rows);
   } catch (error) {
     const message = errorMessage(error);
     await database.send(new UpdateCommand({
       TableName: tableName,
       Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
-      UpdateExpression: 'SET #status = :status, #errorMessage = :errorMessage',
-      ExpressionAttributeNames: { '#status': 'status', '#errorMessage': 'errorMessage' },
-      ExpressionAttributeValues: { ':status': 'failed', ':errorMessage': message },
+      UpdateExpression: extractionKey
+        ? 'SET #status = :status, #errorMessage = :errorMessage, #extractionKey = :extractionKey, #textractAnswers = :textractAnswers'
+        : 'SET #status = :status, #errorMessage = :errorMessage',
+      ExpressionAttributeNames: {
+        '#status': 'status',
+        '#errorMessage': 'errorMessage',
+        ...(extractionKey
+          ? { '#extractionKey': 'extractionKey', '#textractAnswers': 'textractAnswers' }
+          : {}),
+      },
+      ExpressionAttributeValues: {
+        ':status': 'failed',
+        ':errorMessage': message,
+        ...(extractionKey
+          ? {
+              ':extractionKey': extractionKey,
+              ':textractAnswers': answers,
+            }
+          : {}),
+      },
     }));
     if (error instanceof InvalidAmexStatementError || error instanceof TextractDocumentError) {
       throw error;
@@ -1524,182 +1784,25 @@ const getAmexImport = async (importId: string, owner: string): Promise<JsonObjec
   }
 };
 
-const applyAmexImport = async (importId: string, owner: string): Promise<JsonObject> => {
-  if (!/^[a-f0-9]{64}$/.test(importId)) throw new InvalidAmexStatementError('Identificador de importación inválido.');
-  const stored = await database.send(new GetCommand({
-    TableName: tableName,
-    Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
-    ConsistentRead: true,
-  }));
-  const source = stored.Item?.source as JsonObject | undefined;
-  if (!stored.Item || stored.Item.owner !== owner || typeof source?.key !== 'string') {
-    throw new InvalidAmexStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
-  }
-  if (stored.Item.status === 'processing') {
-    throw new InvalidAmexStatementError('El PDF aún se está leyendo. Espera a que termine Textract.');
-  }
-  if (stored.Item.status === 'failed') {
-    throw new InvalidAmexStatementError(
-      typeof stored.Item.errorMessage === 'string'
-        ? stored.Item.errorMessage
-        : 'No se pudo leer el estado Amex.',
-    );
-  }
-  if (stored.Item.status === 'applied') {
-    const previous = stored.Item.result as JsonObject | undefined;
-    return {
-      importId,
-      created: [],
-      summary: previous ?? { confirmed: 0, createdUnplanned: 0, skipped: 0 },
-      alreadyApplied: true,
-    };
-  }
-  if (stored.Item.status !== 'previewed' || !Array.isArray(stored.Item.rows)) {
-    throw new InvalidAmexStatementError('La previsualización aún no está lista.');
-  }
-
-  const accountLastFour = String(stored.Item.accountLastFour ?? '');
-  const previewRows = stored.Item.rows as readonly (EvidenceLine & { status?: string })[];
-  const appliedAt = new Date().toISOString();
-  let eventsSnapshot = await allStoredEvents();
-  let confirmed = 0;
-  let createdUnplanned = 0;
-  let skipped = 0;
-  const created: JsonObject[] = [];
-
-  for (const row of previewRows) {
-    if (row.status === 'skipped') {
-      skipped += 1;
-      continue;
-    }
-    const match = matchEvidenceLine(row, eventsSnapshot);
-    if (match.kind === 'skip') {
-      skipped += 1;
-      continue;
-    }
-    if (match.kind === 'confirm') {
-      const updated = await persistEventMsi(
-        match.eventId,
-        owner,
-        match.previous,
-        match.next,
-        'Cuota MSI confirmada con estado de cuenta Amex.',
-      );
-      if (updated) {
-        confirmed += 1;
-        eventsSnapshot = eventsSnapshot.map((event) => event.id === match.eventId ? { ...event, msi: match.next } : event);
-      } else skipped += 1;
-      continue;
-    }
-    if (match.kind === 'unplanned') {
-      const id = randomUUID();
-      const observationId = randomUUID();
-      const occurredAt = `${row.occurredOn}T12:00:00.000Z`;
-      const purchase: JsonObject = {
-        id,
-        institution: 'american_express_mx',
-        eventType: 'card_purchase',
-        status: 'needs_review',
-        account: {
-          institution: 'american_express_mx',
-          accountId: `american_express_mx:${accountLastFour}`,
-          displayName: `American Express · ${accountLastFour}`,
-          lastFour: accountLastFour,
-        },
-        amount: { amountMinor: match.plan.principalMinor, currency: 'MXN' },
-        merchantRaw: match.merchantRaw,
-        occurredAt,
-        receivedAt: appliedAt,
-        ingestedAt: appliedAt,
-        source,
-        parserVersion: 'amex-mx-statement-textract-v1',
-        parseWarnings: ['MSI sin plan completo: confirma meses y cuota.'],
-        captureSource: 'amex_statement',
-        captureSources: ['amex_statement'],
-        observationCount: 1,
-        primaryObservationId: observationId,
-        hasRawEmail: false,
-        msi: match.plan,
-      };
-      try {
-        await database.send(new TransactWriteCommand({ TransactItems: [
-          { Put: {
-            TableName: tableName,
-            Item: {
-              PK: `DEDUPE#AMEX_STATEMENT#${createHash('sha256').update(row.identity).digest('hex')}`,
-              SK: 'CLAIM',
-              entityType: 'amex_statement_dedupe',
-              identity: row.identity,
-              owner,
-              eventId: id,
-              createdAt: appliedAt,
-            },
-            ConditionExpression: 'attribute_not_exists(PK)',
-          } },
-          { Put: {
-            TableName: tableName,
-            Item: {
-              PK: `EVENT#${id}`,
-              SK: 'EVENT',
-              GSI1PK: 'EVENTS',
-              GSI1SK: appliedAt,
-              GSI2PK: reconciliationPartition(purchase as Parameters<typeof reconciliationPartition>[0]),
-              GSI2SK: `${occurredAt}#${id}`,
-              reconciliationAt: occurredAt,
-              entityType: 'observed_purchase',
-              payload: purchase,
-            },
-            ConditionExpression: 'attribute_not_exists(PK)',
-          } },
-          { Put: {
-            TableName: tableName,
-            Item: {
-              PK: `EVENT#${id}`,
-              SK: `OBSERVATION#${occurredAt}#${observationId}`,
-              entityType: 'event_observation',
-              payload: {
-                id: observationId,
-                eventId: id,
-                captureSource: 'amex_statement',
-                observedAt: appliedAt,
-                reconciliationAt: occurredAt,
-                institution: 'american_express_mx',
-                eventType: 'card_purchase',
-                account: purchase.account,
-                amount: purchase.amount,
-                merchantRaw: match.merchantRaw,
-                occurredAt,
-                source,
-                parserVersion: 'amex-mx-statement-textract-v1',
-                parseWarnings: purchase.parseWarnings,
-              },
-            },
-            ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
-          } },
-        ] }));
-        created.push(toPublicEvent(purchase));
-        createdUnplanned += 1;
-        eventsSnapshot = [...eventsSnapshot, purchase];
-      } catch (error) {
-        if (errorName(error) === 'TransactionCanceledException') skipped += 1;
-        else throw error;
-      }
-      continue;
-    }
-    skipped += 1;
-  }
-
-  await database.send(new UpdateCommand({
-    TableName: tableName,
-    Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
-    ...amexImportCompletionUpdate(appliedAt, { confirmed, createdUnplanned, skipped }),
-  }));
-  return {
-    importId,
-    created,
-    summary: { confirmed, createdUnplanned, skipped },
-  };
-};
+const applyAmexImport = async (
+  importId: string,
+  owner: string,
+  decisionBody: string | undefined,
+): Promise<JsonObject> => applyStatementImport({
+  provider: 'amex',
+  importId,
+  owner,
+  decisionBody,
+  rebuildRows: async () => {
+    const stored = await database.send(new GetCommand({
+      TableName: tableName,
+      Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
+      ConsistentRead: true,
+    }));
+    const extraction = await loadStatementTextractExtraction(stored.Item as JsonObject);
+    return buildAmexPreviewRows(parseAmexStatementExtraction(extraction));
+  },
+});
 
 const getMonthlyPlan = async (owner: string, month: string): Promise<JsonObject> => {
   const result = await database.send(new GetCommand({

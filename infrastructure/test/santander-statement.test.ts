@@ -1,13 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { parseSantanderStatementText } from '../lambda/santander-statement.js';
-import { textractLinesToText } from '../lambda/textract-document.js';
+import { parseSantanderStatementExtraction } from '../lambda/santander-statement.js';
+import type { TextractStatementExtraction } from '../lambda/textract-document.js';
 
-const fixture = readFileSync(new URL('./fixtures/santander-statement-ocr.txt', import.meta.url), 'utf8');
+const fixture = JSON.parse(
+  readFileSync(new URL('./fixtures/santander-statement-extraction.json', import.meta.url), 'utf8'),
+) as TextractStatementExtraction;
 
-describe('parseSantanderStatementText', () => {
-  it('parses period, card and MSI cuotas from statement text', () => {
-    const document = parseSantanderStatementText(fixture);
+describe('parseSantanderStatementExtraction', () => {
+  it('maps period, card and MSI cuotas from Textract tables', () => {
+    const document = parseSantanderStatementExtraction(fixture);
     expect(document.accountLastFour).toBe('6349');
     expect(document.period).toEqual({ from: '2026-06-05', to: '2026-07-04' });
     expect(document.product).toMatch(/Unique Rewards/i);
@@ -29,26 +31,19 @@ describe('parseSantanderStatementText', () => {
     expect(document.charges.every((charge) => !charge.credit)).toBe(true);
   });
 
-  it('tolerates noisy OCR separators around MSI rows', () => {
-    const noisy = [
-      'Periodo: 05-Jun-2026 al 04-Jul-2026',
-      'Numero de tarjeta: 4262 8300 0028 6349',
-      '03-Jul-2026_ [03-Jul-2026_ [AMAZON A MESES S 237.92',
-      '03-Jul-2026_ [U3-Jul-2026_ [AMAZON A MESES S 187.26',
-    ].join('\n');
-    const document = parseSantanderStatementText(noisy);
+  it('tolerates noisy OCR separators inside table cells', () => {
+    const noisy: TextractStatementExtraction = {
+      ...fixture,
+      tables: [{
+        page: 1,
+        rows: [
+          ['03-Jul-2026_', '[03-Jul-2026_', '[AMAZON A MESES', 'S 237.92'],
+          ['03-Jul-2026_', '[U3-Jul-2026_', '[AMAZON A MESES', 'S 187.26'],
+        ],
+      }],
+    };
+    const document = parseSantanderStatementExtraction(noisy);
     expect(document.msiCharges).toHaveLength(2);
     expect(document.msiCharges.map((row) => row.amountMinor).sort()).toEqual([18_726, 23_792]);
-  });
-});
-
-describe('textractLinesToText', () => {
-  it('orders LINE blocks by page and geometry', () => {
-    const text = textractLinesToText([
-      { BlockType: 'LINE', Text: 'second', Page: 1, Geometry: { BoundingBox: { Top: 0.4, Left: 0.1 } } },
-      { BlockType: 'LINE', Text: 'first', Page: 1, Geometry: { BoundingBox: { Top: 0.1, Left: 0.1 } } },
-      { BlockType: 'LINE', Text: 'page2', Page: 2, Geometry: { BoundingBox: { Top: 0.1, Left: 0.1 } } },
-    ]);
-    expect(text).toBe('first\nsecond\npage2');
   });
 });

@@ -334,7 +334,7 @@ export class PersonalFinanceV1Stack extends Stack {
       resources: [metadataTable.tableArn, `${metadataTable.tableArn}/index/*`],
     }));
     apiFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['textract:StartDocumentTextDetection', 'textract:GetDocumentTextDetection'],
+      actions: ['textract:StartDocumentAnalysis', 'textract:GetDocumentAnalysis'],
       resources: ['*'],
     }));
     // Textract reads statement PDFs from the KMS-encrypted raw bucket.

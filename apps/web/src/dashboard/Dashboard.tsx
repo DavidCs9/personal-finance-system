@@ -17,9 +17,8 @@ import { EventSheet } from "../sheets/EventSheet";
 import { IncomeSheet } from "../sheets/IncomeSheet";
 import { ManualEntrySheet } from "../sheets/ManualEntrySheet";
 import { PaymentSheet } from "../sheets/PaymentSheet";
-import { AmexImportSheet } from "../sheets/AmexImportSheet";
 import { SantanderImportSheet } from "../sheets/SantanderImportSheet";
-import { SantanderStatementImportSheet } from "../sheets/SantanderStatementImportSheet";
+import { StatementImportSheet } from "../sheets/StatementImportSheet";
 import type { IngestionException, PurchaseEvent } from "../types";
 import { MovementsView } from "../views/MovementsView";
 import { SummaryView } from "../views/SummaryView";
@@ -288,7 +287,8 @@ export function Dashboard({
         />
       )}
       {amexImportOpen && (
-        <AmexImportSheet
+        <StatementImportSheet
+          provider="amex"
           idToken={idToken}
           onClose={() => setAmexImportOpen(false)}
           onApplied={() => {
@@ -298,7 +298,8 @@ export function Dashboard({
         />
       )}
       {santanderStatementOpen && (
-        <SantanderStatementImportSheet
+        <StatementImportSheet
+          provider="santander"
           idToken={idToken}
           onClose={() => setSantanderStatementOpen(false)}
           onApplied={() => {

@@ -1,0 +1,29 @@
+{
+  "provider": "amex",
+  "jobId": "fixture-amex-aeromexico",
+  "status": "SUCCEEDED",
+  "lines": [],
+  "text": "",
+  "answers": {
+    "PERIOD_FROM": "23 de Junio de 2026",
+    "PERIOD_TO": "22 de Julio de 2026",
+    "ACCOUNT_LAST_FOUR": "3401-146965-41000",
+    "PRODUCT": "American Express Aeroméxico"
+  },
+  "queryAnswers": [],
+  "tables": [
+    {
+      "page": 2,
+      "rows": [
+        ["23 de Junio", "AEROMEXICO 8697744 NUEVO PORTAL", "CARGO 02 DE 03", "1,508.67"]
+      ]
+    },
+    {
+      "page": 3,
+      "rows": [
+        ["AEROMEXICO 8697744 NUEVO PORTAL"],
+        ["23 de Jun", "4,526.00", "0.00%", "1,508.66", "2 de 3", "1,508.67"]
+      ]
+    }
+  ]
+}

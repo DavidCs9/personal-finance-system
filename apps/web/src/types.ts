@@ -106,21 +106,53 @@ export interface SantanderImportResult {
   };
 }
 
-export type AmexImportRowStatus = "matched" | "unplanned" | "skipped";
+export type StatementImportStatus = "processing" | "ready";
 
-export interface AmexImportRow {
+export type StatementRowKind = "purchase" | "msi";
+
+export type StatementRowStatus =
+  | "new"
+  | "matched"
+  | "ambiguous"
+  | "duplicate"
+  | "excluded"
+  | "unplanned"
+  | "skipped";
+
+export interface StatementImportCandidate {
+  readonly id: string;
+  readonly merchantRaw: string;
+  readonly occurredAt?: string;
+}
+
+export interface StatementImportRow {
   readonly identity: string;
+  readonly kind: StatementRowKind;
   readonly merchantRaw: string;
   readonly amountMinor: number;
   readonly occurredOn: string;
   readonly installmentIndex?: number;
   readonly installmentMonths?: number;
   readonly originalAmountMinor?: number;
-  readonly status: AmexImportRowStatus;
+  readonly status: StatementRowStatus;
   readonly eventId?: string;
+  readonly candidateEventIds?: readonly string[];
+  readonly candidates?: readonly StatementImportCandidate[];
+  readonly msi?: boolean;
 }
 
-export type StatementImportStatus = "processing" | "ready";
+export interface StatementImportSummary {
+  readonly total: number;
+  readonly new: number;
+  readonly matched: number;
+  readonly ambiguous: number;
+  readonly duplicate: number;
+  readonly excluded: number;
+  readonly unplanned: number;
+  readonly skipped: number;
+  readonly purchases: number;
+  readonly msi: number;
+}
 
 export interface AmexImportPreview {
   readonly importId: string;
@@ -129,47 +161,22 @@ export interface AmexImportPreview {
   readonly accountLastFour?: string;
   readonly product?: string;
   readonly period?: { readonly from: string; readonly to: string };
-  readonly summary?: {
-    readonly total: number;
-    readonly matched: number;
-    readonly unplanned: number;
-    readonly skipped: number;
-  };
-  readonly rows?: readonly AmexImportRow[];
+  readonly summary?: StatementImportSummary;
+  readonly rows?: readonly StatementImportRow[];
 }
 
 export interface AmexImportResult {
   readonly importId: string;
   readonly created: readonly PurchaseEvent[];
   readonly summary: {
-    readonly confirmed: number;
-    readonly createdUnplanned: number;
+    readonly created: number;
+    readonly linked: number;
     readonly skipped: number;
+    readonly msiConfirmed: number;
+    readonly createdUnplanned: number;
   };
 }
 
-export interface SantanderStatementImportPreview {
-  readonly importId: string;
-  readonly status: StatementImportStatus;
-  readonly message?: string;
-  readonly accountLastFour?: string;
-  readonly product?: string;
-  readonly period?: { readonly from: string; readonly to: string };
-  readonly summary?: {
-    readonly total: number;
-    readonly matched: number;
-    readonly unplanned: number;
-    readonly skipped: number;
-  };
-  readonly rows?: readonly AmexImportRow[];
-}
-
-export interface SantanderStatementImportResult {
-  readonly importId: string;
-  readonly created: readonly PurchaseEvent[];
-  readonly summary: {
-    readonly confirmed: number;
-    readonly createdUnplanned: number;
-    readonly skipped: number;
-  };
-}
+export type SantanderStatementImportPreview = AmexImportPreview;
+export type SantanderStatementImportResult = AmexImportResult;
+export type StatementImportDecision = SantanderImportDecision;

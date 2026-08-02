@@ -46,14 +46,14 @@ export function CaptureActionsSheet({
         >
           <span>
             <strong>Estado de cuenta Santander</strong>
-            <small>PDF del periodo · confirmar cuotas A MESES</small>
+            <small>PDF del periodo · conciliar compras y A MESES</small>
           </span>
           <span aria-hidden="true">›</span>
         </button>
         <button type="button" className="capture-action" role="menuitem" onClick={onImportAmex}>
           <span>
             <strong>Estado de cuenta Amex</strong>
-            <small>PDF del periodo · confirmar cuotas MSI</small>
+            <small>PDF del periodo · conciliar compras y MSI</small>
           </span>
           <span aria-hidden="true">›</span>
         </button>
