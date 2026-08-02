@@ -1,4 +1,4 @@
-import type { EventRevision, Institution, Money, RawSourcePointer } from "@finance/domain";
+import type { EventRevision, Institution, Money, ObservedSourcePointer } from "@finance/domain";
 
 export type ReviewStatus = "accepted" | "needs_review" | "rejected";
 
@@ -16,7 +16,8 @@ export interface PurchaseEvent {
   readonly receivedAt: string;
   readonly ingestedAt: string;
   readonly parserVersion: string;
-  readonly source: RawSourcePointer;
+  readonly source: ObservedSourcePointer;
+  readonly hasRawEmail?: boolean;
   readonly parseWarnings: readonly string[];
   readonly rawEmail?: string;
   readonly revisions: readonly EventRevision[];

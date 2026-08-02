@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { IngestionException, ObservedPurchase } from "@finance/domain";
+import type { IngestionException, ObservedPurchase, RawSourcePointer } from "@finance/domain";
 import { sha256 } from "./in-memory.js";
 import type {
   CardPurchaseParser,
@@ -105,7 +105,7 @@ export class IngestionPipeline {
 
   private async createException(
     email: IncomingEmail,
-    source: ObservedPurchase["source"],
+    source: RawSourcePointer,
     reason: IngestionException["reason"],
     details: string,
     institution?: IngestionException["institution"],

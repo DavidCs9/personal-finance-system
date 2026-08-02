@@ -17,6 +17,7 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as ses from 'aws-cdk-lib/aws-ses';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
@@ -278,23 +279,56 @@ export class PersonalFinanceV1Stack extends Stack {
       resources: [metadataTable.tableArn, `${metadataTable.tableArn}/index/*`],
     }));
 
+    const applePayCaptureSecret = new secretsmanager.Secret(this, 'ApplePayCaptureSecret', {
+      description: 'Bearer token used only by the personal Apple Pay Shortcut capture endpoint.',
+      generateSecretString: {
+        secretStringTemplate: '{}',
+        generateStringKey: 'token',
+        passwordLength: 48,
+        excludePunctuation: true,
+      },
+    });
+    const applePayCaptureFunction = new NodejsFunction(this, 'ApplePayCaptureFunction', {
+      ...lambdaDefaults,
+      functionName: 'personal-finance-v1-apple-pay-capture',
+      logGroup: this.createLogGroup('ApplePayCaptureLogGroup', 'personal-finance-v1-apple-pay-capture'),
+      entry: path.join(__dirname, '..', 'lambda', 'apple-pay-capture.ts'),
+      handler: 'handler',
+      description: 'Validates and atomically persists Apple Pay Shortcut observations.',
+      environment: {
+        METADATA_TABLE_NAME: metadataTable.tableName,
+        APPLE_PAY_CAPTURE_SECRET_ARN: applePayCaptureSecret.secretArn,
+      },
+      reservedConcurrentExecutions: 4,
+    });
+    metadataTable.grantReadWriteData(applePayCaptureFunction);
+    applePayCaptureSecret.grantRead(applePayCaptureFunction);
+
     const httpApi = new apigatewayv2.HttpApi(this, 'HttpApi', {
       apiName: 'personal-finance-v1',
       description: 'Authenticated personal-finance API.',
       createDefaultStage: true,
       corsPreflight: {
-        allowHeaders: ['Authorization', 'Content-Type'],
+        allowHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key'],
         allowMethods: [apigatewayv2.CorsHttpMethod.GET, apigatewayv2.CorsHttpMethod.POST, apigatewayv2.CorsHttpMethod.PATCH, apigatewayv2.CorsHttpMethod.PUT, apigatewayv2.CorsHttpMethod.DELETE],
         allowOrigins: [`https://${webDomainName}`],
         maxAge: Duration.hours(1),
       },
     });
+    const defaultApiStage = httpApi.defaultStage?.node.defaultChild;
+    if (defaultApiStage instanceof apigatewayv2.CfnStage) {
+      defaultApiStage.defaultRouteSettings = {
+        throttlingBurstLimit: 10,
+        throttlingRateLimit: 5,
+      };
+    }
     const authorizer = new HttpJwtAuthorizer(
       'CognitoJwtAuthorizer',
       userPool.userPoolProviderUrl,
       { jwtAudience: [userPoolClient.userPoolClientId] },
     );
     const apiIntegration = new HttpLambdaIntegration('ApiLambdaIntegration', apiFunction);
+    const applePayCaptureIntegration = new HttpLambdaIntegration('ApplePayCaptureIntegration', applePayCaptureFunction);
     for (const route of [
       'GET /events',
       'GET /exceptions',
@@ -314,6 +348,11 @@ export class PersonalFinanceV1Stack extends Stack {
         authorizer,
       });
     }
+    httpApi.addRoutes({
+      path: '/captures/apple-pay',
+      methods: [apigatewayv2.HttpMethod.POST],
+      integration: applePayCaptureIntegration,
+    });
 
     const webBucket = new s3.Bucket(this, 'WebBucket', {
       encryption: s3.BucketEncryption.S3_MANAGED,
@@ -374,6 +413,16 @@ export class PersonalFinanceV1Stack extends Stack {
       threshold: 1,
       evaluationPeriods: 2,
     });
+    const applePayCaptureErrorAlarm = new cdk.aws_cloudwatch.Alarm(this, 'ApplePayCaptureErrorsAlarm', {
+      metric: applePayCaptureFunction.metricErrors({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 2,
+    });
+    const applePayCaptureThrottleAlarm = new cdk.aws_cloudwatch.Alarm(this, 'ApplePayCaptureThrottlesAlarm', {
+      metric: applePayCaptureFunction.metricThrottles({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
     const deadLetterAlarm = new cdk.aws_cloudwatch.Alarm(this, 'DeadLetterMessagesAlarm', {
       metric: deadLetterQueue.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(5) }),
       threshold: 1,
@@ -388,10 +437,14 @@ export class PersonalFinanceV1Stack extends Stack {
     new cdk.CfnOutput(this, 'UserPoolId', { value: userPool.userPoolId });
     new cdk.CfnOutput(this, 'UserPoolClientId', { value: userPoolClient.userPoolClientId });
     new cdk.CfnOutput(this, 'HttpApiUrl', { value: httpApi.apiEndpoint });
+    new cdk.CfnOutput(this, 'ApplePayCaptureUrl', { value: `${httpApi.apiEndpoint}/captures/apple-pay` });
+    new cdk.CfnOutput(this, 'ApplePayCaptureSecretArn', { value: applePayCaptureSecret.secretArn });
     new cdk.CfnOutput(this, 'WebDistributionUrl', { value: `https://${distribution.distributionDomainName}` });
     new cdk.CfnOutput(this, 'WebCustomDomainUrl', { value: `https://${webDomainName}` });
     new cdk.CfnOutput(this, 'EmailReceiptErrorsAlarmName', { value: receiptErrorAlarm.alarmName });
     new cdk.CfnOutput(this, 'IngestionErrorsAlarmName', { value: ingestionErrorAlarm.alarmName });
+    new cdk.CfnOutput(this, 'ApplePayCaptureErrorsAlarmName', { value: applePayCaptureErrorAlarm.alarmName });
+    new cdk.CfnOutput(this, 'ApplePayCaptureThrottlesAlarmName', { value: applePayCaptureThrottleAlarm.alarmName });
     new cdk.CfnOutput(this, 'DeadLetterMessagesAlarmName', { value: deadLetterAlarm.alarmName });
   }
 

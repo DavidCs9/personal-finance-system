@@ -90,7 +90,10 @@ describe("IngestionPipeline", () => {
       amount: { amountMinor: 34700, currency: "MXN" },
       account: { lastFour: "1234" },
     });
-    expect(await rawSources.get(result.purchase.source)).toBe(amexEmail);
+    expect(result.purchase.source.kind).not.toBe("apple_pay_shortcut");
+    if (result.purchase.source.kind !== "apple_pay_shortcut") {
+      expect(await rawSources.get(result.purchase.source)).toBe(amexEmail);
+    }
     expect(ledger.purchases.size).toBe(1);
     expect(notifier.observedPurchases).toHaveLength(1);
   });

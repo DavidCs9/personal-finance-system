@@ -4,7 +4,7 @@ Un tablero personal de gasto mensual que observa eventos financieros desde alert
 
 ## Estado
 
-La V1 recibe correos reenviados a través de Amazon SES y conserva el MIME original en S3 antes de procesarlo.
+La V1 recibe correos reenviados a través de Amazon SES y observaciones automáticas de Apple Pay mediante Shortcuts. Conserva cada fuente antes de reconciliar observaciones de una misma compra.
 
 ## Estructura
 
@@ -18,6 +18,7 @@ La V1 recibe correos reenviados a través de Amazon SES y conserva el MIME origi
 
 Las decisiones acordadas para V1 están en [docs/v1-decisions.md](docs/v1-decisions.md).
 La configuracion unica de reenvio esta en [docs/gmail-forwarding.md](docs/gmail-forwarding.md).
+La automatizacion de Apple Pay esta en [docs/apple-pay-shortcut.md](docs/apple-pay-shortcut.md).
 
 ## Entregas
 
