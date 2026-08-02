@@ -146,7 +146,14 @@ export const parseSantanderCsv = (input: string): SantanderCsvDocument => {
     const base = [occurredOn, normaliseMerchant(merchantRaw), amountMinor].join(":");
     const occurrence = (occurrenceCounts.get(base) ?? 0) + 1;
     occurrenceCounts.set(base, occurrence);
-    const row = { rowNumber: headerIndex + index + 2, occurredOn, transactionId, merchantRaw, amountMinor, occurrence };
+    const row = {
+      rowNumber: headerIndex + index + 2,
+      occurredOn,
+      ...(transactionId ? { transactionId } : {}),
+      merchantRaw,
+      amountMinor,
+      occurrence,
+    };
     return {
       ...row,
       identity: transactionId
