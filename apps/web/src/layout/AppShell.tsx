@@ -41,8 +41,8 @@ export function AppShell({
 
       <div className={`app-content${tab === "summary" ? " summary-active" : " movements-active"}`}>
         {error && <p className="banner-error">{error}</p>}
-        <TabNav tab={tab} onTabChange={onTabChange} variant="desktop" />
         <MonthSelector value={month} onChange={onMonthChange} />
+        <TabNav tab={tab} onTabChange={onTabChange} variant="desktop" />
         {children}
         <TabNav tab={tab} onTabChange={onTabChange} variant="mobile" />
       </div>
