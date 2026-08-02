@@ -84,6 +84,10 @@ const ingest = async (job: IngestionJob): Promise<void> => {
   }
 
   const source = { bucket: job.source.bucket, key: job.source.key, sha256, contentType: 'message/rfc822' as const };
+  if (shouldIgnoreEmail(mime)) {
+    console.info(JSON.stringify({ message: 'Administrative email ignored', sourceKey: job.source.key }));
+    return;
+  }
   const parser = emailParsers.find((candidate) => candidate.matches(mime));
   if (!parser) {
     await saveException({
@@ -243,6 +247,11 @@ const header = (mime: string, name: string): string | undefined => {
   const headerBlock = mime.split(/\r?\n\r?\n/, 1)[0] ?? '';
   const unfolded = headerBlock.replace(/\r?\n[ \t]+/g, ' ');
   return new RegExp(`^${name}:\\s*(.+)$`, 'im').exec(unfolded)?.[1]?.trim();
+};
+export const shouldIgnoreEmail = (mime: string): boolean => {
+  const from = header(mime, 'from')?.toLowerCase() ?? '';
+  const subject = header(mime, 'subject')?.toLowerCase() ?? '';
+  return from.includes('forwarding-noreply@google.com') && subject.includes('gmail forwarding confirmation');
 };
 const body = (mime: string): string => {
   const separator = /\r?\n\r?\n/.exec(mime);

@@ -38,6 +38,9 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     if (exceptionId && event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/retry')) {
       return response(202, await requestRetry(exceptionId, principal(event)));
     }
+    if (exceptionId && event.requestContext.http.method === 'DELETE') {
+      return response(200, await discardException(exceptionId, principal(event)));
+    }
     if (!eventId) return response(404, { message: 'Route not found.' });
     if (event.requestContext.http.method === 'GET' && event.rawPath.endsWith('/raw')) {
       return response(200, { rawEmail: await readRawEmail(eventId) });
@@ -113,7 +116,10 @@ const listExceptions = async (): Promise<readonly JsonObject[]> => {
     TableName: tableName, IndexName: 'GSI1', KeyConditionExpression: 'GSI1PK = :partition',
     ExpressionAttributeValues: { ':partition': 'EXCEPTIONS' }, ScanIndexForward: false, Limit: 100,
   }));
-  return (result.Items ?? []).map((item) => toPublicException(item.payload as JsonObject));
+  return (result.Items ?? [])
+    .map((item) => item.payload as JsonObject)
+    .filter((payload) => !payload.discarded && (payload.retry as JsonObject | undefined)?.status !== 'completed')
+    .map(toPublicException);
 };
 
 const toPublicException = (payload: JsonObject): JsonObject => ({
@@ -140,6 +146,19 @@ const requestRetry = async (exceptionId: string, requestedBy: string): Promise<J
     }, ConditionExpression: 'attribute_not_exists(PK)' } },
   ] }));
   return { id: exceptionId, retry };
+};
+
+const discardException = async (exceptionId: string, discardedBy: string): Promise<JsonObject> => {
+  const discarded = { at: new Date().toISOString(), by: discardedBy };
+  await database.send(new UpdateCommand({
+    TableName: tableName,
+    Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' },
+    UpdateExpression: 'SET #payload.#discarded = if_not_exists(#payload.#discarded, :discarded)',
+    ConditionExpression: 'attribute_exists(PK)',
+    ExpressionAttributeNames: { '#payload': 'payload', '#discarded': 'discarded' },
+    ExpressionAttributeValues: { ':discarded': discarded },
+  }));
+  return { id: exceptionId, discarded };
 };
 
 const getEventDetail = async (eventId: string): Promise<JsonObject | undefined> => {

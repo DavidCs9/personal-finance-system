@@ -165,6 +165,10 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
     const result = await ledgerApi.retryException(exceptionId, idToken);
     setExceptions((current) => current.map((item) => item.id === exceptionId ? { ...item, retry: result.retry } : item));
   };
+  const discardException = async (exceptionId: string) => {
+    await ledgerApi.discardException(exceptionId, idToken);
+    setExceptions((current) => current.filter((item) => item.id !== exceptionId));
+  };
 
   useEffect(() => {
     if (demoMode) return;
@@ -219,8 +223,6 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
 
     <div className="app-content">
     {error && <p className="banner-error">{error}</p>}
-    {exceptions.filter((item) => !item.retry).map((item) => <RecoveryNotice key={item.id} exception={item} onRetry={() => retryException(item.id)} />)}
-
     <div className="desktop-tabs" role="tablist" aria-label="Secciones">
       <TabButton active={tab === "summary"} onClick={() => setTab("summary")} icon="summary">Resumen</TabButton>
       <TabButton active={tab === "movements"} onClick={() => setTab("movements")} icon="movements">Movimientos</TabButton>
@@ -253,6 +255,9 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
       sort={movementSort}
       onSortChange={setMovementSort}
       onOpen={setActiveEvent}
+      exceptions={exceptions}
+      onRetryException={retryException}
+      onDiscardException={discardException}
     />}
 
     <nav className="mobile-tabs" aria-label="Navegación principal">
@@ -280,10 +285,11 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
   </main>;
 }
 
-function RecoveryNotice({ exception, onRetry }: { exception: IngestionException; onRetry(): Promise<void> }) {
+function RecoveryNotice({ exception, onRetry, onDiscard }: { exception: IngestionException; onRetry(): Promise<void>; onDiscard(): Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  return <section className="setup-card plan-error"><span className="setup-alert">!</span><p className="eyebrow">CORREO PENDIENTE DE RECUPERACIÓN</p><h2>{exception.institution ?? "Origen por identificar"}</h2><p>{exception.details}</p>{error && <p className="form-error">{error}</p>}<button className="primary-button" disabled={busy} onClick={() => { setBusy(true); setError(undefined); void onRetry().catch((reason) => setError(reason instanceof Error ? reason.message : "No se pudo solicitar el reintento.")).finally(() => setBusy(false)); }}>{busy ? "Enviando…" : "Reintentar análisis"}</button></section>;
+  const run = (action: () => Promise<void>) => { setBusy(true); setError(undefined); void action().catch((reason) => setError(reason instanceof Error ? reason.message : "No se pudo actualizar este correo.")).finally(() => setBusy(false)); };
+  return <article className="recovery-row"><span className="recovery-dot">!</span><div><strong>{exception.institution ?? "Origen por identificar"}</strong><small>{exception.retry?.status === "queued" ? "Reintento en proceso" : exception.details}</small>{error && <p className="form-error">{error}</p>}</div><div className="recovery-actions">{!exception.retry && <button disabled={busy} onClick={() => run(onRetry)}>Reintentar</button>}<button className="discard-action" disabled={busy} onClick={() => { if (window.confirm("¿Descartar este correo pendiente? La fuente original se conservará.")) run(onDiscard); }}>Descartar</button></div></article>;
 }
 
 function MonthSelector({ value, onChange }: { value: string; onChange(value: string): void }) {
@@ -400,14 +406,17 @@ function Summary(props: SummaryProps) {
   </section>;
 }
 
-function Movements({ month, onMonthChange, events, loading, sort, onSortChange, onOpen }: {
+function Movements({ month, onMonthChange, events, exceptions, loading, sort, onSortChange, onOpen, onRetryException, onDiscardException }: {
   month: string;
   onMonthChange(value: string): void;
   events: readonly PurchaseEvent[];
+  exceptions: readonly IngestionException[];
   loading: boolean;
   sort: "recent" | "largest";
   onSortChange(value: "recent" | "largest"): void;
   onOpen(event: PurchaseEvent): void;
+  onRetryException(id: string): Promise<void>;
+  onDiscardException(id: string): Promise<void>;
 }) {
   const sorted = [...events].sort((a, b) => sort === "largest" ? b.amount.amountMinor - a.amount.amountMinor : eventDate(b).getTime() - eventDate(a).getTime());
   const total = events.filter((event) => event.status !== "rejected").reduce((sum, event) => sum + event.amount.amountMinor, 0);
@@ -417,6 +426,7 @@ function Movements({ month, onMonthChange, events, loading, sort, onSortChange, 
       <div><p className="eyebrow">TRAZABILIDAD</p><h1>Movimientos</h1><p>{events.length} registros · {money(total)}</p></div>
       <label className="sort-control"><span>Ordenar</span><select value={sort} onChange={(event) => onSortChange(event.target.value as "recent" | "largest")}><option value="recent">Más recientes</option><option value="largest">Mayor gasto</option></select></label>
     </header>
+    {exceptions.length > 0 && <details className="recovery-section"><summary><span>Correos por revisar</span><small>{exceptions.length}</small></summary><div>{exceptions.map((exception) => <RecoveryNotice key={exception.id} exception={exception} onRetry={() => onRetryException(exception.id)} onDiscard={() => onDiscardException(exception.id)} />)}</div></details>}
     <div className="movement-list">
       {sorted.map((event) => <button className="movement-row" key={event.id} onClick={() => onOpen(event)}>
         <span className={`movement-icon ${event.status}`} aria-hidden="true">{event.status === "needs_review" ? "!" : event.merchantRaw.slice(0, 1)}</span>
