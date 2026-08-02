@@ -236,7 +236,7 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
       </div>
     </header>
 
-    <div className={`app-content${tab === "movements" ? " movements-active" : ""}`}>
+    <div className={`app-content${tab === "summary" ? " summary-active" : " movements-active"}`}>
     {error && <p className="banner-error">{error}</p>}
     <div className="desktop-tabs" role="tablist" aria-label="Secciones">
       <TabButton active={tab === "summary"} onClick={() => setTab("summary")} icon="summary">Resumen</TabButton>
@@ -382,6 +382,7 @@ function Summary(props: SummaryProps) {
   const paymentMonth = new Intl.DateTimeFormat("es-MX", { month: "short", timeZone: "UTC" }).format(monthDate(props.month)).replace(".", "").toUpperCase();
   return <section className={`summary-view risk-${props.risk}`}>
     <MonthSelector value={props.month} onChange={props.onMonthChange} />
+    <div className="summary-scroll">
     {props.loading ? <section className="setup-card plan-loading">
       <p className="eyebrow">CONFIGURACIÓN MENSUAL</p>
       <h1>Cargando este mes…</h1>
@@ -450,6 +451,7 @@ function Summary(props: SummaryProps) {
         <div className="payment-total"><span>Total próximo</span><strong>{money(props.upcomingMinor)}</strong></div>
       </div> : <button className="empty-action" onClick={props.onAddPayment}><span>+</span><div><strong>Agrega tus pagos próximos</strong><small>Renta, servicios, seguros y otras obligaciones.</small></div></button>}
     </section>}
+    </div>
   </section>;
 }
 

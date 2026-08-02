@@ -27,6 +27,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 
 .app-shell { width: min(1120px, 100%); height: 100vh; height: 100dvh; min-height: 0; margin: 0 auto; padding: env(safe-area-inset-top) max(18px, env(safe-area-inset-right)) 0 max(18px, env(safe-area-inset-left)); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
 .app-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding-bottom: calc(104px + env(safe-area-inset-bottom)); }
+.app-content.summary-active { display: flex; flex-direction: column; overflow: hidden; }
 .app-content.movements-active { display: flex; flex-direction: column; overflow: hidden; }
 .topbar { height: 68px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 10px; font: 700 21px/1 "Fraunces", serif; letter-spacing: -.035em; }
@@ -121,6 +122,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .empty-action small { color: var(--muted); font-size: 10px; }
 
 .movements-view { padding-bottom: 20px; }
+.summary-active .summary-view { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; width: 100%; }
+.summary-active .summary-scroll { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .movements-active .movements-view { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; width: 100%; }
 .movements-heading { display: flex; align-items: end; justify-content: space-between; gap: 15px; padding: 28px 0 20px; }
 .movements-heading h1 { font-size: 34px; }
