@@ -40,7 +40,8 @@ export class FinanceApiService {
 
   async raw(id: string): Promise<string | undefined> {
     const purchase = await this.ledger.getPurchase(id);
-    return purchase ? this.rawSources.get(purchase.source) : undefined;
+    if (!purchase || purchase.source.kind === "apple_pay_shortcut") return undefined;
+    return this.rawSources.get(purchase.source);
   }
 
   async revisions(id: string): Promise<readonly EventRevision[] | undefined> {

@@ -179,18 +179,30 @@ const getEventDetail = async (eventId: string): Promise<JsonObject | undefined> 
     Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
   }));
   if (!record.Item?.payload) return undefined;
-  const revisions = await database.send(new QueryCommand({
+  const related = await database.send(new QueryCommand({
     TableName: tableName,
-    KeyConditionExpression: 'PK = :partition AND begins_with(SK, :revision)',
-    ExpressionAttributeValues: { ':partition': `EVENT#${eventId}`, ':revision': 'REVISION#' },
+    KeyConditionExpression: 'PK = :partition',
+    ExpressionAttributeValues: { ':partition': `EVENT#${eventId}` },
     ScanIndexForward: false,
   }));
-  return toPublicEvent(record.Item.payload as JsonObject, (revisions.Items ?? []).map((item) => item.payload as JsonObject));
+  const revisions = (related.Items ?? [])
+    .filter((item) => typeof item.SK === 'string' && item.SK.startsWith('REVISION#'))
+    .map((item) => item.payload as JsonObject);
+  const observations = (related.Items ?? [])
+    .filter((item) => typeof item.SK === 'string' && item.SK.startsWith('OBSERVATION#'))
+    .map((item) => item.payload as JsonObject);
+  return toPublicEvent(record.Item.payload as JsonObject, revisions, observations);
 };
 
 const readRawEmail = async (eventId: string): Promise<string> => {
   const detail = await getEventDetail(eventId);
-  const source = detail?.source as { bucket?: string; key?: string } | undefined;
+  const directSource = detail?.source as { bucket?: string; key?: string } | undefined;
+  const linkedSource = Array.isArray(detail?.observations)
+    ? detail.observations
+      .map((observation) => (observation as JsonObject).source as { bucket?: string; key?: string } | undefined)
+      .find((source) => source?.bucket && source.key)
+    : undefined;
+  const source = directSource?.bucket && directSource.key ? directSource : linkedSource;
   if (!source?.bucket || !source.key) throw new Error(`Missing raw source for event ${eventId}`);
   return readSource({ bucket: source.bucket, key: source.key }, `event ${eventId}`);
 };
@@ -231,7 +243,11 @@ const markVerified = async (eventId: string, changedBy: string): Promise<JsonObj
   return toPublicEvent(updated.Attributes?.payload as JsonObject, [revision]);
 };
 
-const toPublicEvent = (payload: JsonObject, revisions: readonly JsonObject[] = []): JsonObject => {
+const toPublicEvent = (
+  payload: JsonObject,
+  revisions: readonly JsonObject[] = [],
+  observations: readonly JsonObject[] = [],
+): JsonObject => {
   const account = payload.account as JsonObject | undefined;
   return {
     id: payload.id,
@@ -248,8 +264,14 @@ const toPublicEvent = (payload: JsonObject, revisions: readonly JsonObject[] = [
     ingestedAt: payload.ingestedAt,
     parserVersion: payload.parserVersion,
     source: payload.source,
+    captureSource: payload.captureSource,
+    captureSources: payload.captureSources ?? [],
+    observationCount: payload.observationCount ?? Math.max(1, observations.length),
+    reconciledAt: payload.reconciledAt,
+    hasRawEmail: payload.hasRawEmail ?? (payload.source as JsonObject | undefined)?.contentType === 'message/rfc822',
     parseWarnings: payload.parseWarnings ?? [],
     revisions,
+    observations,
   };
 };
 

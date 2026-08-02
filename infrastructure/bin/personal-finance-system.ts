@@ -10,7 +10,7 @@ new PersonalFinanceV1Stack(app, 'PersonalFinanceV1', {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: 'us-east-2',
   },
-  description: 'Serverless personal-finance email ingestion system (V1).',
+  description: 'Serverless multi-source personal-finance ingestion system (V1).',
   tags: {
     Project: 'personal-finance-system',
     Environment: 'prod',

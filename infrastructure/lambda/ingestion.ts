@@ -2,9 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SendEmailCommand, SESClient } from '@aws-sdk/client-ses';
-import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { SQSHandler } from 'aws-lambda';
 import { ingestionExceptionAlert, type IngestionExceptionAlertInput } from './ingestion-notifications.js';
+import { saveObservedEvent } from './observed-events.js';
 
 const s3 = new S3Client({});
 const ses = new SESClient({});
@@ -69,22 +70,10 @@ const ingest = async (job: IngestionJob): Promise<void> => {
   const sourceMessageId = normaliseMessageId(job.sourceMessageId);
   const dedupeKey = createHash('sha256').update(job.retryExceptionId ?? `${sourceMessageId ?? 'no-message-id'}:${sha256}`).digest('hex');
 
-  try {
-    await database.send(new PutCommand({
-      TableName: tableName,
-      Item: { PK: `DEDUPE#${dedupeKey}`, SK: 'CLAIM', createdAt: new Date().toISOString() },
-      ConditionExpression: 'attribute_not_exists(PK)',
-    }));
-  } catch (error) {
-    if (errorName(error) === 'ConditionalCheckFailedException') {
-      console.info(JSON.stringify({ message: 'Duplicate SES email ignored', dedupeKey }));
-      return;
-    }
-    throw error;
-  }
-
   const source = { bucket: job.source.bucket, key: job.source.key, sha256, contentType: 'message/rfc822' as const };
   if (shouldIgnoreEmail(mime)) {
+    const claimed = await claimIgnoredSource(dedupeKey);
+    if (!claimed) return;
     console.info(JSON.stringify({ message: 'Administrative email ignored', sourceKey: job.source.key }));
     return;
   }
@@ -95,64 +84,15 @@ const ingest = async (job: IngestionJob): Promise<void> => {
       reason: 'unsupported_source',
       details: 'No configured parser accepted this SES-received email.',
       source,
-    });
+    }, dedupeKey);
     return;
   }
 
+  let parsed: ParsedPurchase;
   try {
-    const parsed = parser.parse(mime);
+    parsed = parser.parse(mime);
     if (parsed.amount.amountMinor <= 0 || !parsed.amount.currency || !parsed.merchantRaw.trim()) {
       throw new Error('Parser returned incomplete event data.');
-    }
-    const importWarning = header(mime, 'x-ledger-import-source')
-      ? ['Importado desde un PDF de ejemplo; el MIME original no estaba disponible.']
-      : [];
-    const parseWarnings = [...(parsed.parseWarnings ?? []), ...importWarning];
-    const purchase = {
-      id: randomUUID(),
-      institution: parsed.institution,
-      eventType: parsed.eventType ?? 'card_purchase',
-      status: parseWarnings.length ? 'needs_review' : 'accepted',
-      account: parsed.account,
-      amount: parsed.amount,
-      merchantRaw: parsed.merchantRaw,
-      counterparty: parsed.counterparty,
-      transferType: parsed.transferType,
-      reference: parsed.reference,
-      folio: parsed.folio,
-      trackingKey: parsed.trackingKey,
-      counterpartyInstitution: parsed.counterpartyInstitution,
-      counterpartyAccountLastFour: parsed.counterpartyAccountLastFour,
-      billingPeriod: parsed.billingPeriod,
-      paymentMethodLastFour: parsed.paymentMethodLastFour,
-      occurredAt: parsed.occurredAt,
-      receivedAt: job.receivedAt,
-      ingestedAt: new Date().toISOString(),
-      sourceMessageId,
-      source,
-      parserVersion: parser.version,
-      parseWarnings,
-    };
-    await database.send(new PutCommand({
-      TableName: tableName,
-      Item: {
-        PK: `EVENT#${purchase.id}`,
-        SK: 'EVENT',
-        GSI1PK: 'EVENTS',
-        GSI1SK: purchase.receivedAt,
-        entityType: 'observed_purchase',
-        payload: purchase,
-      },
-    }));
-    if (job.retryExceptionId) await markRetryCompleted(job.retryExceptionId, purchase.id);
-    try {
-      await notifyObservedPurchase(purchase);
-    } catch (error) {
-      console.error(JSON.stringify({
-        message: 'Unable to send observed-movement alert',
-        eventId: purchase.id,
-        error: errorMessage(error),
-      }));
     }
   } catch (error) {
     await saveException({
@@ -161,7 +101,78 @@ const ingest = async (job: IngestionJob): Promise<void> => {
       reason: 'parser_failed',
       details: errorMessage(error),
       source,
-    });
+    }, dedupeKey);
+    return;
+  }
+
+  const importWarning = header(mime, 'x-ledger-import-source')
+    ? ['Importado desde un PDF de ejemplo; el MIME original no estaba disponible.']
+    : [];
+  const parseWarnings = [...(parsed.parseWarnings ?? []), ...importWarning];
+  const purchase = {
+    id: randomUUID(),
+    institution: parsed.institution,
+    eventType: parsed.eventType ?? 'card_purchase',
+    status: parseWarnings.length ? 'needs_review' : 'accepted',
+    account: parsed.account,
+    amount: parsed.amount,
+    merchantRaw: parsed.merchantRaw,
+    counterparty: parsed.counterparty,
+    transferType: parsed.transferType,
+    reference: parsed.reference,
+    folio: parsed.folio,
+    trackingKey: parsed.trackingKey,
+    counterpartyInstitution: parsed.counterpartyInstitution,
+    counterpartyAccountLastFour: parsed.counterpartyAccountLastFour,
+    billingPeriod: parsed.billingPeriod,
+    paymentMethodLastFour: parsed.paymentMethodLastFour,
+    occurredAt: parsed.occurredAt,
+    receivedAt: job.receivedAt,
+    ingestedAt: new Date().toISOString(),
+    sourceMessageId,
+    source,
+    parserVersion: parser.version,
+    parseWarnings,
+  };
+  const saved = await saveObservedEvent({
+    database,
+    tableName,
+    dedupeKey,
+    captureSource: 'email',
+    event: purchase,
+    reconciliationAt: job.receivedAt,
+  });
+  if (saved.duplicate) {
+    console.info(JSON.stringify({ message: 'Duplicate SES email ignored', dedupeKey }));
+    return;
+  }
+  if (job.retryExceptionId) await markRetryCompleted(job.retryExceptionId, saved.eventId);
+  if (!saved.created) {
+    console.info(JSON.stringify({ message: 'Email observation reconciled with an existing event', eventId: saved.eventId }));
+    return;
+  }
+  try {
+    await notifyObservedPurchase(purchase);
+  } catch (error) {
+    console.error(JSON.stringify({
+      message: 'Unable to send observed-movement alert',
+      eventId: purchase.id,
+      error: errorMessage(error),
+    }));
+  }
+};
+
+const claimIgnoredSource = async (dedupeKey: string): Promise<boolean> => {
+  try {
+    await database.send(new PutCommand({
+      TableName: tableName,
+      Item: { PK: `DEDUPE#${dedupeKey}`, SK: 'CLAIM', entityType: 'source_dedupe_claim', createdAt: new Date().toISOString() },
+      ConditionExpression: 'attribute_not_exists(PK)',
+    }));
+    return true;
+  } catch (error) {
+    if (errorName(error) === 'ConditionalCheckFailedException') return false;
+    throw error;
   }
 };
 
@@ -176,20 +187,36 @@ const markRetryCompleted = async (exceptionId: string, eventId: string): Promise
 
 type NewIngestionException = Omit<IngestionExceptionAlertInput, 'id'>;
 
-const saveException = async (exception: NewIngestionException): Promise<void> => {
+const saveException = async (exception: NewIngestionException, dedupeKey: string): Promise<void> => {
   const id = randomUUID();
   const savedException = { id, ...exception };
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: {
-      PK: `EXCEPTION#${id}`,
-      SK: 'EXCEPTION',
-      GSI1PK: 'EXCEPTIONS',
-      GSI1SK: String(exception.receivedAt),
-      entityType: 'ingestion_exception',
-      payload: savedException,
-    },
-  }));
+  try {
+    await database.send(new TransactWriteCommand({ TransactItems: [
+      { Put: {
+        TableName: tableName,
+        Item: { PK: `DEDUPE#${dedupeKey}`, SK: 'CLAIM', entityType: 'source_dedupe_claim', createdAt: new Date().toISOString() },
+        ConditionExpression: 'attribute_not_exists(PK)',
+      } },
+      { Put: {
+        TableName: tableName,
+        Item: {
+          PK: `EXCEPTION#${id}`,
+          SK: 'EXCEPTION',
+          GSI1PK: 'EXCEPTIONS',
+          GSI1SK: String(exception.receivedAt),
+          entityType: 'ingestion_exception',
+          payload: savedException,
+        },
+        ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
+      } },
+    ] }));
+  } catch (error) {
+    if (errorName(error) === 'TransactionCanceledException') {
+      console.info(JSON.stringify({ message: 'Duplicate SES email exception ignored', dedupeKey }));
+      return;
+    }
+    throw error;
+  }
   console.warn(JSON.stringify({ message: 'SES email needs review', exception: { reason: exception.reason, institution: exception.institution } }));
   try {
     await notifyIngestionException(savedException);

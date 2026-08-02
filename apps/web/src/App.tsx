@@ -566,6 +566,8 @@ function EventSheet({ event, idToken, demoMode, onClose, onVerified }: { event: 
       setError(reason instanceof Error ? reason.message : "No se pudo actualizar el movimiento.");
     }
   };
+  const isApplePayCapture = event.source.kind === "apple_pay_shortcut";
+  const hasRawEmail = !isApplePayCapture || event.hasRawEmail === true;
   return <Sheet eyebrow="MOVIMIENTO OBSERVADO" title={event.merchantRaw} onClose={onClose}>
     <div className="event-detail">
       <div className="detail-amount"><strong>{eventMoney(event)}</strong><span className={`status ${event.status}`}>{statusLabel[event.status]}</span></div>
@@ -573,8 +575,10 @@ function EventSheet({ event, idToken, demoMode, onClose, onVerified }: { event: 
       {event.parseWarnings.length > 0 && <div className="warning"><span>!</span><div><strong>Necesita confirmación</strong><p>{event.parseWarnings[0]}</p></div><button onClick={verify}>Confirmar</button></div>}
       {error && <p className="form-error">{error}</p>}
       <dl className="facts"><div><dt>Fecha de compra</dt><dd>{longDateFormatter.format(eventDate(event))}</dd></div><div><dt>Procesado</dt><dd>{longDateFormatter.format(new Date(event.ingestedAt))}</dd></div><div><dt>Parser</dt><dd>{event.parserVersion}</dd></div><div><dt>Estado</dt><dd>{statusLabel[event.status]}</dd></div></dl>
-      <div className="detail-section-heading"><div><p className="eyebrow">EVIDENCIA</p><h3>Correo original</h3></div><button className="secondary-button" onClick={toggleRaw}>{rawEmail ? "Ocultar" : "Ver fuente"}</button></div>
-      {rawEmail ? <pre className="raw-source">{rawEmail}</pre> : <div className="source-summary"><Mark /><div><strong>Mensaje original conservado</strong><p>{event.source.key}</p></div></div>}
+      <div className="detail-section-heading"><div><p className="eyebrow">EVIDENCIA</p><h3>{isApplePayCapture ? "Captura de Apple Pay" : "Correo original"}</h3></div>{hasRawEmail && <button className="secondary-button" onClick={toggleRaw}>{rawEmail ? "Ocultar" : isApplePayCapture ? "Ver correo" : "Ver fuente"}</button>}</div>
+      {rawEmail
+        ? <pre className="raw-source">{rawEmail}</pre>
+        : <div className="source-summary"><Mark /><div><strong>{isApplePayCapture ? "Observación automática conservada" : "Mensaje original conservado"}</strong><p>{isApplePayCapture ? event.source.cardRaw : event.source.key}</p></div></div>}
     </div>
   </Sheet>;
 }
