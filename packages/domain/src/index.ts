@@ -134,6 +134,7 @@ export {
   markInstallmentSpent,
   maybeAutoAmexMsi,
   msiLabel,
+  replaceMsiSchedule,
   type InstallmentStatus,
   type MsiEvidenceCandidate,
   type MsiInstallment,

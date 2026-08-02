@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { computeMonthSummary, monthKeyInZone } from "@finance/domain";
 import { RecoveryNotice } from "../components/RecoveryNotice";
 import {
   dateFormatter,
@@ -15,6 +14,7 @@ import type { IngestionException, PurchaseEvent } from "../types";
 
 export function MovementsView({
   events,
+  spentMinor,
   exceptions,
   loading,
   sort,
@@ -28,6 +28,8 @@ export function MovementsView({
   onRegisterCharge,
 }: {
   events: readonly PurchaseEvent[];
+  /** Month spend including MSI cuotas whose purchase may live in another month. */
+  spentMinor: number;
   exceptions: readonly IngestionException[];
   loading: boolean;
   sort: "recent" | "largest";
@@ -47,22 +49,6 @@ export function MovementsView({
       ? b.amount.amountMinor - a.amount.amountMinor
       : eventDate(b).getTime() - eventDate(a).getTime(),
   );
-  const month = events[0] ? monthKeyInZone(eventDate(events[0])) : monthKeyInZone(new Date());
-  const total = computeMonthSummary({
-    events: events.map((event) => ({
-      amountMinor: event.amount.amountMinor,
-      status: event.status,
-      occurredAt: event.occurredAt,
-      receivedAt: event.receivedAt,
-      merchantRaw: event.merchantRaw,
-      msi: event.msi,
-    })),
-    month,
-    incomeMinor: 0,
-    incomeConfigured: false,
-    upcomingPaymentsMinor: 0,
-    now: new Date(),
-  }).spentMinor;
 
   return (
     <section className="movements-view">
@@ -71,7 +57,7 @@ export function MovementsView({
           <p className="eyebrow">TRAZABILIDAD</p>
           <h1>Movimientos</h1>
           <p>
-            {events.length} registros · {money(total)}
+            {events.length} registros · {money(spentMinor)}
           </p>
         </div>
         <div className="movement-actions">

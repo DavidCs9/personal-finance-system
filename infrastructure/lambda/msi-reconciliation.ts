@@ -46,6 +46,9 @@ const asMsiPlan = (value: unknown): MsiPlan | undefined => {
   return plan;
 };
 
+const isAutomaticAmexLabel = (merchantRaw: string): boolean =>
+  /MESES EN AUTOM[AÁ]TICO/i.test(merchantRaw);
+
 export const evidenceCandidatesFromEvents = (
   events: readonly JsonObject[],
 ): readonly MsiEvidenceCandidate[] => {
@@ -66,12 +69,28 @@ export const evidenceCandidatesFromEvents = (
   return candidates;
 };
 
-const amexMerchantsMatch = (left: string, right: string): boolean => {
-  if (/MESES EN AUTOM[AÁ]TICO/i.test(left) || /MESES EN AUTOM[AÁ]TICO/i.test(right)) {
-    return true;
+/** Merchant equality for statement matching. Automatic Amex labels never match arbitrary merchants. */
+export const amexMerchantsMatch = (left: string, right: string): boolean => {
+  if (isAutomaticAmexLabel(left) || isAutomaticAmexLabel(right)) {
+    return isAutomaticAmexLabel(left) && isAutomaticAmexLabel(right);
   }
   return santanderMerchantsMatch(left, right);
 };
+
+const confirmMatch = (
+  match: MsiEvidenceCandidate,
+  line: EvidenceLine,
+): EvidenceMatchResult => ({
+  kind: "confirm",
+  eventId: match.eventId,
+  previous: match.plan,
+  next: markInstallmentSpent(match.plan, match.installment.index, {
+    amountMinor: line.amountMinor,
+    confirmedAt: new Date().toISOString(),
+    evidenceObservationId: line.identity,
+  }),
+  installmentIndex: match.installment.index,
+});
 
 export const matchEvidenceLine = (
   line: EvidenceLine,
@@ -79,6 +98,15 @@ export const matchEvidenceLine = (
 ): EvidenceMatchResult => {
   const month = monthKeyInZone(new Date(`${line.occurredOn}T12:00:00Z`));
   const candidates = evidenceCandidatesFromEvents(events);
+
+  const alreadyApplied = events.some((event) => {
+    const plan = asMsiPlan(event.msi);
+    return plan?.installments.some(
+      (installment) =>
+        installment.status === "spent" && installment.evidenceObservationId === line.identity,
+    );
+  });
+  if (alreadyApplied) return { kind: "skip", reason: "already_confirmed" };
 
   const indexed = candidates.filter((candidate) => {
     if (candidate.installment.month !== month) return false;
@@ -91,54 +119,35 @@ export const matchEvidenceLine = (
     ) {
       return false;
     }
+    if (!amountsWithinTolerance(candidate.installment.amountMinor, line.amountMinor)) return false;
+
+    if (isAutomaticAmexLabel(line.merchantRaw)) {
+      // Automatic labels omit the real merchant: principal (+ index/months/amount) must disambiguate.
+      if (line.originalAmountMinor === undefined) return false;
+      return amountsWithinTolerance(candidate.plan.principalMinor, line.originalAmountMinor);
+    }
+
     if (
       line.originalAmountMinor !== undefined &&
-      !amountsWithinTolerance(candidate.plan.principalMinor, line.originalAmountMinor)
+      !amountsWithinTolerance(candidate.plan.principalMinor, line.originalAmountMinor) &&
+      !amexMerchantsMatch(candidate.merchantRaw, line.merchantRaw)
     ) {
-      // Keep as soft signal; automatic Amex labels often omit merchant.
-      if (!/MESES EN AUTOM[AÁ]TICO/i.test(line.merchantRaw)) return false;
-    }
-    if (!amountsWithinTolerance(candidate.installment.amountMinor, line.amountMinor)) return false;
-    if (/MESES EN AUTOM[AÁ]TICO/i.test(line.merchantRaw)) {
-      return line.originalAmountMinor === undefined
-        || amountsWithinTolerance(candidate.plan.principalMinor, line.originalAmountMinor);
+      return false;
     }
     return amexMerchantsMatch(candidate.merchantRaw, line.merchantRaw);
   });
 
-  if (indexed.length === 1) {
-    const match = indexed[0];
-    return {
-      kind: "confirm",
-      eventId: match.eventId,
-      previous: match.plan,
-      next: markInstallmentSpent(match.plan, match.installment.index, {
-        amountMinor: line.amountMinor,
-        confirmedAt: new Date().toISOString(),
-        evidenceObservationId: line.identity,
-      }),
-      installmentIndex: match.installment.index,
-    };
-  }
+  if (indexed.length === 1) return confirmMatch(indexed[0], line);
+  if (indexed.length > 1) return { kind: "skip", reason: "ambiguous_msi_match" };
 
-  const loose = findMsiEvidenceMatch(candidates, {
-    merchantRaw: line.merchantRaw,
-    amountMinor: line.amountMinor,
-    month,
-    merchantsMatch: amexMerchantsMatch,
-  });
-  if (loose) {
-    return {
-      kind: "confirm",
-      eventId: loose.eventId,
-      previous: loose.plan,
-      next: markInstallmentSpent(loose.plan, loose.installment.index, {
-        amountMinor: line.amountMinor,
-        confirmedAt: new Date().toISOString(),
-        evidenceObservationId: line.identity,
-      }),
-      installmentIndex: loose.installment.index,
-    };
+  if (!isAutomaticAmexLabel(line.merchantRaw)) {
+    const loose = findMsiEvidenceMatch(candidates, {
+      merchantRaw: line.merchantRaw,
+      amountMinor: line.amountMinor,
+      month,
+      merchantsMatch: amexMerchantsMatch,
+    });
+    if (loose) return confirmMatch(loose, line);
   }
 
   if (line.installmentIndex !== undefined || isMsiLikeMerchant(line.merchantRaw) || line.originalAmountMinor) {

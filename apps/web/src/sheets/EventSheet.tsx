@@ -1,6 +1,6 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { buildMsiSchedule, defaultCuotaMinor, monthKeyInZone } from "@finance/domain";
+import { defaultCuotaMinor, monthKeyInZone, replaceMsiSchedule } from "@finance/domain";
 import { ledgerApi } from "../api/client";
 import { Mark } from "../components/Brand";
 import { Field } from "../components/Field";
@@ -37,6 +37,20 @@ export function EventSheet({
   const [msiCuota, setMsiCuota] = useState(
     ((event.msi?.cuotaMinor ?? defaultCuotaMinor(event.amount.amountMinor, event.msi?.months ?? 3)) / 100).toFixed(2),
   );
+
+  useEffect(() => {
+    setRawEmail(undefined);
+    setError(undefined);
+    setMsiEnabled(Boolean(event.msi));
+    setMsiMonths(String(event.msi?.months ?? 3));
+    setMsiCuota(
+      (
+        (event.msi?.cuotaMinor ??
+          defaultCuotaMinor(event.amount.amountMinor, event.msi?.months ?? 3)) /
+        100
+      ).toFixed(2),
+    );
+  }, [event.id, event.msi, event.amount.amountMinor]);
 
   const updateCache = (updated: PurchaseEvent) => {
     queryClient.setQueryData<{ events: readonly PurchaseEvent[] }>(eventsQueryKey, (current) =>
@@ -84,25 +98,13 @@ export function EventSheet({
       if (!Number.isSafeInteger(cuotaMinor) || cuotaMinor <= 0) throw new Error("Indica una cuota válida.");
       if (demoMode) {
         const startMonth = monthKeyInZone(eventDate(event));
-        const action = event.msi?.needsScheduleCompletion ? "complete" : "set";
-        const plan =
-          action === "complete" && event.msi
-            ? {
-                ...buildMsiSchedule({
-                  principalMinor: event.amount.amountMinor,
-                  months,
-                  startMonth,
-                  origin: "manual",
-                  cuotaMinor,
-                }),
-              }
-            : buildMsiSchedule({
-                principalMinor: event.amount.amountMinor,
-                months,
-                startMonth,
-                origin: "manual",
-                cuotaMinor,
-              });
+        const plan = replaceMsiSchedule(event.msi, {
+          principalMinor: event.amount.amountMinor,
+          months,
+          startMonth,
+          origin: event.msi?.origin === "amex_auto" ? "amex_auto" : "manual",
+          cuotaMinor,
+        });
         return { ...event, msi: { ...plan, needsScheduleCompletion: undefined } };
       }
       if (event.msi?.needsScheduleCompletion) {

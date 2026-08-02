@@ -210,6 +210,7 @@ export function Dashboard({
         ) : (
           <MovementsView
             events={monthEvents}
+            spentMinor={spentMinor}
             loading={loading}
             sort={movementSort}
             onSortChange={setMovementSort}
@@ -265,6 +266,7 @@ export function Dashboard({
       )}
       {activeEvent && (
         <EventSheet
+          key={activeEvent.id}
           event={activeEvent}
           idToken={idToken}
           demoMode={demoMode}

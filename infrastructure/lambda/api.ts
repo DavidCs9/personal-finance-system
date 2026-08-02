@@ -11,11 +11,11 @@ import {
   type ManualEntryInput,
 } from './manual-entry-input.js';
 import {
-  buildMsiSchedule,
   cancelRemainingInstallments,
   completeUnplannedSchedule,
   maybeAutoAmexMsi,
   monthKeyInZone,
+  replaceMsiSchedule,
   type MsiPlan,
 } from '@finance/domain';
 import { amexImportCompletionUpdate, InvalidAmexStatementError, parseAmexStatementText } from './amex-statement.js';
@@ -707,14 +707,17 @@ const applySantanderImport = async (importId: string, owner: string, decisionBod
   for (const row of rows) {
     const previewRow = previewByIdentity.get(row.identity);
     const action = santanderApplyAction(row, previewRow, decisions[row.identity]);
-    if (action.kind === 'create' && isSantanderMsiRow(row.merchantRaw) && row.amountMinor > 0) {
-      const evidence: EvidenceLine = {
-        merchantRaw: row.merchantRaw,
-        amountMinor: row.amountMinor,
-        occurredOn: row.occurredOn,
-        identity: row.identity,
-      };
-      const match = matchEvidenceLine(evidence, eventsSnapshot);
+    const msiEvidence: EvidenceLine | undefined = isSantanderMsiRow(row.merchantRaw) && row.amountMinor > 0
+      ? {
+          merchantRaw: row.merchantRaw,
+          amountMinor: row.amountMinor,
+          occurredOn: row.occurredOn,
+          identity: row.identity,
+        }
+      : undefined;
+
+    if (action.kind === 'create' && msiEvidence) {
+      const match = matchEvidenceLine(msiEvidence, eventsSnapshot);
       if (match.kind === 'confirm') {
         const updated = await persistEventMsi(
           match.eventId,
@@ -740,6 +743,7 @@ const applySantanderImport = async (importId: string, owner: string, decisionBod
         continue;
       }
     }
+
     if (action.kind === 'create') {
       const purchase = await claimAndCreateCsvEvent(owner, document, row, source, appliedAt);
       if (purchase) {
@@ -747,6 +751,23 @@ const applySantanderImport = async (importId: string, owner: string, decisionBod
         eventsSnapshot = [...eventsSnapshot, purchase];
       } else skipped += 1;
     } else if (action.kind === 'link') {
+      if (msiEvidence) {
+        const scoped = eventsSnapshot.filter((event) => event.id === action.eventId);
+        const match = matchEvidenceLine(msiEvidence, scoped.length > 0 ? scoped : eventsSnapshot);
+        if (match.kind === 'confirm') {
+          const updated = await persistEventMsi(
+            match.eventId,
+            owner,
+            match.previous,
+            match.next,
+            'Cuota MSI confirmada con CSV Santander.',
+          );
+          if (updated) {
+            msiConfirmed += 1;
+            eventsSnapshot = eventsSnapshot.map((event) => event.id === match.eventId ? { ...event, msi: match.next } : event);
+          }
+        }
+      }
       if (await claimAndLinkCsvEvidence(owner, action.eventId, row, source, appliedAt)) linked += 1;
       else skipped += 1;
     } else {
@@ -872,6 +893,15 @@ const applyAmexImport = async (importId: string, owner: string): Promise<JsonObj
   if (!stored.Item || stored.Item.owner !== owner || typeof source?.key !== 'string') {
     throw new InvalidAmexStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
   }
+  if (stored.Item.status === 'applied') {
+    const previous = stored.Item.result as JsonObject | undefined;
+    return {
+      importId,
+      created: [],
+      summary: previous ?? { confirmed: 0, createdUnplanned: 0, skipped: 0 },
+      alreadyApplied: true,
+    };
+  }
   const object = await s3.send(new GetObjectCommand({ Bucket: rawSourceBucketName, Key: source.key }));
   if (!object.Body) throw new Error('The Amex statement source did not contain a body.');
   const sourceBody = await object.Body.transformToString('utf8');
@@ -888,7 +918,15 @@ const applyAmexImport = async (importId: string, owner: string): Promise<JsonObj
   const created: JsonObject[] = [];
 
   for (const row of previewRows) {
+    if (row.status === 'skipped') {
+      skipped += 1;
+      continue;
+    }
     const match = matchEvidenceLine(row, eventsSnapshot);
+    if (match.kind === 'skip') {
+      skipped += 1;
+      continue;
+    }
     if (match.kind === 'confirm') {
       const updated = await persistEventMsi(
         match.eventId,
@@ -1251,11 +1289,12 @@ const setEventMsi = async (eventId: string, changedBy: string, body: JsonObject)
   if (cuotaMinor !== undefined && (!Number.isSafeInteger(cuotaMinor) || cuotaMinor <= 0)) {
     throw new InvalidMsiError('La cuota MSI debe ser un entero positivo en centavos.');
   }
-  const plan = buildMsiSchedule({
+  const previous = readMsiPlan(existing.msi);
+  const plan = replaceMsiSchedule(previous, {
     principalMinor,
     months,
     startMonth,
-    origin: 'manual',
+    origin: previous?.origin === 'amex_auto' ? 'amex_auto' : 'manual',
     ...(cuotaMinor !== undefined ? { cuotaMinor } : {}),
   });
   return persistEventMsi(eventId, changedBy, existing.msi, plan, 'Plan MSI actualizado desde la UI.');

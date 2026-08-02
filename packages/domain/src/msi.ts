@@ -158,28 +158,23 @@ export const markInstallmentSpent = (
   };
 };
 
-export const completeUnplannedSchedule = (
-  plan: MsiPlan,
-  input: {
-    readonly months: number;
-    readonly cuotaMinor?: number;
-    readonly startMonth: string;
-  },
+const preserveTerminalInstallments = (
+  previous: MsiPlan | undefined,
+  rebuilt: MsiPlan,
 ): MsiPlan => {
-  const rebuilt = buildMsiSchedule({
-    principalMinor: plan.principalMinor,
-    months: input.months,
-    startMonth: input.startMonth,
-    origin: plan.origin === "statement_unplanned" ? "manual" : plan.origin,
-    cuotaMinor: input.cuotaMinor,
-  });
+  if (!previous) return rebuilt;
+  const spentByIndex = new Map(
+    previous.installments
+      .filter((installment) => installment.status === "spent")
+      .map((installment) => [installment.index, installment]),
+  );
   const spentByMonth = new Map(
-    plan.installments
+    previous.installments
       .filter((installment) => installment.status === "spent")
       .map((installment) => [installment.month, installment]),
   );
   const installments = rebuilt.installments.map((installment) => {
-    const spent = spentByMonth.get(installment.month);
+    const spent = spentByIndex.get(installment.index) ?? spentByMonth.get(installment.month);
     return spent
       ? {
           ...installment,
@@ -190,12 +185,37 @@ export const completeUnplannedSchedule = (
         }
       : installment;
   });
+  const allTerminal = installments.every(
+    (installment) => installment.status === "spent" || installment.status === "cancelled",
+  );
   return {
     ...rebuilt,
     installments,
+    status: allTerminal ? "completed" : rebuilt.status,
     needsScheduleCompletion: undefined,
   };
 };
+
+export const replaceMsiSchedule = (
+  previous: MsiPlan | undefined,
+  input: MsiScheduleInput,
+): MsiPlan => preserveTerminalInstallments(previous, buildMsiSchedule(input));
+
+export const completeUnplannedSchedule = (
+  plan: MsiPlan,
+  input: {
+    readonly months: number;
+    readonly cuotaMinor?: number;
+    readonly startMonth: string;
+  },
+): MsiPlan =>
+  replaceMsiSchedule(plan, {
+    principalMinor: plan.principalMinor,
+    months: input.months,
+    startMonth: input.startMonth,
+    origin: plan.origin === "statement_unplanned" ? "manual" : plan.origin,
+    cuotaMinor: input.cuotaMinor,
+  });
 
 export interface MsiEvidenceCandidate {
   readonly eventId: string;
