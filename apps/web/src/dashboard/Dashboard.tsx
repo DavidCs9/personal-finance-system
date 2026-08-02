@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { computeMonthSummary } from "@finance/domain";
 import { ledgerApi } from "../api/client";
 import { mockEventFeed } from "../api/mock-data";
 import { AppShell } from "../layout/AppShell";
-import { dayInZone, eventDate, monthKey } from "../lib/format";
+import { eventDate, monthKey } from "../lib/format";
 import { eventsQueryKey, exceptionsQueryKey, monthlyPlanQueryKey } from "../lib/query-keys";
 import type { Tab } from "../lib/tabs";
 import {
@@ -107,26 +108,34 @@ export function Dashboard({
     () => events.filter((event) => monthKey(eventDate(event)) === selectedMonth),
     [events, selectedMonth],
   );
-  const spendEvents = useMemo(
-    () => monthEvents.filter((event) => event.status !== "rejected"),
-    [monthEvents],
+  const summary = useMemo(
+    () =>
+      computeMonthSummary({
+        events: events.map((event) => ({
+          amountMinor: event.amount.amountMinor,
+          status: event.status,
+          occurredAt: event.occurredAt,
+          receivedAt: event.receivedAt,
+        })),
+        month: selectedMonth,
+        incomeMinor: plan.incomeMinor,
+        incomeConfigured: plan.configured,
+        upcomingPaymentsMinor: plan.upcomingPayments.reduce(
+          (sum, payment) => sum + payment.amountMinor,
+          0,
+        ),
+        now,
+      }),
+    [events, selectedMonth, plan.incomeMinor, plan.configured, plan.upcomingPayments, now],
   );
-  const spentMinor = spendEvents.reduce((sum, event) => sum + event.amount.amountMinor, 0);
-  const uncertainMinor = spendEvents
-    .filter((event) => event.status === "needs_review")
-    .reduce((sum, event) => sum + event.amount.amountMinor, 0);
-  const upcomingMinor = plan.upcomingPayments.reduce((sum, payment) => sum + payment.amountMinor, 0);
-  const remainingMinor = plan.incomeMinor - spentMinor - upcomingMinor;
-  const isCurrentMonth = selectedMonth === monthKey(now);
-  const daysInMonth = new Date(
-    Number(selectedMonth.slice(0, 4)),
-    Number(selectedMonth.slice(5, 7)),
-    0,
-  ).getDate();
-  const elapsedDays = isCurrentMonth ? dayInZone(now) : daysInMonth;
-  const projectedMinor =
-    Math.round((spentMinor / Math.max(elapsedDays, 1)) * daysInMonth) + upcomingMinor;
-  const projectedRemainingMinor = plan.incomeMinor - projectedMinor;
+  const {
+    spentMinor,
+    uncertainMinor,
+    upcomingMinor,
+    remainingMinor,
+    projectedRemainingMinor,
+    isCurrentMonth,
+  } = summary;
   const spendPercent = plan.incomeMinor > 0 ? Math.round((spentMinor / plan.incomeMinor) * 100) : 0;
   const risk =
     plan.incomeMinor > 0 && projectedRemainingMinor < 0

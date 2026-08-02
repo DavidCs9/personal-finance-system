@@ -68,7 +68,7 @@ export function PushPreference({
       await ledgerApi.savePushSubscription(subscriptionId, subscription, idToken);
       setEnabled(true);
       setPermission("granted");
-      setMessage("Te avisaré cuando llegue una compra nueva.");
+      setMessage("Te avisaré por la mañana y cuando llegue una compra nueva.");
     } catch (error) {
       setEnabled(false);
       setPermission(currentPushPermission());
@@ -102,11 +102,11 @@ export function PushPreference({
     <section className="push-preference">
       <div>
         <p className="eyebrow">AVISOS</p>
-        <strong>Notificar compras nuevas</strong>
+        <strong>Avisos de Olbia</strong>
         <small>
           {permission === "denied"
             ? "El permiso está bloqueado en el sistema. Cámbialo en Ajustes."
-            : "Un aviso cuando Olbia registre un movimiento observado."}
+            : "Balance diario a las 07:00 y aviso cuando llegue una compra nueva."}
         </small>
         {message && <p className="push-preference-message">{message}</p>}
       </div>

@@ -20,6 +20,7 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
+    "@finance/domain": "*",
     "@aws-sdk/client-dynamodb": "^3.883.0",
     "@aws-sdk/client-s3": "^3.883.0",
     "@aws-sdk/client-secrets-manager": "^3.1101.0",

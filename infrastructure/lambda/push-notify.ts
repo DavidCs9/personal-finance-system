@@ -21,11 +21,18 @@ export interface VapidCredentials {
   readonly subject: string;
 }
 
+export interface DeclarativePushMessage {
+  readonly title: string;
+  readonly body: string;
+  readonly tag: string;
+  readonly navigate: string;
+}
+
 export const observedPurchasePushMessage = (
   purchase: ObservedPurchasePushInput,
   contentMode: PushSubscriptionRecord['contentMode'],
   navigateUrl: string,
-): { readonly title: string; readonly body: string; readonly tag: string; readonly navigate: string } => {
+): DeclarativePushMessage => {
   if (contentMode === 'private') {
     return {
       title: 'Olbia',
@@ -42,9 +49,7 @@ export const observedPurchasePushMessage = (
   };
 };
 
-export const declarativeWebPushPayload = (
-  message: ReturnType<typeof observedPurchasePushMessage>,
-): string => JSON.stringify({
+export const declarativeWebPushPayload = (message: DeclarativePushMessage): string => JSON.stringify({
   web_push: 8030,
   notification: {
     title: message.title,
@@ -73,15 +78,37 @@ export const notifyObservedPurchasePush = async (input: {
     return { sent: 0, expired: 0, failed: 0 };
   }
   const vapid = await loadVapidCredentials(input.secrets, input.vapidSecretArn);
-  webpush.setVapidDetails(vapid.subject, vapid.publicKey, vapid.privateKey);
+  return sendPushToSubscriptions({
+    database: input.database,
+    tableName: input.tableName,
+    vapid,
+    subscriptions,
+    buildMessage: (subscription) => observedPurchasePushMessage(
+      input.purchase,
+      subscription.contentMode,
+      input.navigateUrl,
+    ),
+    send: input.send,
+  });
+};
+
+export const sendPushToSubscriptions = async (input: {
+  readonly database: DynamoDBDocumentClient;
+  readonly tableName: string;
+  readonly vapid: VapidCredentials;
+  readonly subscriptions: readonly PushSubscriptionRecord[];
+  readonly buildMessage: (subscription: PushSubscriptionRecord) => DeclarativePushMessage;
+  readonly send?: typeof webpush.sendNotification;
+}): Promise<{ readonly sent: number; readonly expired: number; readonly failed: number }> => {
+  webpush.setVapidDetails(input.vapid.subject, input.vapid.publicKey, input.vapid.privateKey);
   const send = input.send ?? webpush.sendNotification.bind(webpush);
 
   let sent = 0;
   let expired = 0;
   let failed = 0;
 
-  for (const subscription of subscriptions) {
-    const message = observedPurchasePushMessage(input.purchase, subscription.contentMode, input.navigateUrl);
+  for (const subscription of input.subscriptions) {
+    const message = input.buildMessage(subscription);
     const payload = declarativeWebPushPayload(message);
     try {
       await send({
@@ -110,7 +137,7 @@ export const notifyObservedPurchasePush = async (input: {
       }
       failed += 1;
       console.error(JSON.stringify({
-        message: 'Unable to deliver observed-purchase push',
+        message: 'Unable to deliver push notification',
         subscriptionId: subscription.subscriptionId.slice(0, 12),
         statusCode,
         error: errorMessage(error),

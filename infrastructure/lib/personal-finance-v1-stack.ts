@@ -22,6 +22,8 @@ import * as ses from 'aws-cdk-lib/aws-ses';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53targets from 'aws-cdk-lib/aws-route53-targets';
+import * as scheduler from 'aws-cdk-lib/aws-scheduler';
+import { LambdaInvoke } from 'aws-cdk-lib/aws-scheduler-targets';
 import type { IConstruct } from 'constructs';
 import { Construct } from 'constructs';
 import * as path from 'node:path';
@@ -359,6 +361,45 @@ export class PersonalFinanceV1Stack extends Stack {
     applePayCaptureSecret.grantRead(applePayCaptureFunction);
     vapidSecret.grantRead(applePayCaptureFunction);
 
+    const dailyBalancePushDlq = new sqs.Queue(this, 'DailyBalancePushDlq', {
+      queueName: 'personal-finance-v1-daily-balance-push-dlq',
+      retentionPeriod: Duration.days(14),
+      encryption: sqs.QueueEncryption.KMS_MANAGED,
+    });
+    const dailyBalancePushFunction = new NodejsFunction(this, 'DailyBalancePushFunction', {
+      ...pushLambdaDefaults,
+      functionName: 'personal-finance-v1-daily-balance-push',
+      logGroup: this.createLogGroup('DailyBalancePushLogGroup', 'personal-finance-v1-daily-balance-push'),
+      entry: path.join(__dirname, '..', 'lambda', 'daily-balance-push.ts'),
+      handler: 'handler',
+      description: 'Sends the daily Olbia balance Web Push at 07:00 America/Chihuahua.',
+      timeout: Duration.minutes(2),
+      environment: {
+        METADATA_TABLE_NAME: metadataTable.tableName,
+        VAPID_SECRET_ARN: vapidSecret.secretArn,
+        WEB_APP_URL: webAppUrl,
+      },
+    });
+    metadataTable.grantReadWriteData(dailyBalancePushFunction);
+    vapidSecret.grantRead(dailyBalancePushFunction);
+    new scheduler.Schedule(this, 'DailyBalancePushSchedule', {
+      scheduleName: 'personal-finance-v1-daily-balance-push',
+      description: 'Invokes the Olbia daily balance push at 07:00 America/Chihuahua.',
+      schedule: scheduler.ScheduleExpression.cron({
+        minute: '0',
+        hour: '7',
+        day: '*',
+        month: '*',
+        year: '*',
+        timeZone: cdk.TimeZone.of('America/Chihuahua'),
+      }),
+      timeWindow: scheduler.TimeWindow.off(),
+      target: new LambdaInvoke(dailyBalancePushFunction, {
+        deadLetterQueue: dailyBalancePushDlq,
+        retryAttempts: 2,
+      }),
+    });
+
     const httpApi = new apigatewayv2.HttpApi(this, 'HttpApi', {
       apiName: 'personal-finance-v1',
       description: 'Authenticated personal-finance API.',
@@ -491,6 +532,16 @@ export class PersonalFinanceV1Stack extends Stack {
       threshold: 1,
       evaluationPeriods: 1,
     });
+    const dailyBalancePushErrorAlarm = new cdk.aws_cloudwatch.Alarm(this, 'DailyBalancePushErrorsAlarm', {
+      metric: dailyBalancePushFunction.metricErrors({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
+    const dailyBalancePushDlqAlarm = new cdk.aws_cloudwatch.Alarm(this, 'DailyBalancePushDlqAlarm', {
+      metric: dailyBalancePushDlq.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
 
     new cdk.CfnOutput(this, 'RawEmailBucketName', { value: rawEmailBucket.bucketName });
     new cdk.CfnOutput(this, 'MetadataTableName', { value: metadataTable.tableName });
@@ -510,6 +561,8 @@ export class PersonalFinanceV1Stack extends Stack {
     new cdk.CfnOutput(this, 'ApplePayCaptureErrorsAlarmName', { value: applePayCaptureErrorAlarm.alarmName });
     new cdk.CfnOutput(this, 'ApplePayCaptureThrottlesAlarmName', { value: applePayCaptureThrottleAlarm.alarmName });
     new cdk.CfnOutput(this, 'DeadLetterMessagesAlarmName', { value: deadLetterAlarm.alarmName });
+    new cdk.CfnOutput(this, 'DailyBalancePushErrorsAlarmName', { value: dailyBalancePushErrorAlarm.alarmName });
+    new cdk.CfnOutput(this, 'DailyBalancePushDlqAlarmName', { value: dailyBalancePushDlqAlarm.alarmName });
   }
 
   private createLogGroup(id: string, functionName: string): logs.LogGroup {
