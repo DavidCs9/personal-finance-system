@@ -37,6 +37,7 @@
 - Una regla de recepción de SES guarda primero el MIME y luego publica su puntero en SQS; una Lambda de ingestión persiste metadatos, deduplica y parsea. La cola tiene una DLQ.
 - Amazon SES notifica cada evento observado inicialmente. La política puede cambiar a alertas por excepción sin modificar la ingestión.
 - El monitoreo V1 se limita a fallos de recepción, mensajes en DLQ y errores persistentes de ingestión.
+- Ninguna Lambda usa concurrencia reservada. Los endpoints públicos limitan tráfico en API Gateway para conservar la concurrencia compartida de la cuenta.
 
 ## Calidad y salida de V1
 
