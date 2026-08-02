@@ -1824,15 +1824,25 @@ const toPublicMonthlyPlan = (month: string, payload: JsonObject, configured: boo
 });
 
 const listEvents = async (): Promise<readonly JsonObject[]> => {
-  const result = await database.send(new QueryCommand({
-    TableName: tableName,
-    IndexName: 'GSI1',
-    KeyConditionExpression: 'GSI1PK = :partition',
-    ExpressionAttributeValues: { ':partition': 'EVENTS' },
-    ScanIndexForward: false,
-    Limit: 100,
-  }));
-  return (result.Items ?? []).map((item) => toPublicEvent(item.payload as JsonObject));
+  // Paginate the full EVENTS partition. A hard Limit: 100 dropped older months after
+  // statement imports (e.g. August Zara fell off once Amex/Santander adds exceeded 100).
+  const events: JsonObject[] = [];
+  let exclusiveStartKey: Record<string, unknown> | undefined;
+  do {
+    const result = await database.send(new QueryCommand({
+      TableName: tableName,
+      IndexName: 'GSI1',
+      KeyConditionExpression: 'GSI1PK = :partition',
+      ExpressionAttributeValues: { ':partition': 'EVENTS' },
+      ScanIndexForward: false,
+      ExclusiveStartKey: exclusiveStartKey,
+    }));
+    for (const item of result.Items ?? []) {
+      if (item.payload) events.push(toPublicEvent(item.payload as JsonObject));
+    }
+    exclusiveStartKey = result.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+  return events;
 };
 
 const listExceptions = async (): Promise<readonly JsonObject[]> => {
