@@ -165,6 +165,8 @@ const toPublicEvent = (payload: JsonObject, revisions: readonly JsonObject[] = [
     accountName: account?.displayName ?? 'Tarjeta sin identificar',
     amount: payload.amount,
     merchantRaw: payload.merchantRaw,
+    billingPeriod: payload.billingPeriod,
+    paymentMethodLastFour: payload.paymentMethodLastFour,
     occurredAt: payload.occurredAt,
     receivedAt: payload.receivedAt,
     ingestedAt: payload.ingestedAt,

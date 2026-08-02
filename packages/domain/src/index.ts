@@ -1,4 +1,4 @@
-export const INSTITUTIONS = ["american_express_mx", "santander_mx", "nu_mx"] as const;
+export const INSTITUTIONS = ["american_express_mx", "santander_mx", "nu_mx", "amazon_web_services"] as const;
 
 export type Institution = (typeof INSTITUTIONS)[number];
 
@@ -26,7 +26,7 @@ export interface RawSourcePointer {
 export interface ObservedPurchase {
   readonly id: string;
   readonly institution: Institution;
-  readonly eventType: "card_purchase" | "outgoing_transfer";
+  readonly eventType: "card_purchase" | "outgoing_transfer" | "card_charge";
   readonly status: EventStatus;
   readonly account?: AccountReference;
   readonly amount: Money;
@@ -39,6 +39,8 @@ export interface ObservedPurchase {
   readonly trackingKey?: string;
   readonly counterpartyInstitution?: string;
   readonly counterpartyAccountLastFour?: string;
+  readonly billingPeriod?: string;
+  readonly paymentMethodLastFour?: string;
   readonly occurredAt?: string;
   readonly receivedAt: string;
   readonly ingestedAt: string;

@@ -16,12 +16,15 @@ const decodeQuotedPrintable = (value: string): string => {
   return Buffer.from(bytes, "binary").toString("utf8");
 };
 
-const readableBody = (mime: string): string => {
+const decodedBody = (mime: string): string => {
   const raw = body(mime);
-  const decoded = /quoted-printable/i.test(header(mime, "content-transfer-encoding") ?? "")
+  return /quoted-printable/i.test(header(mime, "content-transfer-encoding") ?? "")
     ? decodeQuotedPrintable(raw)
     : raw;
-  return decoded
+};
+
+const readableBody = (mime: string): string =>
+  decodedBody(mime)
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(?:div|p|td|tr|h[1-6])>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
@@ -29,7 +32,6 @@ const readableBody = (mime: string): string => {
     .replace(/&amp;/gi, "&")
     .replace(/&#39;|&apos;/gi, "'")
     .replace(/&quot;/gi, '"');
-};
 
 const dateOnlyToIso = (value: string | undefined): string | undefined => {
   if (!value) return undefined;
@@ -195,8 +197,54 @@ export class NuMxOutgoingTransferParser implements CardPurchaseParser {
   }
 }
 
+/** Captures the MXN amount AWS announces it will charge to the default card. */
+export class AwsMxBillingStatementParser implements CardPurchaseParser {
+  readonly institution = "amazon_web_services" as const;
+  readonly version = "aws-mx-billing-statement-v1";
+
+  matches(email: IncomingEmail): boolean {
+    const from = header(email.mime, "from")?.toLowerCase() ?? "";
+    const subject = header(email.mime, "subject") ?? "";
+    const text = readableBody(email.mime);
+    return from.includes("invoicing@aws.com")
+      && /amazon web services billing statement available/i.test(subject)
+      && /total in mxn\s*:/i.test(text);
+  }
+
+  parse(email: IncomingEmail): ParsedPurchase {
+    const text = readableBody(email.mime);
+    const decoded = decodedBody(email.mime);
+    const amount = /total in mxn\s*:\s*\$\s*([\d,.]+)/i.exec(text)?.[1];
+    const awsAccountLastFour = /account ending in\s*\*+(\d{4})/i.exec(text)?.[1];
+    const paymentMethodLastFour = /credit card ending in\s*(\d{4})/i.exec(text)?.[1];
+    const billing = /\/bills\?year=(\d{4})(?:&|&amp;)month=(\d{1,2})/i.exec(decoded);
+
+    if (!amount || !awsAccountLastFour || !paymentMethodLastFour || !billing) {
+      throw new Error("AWS MX billing statement is missing amount, account, payment card, or billing period");
+    }
+    const month = Number(billing[2]);
+    if (month < 1 || month > 12) throw new Error(`Invalid AWS billing month: ${billing[2]}`);
+
+    return {
+      institution: this.institution,
+      eventType: "card_charge",
+      account: {
+        institution: this.institution,
+        accountId: `${this.institution}:${awsAccountLastFour}`,
+        displayName: `Cuenta AWS terminada en ${awsAccountLastFour}`,
+        lastFour: awsAccountLastFour,
+      },
+      amount: { amountMinor: mxnMinorUnits(amount), currency: "MXN" },
+      merchantRaw: "Amazon Web Services",
+      billingPeriod: `${billing[1]}-${String(month).padStart(2, "0")}`,
+      paymentMethodLastFour,
+    };
+  }
+}
+
 export const defaultCardPurchaseParsers = (): readonly CardPurchaseParser[] => [
   new AmexMxCardPurchaseParser(),
+  new AwsMxBillingStatementParser(),
   new NuMxOutgoingTransferParser(),
   new SantanderMxCardPurchaseParser(),
 ];
