@@ -14,6 +14,9 @@ const aeroLines = asLines(readFileSync(new URL('./fixtures/amex-aeromexico-state
 const goldExtraction = JSON.parse(
   readFileSync(new URL('./fixtures/amex-gold-extraction.json', import.meta.url), 'utf8'),
 ) as TextractStatementExtraction;
+const goldLiveExtraction = JSON.parse(
+  readFileSync(new URL('./fixtures/amex-gold-live-extraction.json', import.meta.url), 'utf8'),
+) as TextractStatementExtraction;
 
 const fromLines = (
   provider: 'amex',
@@ -79,6 +82,42 @@ describe('parseAmexStatementExtraction', () => {
     expect(document.accountLastFour).toBe('1007');
     expect(document.period).toEqual({ from: '2026-06-07', to: '2026-07-06' });
     expect(document.charges.some((charge) => charge.msi && charge.amountMinor === 82_532)).toBe(true);
+  });
+
+  it('reads normal compras from AnalyzeDocument TABLES when LINE columns are scrambled', () => {
+    const document = parseAmexStatementExtraction(goldLiveExtraction);
+    expect(document.accountLastFour).toBe('1007');
+    expect(document.period).toEqual({ from: '2026-06-07', to: '2026-07-06' });
+    const purchases = document.charges.filter((charge) => !charge.msi);
+    const msi = document.charges.filter((charge) => charge.msi);
+    expect(purchases.length).toBeGreaterThanOrEqual(18);
+    expect(purchases.filter((charge) => /OPENROUTER/i.test(charge.merchantRaw))).toHaveLength(2);
+    expect(purchases.reduce((sum, charge) => sum + charge.amountMinor, 0)).toBe(879_718);
+    expect(purchases).toEqual(expect.arrayContaining([
+      expect.objectContaining({ occurredOn: '2026-06-07', merchantRaw: expect.stringMatching(/CINEPOLIS/i), amountMinor: 19_200 }),
+      expect.objectContaining({ occurredOn: '2026-06-12', merchantRaw: expect.stringMatching(/UNICEF/i), amountMinor: 45_000 }),
+      expect.objectContaining({ occurredOn: '2026-07-01', merchantRaw: expect.stringMatching(/ANYTIME FITNESS/i), amountMinor: 89_900 }),
+      expect.objectContaining({ occurredOn: '2026-06-13', merchantRaw: expect.stringMatching(/VEJA/i), amountMinor: 311_014 }),
+      expect.objectContaining({ occurredOn: '2026-07-03', merchantRaw: expect.stringMatching(/HETZNER/i), amountMinor: 4_180 }),
+    ]));
+    expect(msi).toHaveLength(2);
+    expect(msi.map((charge) => charge.amountMinor).sort((left, right) => left - right)).toEqual([82_532, 224_967]);
+    expect(document.msiPlans).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        originalAmountMinor: 247_600,
+        installmentIndex: 3,
+        installmentMonths: 3,
+        cuotaMinor: 82_532,
+      }),
+      expect.objectContaining({
+        originalAmountMinor: 674_900,
+        installmentIndex: 2,
+        installmentMonths: 3,
+        cuotaMinor: 224_967,
+      }),
+    ]));
+    expect(amexMsiEvidenceLines(document).every((row) => row.originalAmountMinor !== undefined)).toBe(true);
+    expect(purchases.every((charge) => !/\bRFC|\bREF|Dólar U\.S\.A\.|TC:/i.test(charge.merchantRaw))).toBe(true);
   });
 
   it('reads purchases when Textract puts the amount on the same dated line', () => {

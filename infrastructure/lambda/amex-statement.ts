@@ -77,10 +77,31 @@ const cleanMerchant = (raw: string): string =>
   raw
     .replace(/CARGO\s+\d{1,2}\s+DE\s+\d{1,2}/ig, " ")
     .replace(/Mensualidad\s*=\s*\([^)]*\)/ig, " ")
+    .replace(/\bRFC[A-Z0-9]+\b/ig, " ")
+    .replace(/\/?REF\S*(?:\s+[A-Z0-9#]+)?/ig, " ")
+    .replace(/D[oó]lar U\.S\.A\./ig, " ")
+    .replace(/\bTC:\s*[\d.]+/ig, " ")
     .replace(/\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2}/g, " ")
     .replace(/\bCR\b/ig, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+const parseAmountCell = (
+  raw: string,
+): { readonly amountMinor: number; readonly credit: boolean } | undefined => {
+  const credit = /\bCR\b/i.test(raw);
+  const match = /(-?\d{1,3}(?:,\d{3})*\.\d{2}|-?\d+\.\d{2})/.exec(raw.replace(/\$/g, ""));
+  if (!match) return undefined;
+  const amountMinor = parseMoneyMinor(match[1]);
+  if (amountMinor === undefined) return undefined;
+  return { amountMinor: Math.abs(amountMinor), credit };
+};
+
+const spanishDateIn = (raw: string, periodTo: string): string | undefined => {
+  const match = /(\d{1,2})\s+de\s+([A-Za-zÁÉÍÓÚáéíóú]+)/i.exec(raw.trim());
+  if (!match) return undefined;
+  return parseSpanishDate(match[1], match[2], periodTo);
+};
 
 const splitTrailingAmount = (
   raw: string,
@@ -180,7 +201,11 @@ const isNoiseLine = (line: string): boolean =>
   /^(RFC|D[oó]lar U\.S\.A\.|TC:|Total de|Este no es|Estado de Cuenta|N[uú]mero de Cuenta|Fecha y Detalle|P[aá]gina|Nuevos cargos|GRACIAS POR SU PAGO)/i
     .test(line);
 
-const msiFromTables = (
+/**
+ * AnalyzeDocument TABLES keep Amex charge rows intact (date | merchant | amount).
+ * LINE blocks often scramble those columns, so tables are the primary source for compras.
+ */
+const chargesFromTables = (
   tables: readonly TextractTable[],
   accountLastFour: string,
   periodTo: string,
@@ -188,41 +213,69 @@ const msiFromTables = (
   const charges: AmexStatementCharge[] = [];
   for (const table of tables) {
     for (const row of table.rows) {
-      const joined = row.join(" ").replace(/\s+/g, " ").trim();
+      const cells = row.map((cell) => cell.trim()).filter(Boolean);
+      if (cells.length < 2) continue;
+      const joined = cells.join(" ").replace(/\s+/g, " ").trim();
       if (!joined || isPlanSummaryNoise(joined)) continue;
-      const installment = installmentFrom(joined);
-      // Table MSI evidence needs an explicit CARGO N DE M; plan-summary rows are handled separately.
-      if (!installment) continue;
-      const moneyMatches = [...joined.matchAll(/(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})/g)];
-      const amountRaw = moneyMatches.at(-1)?.[1];
-      const amountMinor = amountRaw ? parseMoneyMinor(amountRaw) : undefined;
-      if (amountMinor === undefined || amountMinor <= 0) continue;
-      const dated = /(\d{1,2})\s+de\s+([A-Za-zÁÉÍÓÚáéíóú]+)/i.exec(joined);
-      const occurredOn = dated
-        ? parseSpanishDate(dated[1], dated[2], periodTo)
-        : periodTo;
+      if (/^Fecha y Detalle|^Total de\b|^Importe\b/i.test(joined)) continue;
+
+      const dateCell = cells.find((cell) => spanishDateIn(cell, periodTo));
+      const occurredOn = dateCell ? spanishDateIn(dateCell, periodTo) : undefined;
       if (!occurredOn) continue;
+
+      const amountCell = [...cells].reverse().find((cell) => parseAmountCell(cell));
+      const parsedAmount = amountCell ? parseAmountCell(amountCell) : undefined;
+      if (!parsedAmount || parsedAmount.amountMinor <= 0) continue;
+
+      const installment = installmentFrom(joined);
       let merchantRaw = cleanMerchant(
-        joined.replace(/\d{1,2}\s+de\s+[A-Za-zÁÉÍÓÚáéíóú]+/ig, " "),
+        cells
+          .filter((cell) => cell !== dateCell && cell !== amountCell)
+          .join(" ")
+          .replace(/\d{1,2}\s+de\s+[A-Za-zÁÉÍÓÚáéíóú]+/ig, " "),
       );
       if (!merchantRaw || merchantRaw.length < 3) {
-        merchantRaw = /MESES EN AUTOM/i.test(joined) ? "MESES EN AUTOMÁTICO NACIONAL" : "MSI";
+        merchantRaw = /MESES EN AUTOM/i.test(joined) ? "MESES EN AUTOMÁTICO NACIONAL" : "";
       }
+      if (!merchantRaw || merchantRaw.length < 3) continue;
+      if (/^GRACIAS POR SU PAGO/i.test(merchantRaw)) {
+        charges.push({
+          occurredOn,
+          merchantRaw,
+          amountMinor: parsedAmount.amountMinor,
+          credit: true,
+          msi: false,
+          identity: [
+            "amex_statement_table",
+            accountLastFour,
+            occurredOn,
+            merchantRaw,
+            String(parsedAmount.amountMinor),
+            "credit",
+            String(charges.length + 1),
+          ].join(":"),
+        });
+        continue;
+      }
+
+      const msi = Boolean(installment) || /MESES EN AUTOM[AÁ]TICO/i.test(merchantRaw);
+      if (msi && !installment) continue;
+
       charges.push({
         occurredOn,
         merchantRaw,
-        amountMinor: Math.abs(amountMinor),
-        credit: false,
-        installmentIndex: installment.index,
-        installmentMonths: installment.months,
-        msi: true,
+        amountMinor: parsedAmount.amountMinor,
+        credit: parsedAmount.credit,
+        installmentIndex: installment?.index,
+        installmentMonths: installment?.months,
+        msi,
         identity: [
           "amex_statement_table",
           accountLastFour,
           occurredOn,
           merchantRaw,
-          String(Math.abs(amountMinor)),
-          `${installment.index}/${installment.months}`,
+          String(parsedAmount.amountMinor),
+          installment ? `${installment.index}/${installment.months}` : "full",
           String(charges.length + 1),
         ].join(":"),
       });
@@ -400,6 +453,54 @@ const parseChargesAndPlansFromLines = (
   return { charges, msiPlans };
 };
 
+const msiPlansFromTables = (
+  tables: readonly TextractTable[],
+  periodTo: string,
+): readonly AmexMsiPlanSummary[] => {
+  const plans: AmexMsiPlanSummary[] = [];
+  for (const table of tables) {
+    for (const row of table.rows) {
+      const cells = row.map((cell) => cell.trim());
+      const joined = cells.join(" ").replace(/\s+/g, " ").trim();
+      if (!/Mensualidad\s*=\s*\(Pago a capital/i.test(joined)) continue;
+      if (/^Total de Plan/i.test(joined)) continue;
+
+      const merchantCell = cells[0] ?? joined;
+      const merchantRaw = /MESES EN AUTOM/i.test(merchantCell)
+        ? "MESES EN AUTOMÁTICO NACIONAL"
+        : (cleanMerchant(merchantCell) || "MESES EN AUTOMÁTICO NACIONAL");
+      const installmentCell = cells.find((cell) => /^\d{1,2}\s+de\s+\d{1,2}$/i.test(cell));
+      const installmentMatch = installmentCell
+        ? /^(\d{1,2})\s+de\s+(\d{1,2})$/i.exec(installmentCell)
+        : undefined;
+      if (!installmentMatch) continue;
+
+      const originalOn = cells.map((cell) => spanishDateIn(cell, periodTo)).find(Boolean);
+      const moneyCells = cells
+        .map((cell) => parseMoneyMinor(cell.replace(/%/g, "").trim()))
+        .filter((value): value is number => value !== undefined)
+        .map((value) => Math.abs(value));
+      // Typical columns: original | rate% | pending | cuota — rate may parse as money if "0.00" without %.
+      const cuotaMinor = moneyCells.at(-1);
+      const originalAmountMinor = moneyCells.find((value) => value >= (cuotaMinor ?? 0) && value !== cuotaMinor)
+        ?? moneyCells[0];
+      const pendingMinor = moneyCells.length >= 3 ? moneyCells[moneyCells.length - 2] : 0;
+      if (originalAmountMinor === undefined || cuotaMinor === undefined || cuotaMinor <= 0) continue;
+
+      plans.push({
+        merchantRaw,
+        originalOn,
+        originalAmountMinor,
+        pendingMinor: pendingMinor ?? 0,
+        installmentIndex: Number(installmentMatch[1]),
+        installmentMonths: Number(installmentMatch[2]),
+        cuotaMinor,
+      });
+    }
+  }
+  return plans;
+};
+
 /**
  * Map Textract AnalyzeDocument output into an Amex statement.
  * Queries own metadata (with LINE text fallback); tables + LINE blocks own movements.
@@ -412,26 +513,50 @@ export const parseAmexStatementExtraction = (
   const accountLastFour = parseAccountLastFour(text, extraction.answers);
   const product = parseProduct(text, extraction.answers);
   const fromLines = parseChargesAndPlansFromLines(extraction.lines, accountLastFour, period);
-  const fromTables = msiFromTables(extraction.tables, accountLastFour, period.to);
+  const fromTables = chargesFromTables(extraction.tables, accountLastFour, period.to);
+  const tablePlans = msiPlansFromTables(extraction.tables, period.to);
 
-  const seen = new Set<string>();
+  const remaining = new Map<string, number>();
+  const chargeKey = (charge: AmexStatementCharge): string => [
+    charge.occurredOn,
+    charge.merchantRaw.toUpperCase(),
+    charge.amountMinor,
+    charge.installmentIndex ?? "",
+    charge.installmentMonths ?? "",
+  ].join("|");
+
   const charges: AmexStatementCharge[] = [];
-  for (const charge of [...fromLines.charges, ...fromTables]) {
+  // Prefer TABLES: they preserve date/merchant/amount columns that LINE OCR often splits.
+  // Keep duplicate table rows (two identical compras the same day are valid).
+  for (const charge of fromTables) {
     if (charge.credit) continue;
     if (charge.msi && charge.installmentIndex === undefined) continue;
-    const key = [
-      charge.occurredOn,
-      charge.merchantRaw,
-      charge.amountMinor,
-      charge.installmentIndex ?? "",
-      charge.installmentMonths ?? "",
-    ].join("|");
-    if (seen.has(key)) continue;
-    seen.add(key);
+    charges.push(charge);
+    const key = chargeKey(charge);
+    remaining.set(key, (remaining.get(key) ?? 0) + 1);
+  }
+  for (const charge of fromLines.charges) {
+    if (charge.credit) continue;
+    if (charge.msi && charge.installmentIndex === undefined) continue;
+    const key = chargeKey(charge);
+    const left = remaining.get(key) ?? 0;
+    if (left > 0) {
+      remaining.set(key, left - 1);
+      continue;
+    }
     charges.push(charge);
   }
 
-  if (charges.length === 0 && fromLines.msiPlans.length === 0) {
+  const planKeys = new Set<string>();
+  const msiPlans: AmexMsiPlanSummary[] = [];
+  for (const plan of [...tablePlans, ...fromLines.msiPlans]) {
+    const key = `${plan.installmentIndex}/${plan.installmentMonths}:${plan.cuotaMinor}:${plan.originalAmountMinor}`;
+    if (planKeys.has(key)) continue;
+    planKeys.add(key);
+    msiPlans.push(plan);
+  }
+
+  if (charges.length === 0 && msiPlans.length === 0) {
     throw new InvalidAmexStatementError(
       `Textract no encontró movimientos Amex (answers=${Object.keys(extraction.answers).join(",") || "∅"}, tables=${extraction.tables.length}, lines=${extraction.lines.length}).`,
     );
@@ -442,7 +567,7 @@ export const parseAmexStatementExtraction = (
     product,
     period,
     charges,
-    msiPlans: fromLines.msiPlans,
+    msiPlans,
   };
 };
 
