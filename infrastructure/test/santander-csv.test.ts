@@ -34,6 +34,8 @@ describe("Santander CSV", () => {
     const document = parseSantanderCsv(fixture);
     const withoutTransactionId = document.rows.filter((row) => !row.transactionId);
     expect(withoutTransactionId).toHaveLength(3);
+    expect(withoutTransactionId.every((row) => !Object.values(row).includes(undefined))).toBe(true);
+    expect(withoutTransactionId.every((row) => !Object.hasOwn(row, "transactionId"))).toBe(true);
     expect(new Set(withoutTransactionId.map((row) => row.identity)).size).toBe(3);
   });
 

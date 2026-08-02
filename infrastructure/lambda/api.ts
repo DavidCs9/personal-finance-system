@@ -7,7 +7,9 @@ import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan
 import { reconciliationPartition } from './observed-events.js';
 import { InvalidSantanderCsvError, merchantsMatch, parseSantanderCsv, santanderApplyAction, type SantanderCsvDocument, type SantanderCsvRow, type SantanderReconciliationDecision, type SantanderReconciliationStatus } from './santander-csv.js';
 
-const database = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const database = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
+  marshallOptions: { removeUndefinedValues: true },
+});
 const s3 = new S3Client({});
 const tableName = process.env.METADATA_TABLE_NAME;
 if (!tableName) throw new Error('Missing required environment variable: METADATA_TABLE_NAME');
