@@ -1,3 +1,4 @@
+import type { CommittedMsiRow } from "@finance/domain";
 import { money, monthDate } from "../lib/format";
 import type { MonthlyPlan, PlannedPayment } from "../monthly-plan";
 import { PushPreference } from "../components/PushPreference";
@@ -16,9 +17,11 @@ export interface SummaryViewProps {
   readonly spendPercent: number;
   readonly isCurrentMonth: boolean;
   readonly risk: "danger" | "watch" | "steady";
+  readonly committedMsiRows: readonly CommittedMsiRow[];
   readonly onEditIncome: () => void;
   readonly onAddPayment: () => void;
   readonly onEditPayment: (payment: PlannedPayment) => void;
+  readonly onOpenMsiEvent: (eventId: string) => void;
   readonly onReviewLargest: () => void;
   readonly idToken: string;
   readonly demoMode: boolean;
@@ -132,8 +135,28 @@ export function SummaryView(props: SummaryViewProps) {
                 +
               </button>
             </div>
-            {props.plan.upcomingPayments.length > 0 ? (
+            {props.plan.upcomingPayments.length > 0 || props.committedMsiRows.length > 0 ? (
               <div className="payment-list">
+                {props.committedMsiRows.map((row) => (
+                  <button
+                    key={`${row.eventId ?? row.name}-${row.installmentIndex}`}
+                    className="payment-row"
+                    onClick={() => {
+                      if (row.eventId) props.onOpenMsiEvent(row.eventId);
+                    }}
+                  >
+                    <span className="date-block">
+                      <small>MSI</small>
+                      <strong>{String(row.installmentIndex).padStart(2, "0")}</strong>
+                    </span>
+                    <span className="payment-name">
+                      <strong>{row.name}</strong>
+                      <small>Cuota pendiente de reconciliar</small>
+                    </span>
+                    <strong className="payment-amount">{money(row.amountMinor)}</strong>
+                    <span className="chevron">›</span>
+                  </button>
+                ))}
                 {props.plan.upcomingPayments.map((payment) => (
                   <button
                     key={payment.id}
@@ -153,7 +176,7 @@ export function SummaryView(props: SummaryViewProps) {
                   </button>
                 ))}
                 <div className="payment-total">
-                  <span>Total próximo</span>
+                  <span>Total comprometido</span>
                   <strong>{money(props.upcomingMinor)}</strong>
                 </div>
               </div>
@@ -162,7 +185,7 @@ export function SummaryView(props: SummaryViewProps) {
                 <span>+</span>
                 <div>
                   <strong>Agrega tus pagos próximos</strong>
-                  <small>Renta, servicios, seguros y otras obligaciones.</small>
+                  <small>Renta, servicios, seguros, MSI y otras obligaciones.</small>
                 </div>
               </button>
             )}

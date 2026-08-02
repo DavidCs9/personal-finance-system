@@ -11,7 +11,8 @@ The primary unit is not a final accounting transaction — it is an **observed e
 - Every alert or automation leaves an immutable observation with its source.
 - Multiple observations of the same purchase can be reconciled; none are deleted.
 - Ambiguous cases stay for human review. A purchase is never invented by inference.
-- Original MIME, Apple Pay payloads, and fallback CSVs are retained encrypted before parsing.
+- Original MIME, Apple Pay payloads, fallback CSVs, and Amex statement text are retained encrypted before parsing.
+- MSI schedules attach to the observed purchase: committed cuotas reduce remaining money until statement/CSV evidence marks them spent.
 
 That separates capture, evidence, reconciliation, and presentation — production-grade financial system discipline, applied to a single-user product.
 

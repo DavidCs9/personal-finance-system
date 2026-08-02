@@ -439,6 +439,8 @@ export class PersonalFinanceV1Stack extends Stack {
       'PUT /months/{month}',
       'POST /imports/santander/preview',
       'POST /imports/santander/{importId}/apply',
+      'POST /imports/amex/preview',
+      'POST /imports/amex/{importId}/apply',
       'GET /push/subscriptions',
       'PUT /push/subscriptions/{subscriptionId}',
       'DELETE /push/subscriptions/{subscriptionId}',

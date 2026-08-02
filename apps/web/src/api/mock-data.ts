@@ -1,3 +1,4 @@
+import { buildMsiSchedule } from "@finance/domain";
 import type { EventFeed } from "../types";
 
 const source = (key: string) => ({
@@ -73,6 +74,29 @@ export const mockEventFeed: EventFeed = {
       parseWarnings: [],
       rawEmail: rawEmail("American Express <alerts@example.test>", "Compra aprobada", "Se registró una compra por $799.00 MXN en LIBRERÍA CENTRAL 017.\nTarjeta terminación 1234."),
       revisions: [],
+    },
+    {
+      id: "evt_01J5MSI1",
+      institution: "american_express_mx",
+      status: "accepted",
+      accountName: "Tarjeta personal • 1007",
+      amount: { amountMinor: 674900, currency: "MXN" },
+      merchantRaw: "MESES EN AUTOMÁTICO NACIONAL",
+      occurredAt: "2026-06-06T12:00:00Z",
+      receivedAt: "2026-06-06T12:05:00Z",
+      ingestedAt: "2026-06-06T12:05:10Z",
+      parserVersion: "amex-mx@0.1.0",
+      source: source("2026/06/06/evt_01J5MSI1.eml"),
+      parseWarnings: [],
+      rawEmail: rawEmail("American Express <alerts@example.test>", "Compra aprobada", "Se registró una compra por $6,749.00 MXN.\nTarjeta terminación 1007."),
+      revisions: [],
+      msi: buildMsiSchedule({
+        principalMinor: 674900,
+        months: 3,
+        startMonth: "2026-06",
+        origin: "amex_auto",
+        cuotaMinor: 224967,
+      }),
     },
   ],
 };

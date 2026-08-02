@@ -1,4 +1,13 @@
-import type { EventFeed, IngestionException, PurchaseEvent, SantanderImportDecision, SantanderImportPreview, SantanderImportResult } from "../types";
+import type {
+  AmexImportPreview,
+  AmexImportResult,
+  EventFeed,
+  IngestionException,
+  PurchaseEvent,
+  SantanderImportDecision,
+  SantanderImportPreview,
+  SantanderImportResult,
+} from "../types";
 import type { MonthlyPlan } from "../monthly-plan";
 
 interface LedgerRuntimeConfig {
@@ -255,6 +264,38 @@ export const ledgerApi = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ decisions }),
+    });
+  },
+  async previewAmexStatement(text: string, idToken: string): Promise<AmexImportPreview> {
+    return request<AmexImportPreview>("/imports/amex/preview", idToken, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      body: text,
+    });
+  },
+  async applyAmexStatement(importId: string, idToken: string): Promise<AmexImportResult> {
+    return request<AmexImportResult>(`/imports/amex/${encodeURIComponent(importId)}/apply`, idToken, {
+      method: "POST",
+    });
+  },
+  async updateEventMsi(
+    eventId: string,
+    body:
+      | { readonly action: "set_msi"; readonly months: number; readonly cuotaMinor?: number; readonly startMonth?: string }
+      | { readonly action: "clear_msi" }
+      | { readonly action: "cancel_msi_remaining" }
+      | {
+          readonly action: "complete_msi_schedule";
+          readonly months: number;
+          readonly cuotaMinor?: number;
+          readonly startMonth?: string;
+        },
+    idToken: string,
+  ): Promise<PurchaseEvent> {
+    return request<PurchaseEvent>(`/events/${encodeURIComponent(eventId)}`, idToken, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
   },
   vapidPublicKey(): string {

@@ -1,13 +1,16 @@
-import { useState } from "react";
+import { FormEvent, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { buildMsiSchedule, defaultCuotaMinor, monthKeyInZone } from "@finance/domain";
 import { ledgerApi } from "../api/client";
 import { Mark } from "../components/Brand";
+import { Field } from "../components/Field";
 import { Sheet } from "../components/Sheet";
 import {
   eventDate,
   eventMoney,
   institutionLabel,
   longDateFormatter,
+  money,
   statusLabel,
 } from "../lib/format";
 import { eventsQueryKey } from "../lib/query-keys";
@@ -29,6 +32,11 @@ export function EventSheet({
   const queryClient = useQueryClient();
   const [rawEmail, setRawEmail] = useState<string>();
   const [error, setError] = useState<string>();
+  const [msiEnabled, setMsiEnabled] = useState(Boolean(event.msi));
+  const [msiMonths, setMsiMonths] = useState(String(event.msi?.months ?? 3));
+  const [msiCuota, setMsiCuota] = useState(
+    ((event.msi?.cuotaMinor ?? defaultCuotaMinor(event.amount.amountMinor, event.msi?.months ?? 3)) / 100).toFixed(2),
+  );
 
   const updateCache = (updated: PurchaseEvent) => {
     queryClient.setQueryData<{ events: readonly PurchaseEvent[] }>(eventsQueryKey, (current) =>
@@ -41,6 +49,11 @@ export function EventSheet({
     );
     void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
     onVerified(updated);
+    setMsiEnabled(Boolean(updated.msi));
+    if (updated.msi) {
+      setMsiMonths(String(updated.msi.months));
+      setMsiCuota((updated.msi.cuotaMinor / 100).toFixed(2));
+    }
   };
 
   const verifyMutation = useMutation({
@@ -56,6 +69,75 @@ export function EventSheet({
       demoMode
         ? Promise.resolve({ ...event, status: "rejected" as const })
         : ledgerApi.markRejected(event.id, idToken),
+    onSuccess: updateCache,
+  });
+
+  const msiMutation = useMutation({
+    mutationFn: async () => {
+      if (!msiEnabled) {
+        if (demoMode) return { ...event, msi: undefined };
+        return ledgerApi.updateEventMsi(event.id, { action: "clear_msi" }, idToken);
+      }
+      const months = Number(msiMonths);
+      const cuotaMinor = Math.round(Number(msiCuota) * 100);
+      if (!Number.isInteger(months) || months < 1) throw new Error("Indica un número de meses válido.");
+      if (!Number.isSafeInteger(cuotaMinor) || cuotaMinor <= 0) throw new Error("Indica una cuota válida.");
+      if (demoMode) {
+        const startMonth = monthKeyInZone(eventDate(event));
+        const action = event.msi?.needsScheduleCompletion ? "complete" : "set";
+        const plan =
+          action === "complete" && event.msi
+            ? {
+                ...buildMsiSchedule({
+                  principalMinor: event.amount.amountMinor,
+                  months,
+                  startMonth,
+                  origin: "manual",
+                  cuotaMinor,
+                }),
+              }
+            : buildMsiSchedule({
+                principalMinor: event.amount.amountMinor,
+                months,
+                startMonth,
+                origin: "manual",
+                cuotaMinor,
+              });
+        return { ...event, msi: { ...plan, needsScheduleCompletion: undefined } };
+      }
+      if (event.msi?.needsScheduleCompletion) {
+        return ledgerApi.updateEventMsi(
+          event.id,
+          {
+            action: "complete_msi_schedule",
+            months,
+            cuotaMinor,
+            startMonth: monthKeyInZone(eventDate(event)),
+          },
+          idToken,
+        );
+      }
+      return ledgerApi.updateEventMsi(event.id, { action: "set_msi", months, cuotaMinor }, idToken);
+    },
+    onSuccess: updateCache,
+  });
+
+  const cancelMsiMutation = useMutation({
+    mutationFn: () =>
+      demoMode
+        ? Promise.resolve({
+            ...event,
+            msi: event.msi
+              ? {
+                  ...event.msi,
+                  status: "cancelled" as const,
+                  installments: event.msi.installments.map((item) =>
+                    item.status === "committed" ? { ...item, status: "cancelled" as const } : item,
+                  ),
+                }
+              : undefined,
+          })
+        : ledgerApi.updateEventMsi(event.id, { action: "cancel_msi_remaining" }, idToken),
     onSuccess: updateCache,
   });
 
@@ -87,10 +169,21 @@ export function EventSheet({
     }
   };
 
+  const saveMsi = async (formEvent: FormEvent) => {
+    formEvent.preventDefault();
+    try {
+      await msiMutation.mutateAsync();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "No se pudo guardar el MSI.");
+    }
+  };
+
   const isApplePayCapture = event.source.kind === "apple_pay_shortcut";
   const isManualCapture = event.source.kind === "manual_entry" || event.captureSource === "manual";
   const isCsvCapture = !isApplePayCapture && !isManualCapture && event.source.contentType === "text/csv";
-  const hasRawSource = isManualCapture || isCsvCapture || !isApplePayCapture || event.hasRawEmail === true;
+  const isAmexStatement = event.captureSource === "amex_statement";
+  const hasRawSource =
+    isManualCapture || isCsvCapture || isAmexStatement || !isApplePayCapture || event.hasRawEmail === true;
   const sources = event.captureSources ?? (event.captureSource ? [event.captureSource] : []);
   const hasLinkedEmail = sources.includes("email") || event.hasRawEmail === true;
   const evidenceTitle = isManualCapture
@@ -101,14 +194,18 @@ export function EventSheet({
       ? "Captura de Apple Pay"
       : isCsvCapture
         ? "CSV de Santander"
-        : "Correo original";
+        : isAmexStatement
+          ? "Estado de cuenta Amex"
+          : "Correo original";
   const evidenceSummary = isManualCapture
     ? "Alta manual conservada"
     : isApplePayCapture
       ? "Observación automática conservada"
       : isCsvCapture
         ? "CSV original conservado"
-        : "Mensaje original conservado";
+        : isAmexStatement
+          ? "Estado de cuenta conservado"
+          : "Mensaje original conservado";
   const evidenceDetail = isApplePayCapture
     ? event.source.cardRaw
     : "key" in event.source
@@ -124,6 +221,7 @@ export function EventSheet({
         </div>
         <p className="detail-subtitle">
           {institutionLabel(event.institution)} · {event.accountName}
+          {event.msi ? ` · MSI ${event.msi.months}` : ""}
         </p>
         {event.parseWarnings.length > 0 && (
           <div className="warning">
@@ -154,6 +252,86 @@ export function EventSheet({
             <dd>{statusLabel[event.status]}</dd>
           </div>
         </dl>
+
+        <form className="sheet-form" onSubmit={(formEvent) => void saveMsi(formEvent)}>
+          <div className="detail-section-heading">
+            <div>
+              <p className="eyebrow">MESES SIN INTERESES</p>
+              <h3>{event.msi?.needsScheduleCompletion ? "Completar plan MSI" : "Plan MSI"}</h3>
+            </div>
+          </div>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={msiEnabled}
+              onChange={(change) => {
+                setMsiEnabled(change.target.checked);
+                if (change.target.checked) {
+                  const months = Number(msiMonths) || 3;
+                  setMsiCuota((defaultCuotaMinor(event.amount.amountMinor, months) / 100).toFixed(2));
+                }
+              }}
+            />
+            <span>Esta compra va a MSI</span>
+          </label>
+          {msiEnabled && (
+            <>
+              <Field label="Meses">
+                <input
+                  inputMode="numeric"
+                  value={msiMonths}
+                  onChange={(change) => {
+                    const value = change.target.value;
+                    setMsiMonths(value);
+                    const months = Number(value);
+                    if (Number.isInteger(months) && months > 0) {
+                      setMsiCuota((defaultCuotaMinor(event.amount.amountMinor, months) / 100).toFixed(2));
+                    }
+                  }}
+                />
+              </Field>
+              <Field label="Cuota mensual">
+                <div className="money-input">
+                  <span>$</span>
+                  <input
+                    inputMode="decimal"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={msiCuota}
+                    onChange={(change) => setMsiCuota(change.target.value)}
+                  />
+                </div>
+              </Field>
+              {event.msi && (
+                <p className="detail-subtitle">
+                  {event.msi.installments.filter((item) => item.status === "spent").length} gastadas ·{" "}
+                  {event.msi.installments.filter((item) => item.status === "committed").length}{" "}
+                  comprometidas
+                  {event.msi.origin === "amex_auto" ? " · Amex auto" : ""}
+                </p>
+              )}
+            </>
+          )}
+          <button className="primary-button" type="submit" disabled={msiMutation.isPending}>
+            {msiMutation.isPending ? "Guardando…" : "Guardar MSI"}
+          </button>
+          {event.msi && (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={cancelMsiMutation.isPending}
+              onClick={() =>
+                void cancelMsiMutation.mutateAsync().catch((reason) => {
+                  setError(reason instanceof Error ? reason.message : "No se pudo cancelar el MSI.");
+                })
+              }
+            >
+              Cancelar cuotas restantes
+            </button>
+          )}
+        </form>
+
         <div className="detail-section-heading">
           <div>
             <p className="eyebrow">EVIDENCIA</p>
@@ -174,6 +352,25 @@ export function EventSheet({
               <strong>{evidenceSummary}</strong>
               <p>{evidenceDetail}</p>
             </div>
+          </div>
+        )}
+        {event.msi && (
+          <div className="payment-list">
+            {event.msi.installments.map((installment) => (
+              <div key={installment.index} className="payment-row" style={{ cursor: "default" }}>
+                <span className="date-block">
+                  <small>{installment.month.slice(5)}</small>
+                  <strong>{String(installment.index).padStart(2, "0")}</strong>
+                </span>
+                <span className="payment-name">
+                  <strong>
+                    MSI {installment.index}/{event.msi?.months}
+                  </strong>
+                  <small>{installment.status}</small>
+                </span>
+                <strong className="payment-amount">{money(installment.amountMinor)}</strong>
+              </div>
+            ))}
           </div>
         )}
         {event.status !== "rejected" && (

@@ -21,6 +21,13 @@
 - La conciliación del CSV compara tarjeta, fecha, importe y concepto normalizado contra observaciones de correo o Apple Pay. Una coincidencia única enlaza el CSV como evidencia del evento existente; múltiples coincidencias exigen una decisión explícita antes de aplicar.
 - Los pagos y abonos negativos del CSV no se incorporan al gasto mensual.
 - Los cobros que no llegan por automatismo (p. ej. Amex sin alerta) se registran como eventos observados con fuente `manual`, no como pagos próximos. Detalle en [Cobros manuales](manual-observed-charges.md).
+- MSI (meses sin intereses) vive en el evento observado como `msi` (schedule multi-mes). No se guarda en `MonthlyPlan`.
+- Amex con importe **> $2,500.00** asume 3 MSI al crear el evento (`amex_auto`); el usuario puede overridear meses/cuota en la UI.
+- El ciclo de cada cuota es `committed` → `spent` (nunca ambos). Hasta reconciliar, la cuota resta de “Te quedan” vía dinero comprometido; al confirmar evidencia pasa a “Has gastado”.
+- Evidencia MSI: CSV Santander con conceptos tipo `A MESES`, y estado de cuenta Amex (PDF→texto en cliente, parseo semántico en API). Coincidencia con tolerancia de $2.00; gana el monto del estado.
+- Una cuota del estado sin plan previo crea un MSI `statement_unplanned` que exige completar N meses/cuota.
+- Liquidación anticipada de MSI es manual (cancelar cuotas restantes + registrar el cargo de cierre si aplica).
+- El PDF de estado Santander es imagen; en V1 la evidencia Santander MSI sigue el CSV de movimientos, no OCR del PDF.
 
 ## Modelo de datos
 
@@ -31,6 +38,7 @@
 - Se conservan `occurred_at`, `received_at` e `ingested_at` en UTC. La UI se presenta inicialmente en `America/Chihuahua`.
 - En V1, el comercio se conserva únicamente como `merchant_raw`.
 - Las correcciones son revisiones auditables: la fuente y el parseo original no se reescriben.
+- `ObservedPurchase.msi` es opcional y contiene origen, principal, cuota, meses e installments con status por mes.
 
 ## Infraestructura
 

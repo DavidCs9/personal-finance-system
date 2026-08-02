@@ -10,7 +10,17 @@ import {
   parseManualEntry,
   type ManualEntryInput,
 } from './manual-entry-input.js';
+import {
+  buildMsiSchedule,
+  cancelRemainingInstallments,
+  completeUnplannedSchedule,
+  maybeAutoAmexMsi,
+  monthKeyInZone,
+  type MsiPlan,
+} from '@finance/domain';
+import { amexImportCompletionUpdate, InvalidAmexStatementError, parseAmexStatementText } from './amex-statement.js';
 import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan, type MonthlyPlanInput } from './monthly-plan.js';
+import { isSantanderMsiRow, matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
 import { reconciliationPartition } from './observed-events.js';
 import {
   deletePushSubscription,
@@ -20,6 +30,8 @@ import {
   savePushSubscription,
 } from './push-subscriptions.js';
 import { InvalidSantanderCsvError, merchantsMatch, parseSantanderCsv, santanderApplyAction, santanderImportCompletionUpdate, type SantanderCsvDocument, type SantanderCsvRow, type SantanderReconciliationDecision, type SantanderReconciliationStatus } from './santander-csv.js';
+
+class InvalidMsiError extends Error {}
 
 const database = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -92,8 +104,14 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     if (event.requestContext.http.method === 'POST' && event.rawPath === '/imports/santander/preview') {
       return response(200, await previewSantanderImport(requestBody(event), principal(event)));
     }
+    if (event.requestContext.http.method === 'POST' && event.rawPath === '/imports/amex/preview') {
+      return response(200, await previewAmexImport(requestBody(event), principal(event)));
+    }
     const importId = event.pathParameters?.importId;
     if (importId && event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/apply')) {
+      if (event.rawPath.includes('/imports/amex/')) {
+        return response(200, await applyAmexImport(importId, principal(event)));
+      }
       return response(200, await applySantanderImport(importId, principal(event), requestBody(event)));
     }
     const month = event.pathParameters?.month;
@@ -143,8 +161,10 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     if (
       error instanceof InvalidMonthlyPlanError
       || error instanceof InvalidSantanderCsvError
+      || error instanceof InvalidAmexStatementError
       || error instanceof InvalidPushSubscriptionError
       || error instanceof InvalidManualEntryError
+      || error instanceof InvalidMsiError
     ) {
       return response(400, { message: error.message });
     }
@@ -225,6 +245,12 @@ const createManualEvent = async (body: string | undefined, owner: string): Promi
     displayName: institutionDisplayName(input.institution, input.accountLastFour),
     ...(input.accountLastFour ? { lastFour: input.accountLastFour } : {}),
   };
+  const autoMsi = maybeAutoAmexMsi({
+    institution: input.institution,
+    amountMinor: input.amountMinor,
+    occurredAt: input.occurredAt,
+    receivedAt: appliedAt,
+  });
   const purchase: JsonObject = {
     id,
     institution: input.institution,
@@ -244,6 +270,7 @@ const createManualEvent = async (body: string | undefined, owner: string): Promi
     observationCount: 1,
     primaryObservationId: observationId,
     hasRawEmail: false,
+    ...(autoMsi ? { msi: autoMsi } : {}),
   };
   const observation = {
     id: observationId,
@@ -461,6 +488,7 @@ const claimAndCreateCsvEvent = async (
   row: SantanderPreviewRow,
   source: JsonObject,
   appliedAt: string,
+  msi?: MsiPlan,
 ): Promise<JsonObject | undefined> => {
   const id = randomUUID();
   const observationId = randomUUID();
@@ -469,14 +497,17 @@ const claimAndCreateCsvEvent = async (
     id,
     institution: 'santander_mx',
     eventType: 'card_purchase',
-    status: 'accepted',
+    status: msi?.needsScheduleCompletion ? 'needs_review' : 'accepted',
     account: {
       institution: 'santander_mx',
       accountId: `santander_mx:${document.accountLastFour}`,
       displayName: `Tarjeta terminada en ${document.accountLastFour}`,
       lastFour: document.accountLastFour,
     },
-    amount: { amountMinor: row.amountMinor, currency: 'MXN' },
+    amount: {
+      amountMinor: msi?.principalMinor ?? row.amountMinor,
+      currency: 'MXN',
+    },
     merchantRaw: row.merchantRaw,
     bankTransactionId: row.transactionId,
     occurredAt,
@@ -484,12 +515,15 @@ const claimAndCreateCsvEvent = async (
     ingestedAt: appliedAt,
     source,
     parserVersion: 'santander-mx-csv-v1',
-    parseWarnings: [],
+    parseWarnings: msi?.needsScheduleCompletion
+      ? ['MSI sin plan completo: confirma meses y cuota.']
+      : [],
     captureSource: 'santander_csv',
     captureSources: ['santander_csv'],
     observationCount: 1,
     primaryObservationId: observationId,
     hasRawEmail: false,
+    ...(msi ? { msi } : {}),
   };
   const observation = {
     id: observationId,
@@ -668,12 +702,50 @@ const applySantanderImport = async (importId: string, owner: string, decisionBod
   const created: JsonObject[] = [];
   let linked = 0;
   let skipped = 0;
+  let msiConfirmed = 0;
+  let eventsSnapshot = await allStoredEvents();
   for (const row of rows) {
     const previewRow = previewByIdentity.get(row.identity);
     const action = santanderApplyAction(row, previewRow, decisions[row.identity]);
+    if (action.kind === 'create' && isSantanderMsiRow(row.merchantRaw) && row.amountMinor > 0) {
+      const evidence: EvidenceLine = {
+        merchantRaw: row.merchantRaw,
+        amountMinor: row.amountMinor,
+        occurredOn: row.occurredOn,
+        identity: row.identity,
+      };
+      const match = matchEvidenceLine(evidence, eventsSnapshot);
+      if (match.kind === 'confirm') {
+        const updated = await persistEventMsi(
+          match.eventId,
+          owner,
+          match.previous,
+          match.next,
+          'Cuota MSI confirmada con CSV Santander.',
+        );
+        if (updated) {
+          msiConfirmed += 1;
+          linked += 1;
+          eventsSnapshot = eventsSnapshot.map((event) => event.id === match.eventId ? { ...event, msi: match.next } : event);
+          continue;
+        }
+      } else if (match.kind === 'unplanned') {
+        const purchase = await claimAndCreateCsvEvent(owner, document, row, source, appliedAt, match.plan);
+        if (purchase) {
+          created.push(toPublicEvent(purchase));
+          eventsSnapshot = [...eventsSnapshot, purchase];
+          continue;
+        }
+        skipped += 1;
+        continue;
+      }
+    }
     if (action.kind === 'create') {
       const purchase = await claimAndCreateCsvEvent(owner, document, row, source, appliedAt);
-      if (purchase) created.push(toPublicEvent(purchase)); else skipped += 1;
+      if (purchase) {
+        created.push(toPublicEvent(purchase));
+        eventsSnapshot = [...eventsSnapshot, purchase];
+      } else skipped += 1;
     } else if (action.kind === 'link') {
       if (await claimAndLinkCsvEvidence(owner, action.eventId, row, source, appliedAt)) linked += 1;
       else skipped += 1;
@@ -686,7 +758,259 @@ const applySantanderImport = async (importId: string, owner: string, decisionBod
     Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER#${importId}` },
     ...santanderImportCompletionUpdate(appliedAt, { created: created.length, linked, skipped }),
   }));
-  return { importId, created, summary: { created: created.length, linked, skipped } };
+  return {
+    importId,
+    created,
+    summary: { created: created.length, linked, skipped, msiConfirmed },
+  };
+};
+
+const amexSourceKey = (owner: string, sha256: string): string => `manual-imports/amex/${owner}/${sha256}.txt`;
+
+const previewAmexImport = async (body: string | undefined, owner: string): Promise<JsonObject> => {
+  if (!body?.trim()) throw new InvalidAmexStatementError('El estado de cuenta Amex está vacío.');
+  const document = parseAmexStatementText(body);
+  const sha256 = createHash('sha256').update(body, 'utf8').digest('hex');
+  const source = {
+    bucket: rawSourceBucketName,
+    key: amexSourceKey(owner, sha256),
+    sha256,
+    contentType: 'text/plain' as const,
+  };
+  await s3.send(new PutObjectCommand({
+    Bucket: rawSourceBucketName,
+    Key: source.key,
+    Body: body,
+    ContentType: 'text/plain; charset=utf-8',
+  }));
+
+  const events = await allStoredEvents();
+  const msiLines: EvidenceLine[] = [
+    ...document.msiPlans.map((plan, index) => ({
+      merchantRaw: plan.merchantRaw,
+      amountMinor: plan.cuotaMinor,
+      occurredOn: document.period.to,
+      installmentIndex: plan.installmentIndex,
+      installmentMonths: plan.installmentMonths,
+      originalAmountMinor: plan.originalAmountMinor,
+      identity: `amex_plan:${document.accountLastFour}:${plan.originalAmountMinor}:${plan.installmentIndex}/${plan.installmentMonths}:${index}`,
+    })),
+    ...document.charges.filter((charge) => charge.msi).map((charge) => ({
+      merchantRaw: charge.merchantRaw,
+      amountMinor: charge.amountMinor,
+      occurredOn: charge.occurredOn,
+      installmentIndex: charge.installmentIndex,
+      installmentMonths: charge.installmentMonths,
+      identity: charge.identity,
+    })),
+  ];
+
+  // Prefer plan summaries; drop charge duplicates with same index+amount+months.
+  const seen = new Set<string>();
+  const uniqueLines = msiLines.filter((line) => {
+    const key = [
+      line.installmentIndex ?? '',
+      line.installmentMonths ?? '',
+      line.amountMinor,
+      line.originalAmountMinor ?? '',
+      line.merchantRaw,
+    ].join(':');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const rows = uniqueLines.map((line) => {
+    const match = matchEvidenceLine(line, events);
+    return {
+      ...line,
+      status: match.kind === 'confirm' ? 'matched' : match.kind === 'unplanned' ? 'unplanned' : 'skipped',
+      eventId: match.kind === 'confirm' ? match.eventId : undefined,
+    };
+  });
+
+  await database.send(new PutCommand({
+    TableName: tableName,
+    Item: {
+      PK: `USER#${owner}`,
+      SK: `IMPORT#AMEX#${sha256}`,
+      entityType: 'amex_statement_import',
+      owner,
+      status: 'previewed',
+      createdAt: new Date().toISOString(),
+      source,
+      accountLastFour: document.accountLastFour,
+      product: document.product,
+      period: document.period,
+      rows,
+    },
+  }));
+
+  return {
+    importId: sha256,
+    accountLastFour: document.accountLastFour,
+    product: document.product,
+    period: document.period,
+    summary: {
+      total: rows.length,
+      matched: rows.filter((row) => row.status === 'matched').length,
+      unplanned: rows.filter((row) => row.status === 'unplanned').length,
+      skipped: rows.filter((row) => row.status === 'skipped').length,
+    },
+    rows,
+  };
+};
+
+const applyAmexImport = async (importId: string, owner: string): Promise<JsonObject> => {
+  if (!/^[a-f0-9]{64}$/.test(importId)) throw new InvalidAmexStatementError('Identificador de importación inválido.');
+  const stored = await database.send(new GetCommand({
+    TableName: tableName,
+    Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
+    ConsistentRead: true,
+  }));
+  const source = stored.Item?.source as JsonObject | undefined;
+  if (!stored.Item || stored.Item.owner !== owner || typeof source?.key !== 'string') {
+    throw new InvalidAmexStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
+  }
+  const object = await s3.send(new GetObjectCommand({ Bucket: rawSourceBucketName, Key: source.key }));
+  if (!object.Body) throw new Error('The Amex statement source did not contain a body.');
+  const sourceBody = await object.Body.transformToString('utf8');
+  const actualHash = createHash('sha256').update(sourceBody, 'utf8').digest('hex');
+  if (actualHash !== importId) throw new Error('The stored Amex statement hash does not match the import identifier.');
+
+  const document = parseAmexStatementText(sourceBody);
+  const previewRows = Array.isArray(stored.Item.rows) ? stored.Item.rows as readonly (EvidenceLine & { status?: string })[] : [];
+  const appliedAt = new Date().toISOString();
+  let eventsSnapshot = await allStoredEvents();
+  let confirmed = 0;
+  let createdUnplanned = 0;
+  let skipped = 0;
+  const created: JsonObject[] = [];
+
+  for (const row of previewRows) {
+    const match = matchEvidenceLine(row, eventsSnapshot);
+    if (match.kind === 'confirm') {
+      const updated = await persistEventMsi(
+        match.eventId,
+        owner,
+        match.previous,
+        match.next,
+        'Cuota MSI confirmada con estado de cuenta Amex.',
+      );
+      if (updated) {
+        confirmed += 1;
+        eventsSnapshot = eventsSnapshot.map((event) => event.id === match.eventId ? { ...event, msi: match.next } : event);
+      } else skipped += 1;
+      continue;
+    }
+    if (match.kind === 'unplanned') {
+      const id = randomUUID();
+      const observationId = randomUUID();
+      const occurredAt = `${row.occurredOn}T12:00:00.000Z`;
+      const purchase: JsonObject = {
+        id,
+        institution: 'american_express_mx',
+        eventType: 'card_purchase',
+        status: 'needs_review',
+        account: {
+          institution: 'american_express_mx',
+          accountId: `american_express_mx:${document.accountLastFour}`,
+          displayName: `American Express · ${document.accountLastFour}`,
+          lastFour: document.accountLastFour,
+        },
+        amount: { amountMinor: match.plan.principalMinor, currency: 'MXN' },
+        merchantRaw: match.merchantRaw,
+        occurredAt,
+        receivedAt: appliedAt,
+        ingestedAt: appliedAt,
+        source,
+        parserVersion: 'amex-mx-statement-v1',
+        parseWarnings: ['MSI sin plan completo: confirma meses y cuota.'],
+        captureSource: 'amex_statement',
+        captureSources: ['amex_statement'],
+        observationCount: 1,
+        primaryObservationId: observationId,
+        hasRawEmail: false,
+        msi: match.plan,
+      };
+      try {
+        await database.send(new TransactWriteCommand({ TransactItems: [
+          { Put: {
+            TableName: tableName,
+            Item: {
+              PK: `DEDUPE#AMEX_STATEMENT#${createHash('sha256').update(row.identity).digest('hex')}`,
+              SK: 'CLAIM',
+              entityType: 'amex_statement_dedupe',
+              identity: row.identity,
+              owner,
+              eventId: id,
+              createdAt: appliedAt,
+            },
+            ConditionExpression: 'attribute_not_exists(PK)',
+          } },
+          { Put: {
+            TableName: tableName,
+            Item: {
+              PK: `EVENT#${id}`,
+              SK: 'EVENT',
+              GSI1PK: 'EVENTS',
+              GSI1SK: appliedAt,
+              GSI2PK: reconciliationPartition(purchase as Parameters<typeof reconciliationPartition>[0]),
+              GSI2SK: `${occurredAt}#${id}`,
+              reconciliationAt: occurredAt,
+              entityType: 'observed_purchase',
+              payload: purchase,
+            },
+            ConditionExpression: 'attribute_not_exists(PK)',
+          } },
+          { Put: {
+            TableName: tableName,
+            Item: {
+              PK: `EVENT#${id}`,
+              SK: `OBSERVATION#${occurredAt}#${observationId}`,
+              entityType: 'event_observation',
+              payload: {
+                id: observationId,
+                eventId: id,
+                captureSource: 'amex_statement',
+                observedAt: appliedAt,
+                reconciliationAt: occurredAt,
+                institution: 'american_express_mx',
+                eventType: 'card_purchase',
+                account: purchase.account,
+                amount: purchase.amount,
+                merchantRaw: match.merchantRaw,
+                occurredAt,
+                source,
+                parserVersion: 'amex-mx-statement-v1',
+                parseWarnings: purchase.parseWarnings,
+              },
+            },
+            ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
+          } },
+        ] }));
+        created.push(toPublicEvent(purchase));
+        createdUnplanned += 1;
+        eventsSnapshot = [...eventsSnapshot, purchase];
+      } catch (error) {
+        if (errorName(error) === 'TransactionCanceledException') skipped += 1;
+        else throw error;
+      }
+      continue;
+    }
+    skipped += 1;
+  }
+
+  await database.send(new UpdateCommand({
+    TableName: tableName,
+    Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
+    ...amexImportCompletionUpdate(appliedAt, { confirmed, createdUnplanned, skipped }),
+  }));
+  return {
+    importId,
+    created,
+    summary: { confirmed, createdUnplanned, skipped },
+  };
 };
 
 const getMonthlyPlan = async (owner: string, month: string): Promise<JsonObject> => {
@@ -841,9 +1165,8 @@ const patchEvent = async (
   changedBy: string,
   body: string | undefined,
 ): Promise<JsonObject | undefined> => {
-  let action: 'verify' | 'reject' = 'verify';
+  let parsed: JsonObject = {};
   if (body?.trim()) {
-    let parsed: JsonObject;
     try {
       const value = JSON.parse(body);
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('not an object');
@@ -851,13 +1174,134 @@ const patchEvent = async (
     } catch {
       throw new InvalidManualEntryError('PATCH body must be a JSON object when provided.');
     }
-    if (parsed.action === 'reject' || parsed.status === 'rejected') action = 'reject';
-    else if (parsed.action === 'verify' || parsed.status === 'accepted' || parsed.action === undefined) action = 'verify';
-    else throw new InvalidManualEntryError('Unsupported PATCH action.');
   }
-  return action === 'reject'
-    ? markRejected(eventId, changedBy)
-    : markVerified(eventId, changedBy);
+  const action = typeof parsed.action === 'string'
+    ? parsed.action
+    : parsed.status === 'rejected'
+      ? 'reject'
+      : parsed.status === 'accepted'
+        ? 'verify'
+        : 'verify';
+  if (action === 'reject') return markRejected(eventId, changedBy);
+  if (action === 'set_msi') return setEventMsi(eventId, changedBy, parsed);
+  if (action === 'clear_msi') return clearEventMsi(eventId, changedBy);
+  if (action === 'cancel_msi_remaining') return cancelEventMsiRemaining(eventId, changedBy);
+  if (action === 'complete_msi_schedule') return completeEventMsiSchedule(eventId, changedBy, parsed);
+  if (action === 'verify') return markVerified(eventId, changedBy);
+  throw new InvalidManualEntryError('Unsupported PATCH action.');
+};
+
+const readMsiPlan = (value: unknown): MsiPlan | undefined => {
+  if (!value || typeof value !== 'object') return undefined;
+  return value as MsiPlan;
+};
+
+const persistEventMsi = async (
+  eventId: string,
+  changedBy: string,
+  previous: unknown,
+  next: MsiPlan | undefined,
+  reason: string,
+): Promise<JsonObject | undefined> => {
+  const existing = await getEventDetail(eventId);
+  if (!existing) return undefined;
+  const updated = await database.send(new UpdateCommand({
+    TableName: tableName,
+    Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
+    UpdateExpression: next
+      ? 'SET #payload.#msi = :msi'
+      : 'REMOVE #payload.#msi',
+    ExpressionAttributeNames: { '#payload': 'payload', '#msi': 'msi' },
+    ...(next ? { ExpressionAttributeValues: { ':msi': next } } : {}),
+    ReturnValues: 'ALL_NEW',
+  }));
+  const revision = {
+    id: randomUUID(),
+    observedPurchaseId: eventId,
+    createdAt: new Date().toISOString(),
+    changedBy,
+    reason,
+    changes: {
+      msi: { previous, next: next ?? null },
+    },
+  };
+  await database.send(new PutCommand({
+    TableName: tableName,
+    Item: { PK: `EVENT#${eventId}`, SK: `REVISION#${revision.createdAt}#${revision.id}`, entityType: 'event_revision', payload: revision },
+  }));
+  return toPublicEvent(
+    updated.Attributes?.payload as JsonObject,
+    [revision, ...(Array.isArray(existing.revisions) ? existing.revisions as JsonObject[] : [])],
+    Array.isArray(existing.observations) ? existing.observations as JsonObject[] : [],
+  );
+};
+
+const setEventMsi = async (eventId: string, changedBy: string, body: JsonObject): Promise<JsonObject | undefined> => {
+  const existing = await getEventDetail(eventId);
+  if (!existing) return undefined;
+  const amount = existing.amount as { amountMinor?: number } | undefined;
+  const principalMinor = Number(amount?.amountMinor);
+  const months = Number(body.months);
+  if (!Number.isInteger(months) || months < 1 || months > 48) throw new InvalidMsiError('Los meses MSI deben ser un entero entre 1 y 48.');
+  if (!Number.isSafeInteger(principalMinor) || principalMinor <= 0) throw new InvalidMsiError('El movimiento no tiene un monto válido para MSI.');
+  const startMonth = typeof body.startMonth === 'string' && /^\d{4}-\d{2}$/.test(body.startMonth)
+    ? body.startMonth
+    : monthKeyInZone(new Date(String(existing.occurredAt ?? existing.receivedAt)));
+  const cuotaMinor = body.cuotaMinor === undefined ? undefined : Number(body.cuotaMinor);
+  if (cuotaMinor !== undefined && (!Number.isSafeInteger(cuotaMinor) || cuotaMinor <= 0)) {
+    throw new InvalidMsiError('La cuota MSI debe ser un entero positivo en centavos.');
+  }
+  const plan = buildMsiSchedule({
+    principalMinor,
+    months,
+    startMonth,
+    origin: 'manual',
+    ...(cuotaMinor !== undefined ? { cuotaMinor } : {}),
+  });
+  return persistEventMsi(eventId, changedBy, existing.msi, plan, 'Plan MSI actualizado desde la UI.');
+};
+
+const clearEventMsi = async (eventId: string, changedBy: string): Promise<JsonObject | undefined> => {
+  const existing = await getEventDetail(eventId);
+  if (!existing) return undefined;
+  return persistEventMsi(eventId, changedBy, existing.msi, undefined, 'Plan MSI eliminado desde la UI.');
+};
+
+const cancelEventMsiRemaining = async (eventId: string, changedBy: string): Promise<JsonObject | undefined> => {
+  const existing = await getEventDetail(eventId);
+  if (!existing) return undefined;
+  const current = readMsiPlan(existing.msi);
+  if (!current) throw new InvalidMsiError('Este movimiento no tiene un plan MSI.');
+  return persistEventMsi(
+    eventId,
+    changedBy,
+    current,
+    cancelRemainingInstallments(current),
+    'Cuotas MSI restantes canceladas manualmente.',
+  );
+};
+
+const completeEventMsiSchedule = async (
+  eventId: string,
+  changedBy: string,
+  body: JsonObject,
+): Promise<JsonObject | undefined> => {
+  const existing = await getEventDetail(eventId);
+  if (!existing) return undefined;
+  const current = readMsiPlan(existing.msi);
+  if (!current) throw new InvalidMsiError('Este movimiento no tiene un plan MSI.');
+  const months = Number(body.months);
+  if (!Number.isInteger(months) || months < 1 || months > 48) throw new InvalidMsiError('Los meses MSI deben ser un entero entre 1 y 48.');
+  const startMonth = typeof body.startMonth === 'string' && /^\d{4}-\d{2}$/.test(body.startMonth)
+    ? body.startMonth
+    : monthKeyInZone(new Date(String(existing.occurredAt ?? existing.receivedAt)));
+  const cuotaMinor = body.cuotaMinor === undefined ? undefined : Number(body.cuotaMinor);
+  const next = completeUnplannedSchedule(current, {
+    months,
+    startMonth,
+    ...(cuotaMinor !== undefined ? { cuotaMinor } : {}),
+  });
+  return persistEventMsi(eventId, changedBy, current, next, 'Schedule MSI completado desde la UI.');
 };
 
 const markVerified = async (eventId: string, changedBy: string): Promise<JsonObject | undefined> => {
@@ -948,6 +1392,7 @@ const toPublicEvent = (
     reconciledAt: payload.reconciledAt,
     hasRawEmail: payload.hasRawEmail ?? (payload.source as JsonObject | undefined)?.contentType === 'message/rfc822',
     parseWarnings: payload.parseWarnings ?? [],
+    msi: payload.msi,
     revisions,
     observations,
   };

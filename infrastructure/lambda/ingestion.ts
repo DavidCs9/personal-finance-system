@@ -6,6 +6,7 @@ import { SendEmailCommand, SESClient } from '@aws-sdk/client-ses';
 import { DynamoDBDocumentClient, PutCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { SQSHandler } from 'aws-lambda';
 import { ingestionExceptionAlert, type IngestionExceptionAlertInput } from './ingestion-notifications.js';
+import { maybeAutoAmexMsi } from '@finance/domain';
 import { saveObservedEvent } from './observed-events.js';
 import { notifyObservedPurchasePush } from './push-notify.js';
 
@@ -112,6 +113,12 @@ const ingest = async (job: IngestionJob): Promise<void> => {
     ? ['Importado desde un PDF de ejemplo; el MIME original no estaba disponible.']
     : [];
   const parseWarnings = [...(parsed.parseWarnings ?? []), ...importWarning];
+  const autoMsi = maybeAutoAmexMsi({
+    institution: parsed.institution,
+    amountMinor: parsed.amount.amountMinor,
+    occurredAt: parsed.occurredAt,
+    receivedAt: job.receivedAt,
+  });
   const purchase = {
     id: randomUUID(),
     institution: parsed.institution,
@@ -136,6 +143,7 @@ const ingest = async (job: IngestionJob): Promise<void> => {
     source,
     parserVersion: parser.version,
     parseWarnings,
+    ...(autoMsi ? { msi: autoMsi } : {}),
   };
   const saved = await saveObservedEvent({
     database,

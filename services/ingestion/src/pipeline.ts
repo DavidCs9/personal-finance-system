@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { IngestionException, ObservedPurchase, RawSourcePointer } from "@finance/domain";
+import { maybeAutoAmexMsi, type IngestionException, type ObservedPurchase, type RawSourcePointer } from "@finance/domain";
 import { sha256 } from "./in-memory.js";
 import type {
   CardPurchaseParser,
@@ -61,6 +61,12 @@ export class IngestionPipeline {
         return this.createException(email, source, "missing_required_data", "Parser returned incomplete event data.", parser.institution);
       }
 
+      const autoMsi = maybeAutoAmexMsi({
+        institution: parsed.institution,
+        amountMinor: parsed.amount.amountMinor,
+        occurredAt: parsed.occurredAt,
+        receivedAt: email.receivedAt,
+      });
       const purchase: ObservedPurchase = {
         id: this.ids.next(),
         institution: parsed.institution,
@@ -85,6 +91,7 @@ export class IngestionPipeline {
         source,
         parserVersion: parser.version,
         parseWarnings: parsed.parseWarnings ?? [],
+        ...(autoMsi ? { msi: autoMsi } : {}),
       };
       await this.dependencies.ledger.savePurchase(purchase);
       await this.dependencies.notifier.notifyObservedPurchase(purchase);

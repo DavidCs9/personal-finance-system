@@ -17,6 +17,7 @@ import { EventSheet } from "../sheets/EventSheet";
 import { IncomeSheet } from "../sheets/IncomeSheet";
 import { ManualEntrySheet } from "../sheets/ManualEntrySheet";
 import { PaymentSheet } from "../sheets/PaymentSheet";
+import { AmexImportSheet } from "../sheets/AmexImportSheet";
 import { SantanderImportSheet } from "../sheets/SantanderImportSheet";
 import type { IngestionException, PurchaseEvent } from "../types";
 import { MovementsView } from "../views/MovementsView";
@@ -43,6 +44,7 @@ export function Dashboard({
   const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
   const [movementSort, setMovementSort] = useState<"recent" | "largest">("recent");
   const [importOpen, setImportOpen] = useState(false);
+  const [amexImportOpen, setAmexImportOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
 
   const eventsQuery = useQuery({
@@ -112,10 +114,13 @@ export function Dashboard({
     () =>
       computeMonthSummary({
         events: events.map((event) => ({
+          id: event.id,
           amountMinor: event.amount.amountMinor,
           status: event.status,
           occurredAt: event.occurredAt,
           receivedAt: event.receivedAt,
+          merchantRaw: event.merchantRaw,
+          msi: event.msi,
         })),
         month: selectedMonth,
         incomeMinor: plan.incomeMinor,
@@ -135,6 +140,7 @@ export function Dashboard({
     remainingMinor,
     projectedRemainingMinor,
     isCurrentMonth,
+    committedMsiRows,
   } = summary;
   const spendPercent = plan.incomeMinor > 0 ? Math.round((spentMinor / plan.incomeMinor) * 100) : 0;
   const risk =
@@ -189,9 +195,14 @@ export function Dashboard({
             spendPercent={spendPercent}
             isCurrentMonth={isCurrentMonth}
             risk={risk}
+            committedMsiRows={committedMsiRows}
             onEditIncome={() => setEditingIncome(true)}
             onAddPayment={() => setEditingPayment(null)}
             onEditPayment={(payment) => setEditingPayment(payment)}
+            onOpenMsiEvent={(eventId) => {
+              const found = events.find((event) => event.id === eventId);
+              if (found) setActiveEvent(found);
+            }}
             onReviewLargest={reviewLargest}
             idToken={idToken}
             demoMode={demoMode}
@@ -208,6 +219,7 @@ export function Dashboard({
             onDiscardException={discardException}
             onReadExceptionRaw={readExceptionRaw}
             onImport={() => setImportOpen(true)}
+            onImportAmex={() => setAmexImportOpen(true)}
             onRegisterCharge={() => setManualOpen(true)}
           />
         )}
@@ -266,6 +278,16 @@ export function Dashboard({
           onClose={() => setImportOpen(false)}
           onApplied={() => {
             setImportOpen(false);
+            void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+          }}
+        />
+      )}
+      {amexImportOpen && (
+        <AmexImportSheet
+          idToken={idToken}
+          onClose={() => setAmexImportOpen(false)}
+          onApplied={() => {
+            setAmexImportOpen(false);
             void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
           }}
         />

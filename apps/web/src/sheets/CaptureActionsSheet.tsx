@@ -4,10 +4,12 @@ export function CaptureActionsSheet({
   onClose,
   onRegisterCharge,
   onImport,
+  onImportAmex,
 }: {
   onClose(): void;
   onRegisterCharge(): void;
   onImport(): void;
+  onImportAmex(): void;
 }) {
   return (
     <Sheet eyebrow="CAPTURAR" title="Sumar un movimiento" onClose={onClose}>
@@ -29,8 +31,15 @@ export function CaptureActionsSheet({
         </button>
         <button type="button" className="capture-action" role="menuitem" onClick={onImport}>
           <span>
-            <strong>Conciliar CSV</strong>
-            <small>Respaldo de movimientos Santander</small>
+            <strong>Conciliar CSV Santander</strong>
+            <small>Respaldo y cuotas A MESES</small>
+          </span>
+          <span aria-hidden="true">›</span>
+        </button>
+        <button type="button" className="capture-action" role="menuitem" onClick={onImportAmex}>
+          <span>
+            <strong>Estado de cuenta Amex</strong>
+            <small>Confirmar cuotas MSI del periodo</small>
           </span>
           <span aria-hidden="true">›</span>
         </button>
