@@ -18,7 +18,7 @@ export interface ParsedPurchase {
   readonly account?: ObservedPurchase["account"];
   readonly amount: ObservedPurchase["amount"];
   readonly merchantRaw: string;
-  readonly eventType?: "card_purchase" | "outgoing_transfer";
+  readonly eventType?: "card_purchase" | "outgoing_transfer" | "card_charge";
   readonly counterparty?: string;
   readonly transferType?: "spei";
   readonly reference?: string;
@@ -26,6 +26,8 @@ export interface ParsedPurchase {
   readonly trackingKey?: string;
   readonly counterpartyInstitution?: string;
   readonly counterpartyAccountLastFour?: string;
+  readonly billingPeriod?: string;
+  readonly paymentMethodLastFour?: string;
   readonly occurredAt?: string;
   readonly parseWarnings?: readonly string[];
 }

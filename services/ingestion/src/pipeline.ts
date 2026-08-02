@@ -76,6 +76,8 @@ export class IngestionPipeline {
         trackingKey: parsed.trackingKey,
         counterpartyInstitution: parsed.counterpartyInstitution,
         counterpartyAccountLastFour: parsed.counterpartyAccountLastFour,
+        billingPeriod: parsed.billingPeriod,
+        paymentMethodLastFour: parsed.paymentMethodLastFour,
         occurredAt: parsed.occurredAt,
         receivedAt: email.receivedAt,
         ingestedAt: this.clock.now().toISOString(),

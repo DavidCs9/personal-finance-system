@@ -15,7 +15,7 @@ const dateFormatter = new Intl.DateTimeFormat("es-MX", { day: "numeric", month: 
 const longDateFormatter = new Intl.DateTimeFormat("es-MX", { dateStyle: "long", timeStyle: "short", timeZone });
 const monthFormatter = new Intl.DateTimeFormat("es-MX", { month: "long", year: "numeric", timeZone: "UTC" });
 const moneyFormatter = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 0 });
-const institutionLabel = (value: PurchaseEvent["institution"]) => value === "american_express_mx" ? "American Express" : value === "santander_mx" ? "Santander" : "Nu";
+const institutionLabel = (value: PurchaseEvent["institution"]) => value === "american_express_mx" ? "American Express" : value === "santander_mx" ? "Santander" : value === "nu_mx" ? "Nu" : "AWS";
 const statusLabel: Record<ReviewStatus, string> = { accepted: "Confirmado", needs_review: "Por confirmar", rejected: "Rechazado" };
 const money = (amountMinor: number) => moneyFormatter.format(amountMinor / 100);
 const eventMoney = (event: PurchaseEvent) => new Intl.NumberFormat("es-MX", { style: "currency", currency: event.amount.currency }).format(event.amount.amountMinor / 100);
