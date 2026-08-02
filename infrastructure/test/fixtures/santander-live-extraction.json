@@ -1,0 +1,468 @@
+{
+  "provider": "santander",
+  "jobId": "live-santander-45576d44",
+  "status": "SUCCEEDED",
+  "lines": [
+    "Periodo: 05-Jun-2026 al 04-Jul-2026",
+    "UNIQUE REWARDS PLATINUM PLATINO",
+    "Numero de tarjeta: 4262 8300 0028 6349"
+  ],
+  "text": "Periodo: 05-Jun-2026 al 04-Jul-2026\nUNIQUE REWARDS PLATINUM PLATINO\nNumero de tarjeta: 4262 8300 0028 6349",
+  "answers": {},
+  "queryAnswers": [],
+  "tables": [
+    {
+      "page": 4,
+      "rows": [
+        [
+          "",
+          "DESGLOSE COMPRAS Y CARGOS Tarjeta adicional",
+          "DE MOVIMIENTOS DIFERIDOS A MESES ****8615",
+          "SIN INTERESES",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Fecha de la operación",
+          "Descripción",
+          "Monto original",
+          "Saldo pendiente",
+          "Pago requerido",
+          "Núm. de pago",
+          "Tasa de interés aplicable"
+        ],
+        [
+          "07-Abr-2026",
+          "AMAZON A MESES 12M S/INT",
+          "$ 2,855.00",
+          "$ 2,141.24",
+          "$ 237.92",
+          "03 DE 12",
+          "0%"
+        ],
+        [
+          "27-May-2026",
+          "AMAZON A MESES 03M S/INT",
+          "$ 561.77",
+          "$ 187.25",
+          "$ 187.26",
+          "02 DE 03",
+          "0%"
+        ]
+      ]
+    },
+    {
+      "page": 4,
+      "rows": [
+        [
+          "",
+          "",
+          "CARGOS, ABONOS Y Tarjeta",
+          "COMPRAS REGULARES (NO A MESES) titular ****6349",
+          "",
+          ""
+        ],
+        [
+          "Fecha de la operación",
+          "Fecha de cargo",
+          "",
+          "Descripción del movimiento",
+          "",
+          "Monto"
+        ],
+        [
+          "06-Jun-2026",
+          "08-Jun-2026",
+          "REST SEOR ELOTEPALOMAR",
+          "EILZ740104H76",
+          "+",
+          "$ 192.00"
+        ],
+        [
+          "06-Jun-2026",
+          "08-Jun-2026",
+          "OXXO HDAS DE VALLE CUF",
+          "",
+          "+",
+          "$55.50"
+        ],
+        [
+          "06-Jun-2026",
+          "08-Jun-2026",
+          "OXXO GAS HDA DL VALLE",
+          "SGM 950714DC2",
+          "+",
+          "$ 500.00"
+        ],
+        [
+          "07-Jun-2026",
+          "08-Jun-2026",
+          "REST MOZAO CAFE 2",
+          "HOCL0106207Z2",
+          "+",
+          "$ 206.00"
+        ],
+        [
+          "08-Jun-2026",
+          "09-Jun-2026",
+          "OXXO HDAS DE VALLE CUF",
+          "",
+          "+",
+          "$ 192.00"
+        ],
+        [
+          "09-Jun-2026",
+          "10-Jun-2026",
+          "CINEPOLIS DULCERIA",
+          "TCI 121023F10",
+          "+",
+          "$ 272.00"
+        ],
+        [
+          "09-Jun-2026",
+          "10-Jun-2026",
+          "GO FAST SUC LAT PDJ",
+          "GGO 190211KV6",
+          "+",
+          "$ 175.00"
+        ],
+        [
+          "09-Jun-2026",
+          "10-Jun-2026",
+          "CAFE DE ALTURA EN CHIH",
+          "CAC 180124GA6",
+          "+",
+          "$95.00"
+        ],
+        [
+          "10-Jun-2026",
+          "11-Jun-2026",
+          "ALSUPER BOSQUES",
+          "OFU 910626UQ0",
+          "+",
+          "$ 729.00"
+        ],
+        [
+          "12-Jun-2026",
+          "12-Jun-2026",
+          "JAPI PARTY BOUT",
+          "MACF001115UH5",
+          "+",
+          "$ 25.00"
+        ],
+        [
+          "12-Jun-2026",
+          "15-Jun-2026",
+          "RESTAURANTS DOS AGUAS",
+          "OGC 120713ES4",
+          "+",
+          "$ 1,256.20"
+        ],
+        [
+          "13-Jun-2026",
+          "15-Jun-2026",
+          "OXXOMULLER",
+          "CCO 8605231N4",
+          "+",
+          "$ 72.00"
+        ],
+        [
+          "13-Jun-2026",
+          "15-Jun-2026",
+          "F AHORRO CIPO POLITEC",
+          "CFC 110121742",
+          "+",
+          "$ 180.00"
+        ],
+        [
+          "13-Jun-2026",
+          "15-Jun-2026",
+          "DRAFTEA",
+          "VESP830715RM9",
+          "+",
+          "$ 200.00"
+        ],
+        [
+          "13-Jun-2026",
+          "15-Jun-2026",
+          "DRAFTEA",
+          "VESP830715RM9",
+          "+",
+          "$ 200.00"
+        ],
+        [
+          "13-Jun-2026",
+          "15-Jun-2026",
+          "SUPERCENTER VALLE ESCO",
+          "NWM 9709244W4",
+          "+",
+          "$ 512.48"
+        ],
+        [
+          "13-Jun-2026",
+          "15-Jun-2026",
+          "ONE FASHION MALL CHIHU",
+          "CHP 170118NH4",
+          "+",
+          "$ 1,451.90"
+        ],
+        [
+          "14-Jun-2026",
+          "15-Jun-2026",
+          "OFFICE MAX CHIHUAHUA",
+          "OOM 960429832",
+          "+",
+          "$ 125.00"
+        ],
+        [
+          "14-Jun-2026",
+          "15-Jun-2026",
+          "DRAFTEA",
+          "VESP830715RM9",
+          "+",
+          "$ 200.00"
+        ],
+        [
+          "15-Jun-2026",
+          "15-Jun-2026",
+          "PAGO POR TRANSFERENCIA",
+          "",
+          "",
+          "$ 11,092.81"
+        ],
+        [
+          "16-Jun-2026",
+          "17-Jun-2026",
+          "PETRO7 GAS PLAZA VISTA",
+          "PET 040903DH1",
+          "+",
+          "$ 500.00"
+        ],
+        [
+          "16-Jun-2026",
+          "17-Jun-2026",
+          "CLIP MX DULC COCOPOPS",
+          "BLI 120726UF6",
+          "+",
+          "$ 49.00"
+        ],
+        [
+          "17-Jun-2026",
+          "18-Jun-2026",
+          "PAGANDO MISC GELOS",
+          "CGC 010606JD6",
+          "+",
+          "$ 147.34"
+        ],
+        [
+          "18-Jun-2026",
+          "19-Jun-2026",
+          "OXXOMULLER",
+          "CCO 8605231N4",
+          "+",
+          "$ 72.00"
+        ],
+        [
+          "18-Jun-2026",
+          "19-Jun-2026",
+          "DRAFTEA",
+          "VESP830715RM9",
+          "+",
+          "$ 200.00"
+        ],
+        [
+          "18-Jun-2026",
+          "19-Jun-2026",
+          "CARNES SAN AGUSTIN 2",
+          "VIVR621026R55",
+          "+",
+          "$ 577.60"
+        ],
+        [
+          "20-Jun-2026",
+          "22-Jun-2026",
+          "MERPAGO NEVERIAHENRY",
+          "MAG 2105031W3",
+          "+",
+          "$ 185.00"
+        ],
+        [
+          "20-Jun-2026",
+          "22-Jun-2026",
+          "GO FAST SUC LAT PDJ",
+          "GGO 190211KV6",
+          "+",
+          "$ 175.00"
+        ],
+        [
+          "23-Jun-2026",
+          "25-Jun-2026",
+          "PAGANDO MISC GELOS",
+          "CGC 010606JD6",
+          "+",
+          "$23.87"
+        ],
+        [
+          "24-Jun-2026",
+          "25-Jun-2026",
+          "OXXO BATOPILAS",
+          "CCO 8605231N4",
+          "+",
+          "$ 150.00"
+        ],
+        [
+          "24-Jun-2026",
+          "25-Jun-2026",
+          "DRAFTEA",
+          "VESP830715RM9",
+          "+",
+          "$ 200.00"
+        ],
+        [
+          "24-Jun-2026",
+          "25-Jun-2026",
+          "DRAFTEA",
+          "VESP830715RM9",
+          "+",
+          "$ 200.00"
+        ],
+        [
+          "24-Jun-2026",
+          "25-Jun-2026",
+          "SUPERCENTER VALLE ESCO",
+          "NWM 9709244W4",
+          "+",
+          "$ 359.00"
+        ],
+        [
+          "26-Jun-2026",
+          "29-Jun-2026",
+          "FRESH MARKET SANTA FE",
+          "OFU 910626UQ0",
+          "+",
+          "$ 208.00"
+        ],
+        [
+          "28-Jun-2026",
+          "29-Jun-2026",
+          "WAL MART CHIHUAHUA",
+          "NWM 9709244W4",
+          "+",
+          "$ 169.00"
+        ],
+        [
+          "02-Jul-2026",
+          "03-Jul-2026",
+          "BPK MISC BY BLU",
+          "SBC 150401B59",
+          "+",
+          "$118.00"
+        ],
+        [
+          "02-Jul-2026",
+          "03-Jul-2026",
+          "OXXORATKAY CUF",
+          "CCO 8605231N4",
+          "+",
+          "$64.50"
+        ],
+        [
+          "02-Jul-2026",
+          "03-Jul-2026",
+          "DRAFTEA",
+          "VESP830715RM9",
+          "+",
+          "$ 200.00"
+        ]
+      ]
+    },
+    {
+      "page": 5,
+      "rows": [
+        [
+          "Fecha de la operación",
+          "Fecha de cargo",
+          "Descripción del movimiento",
+          "",
+          "Monto"
+        ],
+        [
+          "03-Jul-2026",
+          "03-Jul-2026",
+          "AMAZON A MESES",
+          "+",
+          "$ 237.92"
+        ],
+        [
+          "03-Jul-2026",
+          "03-Jul-2026",
+          "AMAZON A MESES",
+          "+",
+          "$ 187.26"
+        ]
+      ]
+    },
+    {
+      "page": 5,
+      "rows": [
+        [
+          "",
+          "",
+          "CARGOS, ABONOS Y COMPRAS REGULARES (NO A MESES) Tarjeta adicional ****8615",
+          "",
+          ""
+        ],
+        [
+          "Fecha de la operación",
+          "Fecha de cargo",
+          "Descripción del movimiento",
+          "",
+          "Monto"
+        ],
+        [
+          "19-Jun-2026",
+          "19-Jun-2026",
+          "CASH BACK CINEPOLIS",
+          "",
+          "$7.05"
+        ],
+        [
+          "20-Jun-2026",
+          "22-Jun-2026",
+          "PPROMEX XBOX MME 910620Q85",
+          "+",
+          "$ 109.00"
+        ],
+        [
+          "25-Jun-2026",
+          "29-Jun-2026",
+          "MANGO MX MOM 140206925",
+          "+",
+          "$ 3,026.00"
+        ],
+        [
+          "",
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "",
+          "",
+          "Total de cargos",
+          "+",
+          "$ 13,797.57"
+        ],
+        [
+          "",
+          "",
+          "Total de abonos",
+          "",
+          "$ 11,099.86"
+        ]
+      ]
+    }
+  ]
+}

@@ -101,11 +101,17 @@ const parseAccountLastFour = (
 const isMsiMerchant = (merchantRaw: string): boolean =>
   /\bA\s*MESES\b/i.test(merchantRaw) || /\bMSI\b/i.test(merchantRaw);
 
+/** Plan-summary rows list original purchase + pending + cuota; period cuotas appear in movimientos. */
+const isMsiPlanSummaryRow = (cells: readonly string[], joined: string): boolean =>
+  /\b\d{1,2}\s+DE\s+\d{1,2}\b/i.test(joined)
+  || cells.some((cell) => /^(Monto original|Saldo pendiente|Pago requerido|N[uú]m\.?\s*de pago)$/i.test(cell));
+
 const cleanMerchant = (raw: string): string =>
   raw
     .replace(/[\[\]|]/g, " ")
-    .replace(/\s+/g, " ")
+    .replace(/(?:^|\s)[+\-]=?(?=\s|$)/g, " ")
     .replace(/\bMOM\b.*$/i, "")
+    .replace(/\s+/g, " ")
     .trim();
 
 const chargesFromTables = (
@@ -118,27 +124,39 @@ const chargesFromTables = (
       const cells = row.map((cell) => cell.trim()).filter(Boolean);
       if (cells.length < 2) continue;
       const joined = cells.join(" ");
-      const dateCell = cells.find((cell) => parseDayMonthYear(cell) || parseFlexibleDate(cell));
-      const occurredOn = dateCell
-        ? (parseDayMonthYear(dateCell) ?? parseFlexibleDate(dateCell))
+      if (/^Total de\b|^Fecha de la operaci/i.test(joined)) continue;
+      if (isMsiPlanSummaryRow(cells, joined)) continue;
+
+      const dateCells = cells.filter((cell) => Boolean(parseDayMonthYear(cell) || parseFlexibleDate(cell)));
+      const occurredOn = dateCells[0]
+        ? (parseDayMonthYear(dateCells[0]) ?? parseFlexibleDate(dateCells[0]))
         : undefined;
       if (!occurredOn) continue;
+      const postedOn = dateCells[1]
+        ? (parseDayMonthYear(dateCells[1]) ?? parseFlexibleDate(dateCells[1]))
+        : undefined;
+
       const amountCell = [...cells].reverse().find((cell) => parseMoneyMinor(cell) !== undefined);
       const amountMinor = amountCell ? parseMoneyMinor(amountCell) : undefined;
       if (amountMinor === undefined) continue;
+
+      const dateCellSet = new Set(dateCells);
       const merchantRaw = cleanMerchant(
         cells
-          .filter((cell) => cell !== dateCell && cell !== amountCell)
+          .filter((cell) => !dateCellSet.has(cell) && cell !== amountCell && cell !== "+")
           .join(" ")
           || joined,
       );
       if (!merchantRaw || merchantRaw.length < 3) continue;
-      if (/^Fecha\b/i.test(merchantRaw) || /^Tarjeta\b/i.test(merchantRaw)) continue;
+      if (/^Fecha\b/i.test(merchantRaw) || /^Tarjeta\b/i.test(merchantRaw) || /^Descripci/i.test(merchantRaw)) {
+        continue;
+      }
       const credit = amountMinor < 0 || /\bPAGO\b|\bABONO\b|\bCASH BACK\b/i.test(merchantRaw);
       const absolute = Math.abs(amountMinor);
       const msi = isMsiMerchant(merchantRaw);
       charges.push({
         occurredOn,
+        ...(postedOn ? { postedOn } : {}),
         merchantRaw,
         amountMinor: absolute,
         credit,
@@ -220,16 +238,26 @@ export const parseSantanderStatementExtraction = (
     ? "Santander Unique Rewards Platinum"
     : (extraction.answers.PRODUCT?.trim() || "Santander");
 
-  const seen = new Set<string>();
+  const remaining = new Map<string, number>();
+  const chargeKey = (charge: SantanderStatementCharge): string =>
+    [charge.occurredOn, charge.merchantRaw.toUpperCase(), charge.amountMinor, charge.msi].join("|");
+
   const charges: SantanderStatementCharge[] = [];
-  for (const charge of [
-    ...chargesFromTables(extraction.tables, accountLastFour),
-    ...chargesFromLines(extraction.lines, accountLastFour),
-  ]) {
+  // Prefer TABLES and keep duplicate table rows (same-day identical compras are valid).
+  for (const charge of chargesFromTables(extraction.tables, accountLastFour)) {
     if (charge.credit) continue;
-    const key = [charge.occurredOn, charge.merchantRaw, charge.amountMinor, charge.msi].join("|");
-    if (seen.has(key)) continue;
-    seen.add(key);
+    charges.push(charge);
+    const key = chargeKey(charge);
+    remaining.set(key, (remaining.get(key) ?? 0) + 1);
+  }
+  for (const charge of chargesFromLines(extraction.lines, accountLastFour)) {
+    if (charge.credit) continue;
+    const key = chargeKey(charge);
+    const left = remaining.get(key) ?? 0;
+    if (left > 0) {
+      remaining.set(key, left - 1);
+      continue;
+    }
     charges.push(charge);
   }
 

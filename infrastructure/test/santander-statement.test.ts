@@ -12,6 +12,9 @@ const fixtureLines = asLines(
 const tableExtraction = JSON.parse(
   readFileSync(new URL('./fixtures/santander-statement-extraction.json', import.meta.url), 'utf8'),
 ) as TextractStatementExtraction;
+const liveExtraction = JSON.parse(
+  readFileSync(new URL('./fixtures/santander-live-extraction.json', import.meta.url), 'utf8'),
+) as TextractStatementExtraction;
 
 describe('parseSantanderStatementExtraction', () => {
   it('maps period, card and MSI cuotas from AnalyzeDocument LINE blocks', () => {
@@ -50,6 +53,28 @@ describe('parseSantanderStatementExtraction', () => {
     const document = parseSantanderStatementExtraction(tableExtraction);
     expect(document.accountLastFour).toBe('6349');
     expect(document.msiCharges.map((row) => row.amountMinor).sort()).toEqual([18_726, 23_792]);
+  });
+
+  it('keeps same-day duplicate compras and skips MSI plan-summary rows', () => {
+    const document = parseSantanderStatementExtraction(liveExtraction);
+    expect(document.accountLastFour).toBe('6349');
+    expect(document.period).toEqual({ from: '2026-06-05', to: '2026-07-04' });
+
+    const purchases = document.charges.filter((charge) => !charge.msi);
+    const msi = document.charges.filter((charge) => charge.msi);
+    expect(purchases.reduce((sum, charge) => sum + charge.amountMinor, 0)).toBe(1_337_239);
+    expect(msi.reduce((sum, charge) => sum + charge.amountMinor, 0)).toBe(42_518);
+    expect(document.charges.reduce((sum, charge) => sum + charge.amountMinor, 0)).toBe(1_379_757);
+
+    expect(purchases.filter((charge) => /DRAFTEA/i.test(charge.merchantRaw) && charge.amountMinor === 20_000)).toHaveLength(7);
+    expect(msi).toHaveLength(2);
+    expect(msi.every((charge) => charge.occurredOn === '2026-07-03')).toBe(true);
+    expect(document.charges.some((charge) => charge.occurredOn === '2026-04-07')).toBe(false);
+    expect(purchases.every((charge) => !/\d{2}-[A-Za-z]{3}-\d{4}/.test(charge.merchantRaw))).toBe(true);
+    expect(purchases.find((charge) => /MANGO/i.test(charge.merchantRaw))).toMatchObject({
+      amountMinor: 302_600,
+      merchantRaw: 'MANGO MX',
+    });
   });
 
   it('tolerates noisy OCR separators around MSI rows', () => {

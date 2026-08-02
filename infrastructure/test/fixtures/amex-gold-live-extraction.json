@@ -1,0 +1,307 @@
+{
+  "provider": "amex",
+  "jobId": "live-gold-elite-eb1bb49b",
+  "status": "SUCCEEDED",
+  "lines": [
+    "The Gold Elite Credit Card American Express",
+    "3717-797421-21007",
+    "Del 7 de Junio al 6 de Julio de 2026",
+    "Período de Facturación",
+    "Número de Cuenta: 3717-797421-21007",
+    "Fecha y Detalle de las operaciones",
+    "GRACIAS POR SU PAGO EN LINEA",
+    "15 de Junio",
+    "7 de Junio",
+    "11 de Junio",
+    "12 de Junio",
+    "13 de Junio",
+    "14 de Junio",
+    "17 de Junio",
+    "21 de Junio",
+    "23 de Junio",
+    "24 de Junio",
+    "25 de Junio",
+    "1 de Julio",
+    "2 de Julio",
+    "3 de Julio",
+    "Transacciones de Meses sin Intereses",
+    "MESES EN AUTOMÁTICO NACIONAL",
+    "6 de Julio",
+    "CARGO 03 DE 03",
+    "CARGO 02 DE 03",
+    "Resumen de Meses sin Intereses",
+    "6 de May",
+    "Mensualidad=(Pago a capital + Interés + IVA)",
+    "6 de Jun",
+    "Gold Elite Credit Card American",
+    "Gold Elite",
+    "Descripción de compras en Meses sin Intereses",
+    "Intereses y de Meses sin Intereses",
+    "825.32",
+    "2,249.67",
+    "Total de Meses sin Intereses",
+    "3,074.99",
+    "Este no es un documento con validez fiscal",
+    "AMERICAN",
+    "EXPRESS",
+    "Página 4",
+    "Estado de Cuenta",
+    "Número de Cuenta",
+    "Siguiente Fecha",
+    "Fecha",
+    "de Corte",
+    "Tarjetahabiente",
+    "06-Ago-2026",
+    "06-Jul-2026",
+    "Consolidado de compras en Meses sin Intereses",
+    "Número",
+    "Tasa de",
+    "Monto",
+    "Saldo",
+    "interés",
+    "de",
+    "total a",
+    "Original",
+    "Mensualidad",
+    "pendiente",
+    "anual",
+    "pagar",
+    "3 de 3",
+    "0.00%",
+    "0.00",
+    "2,476.00",
+    "825.32=825.32+0.00+0.00",
+    "2 de 3",
+    "6,749.00",
+    "2,249.66",
+    "2,249.67=2,249.67+0.00+0.00",
+    "Total de Plan de Meses sin Intereses",
+    "Conoce tus Meses en Automático",
+    "Para identificar las transacciones que",
+    "componen tu plan a meses sin intereses,",
+    "deberás referirte al estado de cuenta original"
+  ],
+  "text": "The Gold Elite Credit Card American Express\n3717-797421-21007\nDel 7 de Junio al 6 de Julio de 2026\nPeríodo de Facturación\nNúmero de Cuenta: 3717-797421-21007\nFecha y Detalle de las operaciones\nGRACIAS POR SU PAGO EN LINEA\n15 de Junio\n7 de Junio\n11 de Junio\n12 de Junio\n13 de Junio\n14 de Junio\n17 de Junio\n21 de Junio\n23 de Junio\n24 de Junio\n25 de Junio\n1 de Julio\n2 de Julio\n3 de Julio\nTransacciones de Meses sin Intereses\nMESES EN AUTOMÁTICO NACIONAL\n6 de Julio\nCARGO 03 DE 03\nCARGO 02 DE 03\nResumen de Meses sin Intereses\n6 de May\nMensualidad=(Pago a capital + Interés + IVA)\n6 de Jun\nGold Elite Credit Card American\nGold Elite\nDescripción de compras en Meses sin Intereses\nIntereses y de Meses sin Intereses\n825.32\n2,249.67\nTotal de Meses sin Intereses\n3,074.99\nEste no es un documento con validez fiscal\nAMERICAN\nEXPRESS\nPágina 4\nEstado de Cuenta\nNúmero de Cuenta\nSiguiente Fecha\nFecha\nde Corte\nTarjetahabiente\n06-Ago-2026\n06-Jul-2026\nConsolidado de compras en Meses sin Intereses\nNúmero\nTasa de\nMonto\nSaldo\ninterés\nde\ntotal a\nOriginal\nMensualidad\npendiente\nanual\npagar\n3 de 3\n0.00%\n0.00\n2,476.00\n825.32=825.32+0.00+0.00\n2 de 3\n6,749.00\n2,249.66\n2,249.67=2,249.67+0.00+0.00\nTotal de Plan de Meses sin Intereses\nConoce tus Meses en Automático\nPara identificar las transacciones que\ncomponen tu plan a meses sin intereses,\ndeberás referirte al estado de cuenta original",
+  "answers": {
+    "PRODUCT": "American Express"
+  },
+  "queryAnswers": [],
+  "tables": [
+    {
+      "page": 2,
+      "rows": [
+        [
+          "Fecha y Detalle",
+          "de las operaciones",
+          "Importe en MN."
+        ],
+        [
+          "15 de Junio",
+          "GRACIAS POR SU PAGO EN LINEA",
+          "13,089.01 CR"
+        ],
+        [
+          "7 de Junio",
+          "CINEPOLIS WEB ALIMENTOS MI RFCTCI121023F10 /REF577166765",
+          "192.00"
+        ],
+        [
+          "11 de Junio",
+          "CARLS JR CANTERA CD JUAREZ RFCBSM000317EF1 /REF731940013657",
+          "222.00"
+        ],
+        [
+          "12 de Junio",
+          "DONATIVO UNICEF MEX MEXICO RFCSPM1410037E8 /REFCH 3THW5FJBSD3XVV0X0",
+          "450.00"
+        ],
+        [
+          "13 de Junio",
+          "ALSUPER SANTA FE ALSUPE CHIHUAHUA, CHIH RFCOFU910626UQ0 /REFB0206993",
+          "334.00"
+        ],
+        [
+          "14 de Junio",
+          "OPENPAY*DOMINOS MX OPER CHIHUAHUA RFCOPE130906HN4 /REFHL7K03ACVM26",
+          "249.00"
+        ],
+        [
+          "17 de Junio",
+          "APPLE.COM/BILL CUPERTINO",
+          "17.00"
+        ],
+        [
+          "21 de Junio",
+          "APPLE.COM/BILL CUPERTINO",
+          "198.00"
+        ],
+        [
+          "21 de Junio",
+          "MERCADO LIBRE MEXICO RFCMAG2105031W3 REF165165676808",
+          "399.00"
+        ],
+        [
+          "23 de Junio",
+          "CONEKTA*PARCO ZAPOPAN RFCGCO121008MU7 /REF148424",
+          "78.00"
+        ],
+        [
+          "24 de Junio",
+          "UNITED PARCEL SERVICE D MEXICO CITY RFCUPS891122HV8 /REF1ZEX036404500360632F",
+          "714.60"
+        ],
+        [
+          "25 de Junio",
+          "UBER EATS HTTPS://HELP.UB",
+          "193.86"
+        ],
+        [
+          "1 de Julio",
+          "ALSUPER SANTA FE ALSUPE CHIHUAHUA, CHIH RFCOFU910626UQ0 /REFA0295241",
+          "293.00"
+        ],
+        [
+          "1 de Julio",
+          "ANYTIME FITNESS ZAPOPAN JAL RFCBBA940707IE1 /REF516813001514",
+          "899.00"
+        ],
+        [
+          "2 de Julio",
+          "CONEKTA*PARCO ZAPOPAN RFCGCO121008MU7 /REF190275",
+          "56.00"
+        ],
+        [
+          "Total de las",
+          "transacciones en $ de TARJETAHABIENTE DEMO",
+          "4,295.46"
+        ],
+        [
+          "13 de Junio",
+          "VEJA PARIS Dólar U.S.A. 176.00 TC:17.67125 RFC478328107 /REF######NhZBNY",
+          "3,110.14"
+        ],
+        [
+          "14 de Junio",
+          "NYTIMES DISC* 800-698-4637 Dólar U.S.A. 1.00 TC:17.67000",
+          "17.67"
+        ],
+        [
+          "23 de Junio",
+          "OPENROUTER, INC NEW YORK Dólar U.S.A. 10.80 TC:18.02407",
+          "194.66"
+        ],
+        [
+          "23 de Junio",
+          "OPENROUTER, INC NEW YORK",
+          "194.66"
+        ]
+      ]
+    },
+    {
+      "page": 3,
+      "rows": [
+        [
+          "Fecha y Detalle",
+          "de las operaciones",
+          "",
+          "Importe en MN."
+        ],
+        [
+          "",
+          "Dólar U.S.A.",
+          "10.80 TC:18.02407",
+          ""
+        ],
+        [
+          "1 de Julio",
+          "POLAR BEAR INTL Dólar U.S.A.",
+          "BOZEMAN 26.80 TC:17.94104",
+          "480.82"
+        ],
+        [
+          "1 de Julio",
+          "WORLD WILDLIFE Dólar U.S.A.",
+          "FND WASHINGTON 25.75 TC:17.94058",
+          "461.97"
+        ],
+        [
+          "3 de Julio",
+          "HETZNER ONLINE Dólar U.S.A.",
+          "GMBH GUNZENHAUSEN 2.33 TC:17.93991",
+          "41.80"
+        ],
+        [
+          "Total de",
+          "Transacciones en Moneda",
+          "Extranjera de TARJETAHABIENTE DEMO",
+          "4,501.72"
+        ],
+        [
+          "Transacciones Descripción Intereses y de",
+          "de Meses sin Intereses de compras en Meses Meses sin Intereses",
+          "sin Intereses",
+          ""
+        ],
+        [
+          "6 de Julio",
+          "MESES EN AUTOMÁTICO CARGO 03 DE 03",
+          "NACIONAL",
+          "825.32"
+        ],
+        [
+          "6 de Julio",
+          "MESES EN AUTOMÁTICO CARGO 02 DE 03",
+          "NACIONAL",
+          "2,249.67"
+        ],
+        [
+          "Total de Meses",
+          "sin Intereses",
+          "",
+          "3,074.99"
+        ]
+      ]
+    },
+    {
+      "page": 4,
+      "rows": [
+        [
+          "",
+          "Fecha Original",
+          "Monto Original",
+          "Tasa de interés anual",
+          "Saldo pendiente",
+          "Número de Mensualidad",
+          "Monto total a pagar"
+        ],
+        [
+          "MESES EN AUTOMÁTICO NACIONAL Mensualidad=(Pago a capital + Interés + IVA) 825.32=825.32+0.00+0.00",
+          "6 de May",
+          "2,476.00",
+          "0.00%",
+          "0.00",
+          "3 de 3",
+          "825.32"
+        ],
+        [
+          "MESES EN AUTOMÁTICO NACIONAL Mensualidad=(Pago a capital + Interés + IVA) 2,249.67=2,249.67+0.00+0.00",
+          "6 de Jun",
+          "6,749.00",
+          "0.00%",
+          "2,249.66",
+          "2 de 3",
+          "2,249.67"
+        ],
+        [
+          "Total de Plan de Meses sin Intereses",
+          "",
+          "",
+          "",
+          "2,249.66",
+          "",
+          "3,074.99"
+        ]
+      ]
+    }
+  ]
+}
