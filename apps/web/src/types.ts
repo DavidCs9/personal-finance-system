@@ -25,3 +25,12 @@ export interface PurchaseEvent {
 export interface EventFeed {
   readonly events: readonly PurchaseEvent[];
 }
+
+export interface IngestionException {
+  readonly id: string;
+  readonly receivedAt: string;
+  readonly institution?: Institution;
+  readonly reason: string;
+  readonly details: string;
+  readonly retry?: { readonly status: "queued" | "completed"; readonly eventId?: string };
+}

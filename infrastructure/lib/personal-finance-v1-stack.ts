@@ -12,6 +12,7 @@ import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import { DynamoEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
@@ -75,6 +76,7 @@ export class PersonalFinanceV1Stack extends Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       encryption: dynamodb.TableEncryption.CUSTOMER_MANAGED,
       encryptionKey,
+      stream: dynamodb.StreamViewType.NEW_IMAGE,
       pointInTimeRecoverySpecification: {
         pointInTimeRecoveryEnabled: true,
         recoveryPeriodInDays: 35,
@@ -145,6 +147,17 @@ export class PersonalFinanceV1Stack extends Stack {
       reportBatchItemFailures: true,
     });
     ingestionQueue.grantConsumeMessages(ingestionFunction);
+
+    const retryDispatcherFunction = new NodejsFunction(this, 'RetryDispatcherFunction', {
+      ...lambdaDefaults,
+      functionName: 'personal-finance-v1-retry-dispatcher',
+      logGroup: this.createLogGroup('RetryDispatcherLogGroup', 'personal-finance-v1-retry-dispatcher'),
+      entry: path.join(__dirname, '..', 'lambda', 'retry-dispatcher.ts'), handler: 'handler',
+      environment: { ...dataStorageEnvironment, INGESTION_QUEUE_URL: ingestionQueue.queueUrl },
+    });
+    metadataTable.grantReadWriteData(retryDispatcherFunction);
+    ingestionQueue.grantSendMessages(retryDispatcherFunction);
+    retryDispatcherFunction.addEventSource(new DynamoEventSource(metadataTable, { startingPosition: lambda.StartingPosition.LATEST, batchSize: 1, retryAttempts: 3 }));
 
     const emailReceiptFunction = new NodejsFunction(this, 'EmailReceiptFunction', {
       ...lambdaDefaults,
@@ -259,7 +272,7 @@ export class PersonalFinanceV1Stack extends Stack {
       environment: dataStorageEnvironment,
     });
     rawEmailBucket.grantRead(apiFunction);
-    metadataTable.grantReadData(apiFunction);
+    metadataTable.grantReadWriteData(apiFunction);
     apiFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'],
       resources: [metadataTable.tableArn, `${metadataTable.tableArn}/index/*`],
@@ -271,7 +284,7 @@ export class PersonalFinanceV1Stack extends Stack {
       createDefaultStage: true,
       corsPreflight: {
         allowHeaders: ['Authorization', 'Content-Type'],
-        allowMethods: [apigatewayv2.CorsHttpMethod.GET, apigatewayv2.CorsHttpMethod.PATCH, apigatewayv2.CorsHttpMethod.PUT],
+        allowMethods: [apigatewayv2.CorsHttpMethod.GET, apigatewayv2.CorsHttpMethod.POST, apigatewayv2.CorsHttpMethod.PATCH, apigatewayv2.CorsHttpMethod.PUT],
         allowOrigins: [`https://${webDomainName}`],
         maxAge: Duration.hours(1),
       },
@@ -284,6 +297,8 @@ export class PersonalFinanceV1Stack extends Stack {
     const apiIntegration = new HttpLambdaIntegration('ApiLambdaIntegration', apiFunction);
     for (const route of [
       'GET /events',
+      'GET /exceptions',
+      'POST /exceptions/{exceptionId}/retry',
       'GET /events/{eventId}',
       'GET /events/{eventId}/raw',
       'PATCH /events/{eventId}',

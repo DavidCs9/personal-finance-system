@@ -8,6 +8,7 @@ import {
   type MonthlyPlans,
   type PlannedPayment,
 } from "./monthly-plan";
+import type { IngestionException } from "./types";
 import type { PurchaseEvent, ReviewStatus } from "./types";
 
 const timeZone = "America/Chihuahua";
@@ -135,6 +136,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode: boolean; onSignOut(): void }) {
   const now = useMemo(() => demoMode ? new Date("2026-07-12T18:00:00-06:00") : new Date(), [demoMode]);
   const [events, setEvents] = useState<readonly PurchaseEvent[]>([]);
+  const [exceptions, setExceptions] = useState<readonly IngestionException[]>([]);
   const [tab, setTab] = useState<Tab>("summary");
   const [selectedMonth, setSelectedMonth] = useState(monthKey(now));
   const [plans, setPlans] = useState<MonthlyPlans>(() => demoMode ? demoPlans : {});
@@ -154,6 +156,15 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
       .catch((reason) => setError(reason instanceof Error ? reason.message : "No se pudieron cargar los movimientos."))
       .finally(() => setLoading(false));
   }, [demoMode, idToken]);
+
+  useEffect(() => {
+    if (demoMode) return;
+    void ledgerApi.listExceptions(idToken).then(({ exceptions: result }) => setExceptions(result)).catch(() => undefined);
+  }, [demoMode, idToken]);
+  const retryException = async (exceptionId: string) => {
+    const result = await ledgerApi.retryException(exceptionId, idToken);
+    setExceptions((current) => current.map((item) => item.id === exceptionId ? { ...item, retry: result.retry } : item));
+  };
 
   useEffect(() => {
     if (demoMode) return;
@@ -208,6 +219,7 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
 
     <div className="app-content">
     {error && <p className="banner-error">{error}</p>}
+    {exceptions.filter((item) => !item.retry).map((item) => <RecoveryNotice key={item.id} exception={item} onRetry={() => retryException(item.id)} />)}
 
     <div className="desktop-tabs" role="tablist" aria-label="Secciones">
       <TabButton active={tab === "summary"} onClick={() => setTab("summary")} icon="summary">Resumen</TabButton>
@@ -266,6 +278,12 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
       setActiveEvent(updated);
     }} />}
   </main>;
+}
+
+function RecoveryNotice({ exception, onRetry }: { exception: IngestionException; onRetry(): Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  return <section className="setup-card plan-error"><span className="setup-alert">!</span><p className="eyebrow">CORREO PENDIENTE DE RECUPERACIÓN</p><h2>{exception.institution ?? "Origen por identificar"}</h2><p>{exception.details}</p>{error && <p className="form-error">{error}</p>}<button className="primary-button" disabled={busy} onClick={() => { setBusy(true); setError(undefined); void onRetry().catch((reason) => setError(reason instanceof Error ? reason.message : "No se pudo solicitar el reintento.")).finally(() => setBusy(false)); }}>{busy ? "Enviando…" : "Reintentar análisis"}</button></section>;
 }
 
 function MonthSelector({ value, onChange }: { value: string; onChange(value: string): void }) {

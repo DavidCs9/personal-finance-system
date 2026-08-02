@@ -1,4 +1,4 @@
-import type { EventFeed, PurchaseEvent } from "../types";
+import type { EventFeed, IngestionException, PurchaseEvent } from "../types";
 import type { MonthlyPlan } from "../monthly-plan";
 
 interface LedgerRuntimeConfig {
@@ -111,6 +111,12 @@ export const ledgerApi = {
   },
   async listEvents(idToken: string): Promise<EventFeed> {
     return request<EventFeed>("/events", idToken);
+  },
+  async listExceptions(idToken: string): Promise<{ exceptions: readonly IngestionException[] }> {
+    return request<{ exceptions: readonly IngestionException[] }>("/exceptions", idToken);
+  },
+  async retryException(exceptionId: string, idToken: string): Promise<IngestionException> {
+    return request<IngestionException>(`/exceptions/${encodeURIComponent(exceptionId)}/retry`, idToken, { method: "POST" });
   },
   async rawEmail(eventId: string, idToken: string): Promise<string> {
     const result = await request<{ rawEmail: string }>(`/events/${encodeURIComponent(eventId)}/raw`, idToken);
