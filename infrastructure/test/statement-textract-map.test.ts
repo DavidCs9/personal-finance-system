@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { parseAmexStatementExtraction, parseAmexStatementText } from '../lambda/amex-statement.js';
+import { parseAmexStatementExtraction } from '../lambda/amex-statement.js';
 import { parseSantanderStatementExtraction } from '../lambda/santander-statement.js';
-import { findPeriodInLooseText } from '../lambda/statement-dates.js';
+import { parseFlexibleDate } from '../lambda/statement-dates.js';
 import { normalizeTextractAnalysis, textractLinesToText } from '../lambda/textract-document.js';
 
 describe('statement date helpers', () => {
-  it('finds Amex billing period even when accents and spacing are noisy', () => {
-    expect(findPeriodInLooseText(
-      'Periodo de Facturacion Del 7 de Junio al 6 de Julio de 2026 Dias del periodo',
-    )).toEqual({ from: '2026-06-07', to: '2026-07-06' });
+  it('parses Spanish query answers into ISO dates', () => {
+    expect(parseFlexibleDate('7 de Junio de 2026')).toBe('2026-06-07');
+    expect(parseFlexibleDate('05-Jun-2026')).toBe('2026-06-05');
   });
 });
 
@@ -18,14 +17,8 @@ describe('parseAmexStatementExtraction', () => {
       provider: 'amex',
       jobId: 'job-1',
       status: 'SUCCEEDED',
-      lines: [
-        'The Gold Elite Credit Card American Express',
-        'Transacciones de Meses sin Intereses',
-        '6 de Julio MESES EN AUTOMÁTICO NACIONAL',
-        'CARGO 03 DE 03',
-        '825.32',
-      ],
-      text: 'garbage without period markers',
+      lines: [],
+      text: '',
       answers: {
         PERIOD_FROM: '7 de Junio de 2026',
         PERIOD_TO: '6 de Julio de 2026',
@@ -33,21 +26,29 @@ describe('parseAmexStatementExtraction', () => {
         PRODUCT: 'Gold Elite',
       },
       queryAnswers: [],
-      tables: [],
+      tables: [{
+        page: 1,
+        rows: [
+          ['6 de Julio', 'MESES EN AUTOMÁTICO NACIONAL', 'CARGO 03 DE 03', '825.32'],
+        ],
+      }],
     });
     expect(document.period).toEqual({ from: '2026-06-07', to: '2026-07-06' });
     expect(document.accountLastFour).toBe('1007');
     expect(document.charges.some((charge) => charge.msi && charge.amountMinor === 82_532)).toBe(true);
   });
 
-  it('reads MSI rows from Textract tables when line layout is broken', () => {
+  it('reads MSI rows from Textract tables', () => {
     const document = parseAmexStatementExtraction({
       provider: 'amex',
       jobId: 'job-2',
       status: 'SUCCEEDED',
-      lines: ['American Express'],
-      text: 'Período de Facturación Del 7 de Junio al 6 de Julio de 2026\nNúmero de Cuenta: 3717-797421-21007',
-      answers: {},
+      lines: [],
+      text: '',
+      answers: {
+        PERIOD_TEXT: 'Del 7 de Junio al 6 de Julio de 2026',
+        ACCOUNT_LAST_FOUR: '3717-797421-21007',
+      },
       queryAnswers: [],
       tables: [{
         page: 1,
@@ -65,17 +66,6 @@ describe('parseAmexStatementExtraction', () => {
       }),
     ]));
   });
-
-  it('falls back to corte date when billing sentence is missing', () => {
-    const document = parseAmexStatementText([
-      'Tarjetahabiente 3717-797421-21007 de Corte',
-      '06-Jul-2026 06-Ago-2026',
-      'The Gold Elite Credit Card American Express',
-      'Número de Cuenta: 3717-797421-21007',
-    ].join('\n'));
-    expect(document.period.to).toBe('2026-07-06');
-    expect(document.accountLastFour).toBe('1007');
-  });
 });
 
 describe('parseSantanderStatementExtraction', () => {
@@ -85,7 +75,7 @@ describe('parseSantanderStatementExtraction', () => {
       jobId: 'job-3',
       status: 'SUCCEEDED',
       lines: [],
-      text: 'Santander Unique Rewards Platinum',
+      text: '',
       answers: {
         PERIOD_FROM: '05-Jun-2026',
         PERIOD_TO: '04-Jul-2026',
@@ -120,6 +110,9 @@ describe('normalizeTextractAnalysis', () => {
     ]);
     expect(extraction.answers.PERIOD_TO).toBe('6 de Julio de 2026');
     expect(extraction.tables[0]?.rows[0]).toEqual(['AMAZON', '825.32']);
-    expect(textractLinesToText([{ BlockType: 'LINE', Text: 'b', Page: 1, Geometry: { BoundingBox: { Top: 0.2, Left: 0.1 } } }, { BlockType: 'LINE', Text: 'a', Page: 1, Geometry: { BoundingBox: { Top: 0.1, Left: 0.1 } } }])).toBe('a\nb');
+    expect(textractLinesToText([
+      { BlockType: 'LINE', Text: 'b', Page: 1, Geometry: { BoundingBox: { Top: 0.2, Left: 0.1 } } },
+      { BlockType: 'LINE', Text: 'a', Page: 1, Geometry: { BoundingBox: { Top: 0.1, Left: 0.1 } } },
+    ])).toBe('a\nb');
   });
 });

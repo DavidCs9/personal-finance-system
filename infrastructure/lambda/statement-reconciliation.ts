@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { merchantsMatch as santanderMerchantsMatch } from "./santander-csv.js";
 import { amexMerchantsMatch } from "./msi-reconciliation.js";
+import type { StatementProvider } from "./textract-document.js";
 
-export type StatementProvider = "amex" | "santander";
+export type { StatementProvider };
 
 export type StatementRowKind = "purchase" | "msi";
 

@@ -1,8 +1,6 @@
 import {
   GetDocumentAnalysisCommand,
-  GetDocumentTextDetectionCommand,
   StartDocumentAnalysisCommand,
-  StartDocumentTextDetectionCommand,
   TextractClient,
   type Block,
   type Query,
@@ -38,10 +36,6 @@ export interface TextractStatementExtraction {
   readonly tables: readonly TextractTable[];
 }
 
-const sleep = async (ms: number): Promise<void> => {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-};
-
 const amexQueries: readonly Query[] = [
   { Text: "What is the billing period start date?", Alias: "PERIOD_FROM" },
   { Text: "What is the billing period end date?", Alias: "PERIOD_TO" },
@@ -60,19 +54,6 @@ const santanderQueries: readonly Query[] = [
 
 export const statementQueries = (provider: StatementProvider): readonly Query[] =>
   provider === "amex" ? amexQueries : santanderQueries;
-
-/** @deprecated Prefer startTextractDocumentAnalysis for statement imports. */
-export const startTextractTextDetection = async (
-  client: TextractClient,
-  bucket: string,
-  key: string,
-): Promise<string> => {
-  const result = await client.send(new StartDocumentTextDetectionCommand({
-    DocumentLocation: { S3Object: { Bucket: bucket, Name: key } },
-  }));
-  if (!result.JobId) throw new TextractDocumentError("Textract no devolvió un JobId.");
-  return result.JobId;
-};
 
 export const startTextractDocumentAnalysis = async (
   client: TextractClient,
@@ -94,16 +75,6 @@ export const getTextractAnalysisJobStatus = async (
   jobId: string,
 ): Promise<{ readonly status: TextractJobStatus; readonly statusMessage?: string }> => {
   const result = await client.send(new GetDocumentAnalysisCommand({ JobId: jobId, MaxResults: 1 }));
-  const status = (result.JobStatus ?? "FAILED") as TextractJobStatus;
-  return { status, statusMessage: result.StatusMessage };
-};
-
-/** @deprecated Prefer getTextractAnalysisJobStatus. */
-export const getTextractJobStatus = async (
-  client: TextractClient,
-  jobId: string,
-): Promise<{ readonly status: TextractJobStatus; readonly statusMessage?: string }> => {
-  const result = await client.send(new GetDocumentTextDetectionCommand({ JobId: jobId, MaxResults: 1 }));
   const status = (result.JobStatus ?? "FAILED") as TextractJobStatus;
   return { status, statusMessage: result.StatusMessage };
 };
@@ -245,57 +216,4 @@ export const fetchTextractStatementExtraction = async (
     throw new TextractDocumentError("Textract no encontró contenido útil en el PDF.");
   }
   return extraction;
-};
-
-/** @deprecated Prefer fetchTextractStatementExtraction. */
-export const fetchTextractDocumentText = async (
-  client: TextractClient,
-  jobId: string,
-): Promise<string> => {
-  // Legacy text-detection jobs still use GetDocumentTextDetection.
-  const status = await getTextractJobStatus(client, jobId);
-  if (status.status === "IN_PROGRESS") {
-    throw new TextractDocumentError("Textract sigue procesando el documento.");
-  }
-  if (status.status === "FAILED") {
-    throw new TextractDocumentError(status.statusMessage ?? "Textract falló al leer el PDF.");
-  }
-  const lines: Block[] = [];
-  let nextToken: string | undefined;
-  do {
-    const page = await client.send(new GetDocumentTextDetectionCommand({
-      JobId: jobId,
-      MaxResults: 1000,
-      NextToken: nextToken,
-    }));
-    for (const block of page.Blocks ?? []) {
-      if (block.BlockType === "LINE" && block.Text) lines.push(block);
-    }
-    nextToken = page.NextToken;
-  } while (nextToken);
-  const text = textractLinesToText(lines);
-  if (!text.trim()) throw new TextractDocumentError("Textract no encontró texto en el PDF.");
-  return text;
-};
-
-/** Poll helper for non-API Gateway contexts/tests. Prefer the two-step import status endpoint in production. */
-export const waitForTextractDocumentText = async (
-  client: TextractClient,
-  jobId: string,
-  options?: { readonly timeoutMs?: number; readonly intervalMs?: number },
-): Promise<string> => {
-  const timeoutMs = options?.timeoutMs ?? 90_000;
-  const intervalMs = options?.intervalMs ?? 2_000;
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    const status = await getTextractJobStatus(client, jobId);
-    if (status.status === "SUCCEEDED" || status.status === "PARTIAL_SUCCESS") {
-      return fetchTextractDocumentText(client, jobId);
-    }
-    if (status.status === "FAILED") {
-      throw new TextractDocumentError(status.statusMessage ?? "Textract falló al leer el PDF.");
-    }
-    await sleep(intervalMs);
-  }
-  throw new TextractDocumentError("Textract tardó demasiado en procesar el PDF.");
 };

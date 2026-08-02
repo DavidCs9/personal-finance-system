@@ -270,13 +270,10 @@ export const ledgerApi = {
     });
   },
   async previewAmexStatement(file: File, idToken: string): Promise<AmexImportPreview> {
-    const isText = file.type.includes("text") || /\.txt$/i.test(file.name);
     return request<AmexImportPreview>("/imports/amex/preview", idToken, {
       method: "POST",
-      headers: {
-        "Content-Type": isText ? "text/plain; charset=utf-8" : "application/pdf",
-      },
-      body: isText ? await file.text() : await file.arrayBuffer(),
+      headers: { "Content-Type": "application/pdf" },
+      body: await file.arrayBuffer(),
     });
   },
   async getAmexStatementImport(importId: string, idToken: string): Promise<AmexImportPreview> {
@@ -294,13 +291,10 @@ export const ledgerApi = {
     });
   },
   async previewSantanderStatement(file: File, idToken: string): Promise<SantanderStatementImportPreview> {
-    const isText = file.type.includes("text") || /\.txt$/i.test(file.name);
     return request<SantanderStatementImportPreview>("/imports/santander-statement/preview", idToken, {
       method: "POST",
-      headers: {
-        "Content-Type": isText ? "text/plain; charset=utf-8" : "application/pdf",
-      },
-      body: isText ? await file.text() : await file.arrayBuffer(),
+      headers: { "Content-Type": "application/pdf" },
+      body: await file.arrayBuffer(),
     });
   },
   async getSantanderStatementImport(

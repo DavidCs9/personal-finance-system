@@ -157,7 +157,7 @@ export function StatementImportSheet({
             <span>Archivo PDF</span>
             <input
               type="file"
-              accept="application/pdf,text/plain,.pdf,.txt"
+              accept="application/pdf,.pdf"
               onChange={(event) => setFile(event.target.files?.[0])}
             />
           </label>

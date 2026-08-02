@@ -1,0 +1,33 @@
+{
+  "provider": "amex",
+  "jobId": "fixture-amex-gold",
+  "status": "SUCCEEDED",
+  "lines": [],
+  "text": "",
+  "answers": {
+    "PERIOD_FROM": "7 de Junio de 2026",
+    "PERIOD_TO": "6 de Julio de 2026",
+    "ACCOUNT_LAST_FOUR": "3717-797421-21007",
+    "PRODUCT": "The Gold Elite Credit Card American Express"
+  },
+  "queryAnswers": [],
+  "tables": [
+    {
+      "page": 2,
+      "rows": [
+        ["6 de Julio", "MESES EN AUTOMÁTICO NACIONAL", "CARGO 03 DE 03", "825.32"],
+        ["6 de Julio", "MESES EN AUTOMÁTICO NACIONAL", "CARGO 02 DE 03", "2,249.67"],
+        ["12 de Junio", "MANGO MX", "", "3,026.00"]
+      ]
+    },
+    {
+      "page": 3,
+      "rows": [
+        ["MESES EN AUTOMÁTICO NACIONAL"],
+        ["6 de May", "2,476.00", "0.00%", "0.00", "3 de 3", "825.32"],
+        ["MESES EN AUTOMÁTICO NACIONAL"],
+        ["6 de Jun", "6,749.00", "0.00%", "2,249.66", "2 de 3", "2,249.67"]
+      ]
+    }
+  ]
+}
