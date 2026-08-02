@@ -1,3 +1,5 @@
+import type { MsiPlan } from "./msi.js";
+
 export const INSTITUTIONS = ["american_express_mx", "santander_mx", "nu_mx", "amazon_web_services"] as const;
 
 export type Institution = (typeof INSTITUTIONS)[number];
@@ -40,7 +42,7 @@ export interface ManualEntrySourcePointer {
 }
 
 export type ObservedSourcePointer = RawSourcePointer | ApplePayShortcutSourcePointer | ManualEntrySourcePointer;
-export type CaptureSource = "email" | "apple_pay_shortcut" | "santander_csv" | "manual";
+export type CaptureSource = "email" | "apple_pay_shortcut" | "santander_csv" | "manual" | "amex_statement";
 
 export interface ObservedPurchase {
   readonly id: string;
@@ -50,6 +52,7 @@ export interface ObservedPurchase {
   readonly account?: AccountReference;
   readonly amount: Money;
   readonly merchantRaw: string;
+  readonly msi?: MsiPlan;
   /** For transfers, the recipient shown in the bank confirmation. */
   readonly counterparty?: string;
   readonly transferType?: "spei";
@@ -106,10 +109,36 @@ export {
   daysInCalendarMonth,
   eventMonthKey,
   formatMxnWhole,
+  listCommittedMsiRows,
   monthKeyInZone,
+  type CommittedMsiRow,
   type DailyBalancePushMessage,
   type MonthSpendEvent,
   type MonthSummary,
   type MonthSummaryInput,
   type PushContentMode,
 } from "./month-summary.js";
+
+export {
+  AMEX_AUTO_MSI_MONTHS,
+  AMEX_AUTO_MSI_THRESHOLD_MINOR,
+  MSI_AMOUNT_TOLERANCE_MINOR,
+  addCalendarMonths,
+  amountsWithinTolerance,
+  buildMsiSchedule,
+  cancelRemainingInstallments,
+  completeUnplannedSchedule,
+  defaultCuotaMinor,
+  findMsiEvidenceMatch,
+  isMsiLikeMerchant,
+  markInstallmentSpent,
+  maybeAutoAmexMsi,
+  msiLabel,
+  type InstallmentStatus,
+  type MsiEvidenceCandidate,
+  type MsiInstallment,
+  type MsiOrigin,
+  type MsiPlan,
+  type MsiPlanStatus,
+  type MsiScheduleInput,
+} from "./msi.js";

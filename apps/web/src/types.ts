@@ -3,6 +3,7 @@ import type {
   EventRevision,
   Institution,
   Money,
+  MsiPlan,
   ObservedSourcePointer,
 } from "@finance/domain";
 
@@ -29,6 +30,7 @@ export interface PurchaseEvent {
   readonly parseWarnings: readonly string[];
   readonly rawEmail?: string;
   readonly revisions: readonly EventRevision[];
+  readonly msi?: MsiPlan;
 }
 
 export interface ManualEventInput {

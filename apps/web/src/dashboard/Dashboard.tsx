@@ -112,10 +112,13 @@ export function Dashboard({
     () =>
       computeMonthSummary({
         events: events.map((event) => ({
+          id: event.id,
           amountMinor: event.amount.amountMinor,
           status: event.status,
           occurredAt: event.occurredAt,
           receivedAt: event.receivedAt,
+          merchantRaw: event.merchantRaw,
+          msi: event.msi,
         })),
         month: selectedMonth,
         incomeMinor: plan.incomeMinor,
@@ -135,6 +138,7 @@ export function Dashboard({
     remainingMinor,
     projectedRemainingMinor,
     isCurrentMonth,
+    committedMsiRows,
   } = summary;
   const spendPercent = plan.incomeMinor > 0 ? Math.round((spentMinor / plan.incomeMinor) * 100) : 0;
   const risk =
@@ -189,9 +193,14 @@ export function Dashboard({
             spendPercent={spendPercent}
             isCurrentMonth={isCurrentMonth}
             risk={risk}
+            committedMsiRows={committedMsiRows}
             onEditIncome={() => setEditingIncome(true)}
             onAddPayment={() => setEditingPayment(null)}
             onEditPayment={(payment) => setEditingPayment(payment)}
+            onOpenMsiEvent={(eventId) => {
+              const found = events.find((event) => event.id === eventId);
+              if (found) setActiveEvent(found);
+            }}
             onReviewLargest={reviewLargest}
             idToken={idToken}
             demoMode={demoMode}
