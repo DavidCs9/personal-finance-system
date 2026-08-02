@@ -22,11 +22,11 @@ const tableName = process.env.METADATA_TABLE_NAME;
 if (!tableName) throw new Error('Missing required environment variable: METADATA_TABLE_NAME');
 
 interface ParsedPurchase {
-  readonly institution: 'american_express_mx' | 'santander_mx' | 'nu_mx';
+  readonly institution: 'american_express_mx' | 'santander_mx' | 'nu_mx' | 'amazon_web_services';
   readonly account?: { readonly institution: string; readonly accountId: string; readonly displayName: string; readonly lastFour?: string };
   readonly amount: { readonly amountMinor: number; readonly currency: string };
   readonly merchantRaw: string;
-  readonly eventType?: 'card_purchase' | 'outgoing_transfer';
+  readonly eventType?: 'card_purchase' | 'outgoing_transfer' | 'card_charge';
   readonly counterparty?: string;
   readonly transferType?: 'spei';
   readonly reference?: string;
@@ -34,6 +34,8 @@ interface ParsedPurchase {
   readonly trackingKey?: string;
   readonly counterpartyInstitution?: string;
   readonly counterpartyAccountLastFour?: string;
+  readonly billingPeriod?: string;
+  readonly paymentMethodLastFour?: string;
   readonly occurredAt?: string;
   readonly parseWarnings?: readonly string[];
 }
@@ -116,6 +118,8 @@ const ingest = async (job: IngestionJob): Promise<void> => {
       trackingKey: parsed.trackingKey,
       counterpartyInstitution: parsed.counterpartyInstitution,
       counterpartyAccountLastFour: parsed.counterpartyAccountLastFour,
+      billingPeriod: parsed.billingPeriod,
+      paymentMethodLastFour: parsed.paymentMethodLastFour,
       occurredAt: parsed.occurredAt,
       receivedAt: job.receivedAt,
       ingestedAt: new Date().toISOString(),
@@ -208,7 +212,7 @@ const notifyIngestionException = async (exception: IngestionExceptionAlertInput)
   }));
 };
 
-const notifyObservedPurchase = async (purchase: { readonly institution: string; readonly amount: { readonly amountMinor: number; readonly currency: string }; readonly merchantRaw: string }): Promise<void> => {
+const notifyObservedPurchase = async (purchase: { readonly institution: string; readonly eventType: string; readonly amount: { readonly amountMinor: number; readonly currency: string }; readonly merchantRaw: string }): Promise<void> => {
   const addresses = configuredAlertAddresses();
   if (!addresses) {
     console.info(JSON.stringify({ message: 'Purchase alert skipped until SES sender and recipient are configured.' }));
@@ -218,7 +222,7 @@ const notifyObservedPurchase = async (purchase: { readonly institution: string; 
     Source: addresses.source,
     Destination: { ToAddresses: [addresses.destination] },
     Message: {
-      Subject: { Data: `Compra observada: ${purchase.institution}` },
+      Subject: { Data: `Movimiento observado: ${purchase.institution}` },
       Body: { Text: { Data: `${purchase.merchantRaw}: ${(purchase.amount.amountMinor / 100).toFixed(2)} ${purchase.amount.currency}` } },
     },
   }));
@@ -233,12 +237,14 @@ const decodeQuotedPrintable = (value: string): string => {
     .replace(/=([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
   return Buffer.from(bytes, 'binary').toString('utf8');
 };
-const readableBody = (mime: string): string => {
+const decodedBody = (mime: string): string => {
   const raw = body(mime);
-  const decoded = /quoted-printable/i.test(header(mime, 'content-transfer-encoding') ?? '')
+  return /quoted-printable/i.test(header(mime, 'content-transfer-encoding') ?? '')
     ? decodeQuotedPrintable(raw)
     : raw;
-  return decoded
+};
+const readableBody = (mime: string): string =>
+  decodedBody(mime)
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/(?:div|p|td|tr|h[1-6])>/gi, '\n')
     .replace(/<[^>]+>/g, ' ')
@@ -246,7 +252,6 @@ const readableBody = (mime: string): string => {
     .replace(/&amp;/gi, '&')
     .replace(/&#39;|&apos;/gi, "'")
     .replace(/&quot;/gi, '"');
-};
 const dateOnlyToIso = (value: string | undefined): string | undefined => {
   if (!value) return undefined;
   const [, day, month, year] = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value) ?? [];
@@ -279,6 +284,45 @@ const emailParsers: readonly EmailParser[] = [
       ?? dateOnlyToIso(/(?:fecha|d[ií]a)\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i.exec(text)?.[1]);
       if (!amount || !merchant) throw new Error('Amex MX card-purchase alert is missing amount or merchant');
       return { institution: 'american_express_mx', account: accountFromLastFour('american_express_mx', lastFour), amount: { amountMinor: mxnMinorUnits(amount), currency: 'MXN' }, merchantRaw: compact(merchant), occurredAt };
+    },
+  },
+  {
+    institution: 'amazon_web_services',
+    version: 'aws-mx-billing-statement-v1',
+    matches: (mime) => {
+      const from = (header(mime, 'from') ?? '').toLowerCase();
+      const subject = header(mime, 'subject') ?? '';
+      const text = readableBody(mime);
+      return from.includes('invoicing@aws.com')
+        && /amazon web services billing statement available/i.test(subject)
+        && /total in mxn\s*:/i.test(text);
+    },
+    parse: (mime) => {
+      const text = readableBody(mime);
+      const decoded = decodedBody(mime);
+      const amount = /total in mxn\s*:\s*\$\s*([\d,.]+)/i.exec(text)?.[1];
+      const awsAccountLastFour = /account ending in\s*\*+(\d{4})/i.exec(text)?.[1];
+      const paymentMethodLastFour = /credit card ending in\s*(\d{4})/i.exec(text)?.[1];
+      const billing = /\/bills\?year=(\d{4})(?:&|&amp;)month=(\d{1,2})/i.exec(decoded);
+      if (!amount || !awsAccountLastFour || !paymentMethodLastFour || !billing) {
+        throw new Error('AWS MX billing statement is missing amount, account, payment card, or billing period');
+      }
+      const month = Number(billing[2]);
+      if (month < 1 || month > 12) throw new Error(`Invalid AWS billing month: ${billing[2]}`);
+      return {
+        institution: 'amazon_web_services',
+        eventType: 'card_charge',
+        account: {
+          institution: 'amazon_web_services',
+          accountId: `amazon_web_services:${awsAccountLastFour}`,
+          displayName: `Cuenta AWS terminada en ${awsAccountLastFour}`,
+          lastFour: awsAccountLastFour,
+        },
+        amount: { amountMinor: mxnMinorUnits(amount), currency: 'MXN' },
+        merchantRaw: 'Amazon Web Services',
+        billingPeriod: `${billing[1]}-${String(month).padStart(2, '0')}`,
+        paymentMethodLastFour,
+      };
     },
   },
   {

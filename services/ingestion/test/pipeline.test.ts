@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AmexMxCardPurchaseParser,
+  AwsMxBillingStatementParser,
   InMemoryLedgerRepository,
   InMemoryNotifier,
   InMemoryRawSourceStore,
@@ -57,6 +58,17 @@ Content-Type: text/html; charset=utf-8\r
 <div>Detalles de la transferencia:</div>
 <div>Monto: $0.01<br>Fecha: 01/AGO/2026<br>Hora: 16:06<br>Tipo de transferencia: SPEI<br>Concepto: prueba<br>N=C3=BAmero de referencia: 10826<br>Folio: QUFAS5PYN<br>Nombre: PERSONA DESTINATA=\r
 RIA<br>Entidad: SANTANDER<br>CLABE: =E2=80=A2=E2=80=A2=E2=80=A2=E2=80=A23649<br>Estatus: Completada<br>Clave de rastreo: NU3TESTTRACKINGKEY</div></body></html>`;
+const awsBillingHtmlEmail = `From: Amazon Web Services <invoicing@aws.com>\r
+Subject: Amazon Web Services Billing Statement Available [Account: 225989371926]\r
+Message-ID: <aws-billing-2026-07@example.com>\r
+Content-Transfer-Encoding: quoted-printable\r
+Content-Type: text/html; charset=utf-8\r
+\r
+<html><body><p>Greetings from Amazon Web Services,</p>
+<p>This e-mail confirms that your latest billing statement, for the account ending in ****1926, is available. Your account will be charged the following:<br>Total in MXN: $55.84*</p>
+<p>The credit card ending in 6349 is currently your default payment method for your AWS charges.</p>
+<a href=3D"https://console.aws.amazon.com/billing/home#/bills?year=3D2026&amp;month=3D7">Billing &amp; Cost Management</a>
+</body></html>`;
 
 describe("IngestionPipeline", () => {
   it("persists, parses and notifies a valid Amex purchase", async () => {
@@ -240,6 +252,40 @@ describe("IngestionPipeline", () => {
       trackingKey: "NU3TESTTRACKINGKEY",
       occurredAt: "2026-08-01T22:06:00.000Z",
       parserVersion: "nu-mx-outgoing-transfer-v2",
+    });
+  });
+
+  it("captures an AWS MXN billing statement as a card charge", async () => {
+    const rawSources = new InMemoryRawSourceStore();
+    const ledger = new InMemoryLedgerRepository();
+    const notifier = new InMemoryNotifier();
+    const pipeline = new IngestionPipeline({
+      rawSources,
+      ledger,
+      notifier,
+      parsers: [new AwsMxBillingStatementParser()],
+      clock: fixedClock,
+      ids: ids("aws-charge-1"),
+    });
+
+    const result = await pipeline.ingest({
+      mime: awsBillingHtmlEmail,
+      sourceMessageId: "<aws-billing-2026-07@example.com>",
+      receivedAt: "2026-08-01T22:30:00.000Z",
+    });
+
+    expect(result.kind).toBe("accepted");
+    if (result.kind !== "accepted") return;
+    expect(result.purchase).toMatchObject({
+      institution: "amazon_web_services",
+      eventType: "card_charge",
+      merchantRaw: "Amazon Web Services",
+      amount: { amountMinor: 5584, currency: "MXN" },
+      account: { accountId: "amazon_web_services:1926", lastFour: "1926" },
+      billingPeriod: "2026-07",
+      paymentMethodLastFour: "6349",
+      receivedAt: "2026-08-01T22:30:00.000Z",
+      parserVersion: "aws-mx-billing-statement-v1",
     });
   });
 
