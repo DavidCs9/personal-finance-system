@@ -5,7 +5,7 @@ import { ledgerApi } from "../api/client";
 import { mockEventFeed } from "../api/mock-data";
 import { AppShell } from "../layout/AppShell";
 import { eventDate, monthKey } from "../lib/format";
-import { eventsQueryKey, exceptionsQueryKey, monthlyPlanQueryKey } from "../lib/query-keys";
+import { eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey } from "../lib/query-keys";
 import type { Tab } from "../lib/tabs";
 import {
   demoPlans,
@@ -19,7 +19,7 @@ import { ManualEntrySheet } from "../sheets/ManualEntrySheet";
 import { PaymentSheet } from "../sheets/PaymentSheet";
 import { SantanderImportSheet } from "../sheets/SantanderImportSheet";
 import { StatementImportSheet } from "../sheets/StatementImportSheet";
-import type { IngestionException, PurchaseEvent } from "../types";
+import type { EventFeed, IngestionException, PurchaseEvent } from "../types";
 import { MovementsView } from "../views/MovementsView";
 import { SummaryView } from "../views/SummaryView";
 
@@ -49,8 +49,9 @@ export function Dashboard({
   const [manualOpen, setManualOpen] = useState(false);
 
   const eventsQuery = useQuery({
-    queryKey: eventsQueryKey,
-    queryFn: () => (demoMode ? Promise.resolve(mockEventFeed) : ledgerApi.listEvents(idToken)),
+    queryKey: eventsQueryKey(selectedMonth),
+    queryFn: () =>
+      demoMode ? Promise.resolve(mockEventFeed) : ledgerApi.listEvents(idToken, selectedMonth),
   });
   const exceptionsQuery = useQuery({
     queryKey: exceptionsQueryKey,
@@ -68,6 +69,7 @@ export function Dashboard({
   });
 
   const events = eventsQuery.data?.events ?? [];
+  const msiRelated = eventsQuery.data?.msiRelated ?? [];
   const exceptions = exceptionsQuery.data?.exceptions ?? [];
   const plan = monthlyPlanQuery.data ?? planFor({}, selectedMonth);
   const loading = eventsQuery.isPending || eventsQuery.isFetching;
@@ -86,7 +88,7 @@ export function Dashboard({
         : undefined;
 
   const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+    void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
     void queryClient.invalidateQueries({ queryKey: exceptionsQueryKey });
     void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
   };
@@ -107,14 +109,15 @@ export function Dashboard({
   };
   const readExceptionRaw = (exceptionId: string) => ledgerApi.rawException(exceptionId, idToken);
 
-  const monthEvents = useMemo(
-    () => events.filter((event) => monthKey(eventDate(event)) === selectedMonth),
-    [events, selectedMonth],
+  const monthEvents = events;
+  const summaryEvents = useMemo(
+    () => [...events, ...msiRelated],
+    [events, msiRelated],
   );
   const summary = useMemo(
     () =>
       computeMonthSummary({
-        events: events.map((event) => ({
+        events: summaryEvents.map((event) => ({
           id: event.id,
           amountMinor: event.amount.amountMinor,
           status: event.status,
@@ -132,7 +135,7 @@ export function Dashboard({
         ),
         now,
       }),
-    [events, selectedMonth, plan.incomeMinor, plan.configured, plan.upcomingPayments, now],
+    [summaryEvents, selectedMonth, plan.incomeMinor, plan.configured, plan.upcomingPayments, now],
   );
   const {
     spentMinor,
@@ -282,7 +285,7 @@ export function Dashboard({
           onClose={() => setImportOpen(false)}
           onApplied={() => {
             setImportOpen(false);
-            void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+            void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
           }}
         />
       )}
@@ -293,7 +296,7 @@ export function Dashboard({
           onClose={() => setAmexImportOpen(false)}
           onApplied={() => {
             setAmexImportOpen(false);
-            void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+            void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
           }}
         />
       )}
@@ -304,7 +307,7 @@ export function Dashboard({
           onClose={() => setSantanderStatementOpen(false)}
           onApplied={() => {
             setSantanderStatementOpen(false);
-            void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+            void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
           }}
         />
       )}
@@ -316,10 +319,12 @@ export function Dashboard({
           onClose={() => setManualOpen(false)}
           onCreated={(created) => {
             setManualOpen(false);
-            queryClient.setQueryData<{ events: readonly PurchaseEvent[] }>(eventsQueryKey, (current) => ({
+            const createdMonth = monthKey(eventDate(created));
+            queryClient.setQueryData<EventFeed>(eventsQueryKey(createdMonth), (current) => ({
               events: [created, ...(current?.events ?? [])],
+              msiRelated: current?.msiRelated ?? [],
             }));
-            void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+            void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             setActiveEvent(created);
             setTab("movements");
           }}

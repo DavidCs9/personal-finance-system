@@ -13,8 +13,8 @@ import {
   money,
   statusLabel,
 } from "../lib/format";
-import { eventsQueryKey } from "../lib/query-keys";
-import type { PurchaseEvent } from "../types";
+import { eventsQueryKey, eventsQueryRoot } from "../lib/query-keys";
+import type { EventFeed, PurchaseEvent } from "../types";
 
 export function EventSheet({
   event,
@@ -53,15 +53,17 @@ export function EventSheet({
   }, [event.id, event.msi, event.amount.amountMinor]);
 
   const updateCache = (updated: PurchaseEvent) => {
-    queryClient.setQueryData<{ events: readonly PurchaseEvent[] }>(eventsQueryKey, (current) =>
+    const spendMonth = monthKeyInZone(eventDate(updated));
+    queryClient.setQueryData<EventFeed>(eventsQueryKey(spendMonth), (current) =>
       current
         ? {
             ...current,
             events: current.events.map((item) => (item.id === updated.id ? updated : item)),
+            msiRelated: current.msiRelated.map((item) => (item.id === updated.id ? updated : item)),
           }
         : current,
     );
-    void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+    void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
     onVerified(updated);
     setMsiEnabled(Boolean(updated.msi));
     if (updated.msi) {

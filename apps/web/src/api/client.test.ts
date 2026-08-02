@@ -83,8 +83,9 @@ describe("iOS web app session recovery", () => {
       .mockResolvedValueOnce(jsonResponse({ AuthenticationResult: { IdToken: newToken } }))
       .mockResolvedValueOnce(jsonResponse({ events: [] }));
 
-    await expect(ledgerApi.listEvents(oldToken)).resolves.toEqual({ events: [] });
+    await expect(ledgerApi.listEvents(oldToken, "2026-08")).resolves.toEqual({ events: [] });
     expect(fetch).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(fetch).mock.calls[2]?.[0]).toContain("/events?month=2026-08");
     expect(vi.mocked(fetch).mock.calls[2]?.[1]?.headers).toMatchObject({ Authorization: `Bearer ${newToken}` });
   });
 
@@ -113,7 +114,7 @@ describe("iOS web app session recovery", () => {
     localStorage.setItem("ledger-id-token", expired);
     window.addEventListener("olbia:session-expired", expiredListener);
 
-    await expect(ledgerApi.listEvents(expired)).rejects.toThrow("Tu sesión terminó");
+    await expect(ledgerApi.listEvents(expired, "2026-08")).rejects.toThrow("Tu sesión terminó");
     expect(expiredListener).toHaveBeenCalledOnce();
     expect(localStorage.getItem("ledger-id-token")).toBeNull();
     expect(fetch).not.toHaveBeenCalled();

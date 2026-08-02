@@ -28,6 +28,8 @@ import {
 import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan, type MonthlyPlanInput } from './monthly-plan.js';
 import { isSantanderMsiRow, matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
 import { reconciliationPartition } from './observed-events.js';
+import { eventMonthIndexKeys, eventMonthPartition, priorCalendarMonths } from './event-month-index.js';
+import { buildMonthEventFeed, type MonthFeedEvent } from './event-month-feed.js';
 import {
   deletePushSubscription,
   InvalidPushSubscriptionError,
@@ -175,7 +177,11 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     const eventId = event.pathParameters?.eventId;
     const exceptionId = event.pathParameters?.exceptionId;
     if (event.requestContext.http.method === 'GET' && event.rawPath === '/events') {
-      return response(200, { events: await listEvents() });
+      const month = event.queryStringParameters?.month;
+      if (!month || !isValidMonth(month)) {
+        return response(400, { message: 'Query parameter month (YYYY-MM) is required.' });
+      }
+      return response(200, await listEventsForMonth(month));
     }
     if (event.requestContext.http.method === 'GET' && event.rawPath === '/exceptions') {
       return response(200, { exceptions: await listExceptions() });
@@ -360,6 +366,7 @@ const createManualEvent = async (body: string | undefined, owner: string): Promi
           GSI1SK: appliedAt,
           GSI2PK: reconciliationPartition(purchase as Parameters<typeof reconciliationPartition>[0]),
           GSI2SK: `${input.occurredAt}#${id}`,
+          ...eventMonthIndexKeys({ eventId: id, occurredAt: input.occurredAt, receivedAt: appliedAt }),
           reconciliationAt: input.occurredAt,
           entityType: 'observed_purchase',
           payload: purchase,
@@ -606,6 +613,7 @@ const claimAndCreateCsvEvent = async (
           GSI1SK: appliedAt,
           GSI2PK: reconciliationPartition(purchase as Parameters<typeof reconciliationPartition>[0]),
           GSI2SK: `${occurredAt}#${id}`,
+          ...eventMonthIndexKeys({ eventId: id, occurredAt, receivedAt: appliedAt }),
           reconciliationAt: occurredAt,
           entityType: 'observed_purchase',
           payload: purchase,
@@ -1247,6 +1255,7 @@ const claimAndCreateStatementEvent = async (input: {
           GSI1SK: input.appliedAt,
           GSI2PK: reconciliationPartition(purchase as Parameters<typeof reconciliationPartition>[0]),
           GSI2SK: `${occurredAt}#${id}`,
+          ...eventMonthIndexKeys({ eventId: id, occurredAt, receivedAt: input.appliedAt }),
           reconciliationAt: occurredAt,
           entityType: 'observed_purchase',
           payload: purchase,
@@ -1823,17 +1832,17 @@ const toPublicMonthlyPlan = (month: string, payload: JsonObject, configured: boo
   ...(configured && typeof payload.updatedAt === 'string' ? { updatedAt: payload.updatedAt } : {}),
 });
 
-const listEvents = async (): Promise<readonly JsonObject[]> => {
-  // Paginate the full EVENTS partition. A hard Limit: 100 dropped older months after
-  // statement imports (e.g. August Zara fell off once Amex/Santander adds exceeded 100).
+const MSI_LOOKBACK_MONTHS = 24;
+
+const queryEventsForMonthPartition = async (month: string): Promise<readonly JsonObject[]> => {
   const events: JsonObject[] = [];
   let exclusiveStartKey: Record<string, unknown> | undefined;
   do {
     const result = await database.send(new QueryCommand({
       TableName: tableName,
-      IndexName: 'GSI1',
-      KeyConditionExpression: 'GSI1PK = :partition',
-      ExpressionAttributeValues: { ':partition': 'EVENTS' },
+      IndexName: 'GSI3',
+      KeyConditionExpression: 'GSI3PK = :partition',
+      ExpressionAttributeValues: { ':partition': eventMonthPartition(month) },
       ScanIndexForward: false,
       ExclusiveStartKey: exclusiveStartKey,
     }));
@@ -1843,6 +1852,26 @@ const listEvents = async (): Promise<readonly JsonObject[]> => {
     exclusiveStartKey = result.LastEvaluatedKey;
   } while (exclusiveStartKey);
   return events;
+};
+
+/** Spend-month events plus MSI plans whose cuota falls in `month` but purchase was earlier. */
+const listEventsForMonth = async (
+  month: string,
+): Promise<{ readonly events: readonly JsonObject[]; readonly msiRelated: readonly JsonObject[] }> => {
+  const events = await queryEventsForMonthPartition(month);
+  const lookback: JsonObject[] = [];
+  for (const priorMonth of priorCalendarMonths(month, MSI_LOOKBACK_MONTHS)) {
+    lookback.push(...await queryEventsForMonthPartition(priorMonth));
+  }
+  const feed = buildMonthEventFeed(
+    month,
+    events as unknown as readonly MonthFeedEvent[],
+    lookback as unknown as readonly MonthFeedEvent[],
+  );
+  return {
+    events: feed.events as unknown as readonly JsonObject[],
+    msiRelated: feed.msiRelated as unknown as readonly JsonObject[],
+  };
 };
 
 const listExceptions = async (): Promise<readonly JsonObject[]> => {

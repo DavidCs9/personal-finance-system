@@ -17,6 +17,7 @@ Message-ID: <demo-${subject.replaceAll(" ", "-").toLowerCase()}@example.test>
 ${body}`;
 
 export const mockEventFeed: EventFeed = {
+  msiRelated: [],
   events: [
     {
       id: "evt_01J5A0A1",
