@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   classifyPurchaseCharge,
+  statementMsiApplyAction,
   statementPreviewSummary,
   statementPurchaseApplyAction,
 } from '../lambda/statement-reconciliation.js';
+import { buildPlanFromCreateDecision } from '../lambda/msi-reconciliation.js';
 
 describe('classifyPurchaseCharge', () => {
   it('marks unique merchant/date/amount matches as matched', () => {
@@ -109,12 +111,62 @@ describe('statementPreviewSummary', () => {
         merchantRaw: 'B',
         amountMinor: 2,
         occurredOn: '2026-01-01',
-        status: 'unplanned',
+        status: 'needs_decision',
         candidateEventIds: [],
         candidates: [],
         msi: true,
       },
     ]);
-    expect(summary).toMatchObject({ total: 2, new: 1, unplanned: 1, purchases: 1, msi: 1 });
+    expect(summary).toMatchObject({ total: 2, new: 1, needsDecision: 1, unplanned: 1, purchases: 1, msi: 1 });
+  });
+});
+
+describe('statementMsiApplyAction', () => {
+  const needsDecisionRow = {
+    identity: 'm1',
+    kind: 'msi' as const,
+    merchantRaw: 'AMAZON A MESES',
+    amountMinor: 50_000,
+    occurredOn: '2026-07-15',
+    status: 'needs_decision' as const,
+    candidateEventIds: [] as string[],
+    candidates: [],
+    msi: true,
+  };
+
+  it('requires create_plan or skip for unmatched MSI', () => {
+    expect(statementMsiApplyAction(needsDecisionRow, needsDecisionRow)).toEqual({ kind: 'skip' });
+    expect(statementMsiApplyAction(needsDecisionRow, needsDecisionRow, { action: 'skip' })).toEqual({ kind: 'skip' });
+    expect(statementMsiApplyAction(needsDecisionRow, needsDecisionRow, {
+      action: 'create_plan',
+      months: 3,
+      cuotaMinor: 50_000,
+    })).toEqual({ kind: 'create_plan', months: 3, cuotaMinor: 50_000 });
+  });
+
+  it('auto-confirms matched MSI rows', () => {
+    const matched = { ...needsDecisionRow, status: 'matched' as const, eventId: 'evt-1', candidateEventIds: ['evt-1'] };
+    expect(statementMsiApplyAction(matched, matched)).toEqual({ kind: 'confirm_msi', eventId: 'evt-1' });
+  });
+});
+
+describe('buildPlanFromCreateDecision', () => {
+  it('builds a complete manual schedule with the evidenced cuota spent', () => {
+    const plan = buildPlanFromCreateDecision(
+      {
+        merchantRaw: 'AMAZON A MESES',
+        amountMinor: 50_018,
+        occurredOn: '2026-07-15',
+        installmentIndex: 2,
+        installmentMonths: 3,
+        identity: 'msi-1',
+      },
+      { months: 3, cuotaMinor: 50_000 },
+    );
+    expect(plan.origin).toBe('manual');
+    expect(plan.needsScheduleCompletion).toBeUndefined();
+    expect(plan.installments[1]?.status).toBe('spent');
+    expect(plan.installments[0]?.status).toBe('committed');
+    expect(plan.installments[2]?.status).toBe('committed');
   });
 });

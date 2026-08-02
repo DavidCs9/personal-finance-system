@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { defaultCuotaMinor, monthKeyInZone, replaceMsiSchedule } from "@finance/domain";
+import { defaultCuotaMinor, monthKeyInZone, replaceMsiSchedule, addCalendarMonths } from "@finance/domain";
 import { ledgerApi } from "../api/client";
 import { Mark } from "../components/Brand";
 import { Field } from "../components/Field";
@@ -110,13 +110,17 @@ export function EventSheet({
         return { ...event, msi: { ...plan, needsScheduleCompletion: undefined } };
       }
       if (event.msi?.needsScheduleCompletion) {
+        const spent = event.msi.installments.find((item) => item.status === "spent");
+        const startMonth = spent
+          ? addCalendarMonths(spent.month, -(spent.index - 1))
+          : (event.msi.installments[0]?.month ?? monthKeyInZone(eventDate(event)));
         return ledgerApi.updateEventMsi(
           event.id,
           {
             action: "complete_msi_schedule",
             months,
             cuotaMinor,
-            startMonth: monthKeyInZone(eventDate(event)),
+            startMonth,
           },
           idToken,
         );

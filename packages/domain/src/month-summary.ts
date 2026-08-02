@@ -10,7 +10,7 @@ export interface MonthSpendEvent {
   readonly occurredAt?: string;
   readonly receivedAt: string;
   readonly merchantRaw?: string;
-  readonly msi?: Pick<MsiPlan, "months" | "installments">;
+  readonly msi?: Pick<MsiPlan, "months" | "installments" | "needsScheduleCompletion">;
 }
 
 export interface MonthSummaryInput {
@@ -106,6 +106,8 @@ const installmentAmountFor = (
 ): number =>
   events.reduce((sum, event) => {
     if (event.status === "rejected" || !event.msi) return sum;
+    // Incomplete stubs must not pollute committed totals.
+    if (status === "committed" && event.msi.needsScheduleCompletion) return sum;
     return (
       sum +
       event.msi.installments
@@ -121,6 +123,7 @@ export const listCommittedMsiRows = (
   const rows: CommittedMsiRow[] = [];
   for (const event of events) {
     if (event.status === "rejected" || !event.msi) continue;
+    if (event.msi.needsScheduleCompletion) continue;
     for (const installment of event.msi.installments) {
       if (installment.month !== month || installment.status !== "committed") continue;
       const merchantRaw = event.merchantRaw ?? "Compra";

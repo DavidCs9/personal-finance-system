@@ -308,6 +308,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .ambiguous-row strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .ambiguous-row small { flex: 0 0 auto; color: var(--muted); font-size: 9px; }
 .ambiguous-row select { width: 100%; border: 1px solid #c9ab78; border-radius: 8px; background: #fffdf8; padding: 9px; font-size: 10px; }
+.msi-decide { display: grid; gap: 8px; }
+.msi-decide label { display: grid; gap: 4px; font-size: 9px; color: var(--muted); }
+.msi-decide input { border: 1px solid #c9ab78; border-radius: 8px; background: #fffdf8; padding: 8px; font-size: 11px; }
+.msi-decide .text-button { justify-self: start; }
 .import-footer { display: grid; gap: 7px; }
 .import-result { display: grid; justify-items: center; gap: 8px; padding: 10px 0 2px; text-align: center; }
 .import-result .result-mark { display: grid; place-items: center; width: 54px; height: 54px; margin-bottom: 8px; border-radius: 50%; color: #fff; background: var(--green); font-size: 25px; }

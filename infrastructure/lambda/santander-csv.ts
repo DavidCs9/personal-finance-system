@@ -20,7 +20,13 @@ export interface SantanderCsvDocument {
   readonly rows: readonly SantanderCsvRow[];
 }
 
-export type SantanderReconciliationStatus = "new" | "matched" | "ambiguous" | "duplicate" | "excluded";
+export type SantanderReconciliationStatus =
+  | "new"
+  | "matched"
+  | "ambiguous"
+  | "duplicate"
+  | "excluded"
+  | "needs_decision";
 
 export interface SantanderReconciliationState {
   readonly status: SantanderReconciliationStatus;
@@ -29,11 +35,26 @@ export interface SantanderReconciliationState {
 
 export type SantanderReconciliationDecision =
   | { readonly action: "create" }
-  | { readonly action: "link"; readonly eventId: string };
+  | { readonly action: "link"; readonly eventId: string }
+  | { readonly action: "confirm_msi"; readonly eventId: string }
+  | {
+      readonly action: "create_plan";
+      readonly months: number;
+      readonly cuotaMinor: number;
+      readonly startMonth?: string;
+    }
+  | { readonly action: "skip" };
 
 export type SantanderApplyAction =
   | { readonly kind: "create" }
   | { readonly kind: "link"; readonly eventId: string }
+  | { readonly kind: "confirm_msi"; readonly eventId: string }
+  | {
+      readonly kind: "create_plan";
+      readonly months: number;
+      readonly cuotaMinor: number;
+      readonly startMonth?: string;
+    }
   | { readonly kind: "skip" };
 
 export const santanderImportCompletionUpdate = (
@@ -57,6 +78,21 @@ export const santanderApplyAction = (
   if (current.status === "ambiguous" && preview?.status === "ambiguous") {
     if (decision?.action === "create") return { kind: "create" };
     if (decision?.action === "link" && current.candidateEventIds.includes(decision.eventId)) return { kind: "link", eventId: decision.eventId };
+  }
+  if (current.status === "needs_decision" && preview?.status === "needs_decision") {
+    if (decision?.action === "skip") return { kind: "skip" };
+    if (decision?.action === "confirm_msi") return { kind: "confirm_msi", eventId: decision.eventId };
+    if (decision?.action === "link" && current.candidateEventIds.includes(decision.eventId)) {
+      return { kind: "confirm_msi", eventId: decision.eventId };
+    }
+    if (decision?.action === "create_plan") {
+      return {
+        kind: "create_plan",
+        months: decision.months,
+        cuotaMinor: decision.cuotaMinor,
+        ...(decision.startMonth ? { startMonth: decision.startMonth } : {}),
+      };
+    }
   }
   return { kind: "skip" };
 };

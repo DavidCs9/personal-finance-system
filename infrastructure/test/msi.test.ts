@@ -142,4 +142,35 @@ describe('computeMonthSummary with MSI', () => {
     const paced = Math.round((2_000_00 / 2) * 31);
     expect(summary.projectedRemainingMinor).toBe(100_000_00 - (paced + 1_000_00));
   });
+
+  it('ignores committed installments on incomplete statement stubs', () => {
+    const stub = {
+      ...buildMsiSchedule({
+        principalMinor: 9_000_00,
+        months: 3,
+        startMonth: '2026-07',
+        origin: 'statement_unplanned',
+        cuotaMinor: 3_000_00,
+        needsScheduleCompletion: true,
+      }),
+      needsScheduleCompletion: true as const,
+    };
+    const summary = computeMonthSummary({
+      events: [{
+        amountMinor: 9_000_00,
+        status: 'needs_review',
+        merchantRaw: 'Amazon a meses',
+        receivedAt: '2026-07-15T12:00:00Z',
+        occurredAt: '2026-07-15T12:00:00Z',
+        msi: stub,
+      }],
+      month: '2026-08',
+      incomeMinor: 50_000_00,
+      incomeConfigured: true,
+      upcomingPaymentsMinor: 0,
+      now,
+    });
+    expect(summary.msiCommittedMinor).toBe(0);
+    expect(summary.committedMsiRows).toEqual([]);
+  });
 });

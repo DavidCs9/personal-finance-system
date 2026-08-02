@@ -26,7 +26,7 @@ import {
   type AmexStatementDocument,
 } from './amex-statement.js';
 import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan, type MonthlyPlanInput } from './monthly-plan.js';
-import { isSantanderMsiRow, matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
+import { buildPlanFromCreateDecision, isSantanderMsiRow, matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
 import { reconciliationPartition } from './observed-events.js';
 import { eventMonthIndexKeys, eventMonthPartition, priorCalendarMonths } from './event-month-index.js';
 import { buildMonthEventFeed, type MonthFeedEvent } from './event-month-feed.js';
@@ -47,6 +47,7 @@ import {
   classifyPurchaseCharge,
   statementClaimKey,
   statementImportCompletionUpdate,
+  statementMsiApplyAction,
   statementPreviewSummary,
   statementPurchaseApplyAction,
   type StatementDecision,
@@ -466,6 +467,37 @@ const classifySantanderRows = async (document: SantanderCsvDocument): Promise<re
   return document.rows.map((row): SantanderPreviewRow => {
     if (claims.has(rowClaimKey(row.identity).PK)) return { ...row, status: 'duplicate', candidateEventIds: [], candidates: [] };
     if (row.amountMinor < 0) return { ...row, status: 'excluded', candidateEventIds: [], candidates: [] };
+    if (isSantanderMsiRow(row.merchantRaw) && row.amountMinor > 0) {
+      const match = matchEvidenceLine({
+        merchantRaw: row.merchantRaw,
+        amountMinor: row.amountMinor,
+        occurredOn: row.occurredOn,
+        identity: row.identity,
+      }, events);
+      if (match.kind === 'confirm') {
+        return {
+          ...row,
+          status: 'matched',
+          candidateEventIds: [match.eventId],
+          candidates: [{ id: match.eventId, merchantRaw: row.merchantRaw }],
+        };
+      }
+      if (match.kind === 'needs_decision') {
+        const candidates = match.candidates.map((candidate) => ({
+          id: candidate.eventId,
+          merchantRaw: candidate.merchantRaw,
+        }));
+        return {
+          ...row,
+          status: 'needs_decision',
+          candidateEventIds: candidates.map((candidate) => candidate.id),
+          candidates,
+        };
+      }
+      if (match.kind === 'skip' && match.reason === 'already_confirmed') {
+        return { ...row, status: 'duplicate', candidateEventIds: [], candidates: [] };
+      }
+    }
     const candidates = candidateEvents(document, row, events);
     const candidateSummaries = candidates.map((candidate) => ({
       id: String(candidate.id),
@@ -493,6 +525,7 @@ const previewPayload = (importId: string, document: SantanderCsvDocument, rows: 
       ambiguous: count('ambiguous'),
       duplicate: count('duplicate'),
       excluded: count('excluded'),
+      needsDecision: count('needs_decision'),
     },
     rows,
   };
@@ -719,10 +752,49 @@ const parseImportDecisions = (body: string | undefined): Readonly<Record<string,
     const decisions: Record<string, SantanderReconciliationDecision> = {};
     for (const [identity, raw] of Object.entries(parsed.decisions as Record<string, unknown>)) {
       if (!raw || typeof raw !== 'object') throw new InvalidSantanderCsvError('Una decisión de conciliación no es válida.');
-      const decision = raw as { action?: unknown; eventId?: unknown };
-      if (decision.action !== 'create' && decision.action !== 'link') throw new InvalidSantanderCsvError('Una decisión de conciliación no es válida.');
-      if (decision.action === 'link' && typeof decision.eventId !== 'string') throw new InvalidSantanderCsvError('Falta el movimiento elegido para una conciliación.');
-      decisions[identity] = decision.action === 'create' ? { action: 'create' } : { action: 'link', eventId: String(decision.eventId) };
+      const decision = raw as {
+        action?: unknown;
+        eventId?: unknown;
+        months?: unknown;
+        cuotaMinor?: unknown;
+        startMonth?: unknown;
+      };
+      if (decision.action === 'create') {
+        decisions[identity] = { action: 'create' };
+        continue;
+      }
+      if (decision.action === 'skip') {
+        decisions[identity] = { action: 'skip' };
+        continue;
+      }
+      if (decision.action === 'link' || decision.action === 'confirm_msi') {
+        if (typeof decision.eventId !== 'string') {
+          throw new InvalidSantanderCsvError('Falta el movimiento elegido para una conciliación.');
+        }
+        decisions[identity] = decision.action === 'link'
+          ? { action: 'link', eventId: String(decision.eventId) }
+          : { action: 'confirm_msi', eventId: String(decision.eventId) };
+        continue;
+      }
+      if (decision.action === 'create_plan') {
+        if (!Number.isInteger(decision.months) || Number(decision.months) < 1 || Number(decision.months) > 48) {
+          throw new InvalidSantanderCsvError('Los meses del plan MSI no son válidos.');
+        }
+        if (!Number.isInteger(decision.cuotaMinor) || Number(decision.cuotaMinor) <= 0) {
+          throw new InvalidSantanderCsvError('La cuota del plan MSI no es válida.');
+        }
+        if (decision.startMonth !== undefined && (typeof decision.startMonth !== 'string' || !isValidMonth(decision.startMonth))) {
+          throw new InvalidSantanderCsvError('El mes de inicio del plan MSI no es válido.');
+        }
+        decisions[identity] = {
+          action: 'create_plan',
+          months: Number(decision.months),
+          cuotaMinor: Number(decision.cuotaMinor),
+          ...(typeof decision.startMonth === 'string' ? { startMonth: decision.startMonth } : {}),
+        };
+        continue;
+      }
+      throw new InvalidSantanderCsvError('Una decisión de conciliación no es válida.');
     }
     return decisions;
   } catch (error) {
@@ -771,9 +843,10 @@ const applySantanderImport = async (importId: string, owner: string, decisionBod
         }
       : undefined;
 
-    if (action.kind === 'create' && msiEvidence) {
-      const match = matchEvidenceLine(msiEvidence, eventsSnapshot);
-      if (match.kind === 'confirm') {
+    if (action.kind === 'confirm_msi' && msiEvidence) {
+      const scoped = eventsSnapshot.filter((event) => event.id === action.eventId);
+      const match = matchEvidenceLine(msiEvidence, scoped.length > 0 ? scoped : eventsSnapshot);
+      if (match.kind === 'confirm' && match.eventId === action.eventId) {
         const updated = await persistEventMsi(
           match.eventId,
           owner,
@@ -787,19 +860,47 @@ const applySantanderImport = async (importId: string, owner: string, decisionBod
           eventsSnapshot = eventsSnapshot.map((event) => event.id === match.eventId ? { ...event, msi: match.next } : event);
           continue;
         }
-      } else if (match.kind === 'unplanned') {
-        const purchase = await claimAndCreateCsvEvent(owner, document, row, source, appliedAt, match.plan);
-        if (purchase) {
-          created.push(toPublicEvent(purchase));
-          eventsSnapshot = [...eventsSnapshot, purchase];
-          continue;
+      }
+      skipped += 1;
+      continue;
+    }
+
+    if (action.kind === 'create_plan' && msiEvidence) {
+      const plan = buildPlanFromCreateDecision(msiEvidence, {
+        months: action.months,
+        cuotaMinor: action.cuotaMinor,
+        startMonth: action.startMonth,
+      });
+      const purchase = await claimAndCreateCsvEvent(owner, document, row, source, appliedAt, plan);
+      if (purchase) {
+        created.push(toPublicEvent(purchase));
+        eventsSnapshot = [...eventsSnapshot, purchase];
+      } else skipped += 1;
+      continue;
+    }
+
+    if (action.kind === 'create') {
+      // Matched MSI rows use link/confirm; never invent schedules on plain create.
+      if (msiEvidence) {
+        const match = matchEvidenceLine(msiEvidence, eventsSnapshot);
+        if (match.kind === 'confirm') {
+          const updated = await persistEventMsi(
+            match.eventId,
+            owner,
+            match.previous,
+            match.next,
+            'Cuota MSI confirmada con CSV Santander.',
+          );
+          if (updated) {
+            msiConfirmed += 1;
+            linked += 1;
+            eventsSnapshot = eventsSnapshot.map((event) => event.id === match.eventId ? { ...event, msi: match.next } : event);
+            continue;
+          }
         }
         skipped += 1;
         continue;
       }
-    }
-
-    if (action.kind === 'create') {
       const purchase = await claimAndCreateCsvEvent(owner, document, row, source, appliedAt);
       if (purchase) {
         created.push(toPublicEvent(purchase));
@@ -894,6 +995,43 @@ const classifyMsiEvidenceRow = (
   events: readonly JsonObject[],
 ): StatementPreviewRow => {
   const match = matchEvidenceLine(line, events);
+  if (match.kind === 'confirm') {
+    return {
+      identity: line.identity,
+      kind: 'msi',
+      merchantRaw: line.merchantRaw,
+      amountMinor: line.amountMinor,
+      occurredOn: line.occurredOn,
+      msi: true,
+      installmentIndex: line.installmentIndex,
+      installmentMonths: line.installmentMonths,
+      originalAmountMinor: line.originalAmountMinor,
+      status: 'matched',
+      eventId: match.eventId,
+      candidateEventIds: [match.eventId],
+      candidates: [],
+    };
+  }
+  if (match.kind === 'needs_decision') {
+    const candidates = match.candidates.map((candidate) => ({
+      id: candidate.eventId,
+      merchantRaw: candidate.merchantRaw,
+    }));
+    return {
+      identity: line.identity,
+      kind: 'msi',
+      merchantRaw: line.merchantRaw,
+      amountMinor: line.amountMinor,
+      occurredOn: line.occurredOn,
+      msi: true,
+      installmentIndex: line.installmentIndex,
+      installmentMonths: line.installmentMonths,
+      originalAmountMinor: line.originalAmountMinor,
+      status: 'needs_decision',
+      candidateEventIds: candidates.map((candidate) => candidate.id),
+      candidates,
+    };
+  }
   return {
     identity: line.identity,
     kind: 'msi',
@@ -904,9 +1042,8 @@ const classifyMsiEvidenceRow = (
     installmentIndex: line.installmentIndex,
     installmentMonths: line.installmentMonths,
     originalAmountMinor: line.originalAmountMinor,
-    status: match.kind === 'confirm' ? 'matched' : match.kind === 'unplanned' ? 'unplanned' : 'skipped',
-    eventId: match.kind === 'confirm' ? match.eventId : undefined,
-    candidateEventIds: match.kind === 'confirm' ? [match.eventId] : [],
+    status: 'skipped',
+    candidateEventIds: [],
     candidates: [],
   };
 };
@@ -1173,14 +1310,64 @@ const getSantanderStatementImport = async (importId: string, owner: string): Pro
 
 
 const parseStatementDecisions = (body: string | undefined): Readonly<Record<string, StatementDecision>> => {
-  const parsed = parseImportDecisions(body);
-  const decisions: Record<string, StatementDecision> = {};
-  for (const [identity, decision] of Object.entries(parsed)) {
-    decisions[identity] = decision.action === 'create'
-      ? { action: 'create' }
-      : { action: 'link', eventId: decision.eventId };
+  if (!body) return {};
+  try {
+    const parsed = JSON.parse(body) as { decisions?: unknown };
+    if (!parsed.decisions || typeof parsed.decisions !== 'object' || Array.isArray(parsed.decisions)) return {};
+    const decisions: Record<string, StatementDecision> = {};
+    for (const [identity, raw] of Object.entries(parsed.decisions as Record<string, unknown>)) {
+      if (!raw || typeof raw !== 'object') {
+        throw new InvalidAmexStatementError('Una decisión de conciliación no es válida.');
+      }
+      const decision = raw as {
+        action?: unknown;
+        eventId?: unknown;
+        months?: unknown;
+        cuotaMinor?: unknown;
+        startMonth?: unknown;
+      };
+      if (decision.action === 'create') {
+        decisions[identity] = { action: 'create' };
+        continue;
+      }
+      if (decision.action === 'skip') {
+        decisions[identity] = { action: 'skip' };
+        continue;
+      }
+      if (decision.action === 'link' || decision.action === 'confirm_msi') {
+        if (typeof decision.eventId !== 'string') {
+          throw new InvalidAmexStatementError('Falta el movimiento elegido para una conciliación MSI.');
+        }
+        decisions[identity] = decision.action === 'link'
+          ? { action: 'link', eventId: decision.eventId }
+          : { action: 'confirm_msi', eventId: decision.eventId };
+        continue;
+      }
+      if (decision.action === 'create_plan') {
+        if (!Number.isInteger(decision.months) || Number(decision.months) < 1 || Number(decision.months) > 48) {
+          throw new InvalidAmexStatementError('Los meses del plan MSI no son válidos.');
+        }
+        if (!Number.isInteger(decision.cuotaMinor) || Number(decision.cuotaMinor) <= 0) {
+          throw new InvalidAmexStatementError('La cuota del plan MSI no es válida.');
+        }
+        if (decision.startMonth !== undefined && (typeof decision.startMonth !== 'string' || !isValidMonth(decision.startMonth))) {
+          throw new InvalidAmexStatementError('El mes de inicio del plan MSI no es válido.');
+        }
+        decisions[identity] = {
+          action: 'create_plan',
+          months: Number(decision.months),
+          cuotaMinor: Number(decision.cuotaMinor),
+          ...(typeof decision.startMonth === 'string' ? { startMonth: decision.startMonth } : {}),
+        };
+        continue;
+      }
+      throw new InvalidAmexStatementError('Una decisión de conciliación no es válida.');
+    }
+    return decisions;
+  } catch (error) {
+    if (error instanceof InvalidAmexStatementError) throw error;
+    throw new InvalidAmexStatementError('Las decisiones de conciliación no tienen un formato válido.');
   }
-  return decisions;
 };
 
 const claimAndCreateStatementEvent = async (input: {
@@ -1455,10 +1642,6 @@ const applyStatementImport = async (input: {
   for (const row of currentRows) {
     const preview = previewByIdentity.get(row.identity);
     if (row.kind === 'msi') {
-      if (row.status === 'skipped' || preview?.status === 'skipped') {
-        skipped += 1;
-        continue;
-      }
       const evidence: EvidenceLine = {
         merchantRaw: row.merchantRaw,
         amountMinor: row.amountMinor,
@@ -1468,17 +1651,33 @@ const applyStatementImport = async (input: {
         installmentMonths: row.installmentMonths,
         originalAmountMinor: row.originalAmountMinor,
       };
-      const match = matchEvidenceLine(evidence, eventsSnapshot);
-      if (match.kind === 'confirm') {
-        const updated = await persistEventMsi(
-          match.eventId,
-          input.owner,
-          match.previous,
-          match.next,
-          input.provider === 'amex'
-            ? 'Cuota MSI confirmada con estado de cuenta Amex.'
-            : 'Cuota MSI confirmada con estado de cuenta Santander.',
+      const action = statementMsiApplyAction(row, preview, decisions[row.identity]);
+      const msiNote = input.provider === 'amex'
+        ? 'Cuota MSI confirmada con estado de cuenta Amex.'
+        : 'Cuota MSI confirmada con estado de cuenta Santander.';
+      if (action.kind === 'confirm_msi') {
+        const match = matchEvidenceLine(
+          evidence,
+          eventsSnapshot.filter((event) => event.id === action.eventId),
         );
+        if (match.kind !== 'confirm') {
+          // Fall back to full snapshot if scoped miss (e.g. plan updated mid-apply).
+          const fallback = matchEvidenceLine(evidence, eventsSnapshot);
+          if (fallback.kind !== 'confirm' || fallback.eventId !== action.eventId) {
+            skipped += 1;
+            continue;
+          }
+          const updated = await persistEventMsi(fallback.eventId, input.owner, fallback.previous, fallback.next, msiNote);
+          if (updated) {
+            msiConfirmed += 1;
+            linked += 1;
+            eventsSnapshot = eventsSnapshot.map((event) => (
+              event.id === fallback.eventId ? { ...event, msi: fallback.next } : event
+            ));
+          } else skipped += 1;
+          continue;
+        }
+        const updated = await persistEventMsi(match.eventId, input.owner, match.previous, match.next, msiNote);
         if (updated) {
           msiConfirmed += 1;
           linked += 1;
@@ -1488,7 +1687,12 @@ const applyStatementImport = async (input: {
         } else skipped += 1;
         continue;
       }
-      if (match.kind === 'unplanned') {
+      if (action.kind === 'create_plan') {
+        const plan = buildPlanFromCreateDecision(evidence, {
+          months: action.months,
+          cuotaMinor: action.cuotaMinor,
+          startMonth: action.startMonth,
+        });
         const purchase = await claimAndCreateStatementEvent({
           provider: input.provider,
           owner: input.owner,
@@ -1496,12 +1700,11 @@ const applyStatementImport = async (input: {
           row,
           source,
           appliedAt,
-          msi: match.plan,
+          msi: plan,
         });
         if (purchase) {
           created.push(toPublicEvent(purchase));
           createdCount += 1;
-          createdUnplanned += 1;
           eventsSnapshot = [...eventsSnapshot, purchase];
         } else skipped += 1;
         continue;
