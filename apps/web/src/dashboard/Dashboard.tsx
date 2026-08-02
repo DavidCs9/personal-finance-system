@@ -1,0 +1,261 @@
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ledgerApi } from "../api/client";
+import { mockEventFeed } from "../api/mock-data";
+import { AppShell } from "../layout/AppShell";
+import { dayInZone, eventDate, monthKey } from "../lib/format";
+import { eventsQueryKey, exceptionsQueryKey, monthlyPlanQueryKey } from "../lib/query-keys";
+import type { Tab } from "../lib/tabs";
+import {
+  demoPlans,
+  planFor,
+  type MonthlyPlan,
+  type PlannedPayment,
+} from "../monthly-plan";
+import { EventSheet } from "../sheets/EventSheet";
+import { IncomeSheet } from "../sheets/IncomeSheet";
+import { PaymentSheet } from "../sheets/PaymentSheet";
+import { SantanderImportSheet } from "../sheets/SantanderImportSheet";
+import type { IngestionException, PurchaseEvent } from "../types";
+import { MovementsView } from "../views/MovementsView";
+import { SummaryView } from "../views/SummaryView";
+
+export function Dashboard({
+  idToken,
+  demoMode,
+  onSignOut,
+}: {
+  idToken: string;
+  demoMode: boolean;
+  onSignOut(): void;
+}) {
+  const now = useMemo(
+    () => (demoMode ? new Date("2026-07-12T18:00:00-06:00") : new Date()),
+    [demoMode],
+  );
+  const queryClient = useQueryClient();
+  const [tab, setTab] = useState<Tab>("summary");
+  const [selectedMonth, setSelectedMonth] = useState(monthKey(now));
+  const [editingIncome, setEditingIncome] = useState(false);
+  const [editingPayment, setEditingPayment] = useState<PlannedPayment | null | undefined>();
+  const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
+  const [movementSort, setMovementSort] = useState<"recent" | "largest">("recent");
+  const [importOpen, setImportOpen] = useState(false);
+
+  const eventsQuery = useQuery({
+    queryKey: eventsQueryKey,
+    queryFn: () => (demoMode ? Promise.resolve(mockEventFeed) : ledgerApi.listEvents(idToken)),
+  });
+  const exceptionsQuery = useQuery({
+    queryKey: exceptionsQueryKey,
+    queryFn: () =>
+      demoMode
+        ? Promise.resolve({ exceptions: [] as readonly IngestionException[] })
+        : ledgerApi.listExceptions(idToken),
+  });
+  const monthlyPlanQuery = useQuery({
+    queryKey: monthlyPlanQueryKey(selectedMonth),
+    queryFn: () =>
+      demoMode
+        ? Promise.resolve(planFor(demoPlans, selectedMonth))
+        : ledgerApi.monthlyPlan(selectedMonth, idToken),
+  });
+
+  const events = eventsQuery.data?.events ?? [];
+  const exceptions = exceptionsQuery.data?.exceptions ?? [];
+  const plan = monthlyPlanQuery.data ?? planFor({}, selectedMonth);
+  const loading = eventsQuery.isPending || eventsQuery.isFetching;
+  const error =
+    eventsQuery.error instanceof Error
+      ? eventsQuery.error.message
+      : eventsQuery.error
+        ? "No se pudieron cargar los movimientos."
+        : undefined;
+  const planLoading = monthlyPlanQuery.isPending || monthlyPlanQuery.isFetching;
+  const planLoadError =
+    monthlyPlanQuery.error instanceof Error
+      ? monthlyPlanQuery.error.message
+      : monthlyPlanQuery.error
+        ? "No se pudo cargar la configuración del mes."
+        : undefined;
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+    void queryClient.invalidateQueries({ queryKey: exceptionsQueryKey });
+    void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
+  };
+
+  const retryExceptionMutation = useMutation({
+    mutationFn: (exceptionId: string) => ledgerApi.retryException(exceptionId, idToken),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: exceptionsQueryKey }),
+  });
+  const retryException = async (exceptionId: string) => {
+    await retryExceptionMutation.mutateAsync(exceptionId);
+  };
+  const discardExceptionMutation = useMutation({
+    mutationFn: (exceptionId: string) => ledgerApi.discardException(exceptionId, idToken),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: exceptionsQueryKey }),
+  });
+  const discardException = async (exceptionId: string) => {
+    await discardExceptionMutation.mutateAsync(exceptionId);
+  };
+  const readExceptionRaw = (exceptionId: string) => ledgerApi.rawException(exceptionId, idToken);
+
+  const monthEvents = useMemo(
+    () => events.filter((event) => monthKey(eventDate(event)) === selectedMonth),
+    [events, selectedMonth],
+  );
+  const spendEvents = useMemo(
+    () => monthEvents.filter((event) => event.status !== "rejected"),
+    [monthEvents],
+  );
+  const spentMinor = spendEvents.reduce((sum, event) => sum + event.amount.amountMinor, 0);
+  const uncertainMinor = spendEvents
+    .filter((event) => event.status === "needs_review")
+    .reduce((sum, event) => sum + event.amount.amountMinor, 0);
+  const upcomingMinor = plan.upcomingPayments.reduce((sum, payment) => sum + payment.amountMinor, 0);
+  const remainingMinor = plan.incomeMinor - spentMinor - upcomingMinor;
+  const isCurrentMonth = selectedMonth === monthKey(now);
+  const daysInMonth = new Date(
+    Number(selectedMonth.slice(0, 4)),
+    Number(selectedMonth.slice(5, 7)),
+    0,
+  ).getDate();
+  const elapsedDays = isCurrentMonth ? dayInZone(now) : daysInMonth;
+  const projectedMinor =
+    Math.round((spentMinor / Math.max(elapsedDays, 1)) * daysInMonth) + upcomingMinor;
+  const projectedRemainingMinor = plan.incomeMinor - projectedMinor;
+  const spendPercent = plan.incomeMinor > 0 ? Math.round((spentMinor / plan.incomeMinor) * 100) : 0;
+  const risk =
+    plan.incomeMinor > 0 && projectedRemainingMinor < 0
+      ? "danger"
+      : spendPercent >= 70
+        ? "watch"
+        : "steady";
+
+  const savePlan = async (nextPlan: MonthlyPlan) => {
+    const saved = demoMode
+      ? nextPlan
+      : await ledgerApi.saveMonthlyPlan(selectedMonth, nextPlan, idToken);
+    queryClient.setQueryData(monthlyPlanQueryKey(selectedMonth), saved);
+    await queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
+  };
+
+  const reviewLargest = () => {
+    setMovementSort("largest");
+    setTab("movements");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  return (
+    <>
+      <AppShell
+        tab={tab}
+        onTabChange={setTab}
+        month={selectedMonth}
+        onMonthChange={setSelectedMonth}
+        syncing={loading}
+        refreshing={loading || planLoading}
+        onRefresh={refresh}
+        showSignOut={!demoMode}
+        onSignOut={onSignOut}
+        error={error}
+      >
+        {tab === "summary" ? (
+          <SummaryView
+            month={selectedMonth}
+            plan={plan}
+            loading={planLoading}
+            loadError={planLoadError}
+            onRetry={() => {
+              void monthlyPlanQuery.refetch();
+            }}
+            spentMinor={spentMinor}
+            uncertainMinor={uncertainMinor}
+            upcomingMinor={upcomingMinor}
+            remainingMinor={remainingMinor}
+            projectedRemainingMinor={projectedRemainingMinor}
+            spendPercent={spendPercent}
+            isCurrentMonth={isCurrentMonth}
+            risk={risk}
+            onEditIncome={() => setEditingIncome(true)}
+            onAddPayment={() => setEditingPayment(null)}
+            onEditPayment={(payment) => setEditingPayment(payment)}
+            onReviewLargest={reviewLargest}
+          />
+        ) : (
+          <MovementsView
+            events={monthEvents}
+            loading={loading}
+            sort={movementSort}
+            onSortChange={setMovementSort}
+            onOpen={setActiveEvent}
+            exceptions={exceptions}
+            onRetryException={retryException}
+            onDiscardException={discardException}
+            onReadExceptionRaw={readExceptionRaw}
+            onImport={() => setImportOpen(true)}
+          />
+        )}
+      </AppShell>
+
+      {editingIncome && (
+        <IncomeSheet
+          month={selectedMonth}
+          incomeMinor={plan.incomeMinor}
+          onClose={() => setEditingIncome(false)}
+          onSave={async (incomeMinor) => {
+            await savePlan({ ...plan, month: selectedMonth, configured: true, incomeMinor });
+            setEditingIncome(false);
+          }}
+        />
+      )}
+      {editingPayment !== undefined && (
+        <PaymentSheet
+          payment={editingPayment ?? undefined}
+          onClose={() => setEditingPayment(undefined)}
+          onSave={async (payment) => {
+            const existing = plan.upcomingPayments.filter((item) => item.id !== payment.id);
+            await savePlan({
+              ...plan,
+              upcomingPayments: [...existing, payment].sort((a, b) => a.dueDay - b.dueDay),
+            });
+            setEditingPayment(undefined);
+          }}
+          onDelete={
+            editingPayment
+              ? async () => {
+                  await savePlan({
+                    ...plan,
+                    upcomingPayments: plan.upcomingPayments.filter(
+                      (item) => item.id !== editingPayment.id,
+                    ),
+                  });
+                  setEditingPayment(undefined);
+                }
+              : undefined
+          }
+        />
+      )}
+      {activeEvent && (
+        <EventSheet
+          event={activeEvent}
+          idToken={idToken}
+          demoMode={demoMode}
+          onClose={() => setActiveEvent(undefined)}
+          onVerified={setActiveEvent}
+        />
+      )}
+      {importOpen && (
+        <SantanderImportSheet
+          idToken={idToken}
+          onClose={() => setImportOpen(false)}
+          onApplied={() => {
+            setImportOpen(false);
+            void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+          }}
+        />
+      )}
+    </>
+  );
+}

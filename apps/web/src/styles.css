@@ -263,10 +263,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .app-content { padding-bottom: 60px; }
   .topbar { height: 78px; }
   .mobile-tabs { display: none; }
-  .desktop-tabs { display: flex; justify-content: center; width: max-content; margin: 22px auto 0; padding: 4px; border: 1px solid var(--line); border-radius: 13px; background: #e9e3da; }
+  .desktop-tabs { display: flex; justify-content: center; width: max-content; margin: 18px auto 8px; padding: 4px; border: 1px solid var(--line); border-radius: 13px; background: #e9e3da; }
   .desktop-tabs button { min-width: 150px; color: var(--ink-soft); padding: 9px 18px; }
   .desktop-tabs button.active { color: var(--ink); background: var(--paper); box-shadow: 0 2px 8px #2e28220f; }
-  .month-selector { max-width: 460px; margin: 0 auto; }
+  .month-selector { max-width: 460px; margin: 0 auto; border-bottom: 0; }
   .spend-hero { padding-top: 45px; }
   .spend-heading h1 { font-size: 38px; }
   .hero-amount { margin-top: 32px; font-size: 82px; }
