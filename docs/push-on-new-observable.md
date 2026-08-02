@@ -2,7 +2,7 @@
 
 ## Estado
 
-Primera versión operativa: Olbia puede enviar una notificación Web Push cuando se registra un **nuevo evento observado** (correo o Apple Pay), usando Declarative Web Push en la app instalada en la pantalla de inicio.
+Primera versión operativa: Olbia envía una notificación Web Push cuando se registra un **nuevo evento observado** (correo o Apple Pay), usando Declarative Web Push en la app instalada en la pantalla de inicio. Ese aviso reemplaza el correo SES de movimiento observado; SES queda reservado a excepciones de ingestión.
 
 El push diario de balance permanece documentado como exploración en el historial del repositorio; esta V1 cubre sólo el aviso al registrar un movimiento.
 

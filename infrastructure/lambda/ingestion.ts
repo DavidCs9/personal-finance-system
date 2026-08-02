@@ -155,15 +155,6 @@ const ingest = async (job: IngestionJob): Promise<void> => {
     return;
   }
   try {
-    await notifyObservedPurchase(purchase);
-  } catch (error) {
-    console.error(JSON.stringify({
-      message: 'Unable to send observed-movement alert',
-      eventId: purchase.id,
-      error: errorMessage(error),
-    }));
-  }
-  try {
     await notifyObservedPurchaseByPush(purchase);
   } catch (error) {
     console.error(JSON.stringify({
@@ -262,22 +253,6 @@ const notifyIngestionException = async (exception: IngestionExceptionAlertInput)
     Message: {
       Subject: { Data: alert.subject },
       Body: { Text: { Data: alert.body } },
-    },
-  }));
-};
-
-const notifyObservedPurchase = async (purchase: { readonly institution: string; readonly eventType: string; readonly amount: { readonly amountMinor: number; readonly currency: string }; readonly merchantRaw: string }): Promise<void> => {
-  const addresses = configuredAlertAddresses();
-  if (!addresses) {
-    console.info(JSON.stringify({ message: 'Purchase alert skipped until SES sender and recipient are configured.' }));
-    return;
-  }
-  await ses.send(new SendEmailCommand({
-    Source: addresses.source,
-    Destination: { ToAddresses: [addresses.destination] },
-    Message: {
-      Subject: { Data: `Movimiento observado: ${purchase.institution}` },
-      Body: { Text: { Data: `${purchase.merchantRaw}: ${(purchase.amount.amountMinor / 100).toFixed(2)} ${purchase.amount.currency}` } },
     },
   }));
 };

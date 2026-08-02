@@ -39,12 +39,12 @@
 - La UI es una SPA de React en S3 + CloudFront. La API es API Gateway HTTP API + Lambdas con autorización JWT de Cognito.
 - Cognito tiene un único usuario administrado, sin registro público y sin MFA por ahora.
 - Una regla de recepción de SES guarda primero el MIME y luego publica su puntero en SQS; una Lambda de ingestión persiste metadatos, deduplica y parsea. La cola tiene una DLQ.
-- Amazon SES notifica cada evento observado inicialmente. La política puede cambiar a alertas por excepción sin modificar la ingestión.
-- Además, si el usuario activó Web Push, el mismo alta de evento (correo o Apple Pay) puede enviar un aviso al dispositivo. Detalle en [Avisos push de movimientos observados](push-on-new-observable.md).
+- Amazon SES sólo alerta excepciones de ingestión (parser fallido, origen no soportado, datos incompletos). Los movimientos aceptados no generan correo.
+- Si el usuario activó Web Push, el alta de un evento nuevo (correo o Apple Pay) envía un aviso al dispositivo. Detalle en [Avisos push de movimientos observados](push-on-new-observable.md).
 - El monitoreo V1 se limita a fallos de recepción, mensajes en DLQ y errores persistentes de ingestión.
 - Ninguna Lambda usa concurrencia reservada. Los endpoints públicos limitan tráfico en API Gateway para conservar la concurrencia compartida de la cuenta.
 
 ## Calidad y salida de V1
 
 - Los parsers se prueban con fixtures `.eml` anonimizadas y fieles a los formatos reales; los correos reales no se versionan.
-- V1 está lista cuando los flujos de ambos bancos capturan una compra una sola vez, conservan su fuente, envían la alerta, la muestran en UI y hacen recuperables los fallos de parser.
+- V1 está lista cuando los flujos de ambos bancos capturan una compra una sola vez, conservan su fuente, avisan por push si está activo, la muestran en UI y hacen recuperables los fallos de parser.
