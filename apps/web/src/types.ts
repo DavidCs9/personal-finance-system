@@ -44,6 +44,7 @@ export interface ManualEventInput {
 
 export interface EventFeed {
   readonly events: readonly PurchaseEvent[];
+  readonly msiRelated: readonly PurchaseEvent[];
 }
 
 export interface IngestionException {

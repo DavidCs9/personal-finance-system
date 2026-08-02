@@ -107,6 +107,12 @@ export class PersonalFinanceV1Stack extends Stack {
       sortKey: { name: 'GSI2SK', type: dynamodb.AttributeType.STRING },
       projectionType: dynamodb.ProjectionType.ALL,
     });
+    metadataTable.addGlobalSecondaryIndex({
+      indexName: 'GSI3',
+      partitionKey: { name: 'GSI3PK', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'GSI3SK', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
 
     const deadLetterQueue = new sqs.Queue(this, 'IngestionDeadLetterQueue', {
       encryption: sqs.QueueEncryption.KMS,

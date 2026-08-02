@@ -42,6 +42,9 @@ describe('observed event persistence', () => {
       PK: 'EVENT#apple-event-1',
       SK: 'EVENT',
       GSI2PK: 'RECON#santander_mx#card_purchase#MXN#11500',
+      GSI3PK: 'MONTH#2026-08',
+      GSI3SK: '2026-08-02T01:30:00.000Z#apple-event-1',
+      spendMonth: '2026-08',
     });
   });
 

@@ -182,8 +182,8 @@ export const ledgerApi = {
     if (!session) throw new Error("No se completó el cambio de contraseña.");
     return session;
   },
-  async listEvents(idToken: string): Promise<EventFeed> {
-    return request<EventFeed>("/events", idToken);
+  async listEvents(idToken: string, month: string): Promise<EventFeed> {
+    return request<EventFeed>(`/events?month=${encodeURIComponent(month)}`, idToken);
   },
   async listExceptions(idToken: string): Promise<{ exceptions: readonly IngestionException[] }> {
     return request<{ exceptions: readonly IngestionException[] }>("/exceptions", idToken);

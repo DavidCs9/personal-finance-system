@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { GetCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { eventMonthIndexKeys } from './event-month-index.js';
 
 export type CaptureSource =
   | 'email'
@@ -298,6 +299,11 @@ export const saveObservedEvent = async (input: SaveObservedEventInput): Promise<
             GSI1SK: input.event.receivedAt,
             GSI2PK: reconciliationPartition(input.event),
             GSI2SK: `${input.reconciliationAt}#${eventId}`,
+            ...eventMonthIndexKeys({
+              eventId,
+              occurredAt: input.event.occurredAt,
+              receivedAt: input.event.receivedAt,
+            }),
             reconciliationAt: input.reconciliationAt,
             entityType: 'observed_purchase',
             payload: {
