@@ -44,13 +44,11 @@ jobs:
   probe-email-textract:
     name: probe-email-textract
     needs: quality
-    # OIDC trust is currently main-only until PersonalFinanceCiBootstrap is redeployed
-    # with pull_request support. On PRs we still attempt the probe (non-blocking).
+    # Needs GitHub OIDC. Until PersonalFinanceCiBootstrap is redeployed with
+    # pull_request trust, this runs on main / workflow_dispatch only.
     if: >
-      github.event_name == 'pull_request' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    continue-on-error: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
