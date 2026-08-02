@@ -225,6 +225,7 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
       <Brand />
       <div className="top-actions">
         <span className="sync-state"><i />{loading ? "Sincronizando" : "Al día"}</span>
+        {tab === "summary" && <button className={`refresh-button${loading || planLoading ? " refreshing" : ""}`} type="button" onClick={refreshSummary} disabled={loading || planLoading} aria-label="Actualizar resumen" title="Actualizar resumen">↻</button>}
         {!demoMode && <button className="text-button" onClick={onSignOut}>Salir</button>}
       </div>
     </header>
@@ -255,8 +256,6 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
       onAddPayment={() => setEditingPayment(null)}
       onEditPayment={(payment) => setEditingPayment(payment)}
       onReviewLargest={reviewLargest}
-      onRefresh={refreshSummary}
-      refreshing={loading || planLoading}
     /> : <Movements
       month={selectedMonth}
       onMonthChange={setSelectedMonth}
@@ -348,15 +347,13 @@ interface SummaryProps {
   readonly onAddPayment: () => void;
   readonly onEditPayment: (payment: PlannedPayment) => void;
   readonly onReviewLargest: () => void;
-  readonly onRefresh: () => void;
-  readonly refreshing: boolean;
 }
 
 function Summary(props: SummaryProps) {
   const hasIncome = props.plan.configured && props.plan.incomeMinor > 0;
   const paymentMonth = new Intl.DateTimeFormat("es-MX", { month: "short", timeZone: "UTC" }).format(monthDate(props.month)).replace(".", "").toUpperCase();
   return <section className={`summary-view risk-${props.risk}`}>
-    <div className="summary-tools"><MonthSelector value={props.month} onChange={props.onMonthChange} /><button className="refresh-button" type="button" onClick={props.onRefresh} disabled={props.refreshing}>{props.refreshing ? "Actualizando…" : "↻ Actualizar"}</button></div>
+    <MonthSelector value={props.month} onChange={props.onMonthChange} />
     {props.loading ? <section className="setup-card plan-loading">
       <p className="eyebrow">CONFIGURACIÓN MENSUAL</p>
       <h1>Cargando este mes…</h1>
