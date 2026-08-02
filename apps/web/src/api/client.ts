@@ -6,6 +6,8 @@ interface LedgerRuntimeConfig {
   readonly cognitoUserPoolId: string;
   readonly cognitoUserPoolClientId: string;
   readonly region: string;
+  readonly vapidPublicKey?: string;
+  readonly webAppUrl?: string;
 }
 
 interface CognitoChallenge {
@@ -217,6 +219,36 @@ export const ledgerApi = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ decisions }),
+    });
+  },
+  vapidPublicKey(): string {
+    const key = config().vapidPublicKey;
+    if (!key || key === "pending") throw new Error("La clave de avisos todavía no está disponible.");
+    return key;
+  },
+  async listPushSubscriptions(idToken: string): Promise<{
+    subscriptions: readonly { readonly subscriptionId: string; readonly contentMode: "amounts" | "private" }[];
+  }> {
+    return request("/push/subscriptions", idToken);
+  },
+  async savePushSubscription(
+    subscriptionId: string,
+    subscription: { readonly endpoint: string; readonly keys: { readonly p256dh: string; readonly auth: string } },
+    idToken: string,
+  ): Promise<void> {
+    await request(`/push/subscriptions/${encodeURIComponent(subscriptionId)}`, idToken, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        endpoint: subscription.endpoint,
+        keys: subscription.keys,
+        contentMode: "amounts",
+      }),
+    });
+  },
+  async deletePushSubscription(subscriptionId: string, idToken: string): Promise<void> {
+    await request(`/push/subscriptions/${encodeURIComponent(subscriptionId)}`, idToken, {
+      method: "DELETE",
     });
   },
 };

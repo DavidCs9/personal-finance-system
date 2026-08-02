@@ -130,9 +130,49 @@ export class PersonalFinanceV1Stack extends Stack {
       memorySize: 256,
       bundling: { minify: true, sourceMap: true, target: 'node24' },
     };
+    const pushLambdaDefaults = {
+      ...lambdaDefaults,
+      bundling: {
+        ...lambdaDefaults.bundling,
+        nodeModules: ['web-push'],
+      },
+    };
+
+    const webAppUrl = `https://${webDomainName}`;
+    const vapidSecret = new secretsmanager.Secret(this, 'WebPushVapidSecret', {
+      description: 'VAPID key pair used to authenticate Olbia Web Push notifications.',
+      secretObjectValue: {
+        publicKey: cdk.SecretValue.unsafePlainText('pending'),
+        privateKey: cdk.SecretValue.unsafePlainText('pending'),
+        subject: cdk.SecretValue.unsafePlainText('mailto:alerts@finance.castrodavid.dev'),
+      },
+    });
+    const vapidKeysFunction = new NodejsFunction(this, 'VapidKeysFunction', {
+      ...lambdaDefaults,
+      functionName: 'personal-finance-v1-vapid-keys',
+      logGroup: this.createLogGroup('VapidKeysLogGroup', 'personal-finance-v1-vapid-keys'),
+      entry: path.join(__dirname, '..', 'lambda', 'vapid-keys.ts'),
+      handler: 'handler',
+      description: 'Generates durable VAPID keys for Web Push once per environment.',
+      timeout: Duration.minutes(2),
+    });
+    vapidSecret.grantRead(vapidKeysFunction);
+    vapidSecret.grantWrite(vapidKeysFunction);
+    const vapidKeysProvider = new cr.Provider(this, 'VapidKeysProvider', {
+      onEventHandler: vapidKeysFunction,
+      logGroup: this.createLogGroup('VapidKeysProviderLogGroup', 'personal-finance-v1-vapid-keys-provider'),
+    });
+    const vapidKeys = new cdk.CustomResource(this, 'WebPushVapidKeys', {
+      serviceToken: vapidKeysProvider.serviceToken,
+      properties: {
+        SecretArn: vapidSecret.secretArn,
+        Subject: 'mailto:alerts@finance.castrodavid.dev',
+      },
+    });
+    const vapidPublicKey = vapidKeys.getAttString('PublicKey');
 
     const ingestionFunction = new NodejsFunction(this, 'IngestionFunction', {
-      ...lambdaDefaults,
+      ...pushLambdaDefaults,
       functionName: 'personal-finance-v1-ingestion',
       logGroup: this.createLogGroup('IngestionLogGroup', 'personal-finance-v1-ingestion'),
       entry: path.join(__dirname, '..', 'lambda', 'ingestion.ts'),
@@ -142,10 +182,13 @@ export class PersonalFinanceV1Stack extends Stack {
         ...dataStorageEnvironment,
         ALERT_SENDER_EMAIL: senderEmail.valueAsString,
         ALERT_RECIPIENT_EMAIL: alertRecipientEmail.valueAsString,
+        VAPID_SECRET_ARN: vapidSecret.secretArn,
+        WEB_APP_URL: webAppUrl,
       },
     });
     rawEmailBucket.grantRead(ingestionFunction);
     metadataTable.grantReadWriteData(ingestionFunction);
+    vapidSecret.grantRead(ingestionFunction);
     ingestionFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ses:SendEmail'],
       resources: ['*'],
@@ -299,7 +342,7 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     const applePayCaptureFunction = new NodejsFunction(this, 'ApplePayCaptureFunction', {
-      ...lambdaDefaults,
+      ...pushLambdaDefaults,
       functionName: 'personal-finance-v1-apple-pay-capture',
       logGroup: this.createLogGroup('ApplePayCaptureLogGroup', 'personal-finance-v1-apple-pay-capture'),
       entry: path.join(__dirname, '..', 'lambda', 'apple-pay-capture.ts'),
@@ -308,10 +351,13 @@ export class PersonalFinanceV1Stack extends Stack {
       environment: {
         METADATA_TABLE_NAME: metadataTable.tableName,
         APPLE_PAY_CAPTURE_SECRET_ARN: applePayCaptureSecret.secretArn,
+        VAPID_SECRET_ARN: vapidSecret.secretArn,
+        WEB_APP_URL: webAppUrl,
       },
     });
     metadataTable.grantReadWriteData(applePayCaptureFunction);
     applePayCaptureSecret.grantRead(applePayCaptureFunction);
+    vapidSecret.grantRead(applePayCaptureFunction);
 
     const httpApi = new apigatewayv2.HttpApi(this, 'HttpApi', {
       apiName: 'personal-finance-v1',
@@ -351,6 +397,9 @@ export class PersonalFinanceV1Stack extends Stack {
       'PUT /months/{month}',
       'POST /imports/santander/preview',
       'POST /imports/santander/{importId}/apply',
+      'GET /push/subscriptions',
+      'PUT /push/subscriptions/{subscriptionId}',
+      'DELETE /push/subscriptions/{subscriptionId}',
     ]) {
       httpApi.addRoutes({
         path: route.split(' ')[1],
@@ -406,6 +455,8 @@ export class PersonalFinanceV1Stack extends Stack {
           cognitoUserPoolId: userPool.userPoolId,
           cognitoUserPoolClientId: userPoolClient.userPoolClientId,
           region: this.region,
+          vapidPublicKey,
+          webAppUrl,
         })};`),
       ],
       destinationBucket: webBucket,
@@ -450,6 +501,7 @@ export class PersonalFinanceV1Stack extends Stack {
     new cdk.CfnOutput(this, 'HttpApiUrl', { value: httpApi.apiEndpoint });
     new cdk.CfnOutput(this, 'ApplePayCaptureUrl', { value: `${httpApi.apiEndpoint}/captures/apple-pay` });
     new cdk.CfnOutput(this, 'ApplePayCaptureSecretArn', { value: applePayCaptureSecret.secretArn });
+    new cdk.CfnOutput(this, 'WebPushVapidSecretArn', { value: vapidSecret.secretArn });
     new cdk.CfnOutput(this, 'WebDistributionUrl', { value: `https://${distribution.distributionDomainName}` });
     new cdk.CfnOutput(this, 'WebCustomDomainUrl', { value: `https://${webDomainName}` });
     new cdk.CfnOutput(this, 'EmailReceiptErrorsAlarmName', { value: receiptErrorAlarm.alarmName });

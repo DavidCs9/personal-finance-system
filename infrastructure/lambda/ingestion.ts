@@ -1,14 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { SendEmailCommand, SESClient } from '@aws-sdk/client-ses';
 import { DynamoDBDocumentClient, PutCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { SQSHandler } from 'aws-lambda';
 import { ingestionExceptionAlert, type IngestionExceptionAlertInput } from './ingestion-notifications.js';
 import { saveObservedEvent } from './observed-events.js';
+import { notifyObservedPurchasePush } from './push-notify.js';
 
 const s3 = new S3Client({});
 const ses = new SESClient({});
+const secrets = new SecretsManagerClient({});
 const database = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
 });
@@ -160,6 +163,15 @@ const ingest = async (job: IngestionJob): Promise<void> => {
       error: errorMessage(error),
     }));
   }
+  try {
+    await notifyObservedPurchaseByPush(purchase);
+  } catch (error) {
+    console.error(JSON.stringify({
+      message: 'Unable to send observed-movement push',
+      eventId: purchase.id,
+      error: errorMessage(error),
+    }));
+  }
 };
 
 const claimIgnoredSource = async (dedupeKey: string): Promise<boolean> => {
@@ -267,6 +279,35 @@ const notifyObservedPurchase = async (purchase: { readonly institution: string; 
       Subject: { Data: `Movimiento observado: ${purchase.institution}` },
       Body: { Text: { Data: `${purchase.merchantRaw}: ${(purchase.amount.amountMinor / 100).toFixed(2)} ${purchase.amount.currency}` } },
     },
+  }));
+};
+
+const notifyObservedPurchaseByPush = async (purchase: {
+  readonly id: string;
+  readonly institution: string;
+  readonly amount: { readonly amountMinor: number; readonly currency: string };
+  readonly merchantRaw: string;
+}): Promise<void> => {
+  const vapidSecretArn = process.env.VAPID_SECRET_ARN;
+  const navigateUrl = process.env.WEB_APP_URL;
+  if (!vapidSecretArn || !navigateUrl) {
+    console.info(JSON.stringify({ message: 'Purchase push skipped until VAPID secret and web app URL are configured.' }));
+    return;
+  }
+  const result = await notifyObservedPurchasePush({
+    database,
+    tableName,
+    secrets,
+    vapidSecretArn,
+    navigateUrl,
+    purchase,
+  });
+  console.info(JSON.stringify({
+    message: 'Observed-purchase push finished',
+    eventId: purchase.id,
+    sent: result.sent,
+    expired: result.expired,
+    failed: result.failed,
   }));
 };
 

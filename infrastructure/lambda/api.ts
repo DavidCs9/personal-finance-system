@@ -5,6 +5,13 @@ import { BatchGetCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryC
 import type { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan, type MonthlyPlanInput } from './monthly-plan.js';
 import { reconciliationPartition } from './observed-events.js';
+import {
+  deletePushSubscription,
+  InvalidPushSubscriptionError,
+  listOwnerPushSubscriptions,
+  parsePushSubscriptionInput,
+  savePushSubscription,
+} from './push-subscriptions.js';
 import { InvalidSantanderCsvError, merchantsMatch, parseSantanderCsv, santanderApplyAction, santanderImportCompletionUpdate, type SantanderCsvDocument, type SantanderCsvRow, type SantanderReconciliationDecision, type SantanderReconciliationStatus } from './santander-csv.js';
 
 const database = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
@@ -26,6 +33,52 @@ interface SantanderPreviewRow extends SantanderCsvRow {
 
 export const handler: APIGatewayProxyHandlerV2 = async (event) => {
   try {
+    if (event.requestContext.http.method === 'GET' && event.rawPath === '/push/subscriptions') {
+      const subscriptions = await listOwnerPushSubscriptions({
+        database,
+        tableName,
+        owner: principal(event),
+      });
+      return response(200, {
+        subscriptions: subscriptions.map((subscription) => ({
+          subscriptionId: subscription.subscriptionId,
+          contentMode: subscription.contentMode,
+          createdAt: subscription.createdAt,
+          updatedAt: subscription.updatedAt,
+        })),
+      });
+    }
+    const pushSubscriptionId = event.pathParameters?.subscriptionId;
+    if (pushSubscriptionId && event.rawPath.startsWith('/push/subscriptions/')) {
+      const owner = principal(event);
+      if (event.requestContext.http.method === 'PUT') {
+        const input = parsePushSubscriptionInput(requestBody(event), pushSubscriptionId);
+        const saved = await savePushSubscription({
+          database,
+          tableName,
+          owner,
+          endpoint: input.endpoint,
+          keys: input.keys,
+          contentMode: input.contentMode,
+        });
+        return response(200, {
+          subscriptionId: saved.subscriptionId,
+          contentMode: saved.contentMode,
+          createdAt: saved.createdAt,
+          updatedAt: saved.updatedAt,
+        });
+      }
+      if (event.requestContext.http.method === 'DELETE') {
+        await deletePushSubscription({
+          database,
+          tableName,
+          owner,
+          subscriptionId: pushSubscriptionId.toLowerCase(),
+        });
+        return response(200, { deleted: true });
+      }
+      return response(405, { message: 'Method not allowed.' });
+    }
     if (event.requestContext.http.method === 'POST' && event.rawPath === '/imports/santander/preview') {
       return response(200, await previewSantanderImport(requestBody(event), principal(event)));
     }
@@ -77,7 +130,11 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     }
     return response(405, { message: 'Method not allowed.' });
   } catch (error) {
-    if (error instanceof InvalidMonthlyPlanError || error instanceof InvalidSantanderCsvError) {
+    if (
+      error instanceof InvalidMonthlyPlanError
+      || error instanceof InvalidSantanderCsvError
+      || error instanceof InvalidPushSubscriptionError
+    ) {
       return response(400, { message: error.message });
     }
     console.error('API request failed', { message: errorMessage(error) });
