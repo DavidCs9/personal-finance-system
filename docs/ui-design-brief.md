@@ -2,6 +2,8 @@
 
 Olbia es un tablero personal de gasto mensual. Su promesa principal es responder, de inmediato: cuánto he gastado, qué porcentaje representa, cuánto me queda después de compromisos próximos y cómo cerraré el mes si mantengo el mismo ritmo.
 
+Las reglas operativas que deben seguir futuras implementaciones del frontend están en [`apps/web/AGENTS.md`](../apps/web/AGENTS.md).
+
 ## Jerarquía de información
 
 1. **Has gastado** — la cifra dominante.
