@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
-
-process.env.METADATA_TABLE_NAME = 'test-metadata-table';
-const { emailParsers, shouldIgnoreEmail } = await import('../lambda/ingestion.js');
+import { detectEmailInstitution, shouldIgnoreEmail } from '@finance/ingestion';
 
 const forwardedSantanderPurchase = `From: David Castro <david@example.com>\r
 To: alertas@inbound.finance.example.com\r
@@ -26,20 +24,12 @@ Content-Transfer-Encoding: quoted-printable\r
 --forwarded-message--\r
 `;
 
-describe('email parsers', () => {
+describe('email ingestion routing', () => {
   it('ignores Gmail forwarding confirmation messages', () => {
     expect(shouldIgnoreEmail('From: Gmail Team <forwarding-noreply@google.com>\r\nSubject: Gmail Forwarding Confirmation - Receive Mail\r\n\r\nConfirmation instructions')).toBe(true);
   });
 
-  it('parses a quoted-printable Windows-1252 Santander alert forwarded through a multipart email', () => {
-    const parser = emailParsers.find((candidate) => candidate.institution === 'santander_mx');
-    expect(parser).toBeDefined();
-    expect(parser?.matches(forwardedSantanderPurchase)).toBe(true);
-    expect(parser?.parse(forwardedSantanderPurchase)).toMatchObject({
-      institution: 'santander_mx',
-      merchantRaw: 'ZARA CHIHUAHUA',
-      account: { lastFour: '6349' },
-      amount: { amountMinor: 11500, currency: 'MXN' },
-    });
+  it('detects a quoted-printable Windows-1252 Santander alert forwarded through a multipart email', () => {
+    expect(detectEmailInstitution(forwardedSantanderPurchase)).toBe('santander_mx');
   });
 });

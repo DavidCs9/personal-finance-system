@@ -11,7 +11,7 @@ The primary unit is not a final accounting transaction — it is an **observed e
 - Every alert or automation leaves an immutable observation with its source.
 - Multiple observations of the same purchase can be reconciled; none are deleted.
 - Ambiguous cases stay for human review. A purchase is never invented by inference.
-- Original MIME, Apple Pay payloads, fallback CSVs, and Amex statement text are retained encrypted before parsing.
+- Original MIME, Apple Pay payloads, fallback CSVs, statement PDFs, and Textract extractions are retained encrypted before mapping.
 - MSI schedules attach to the observed purchase: committed cuotas reduce remaining money until statement/CSV evidence marks them spent.
 
 That separates capture, evidence, reconciliation, and presentation — production-grade financial system discipline, applied to a single-user product.
@@ -68,7 +68,7 @@ Everything runs on AWS (`us-east-2`), defined with CDK in TypeScript. Deploys fr
 
 | Layer | Responsibility |
 | --- | --- |
-| Ingestion | Deduplicate, parse, persist metadata, and link evidence |
+| Ingestion | Deduplicate, extract via Textract, persist metadata, and link evidence |
 | Domain | Shared types, minor-unit money, cross-service rules |
 | API | Ledger, monthly plan, CSV reconciliation, Apple Pay observations |
 | Web | Mobile-first summary and movements with evidence |

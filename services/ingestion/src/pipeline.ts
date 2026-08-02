@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { maybeAutoAmexMsi, type IngestionException, type ObservedPurchase, type RawSourcePointer } from "@finance/domain";
 import { sha256 } from "./in-memory.js";
 import type {
-  CardPurchaseParser,
   Clock,
+  EmailPurchaseExtractor,
   EventNotifier,
   IdGenerator,
   IncomingEmail,
@@ -34,7 +34,7 @@ export class IngestionPipeline {
     private readonly dependencies: {
       readonly rawSources: RawSourceStore;
       readonly ledger: LedgerRepository;
-      readonly parsers: readonly CardPurchaseParser[];
+      readonly extractor: EmailPurchaseExtractor;
       readonly notifier: EventNotifier;
       readonly clock?: Clock;
       readonly ids?: IdGenerator;
@@ -50,15 +50,16 @@ export class IngestionPipeline {
       return { kind: "duplicate", dedupeKey };
     }
 
-    const parser = this.dependencies.parsers.find((candidate) => candidate.matches(email));
-    if (!parser) {
-      return this.createException(email, source, "unsupported_source", "No configured parser accepted this email.");
-    }
-
     try {
-      const parsed = parser.parse(email);
+      const parsed = await this.dependencies.extractor.extract(email);
       if (parsed.amount.amountMinor <= 0 || !parsed.amount.currency || !parsed.merchantRaw.trim()) {
-        return this.createException(email, source, "missing_required_data", "Parser returned incomplete event data.", parser.institution);
+        return this.createException(
+          email,
+          source,
+          "missing_required_data",
+          "Extractor returned incomplete event data.",
+          parsed.institution,
+        );
       }
 
       const autoMsi = maybeAutoAmexMsi({
@@ -89,7 +90,7 @@ export class IngestionPipeline {
         ingestedAt: this.clock.now().toISOString(),
         sourceMessageId: normaliseMessageId(email.sourceMessageId),
         source,
-        parserVersion: parser.version,
+        parserVersion: parsed.parserVersion,
         parseWarnings: parsed.parseWarnings ?? [],
         ...(autoMsi ? { msi: autoMsi } : {}),
       };
@@ -97,8 +98,12 @@ export class IngestionPipeline {
       await this.dependencies.notifier.notifyObservedPurchase(purchase);
       return { kind: "accepted", purchase };
     } catch (error) {
-      const details = error instanceof Error ? error.message : "Unknown parser failure";
-      return this.createException(email, source, "parser_failed", details, parser.institution);
+      const details = error instanceof Error ? error.message : "Unknown extractor failure";
+      const institution = error && typeof error === "object" && "institution" in error
+        && typeof (error as { institution?: unknown }).institution === "string"
+        ? (error as { institution: IngestionException["institution"] }).institution
+        : undefined;
+      return this.createException(email, source, "parser_failed", details, institution);
     }
   }
 

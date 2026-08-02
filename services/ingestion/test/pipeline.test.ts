@@ -1,19 +1,104 @@
 import { describe, expect, it } from "vitest";
+import type { Institution } from "@finance/domain";
 import {
-  AmexMxCardPurchaseParser,
-  AwsMxBillingStatementParser,
+  detectEmailInstitution,
+  documentTextForTextract,
   InMemoryLedgerRepository,
   InMemoryNotifier,
   InMemoryRawSourceStore,
   IngestionPipeline,
-  NuMxOutgoingTransferParser,
-  SantanderMxCardPurchaseParser,
+  mapTextractEmailPurchase,
+  type EmailPurchaseExtractor,
+  type IncomingEmail,
+  type ParsedPurchase,
+  type TextractEmailExtraction,
 } from "../src/index.js";
 
 const ids = (...values: string[]) => ({ next: () => values.shift() ?? "unexpected-id" });
 const fixedClock = { now: () => new Date("2026-08-01T18:00:00.000Z") };
 
-const createPipeline = () => {
+const fixtureAnswers: Record<string, TextractEmailExtraction["answers"]> = {
+  "amex-1@example.com": {
+    AMOUNT: "$347.00 MXN",
+    MERCHANT: "UBER *TRIP",
+    ACCOUNT_LAST_FOUR: "1234",
+    OCCURRED_AT: "2026-08-01T17:55:00Z",
+  },
+  "santander-1@example.com": {
+    AMOUNT: "$1,250.50 MXN",
+    MERCHANT: "CAFETERIA ROMA",
+    ACCOUNT_LAST_FOUR: "5678",
+    OCCURRED_AT: "2026-08-01T17:55:00Z",
+  },
+  "santander-unique-1@example.com": {
+    AMOUNT: "$52.36 M.N.",
+    MERCHANT: "LIBRERIA DEL CENTRO",
+    ACCOUNT_LAST_FOUR: "6349",
+    OCCURRED_AT: "31/07/2026",
+  },
+  "santander-html-1@example.com": {
+    AMOUNT: "$52.36 M.N.",
+    MERCHANT: "LIBRERIA DEL CENTRO",
+    ACCOUNT_LAST_FOUR: "6349",
+    OCCURRED_AT: "31/07/2026",
+  },
+  "nu-transfer-1@example.com": {
+    AMOUNT: "$2,139.00",
+    RECIPIENT: "Moneypool",
+    DATE: "31/JUL/2026",
+    TIME: "09:47",
+    TRANSFER_TYPE: "SPEI",
+    STATUS: "Completada",
+    REFERENCE: "310726",
+    FOLIO: "QUD7JAXQ4",
+    TRACKING_KEY: "NU3ADJ1PN3U499UASNLP4FJDQBU9",
+    COUNTERPARTY_INSTITUTION: "STP",
+    CLABE_LAST_FOUR: "7067",
+  },
+  "nu-transfer-html-1@example.com": {
+    AMOUNT: "$0.01",
+    RECIPIENT: "PERSONA DESTINATARIA",
+    DATE: "01/AGO/2026",
+    TIME: "16:06",
+    TRANSFER_TYPE: "SPEI",
+    STATUS: "Completada",
+    REFERENCE: "10826",
+    FOLIO: "QUFAS5PYN",
+    TRACKING_KEY: "NU3TESTTRACKINGKEY",
+    COUNTERPARTY_INSTITUTION: "SANTANDER",
+    CLABE_LAST_FOUR: "3649",
+  },
+  "aws-billing-2026-07@example.com": {
+    AMOUNT_MXN: "$55.84",
+    AWS_ACCOUNT_LAST_FOUR: "1926",
+    PAYMENT_CARD_LAST_FOUR: "6349",
+    BILLING_YEAR: "2026",
+    BILLING_MONTH: "7",
+  },
+};
+
+class FixtureTextractExtractor implements EmailPurchaseExtractor {
+  async extract(email: IncomingEmail): Promise<ParsedPurchase> {
+    const institution = detectEmailInstitution(email.mime);
+    if (!institution) {
+      throw Object.assign(new Error("No configured institution accepted this email."), {
+        institution: undefined as Institution | undefined,
+      });
+    }
+    const messageId = email.sourceMessageId?.replace(/^<|>$/g, "") ?? "";
+    const answers = fixtureAnswers[messageId];
+    if (!answers) {
+      throw Object.assign(new Error("Missing Textract fixture answers for test email."), { institution });
+    }
+    // Ensure MIME plumbing still produces document text for Textract.
+    if (!documentTextForTextract(email.mime).trim()) {
+      throw Object.assign(new Error("Email body is empty."), { institution });
+    }
+    return mapTextractEmailPurchase(institution, { answers });
+  }
+}
+
+const createPipeline = (extractor: EmailPurchaseExtractor = new FixtureTextractExtractor()) => {
   const rawSources = new InMemoryRawSourceStore();
   const ledger = new InMemoryLedgerRepository();
   const notifier = new InMemoryNotifier();
@@ -25,7 +110,7 @@ const createPipeline = () => {
       rawSources,
       ledger,
       notifier,
-      parsers: [new AmexMxCardPurchaseParser(), new SantanderMxCardPurchaseParser()],
+      extractor,
       clock: fixedClock,
       ids: ids("purchase-1", "exception-1"),
     }),
@@ -71,7 +156,7 @@ Content-Type: text/html; charset=utf-8\r
 </body></html>`;
 
 describe("IngestionPipeline", () => {
-  it("persists, parses and notifies a valid Amex purchase", async () => {
+  it("persists, maps Textract answers and notifies a valid Amex purchase", async () => {
     const { pipeline, ledger, rawSources, notifier } = createPipeline();
 
     const result = await pipeline.ingest({
@@ -89,20 +174,21 @@ describe("IngestionPipeline", () => {
       merchantRaw: "UBER *TRIP",
       amount: { amountMinor: 34700, currency: "MXN" },
       account: { lastFour: "1234" },
+      parserVersion: "amex-mx-card-purchase-textract-v1",
     });
-    expect(result.purchase.source.kind).not.toBe("apple_pay_shortcut");
-    if (result.purchase.source.kind !== "apple_pay_shortcut") {
+    expect(result.purchase.source).toMatchObject({ contentType: "message/rfc822" });
+    if ("bucket" in result.purchase.source && result.purchase.source.contentType === "message/rfc822") {
       expect(await rawSources.get(result.purchase.source)).toBe(amexEmail);
     }
     expect(ledger.purchases.size).toBe(1);
     expect(notifier.observedPurchases).toHaveLength(1);
   });
 
-  it("keeps the source and creates a review exception when a parser fails", async () => {
+  it("keeps the source and creates a review exception when Textract mapping fails", async () => {
     const { pipeline, ledger, rawSources, notifier } = createPipeline();
-    const malformed = `From: alertas@santander.com.mx\n\nSantander\nCompra por $99.99 MXN`;
+    const malformed = `From: alertas@santander.com.mx\nMessage-ID: <santander-missing@example.com>\n\nSantander\nCompra por $99.99 MXN`;
 
-    const result = await pipeline.ingest({ mime: malformed, receivedAt: "2026-08-01T17:56:00.000Z" });
+    const result = await pipeline.ingest({ mime: malformed, sourceMessageId: "<santander-missing@example.com>", receivedAt: "2026-08-01T17:56:00.000Z" });
 
     expect(result.kind).toBe("needs_review");
     if (result.kind !== "needs_review") return;
@@ -113,7 +199,7 @@ describe("IngestionPipeline", () => {
     expect(notifier.reportedExceptions).toHaveLength(1);
   });
 
-  it("parses a valid Santander purchase deterministically", async () => {
+  it("accepts a valid Santander purchase from Textract answers", async () => {
     const { pipeline } = createPipeline();
 
     const result = await pipeline.ingest({
@@ -132,7 +218,7 @@ describe("IngestionPipeline", () => {
     });
   });
 
-  it("prioritizes the Santander Unique Rewards purchase wording", async () => {
+  it("accepts Santander Unique Rewards wording via Textract answers", async () => {
     const { pipeline } = createPipeline();
 
     const result = await pipeline.ingest({
@@ -152,18 +238,8 @@ describe("IngestionPipeline", () => {
     });
   });
 
-  it("decodes a forwarded Santander quoted-printable HTML purchase", async () => {
-    const rawSources = new InMemoryRawSourceStore();
-    const ledger = new InMemoryLedgerRepository();
-    const notifier = new InMemoryNotifier();
-    const pipeline = new IngestionPipeline({
-      rawSources,
-      ledger,
-      notifier,
-      parsers: [new SantanderMxCardPurchaseParser()],
-      clock: fixedClock,
-      ids: ids("santander-html-1"),
-    });
+  it("decodes a forwarded Santander quoted-printable HTML purchase for Textract", async () => {
+    const { pipeline } = createPipeline();
 
     const result = await pipeline.ingest({
       mime: santanderQuotedPrintableHtmlEmail,
@@ -173,6 +249,7 @@ describe("IngestionPipeline", () => {
 
     expect(result.kind).toBe("accepted");
     if (result.kind !== "accepted") return;
+    expect(documentTextForTextract(santanderQuotedPrintableHtmlEmail)).toContain("LIBRERIA DEL CENTRO");
     expect(result.purchase).toMatchObject({
       institution: "santander_mx",
       eventType: "card_purchase",
@@ -180,22 +257,12 @@ describe("IngestionPipeline", () => {
       amount: { amountMinor: 5236, currency: "MXN" },
       account: { lastFour: "6349" },
       occurredAt: "2026-07-31T12:00:00.000Z",
-      parserVersion: "santander-mx-card-purchase-v2",
+      parserVersion: "santander-mx-card-purchase-textract-v1",
     });
   });
 
   it("captures a completed outgoing Nu SPEI transfer", async () => {
-    const rawSources = new InMemoryRawSourceStore();
-    const ledger = new InMemoryLedgerRepository();
-    const notifier = new InMemoryNotifier();
-    const pipeline = new IngestionPipeline({
-      rawSources,
-      ledger,
-      notifier,
-      parsers: [new NuMxOutgoingTransferParser()],
-      clock: fixedClock,
-      ids: ids("nu-transfer-1"),
-    });
+    const { pipeline } = createPipeline();
 
     const result = await pipeline.ingest({
       mime: nuTransferEmail,
@@ -222,18 +289,8 @@ describe("IngestionPipeline", () => {
     });
   });
 
-  it("decodes Nu's quoted-printable HTML without matching the Santander destination", async () => {
-    const rawSources = new InMemoryRawSourceStore();
-    const ledger = new InMemoryLedgerRepository();
-    const notifier = new InMemoryNotifier();
-    const pipeline = new IngestionPipeline({
-      rawSources,
-      ledger,
-      notifier,
-      parsers: [new SantanderMxCardPurchaseParser(), new NuMxOutgoingTransferParser()],
-      clock: fixedClock,
-      ids: ids("nu-transfer-html-1"),
-    });
+  it("routes Nu HTML ahead of Santander destination bank name", async () => {
+    const { pipeline } = createPipeline();
 
     const result = await pipeline.ingest({
       mime: nuQuotedPrintableHtmlEmail,
@@ -241,6 +298,7 @@ describe("IngestionPipeline", () => {
       receivedAt: "2026-08-01T22:07:01.094Z",
     });
 
+    expect(detectEmailInstitution(nuQuotedPrintableHtmlEmail)).toBe("nu_mx");
     expect(result.kind).toBe("accepted");
     if (result.kind !== "accepted") return;
     expect(result.purchase).toMatchObject({
@@ -254,22 +312,12 @@ describe("IngestionPipeline", () => {
       folio: "QUFAS5PYN",
       trackingKey: "NU3TESTTRACKINGKEY",
       occurredAt: "2026-08-01T22:06:00.000Z",
-      parserVersion: "nu-mx-outgoing-transfer-v2",
+      parserVersion: "nu-mx-outgoing-transfer-textract-v1",
     });
   });
 
   it("captures an AWS MXN billing statement as a card charge", async () => {
-    const rawSources = new InMemoryRawSourceStore();
-    const ledger = new InMemoryLedgerRepository();
-    const notifier = new InMemoryNotifier();
-    const pipeline = new IngestionPipeline({
-      rawSources,
-      ledger,
-      notifier,
-      parsers: [new AwsMxBillingStatementParser()],
-      clock: fixedClock,
-      ids: ids("aws-charge-1"),
-    });
+    const { pipeline } = createPipeline();
 
     const result = await pipeline.ingest({
       mime: awsBillingHtmlEmail,
@@ -288,7 +336,7 @@ describe("IngestionPipeline", () => {
       billingPeriod: "2026-07",
       paymentMethodLastFour: "6349",
       receivedAt: "2026-08-01T22:30:00.000Z",
-      parserVersion: "aws-mx-billing-statement-v1",
+      parserVersion: "aws-mx-billing-statement-textract-v1",
     });
   });
 

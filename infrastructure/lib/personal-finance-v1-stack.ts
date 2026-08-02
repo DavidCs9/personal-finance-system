@@ -185,7 +185,8 @@ export class PersonalFinanceV1Stack extends Stack {
       logGroup: this.createLogGroup('IngestionLogGroup', 'personal-finance-v1-ingestion'),
       entry: path.join(__dirname, '..', 'lambda', 'ingestion.ts'),
       handler: 'handler',
-      description: 'Processes SES-received email, deduplicates it, and creates observed events.',
+      timeout: Duration.minutes(1),
+      description: 'Processes SES-received email via Textract AnalyzeDocument, deduplicates it, and creates observed events.',
       environment: {
         ...dataStorageEnvironment,
         ALERT_SENDER_EMAIL: senderEmail.valueAsString,
@@ -195,12 +196,17 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     rawEmailBucket.grantRead(ingestionFunction);
+    rawEmailBucket.grantPut(ingestionFunction);
     metadataTable.grantReadWriteData(ingestionFunction);
     vapidSecret.grantRead(ingestionFunction);
     ingestionFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ses:SendEmail'],
       resources: ['*'],
       conditions: { StringEquals: { 'ses:FromAddress': senderEmail.valueAsString } },
+    }));
+    ingestionFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['textract:AnalyzeDocument'],
+      resources: ['*'],
     }));
     ingestionFunction.addEventSourceMapping('IngestionQueueMapping', {
       eventSourceArn: ingestionQueue.queueArn,

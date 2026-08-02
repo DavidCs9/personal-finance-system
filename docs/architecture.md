@@ -153,9 +153,9 @@ _Loads jobs, reports batch failures_`"]
     dedupe["`**Source Dedupe**
 «Component: TypeScript»
 _Claims message-id + SHA-256_`"]
-    parsers["`**Email Parsers**
+    textractEmail["`**Email Textract**
 «Component: TypeScript»
-_Amex, Santander, Nu, AWS Billing_`"]
+_PDF body + AnalyzeDocument QUERIES_`"]
     reconcile["`**Observed Event Writer**
 «Component: TypeScript»
 _Persists observations, links matches_`"]
@@ -170,13 +170,18 @@ _SES alerts for ingestion failures_`"]
 _Notifies on accepted events_`"]
   end
 
+  textractApi["`**Amazon Textract**
+«Software System»`"]
+
   queue -->|"Delivers jobs"| consumer
   consumer -->|"Reads MIME"| raw
   consumer -->|"Claims source identity"| dedupe
   dedupe -->|"Writes dedupe claim"| ddb
-  consumer -->|"Selects parser"| parsers
-  parsers -->|"Parsed purchase"| reconcile
-  parsers -->|"Parse failure"| exceptions
+  consumer -->|"Routes institution"| textractEmail
+  textractEmail -->|"AnalyzeDocument QUERIES"| textractApi
+  textractEmail -->|"Persists .textract.json"| raw
+  textractEmail -->|"Mapped purchase"| reconcile
+  textractEmail -->|"Extraction failure"| exceptions
   reconcile -->|"Writes event + observation"| ddb
   reconcile -->|"New accepted event"| push
   exceptions -->|"Writes exception"| ddb
@@ -184,8 +189,8 @@ _Notifies on accepted events_`"]
   mail -->|"Sends email"| ses
   push -->|"Sends notification"| webpush
 
-  class consumer,dedupe,parsers,reconcile,exceptions,mail,push component
-  class queue,raw,ddb,ses,webpush external
+  class consumer,dedupe,textractEmail,reconcile,exceptions,mail,push component
+  class queue,raw,ddb,ses,webpush,textractApi external
 ```
 
 ## Component diagram — Ledger API (C3)

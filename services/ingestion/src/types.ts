@@ -30,13 +30,12 @@ export interface ParsedPurchase {
   readonly paymentMethodLastFour?: string;
   readonly occurredAt?: string;
   readonly parseWarnings?: readonly string[];
+  readonly parserVersion: string;
 }
 
-export interface CardPurchaseParser {
-  readonly institution: Institution;
-  readonly version: string;
-  matches(email: IncomingEmail): boolean;
-  parse(email: IncomingEmail): ParsedPurchase;
+/** Extracts structured purchase fields from an email (production: Textract AnalyzeDocument). */
+export interface EmailPurchaseExtractor {
+  extract(email: IncomingEmail): Promise<ParsedPurchase>;
 }
 
 export interface RawSourceStore {
