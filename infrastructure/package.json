@@ -8,7 +8,8 @@
     "check": "tsc --noEmit",
     "test": "vitest run",
     "synth": "cdk synth",
-    "diff": "cdk diff"
+    "diff": "cdk diff",
+    "probe:email-textract": "tsx scripts/probe-email-textract.ts"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.147",

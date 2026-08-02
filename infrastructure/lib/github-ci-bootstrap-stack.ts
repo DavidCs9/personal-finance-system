@@ -15,16 +15,28 @@ export class GitHubCiBootstrapStack extends Stack {
       'GitHubActionsOidcProvider',
       `arn:${this.partition}:iam::${this.account}:oidc-provider/token.actions.githubusercontent.com`,
     );
+    const githubAudience = {
+      'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
+    };
+    const mainDeploy = new iam.WebIdentityPrincipal(githubActionsOidcProvider.openIdConnectProviderArn, {
+      StringEquals: {
+        ...githubAudience,
+        'token.actions.githubusercontent.com:sub':
+          'repo:DavidCs9@105255351/personal-finance-system@1319548923:ref:refs/heads/main',
+      },
+    });
+    const pullRequestProbe = new iam.WebIdentityPrincipal(githubActionsOidcProvider.openIdConnectProviderArn, {
+      StringEquals: {
+        ...githubAudience,
+        'token.actions.githubusercontent.com:sub':
+          'repo:DavidCs9@105255351/personal-finance-system@1319548923:pull_request',
+      },
+    });
     const deployRole = new iam.Role(this, 'GitHubDeployRole', {
       roleName: 'personal-finance-v1-github-deploy',
-      description: 'Allows GitHub Actions from the protected main branch to deploy PersonalFinanceV1.',
+      description: 'Allows GitHub Actions from main to deploy, and from pull requests to probe email Textract.',
       maxSessionDuration: Duration.hours(1),
-      assumedBy: new iam.WebIdentityPrincipal(githubActionsOidcProvider.openIdConnectProviderArn, {
-        StringEquals: {
-          'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-          'token.actions.githubusercontent.com:sub': 'repo:DavidCs9@105255351/personal-finance-system@1319548923:ref:refs/heads/main',
-        },
-      }),
+      assumedBy: new iam.CompositePrincipal(mainDeploy, pullRequestProbe),
     });
     deployRole.addToPolicy(new iam.PolicyStatement({
       actions: ['sts:AssumeRole', 'sts:TagSession'],
