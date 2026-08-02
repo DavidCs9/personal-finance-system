@@ -118,6 +118,13 @@ export const ledgerApi = {
   async retryException(exceptionId: string, idToken: string): Promise<IngestionException> {
     return request<IngestionException>(`/exceptions/${encodeURIComponent(exceptionId)}/retry`, idToken, { method: "POST" });
   },
+  async discardException(exceptionId: string, idToken: string): Promise<void> {
+    await request(`/exceptions/${encodeURIComponent(exceptionId)}`, idToken, { method: "DELETE" });
+  },
+  async rawException(exceptionId: string, idToken: string): Promise<string> {
+    const result = await request<{ rawEmail: string }>(`/exceptions/${encodeURIComponent(exceptionId)}/raw`, idToken);
+    return result.rawEmail;
+  },
   async rawEmail(eventId: string, idToken: string): Promise<string> {
     const result = await request<{ rawEmail: string }>(`/events/${encodeURIComponent(eventId)}/raw`, idToken);
     return result.rawEmail;
