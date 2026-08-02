@@ -1,4 +1,4 @@
-import type { EventFeed, IngestionException, PurchaseEvent } from "../types";
+import type { EventFeed, IngestionException, PurchaseEvent, SantanderImportDecision, SantanderImportPreview, SantanderImportResult } from "../types";
 import type { MonthlyPlan } from "../monthly-plan";
 
 interface LedgerRuntimeConfig {
@@ -203,6 +203,20 @@ export const ledgerApi = {
         currency: plan.currency,
         upcomingPayments: plan.upcomingPayments,
       }),
+    });
+  },
+  async previewSantanderCsv(file: File, idToken: string): Promise<SantanderImportPreview> {
+    return request<SantanderImportPreview>("/imports/santander/preview", idToken, {
+      method: "POST",
+      headers: { "Content-Type": "text/csv; charset=utf-8" },
+      body: await file.text(),
+    });
+  },
+  async applySantanderCsv(importId: string, decisions: Readonly<Record<string, SantanderImportDecision>>, idToken: string): Promise<SantanderImportResult> {
+    return request<SantanderImportResult>(`/imports/santander/${encodeURIComponent(importId)}/apply`, idToken, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decisions }),
     });
   },
 };

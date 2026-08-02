@@ -282,6 +282,7 @@ export class PersonalFinanceV1Stack extends Stack {
       environment: dataStorageEnvironment,
     });
     rawEmailBucket.grantRead(apiFunction);
+    rawEmailBucket.grantPut(apiFunction);
     metadataTable.grantReadWriteData(apiFunction);
     apiFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'],
@@ -348,6 +349,8 @@ export class PersonalFinanceV1Stack extends Stack {
       'PATCH /events/{eventId}',
       'GET /months/{month}',
       'PUT /months/{month}',
+      'POST /imports/santander/preview',
+      'POST /imports/santander/{importId}/apply',
     ]) {
       httpApi.addRoutes({
         path: route.split(' ')[1],

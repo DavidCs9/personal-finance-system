@@ -4,7 +4,7 @@ Un tablero personal de gasto mensual que observa eventos financieros desde alert
 
 ## Estado
 
-La V1 recibe correos reenviados a través de Amazon SES y observaciones automáticas de Apple Pay mediante Shortcuts. Conserva cada fuente antes de reconciliar observaciones de una misma compra.
+La V1 recibe correos reenviados a través de Amazon SES y observaciones automáticas de Apple Pay mediante Shortcuts. Conserva cada fuente antes de reconciliar observaciones de una misma compra. Como respaldo, la UI también puede conciliar CSVs de movimientos de tarjeta Santander mediante una previsualización que evita duplicados y propone vínculos con observaciones ya registradas.
 
 ## Estructura
 

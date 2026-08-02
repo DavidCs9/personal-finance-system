@@ -16,6 +16,10 @@
 - DynamoDB conserva metadatos, hash y el puntero al objeto fuente.
 - Apple Pay es una fuente adicional y nunca sustituye al correo. Cada ejecución conserva una observación inmutable autenticada con una credencial exclusiva del Shortcut.
 - La idempotencia se aplica por fuente. La reconciliación puede vincular observaciones de fuentes distintas, pero no elimina ninguna de ellas.
+- La UI permite previsualizar y aplicar manualmente el CSV de movimientos de tarjeta Santander. El archivo original se conserva cifrado en S3 como evidencia.
+- La identidad `tarjeta + consecutivo` evita repetir operaciones entre CSVs. Las filas sin consecutivo usan fecha, concepto normalizado, importe y ordinal de aparición dentro del extracto, y siempre exigen confirmación explícita antes de su primera importación.
+- La conciliación del CSV compara tarjeta, fecha, importe y concepto normalizado contra observaciones de correo o Apple Pay. Una coincidencia única enlaza el CSV como evidencia del evento existente; múltiples coincidencias exigen una decisión explícita antes de aplicar.
+- Los pagos y abonos negativos del CSV no se incorporan al gasto mensual.
 
 ## Modelo de datos
 

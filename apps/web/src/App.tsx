@@ -8,7 +8,7 @@ import {
   type MonthlyPlan,
   type PlannedPayment,
 } from "./monthly-plan";
-import type { IngestionException } from "./types";
+import type { IngestionException, SantanderImportDecision, SantanderImportPreview, SantanderImportResult } from "./types";
 import type { PurchaseEvent, ReviewStatus } from "./types";
 
 const timeZone = "America/Chihuahua";
@@ -164,6 +164,7 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
   const [editingPayment, setEditingPayment] = useState<PlannedPayment | null | undefined>();
   const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
   const [movementSort, setMovementSort] = useState<"recent" | "largest">("recent");
+  const [importOpen, setImportOpen] = useState(false);
   const eventsQuery = useQuery({
     queryKey: eventsQueryKey,
     queryFn: () => demoMode ? Promise.resolve(mockEventFeed) : ledgerApi.listEvents(idToken),
@@ -273,6 +274,7 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
       onRetryException={retryException}
       onDiscardException={discardException}
       onReadExceptionRaw={readExceptionRaw}
+      onImport={() => setImportOpen(true)}
     />}
 
     <nav className="mobile-tabs" aria-label="Navegación principal">
@@ -294,6 +296,10 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
       setEditingPayment(undefined);
     } : undefined} />}
     {activeEvent && <EventSheet event={activeEvent} idToken={idToken} demoMode={demoMode} onClose={() => setActiveEvent(undefined)} onVerified={setActiveEvent} />}
+    {importOpen && <SantanderImportSheet idToken={idToken} onClose={() => setImportOpen(false)} onApplied={() => {
+      setImportOpen(false);
+      void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+    }} />}
   </main>;
 }
 
@@ -447,7 +453,7 @@ function Summary(props: SummaryProps) {
   </section>;
 }
 
-function Movements({ month, onMonthChange, events, exceptions, loading, sort, onSortChange, onOpen, onRetryException, onDiscardException, onReadExceptionRaw }: {
+function Movements({ month, onMonthChange, events, exceptions, loading, sort, onSortChange, onOpen, onRetryException, onDiscardException, onReadExceptionRaw, onImport }: {
   month: string;
   onMonthChange(value: string): void;
   events: readonly PurchaseEvent[];
@@ -459,6 +465,7 @@ function Movements({ month, onMonthChange, events, exceptions, loading, sort, on
   onRetryException(id: string): Promise<void>;
   onDiscardException(id: string): Promise<void>;
   onReadExceptionRaw(id: string): Promise<string>;
+  onImport(): void;
 }) {
   const [activeException, setActiveException] = useState<IngestionException>();
   const sorted = [...events].sort((a, b) => sort === "largest" ? b.amount.amountMinor - a.amount.amountMinor : eventDate(b).getTime() - eventDate(a).getTime());
@@ -467,7 +474,10 @@ function Movements({ month, onMonthChange, events, exceptions, loading, sort, on
     <MonthSelector value={month} onChange={onMonthChange} />
     <header className="movements-heading">
       <div><p className="eyebrow">TRAZABILIDAD</p><h1>Movimientos</h1><p>{events.length} registros · {money(total)}</p></div>
-      <label className="sort-control"><span>Ordenar</span><select value={sort} onChange={(event) => onSortChange(event.target.value as "recent" | "largest")}><option value="recent">Más recientes</option><option value="largest">Mayor gasto</option></select></label>
+      <div className="movement-actions">
+        <button className="secondary-button import-button" onClick={onImport}>Conciliar CSV</button>
+        <label className="sort-control"><span>Ordenar</span><select value={sort} onChange={(event) => onSortChange(event.target.value as "recent" | "largest")}><option value="recent">Más recientes</option><option value="largest">Mayor gasto</option></select></label>
+      </div>
     </header>
     {exceptions.length > 0 && <details className="recovery-section"><summary><span>Correos por revisar</span><small>{exceptions.length}</small></summary><div>{exceptions.map((exception) => <RecoveryNotice key={exception.id} exception={exception} onReview={() => setActiveException(exception)} />)}</div></details>}
     <div className="movement-list">
@@ -553,6 +563,99 @@ function PaymentSheet({ payment, onClose, onSave, onDelete }: { payment?: Planne
   </Sheet>;
 }
 
+function SantanderImportSheet({ idToken, onClose, onApplied }: { idToken: string; onClose(): void; onApplied(result: SantanderImportResult): void }) {
+  const [file, setFile] = useState<File>();
+  const [preview, setPreview] = useState<SantanderImportPreview>();
+  const [decisions, setDecisions] = useState<Readonly<Record<string, SantanderImportDecision>>>({});
+  const [result, setResult] = useState<SantanderImportResult>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const ambiguous = preview?.rows.filter((row) => row.status === "ambiguous") ?? [];
+  const unresolved = ambiguous.filter((row) => !decisions[row.identity]).length;
+
+  const inspect = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!file) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      setPreview(await ledgerApi.previewSantanderCsv(file, idToken));
+      setDecisions({});
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "No se pudo analizar el CSV.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const apply = async () => {
+    if (!preview || unresolved > 0) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      setResult(await ledgerApi.applySantanderCsv(preview.importId, decisions, idToken));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "No se pudo aplicar la conciliación.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (result) return <Sheet eyebrow="CONCILIACIÓN TERMINADA" title="CSV Santander aplicado" onClose={() => onApplied(result)}>
+    <div className="import-result">
+      <span className="result-mark">✓</span>
+      <p><strong>{result.summary.created}</strong> movimientos nuevos</p>
+      <p><strong>{result.summary.linked}</strong> conciliados con correo</p>
+      <p><strong>{result.summary.skipped}</strong> omitidos o ya existentes</p>
+      <button className="primary-button" onClick={() => onApplied(result)}>Ver movimientos</button>
+    </div>
+  </Sheet>;
+
+  return <Sheet eyebrow="RESPALDO SANTANDER" title="Conciliar movimientos" onClose={onClose}>
+    {!preview ? <form className="sheet-form" onSubmit={inspect}>
+      <p>Selecciona el CSV descargado desde Santander. Primero verás una previsualización; ningún movimiento se guardará todavía.</p>
+      <label className="file-drop">
+        <input type="file" accept=".csv,text/csv" onChange={(event) => { setFile(event.target.files?.[0]); setError(undefined); }} />
+        <span>{file ? file.name : "Seleccionar CSV de Santander"}</span>
+        <small>{file ? `${Math.ceil(file.size / 1024)} KB` : "Máximo 2 MB"}</small>
+      </label>
+      {error && <p className="form-error">{error}</p>}
+      <button className="primary-button" type="submit" disabled={!file || busy}>{busy ? "Analizando…" : "Previsualizar conciliación"}</button>
+    </form> : <div className="import-preview">
+      <p className="import-account">Tarjeta •••• {preview.accountLastFour} · {preview.period.from} a {preview.period.to}</p>
+      <div className="import-summary">
+        <div><strong>{preview.summary.new}</strong><span>Nuevos</span></div>
+        <div><strong>{preview.summary.matched}</strong><span>Con correo</span></div>
+        <div><strong>{preview.summary.duplicate}</strong><span>Ya cargados</span></div>
+        <div className={preview.summary.ambiguous ? "attention" : ""}><strong>{preview.summary.ambiguous}</strong><span>Por decidir</span></div>
+      </div>
+      {preview.summary.excluded > 0 && <p className="import-note">{preview.summary.excluded} pago o abono queda fuera del gasto mensual.</p>}
+      {ambiguous.length > 0 && <section className="ambiguous-list">
+        <p className="eyebrow">DECISIONES NECESARIAS</p>
+        {ambiguous.map((row) => <div className="ambiguous-row" key={row.identity}>
+          <div><strong>{row.merchantRaw}</strong><small>{row.occurredOn} · {money(row.amountMinor)}</small></div>
+          <select aria-label={`Decisión para ${row.merchantRaw}`} value={decisions[row.identity]?.action === "create" ? "create" : decisions[row.identity]?.eventId ?? ""} onChange={(event) => {
+            const value = event.target.value;
+            setDecisions((current) => ({
+              ...current,
+              [row.identity]: value === "create" ? { action: "create" } : { action: "link", eventId: value },
+            }));
+          }}>
+            <option value="" disabled>Elegir…</option>
+            {row.candidates.map((candidate) => <option value={candidate.id} key={candidate.id}>Vincular: {candidate.merchantRaw}</option>)}
+            <option value="create">Importar como nuevo</option>
+          </select>
+        </div>)}
+      </section>}
+      {error && <p className="form-error">{error}</p>}
+      <div className="import-footer">
+        <button className="text-button" onClick={() => { setPreview(undefined); setFile(undefined); setDecisions({}); }}>Elegir otro archivo</button>
+        <button className="primary-button" disabled={busy || unresolved > 0} onClick={() => void apply()}>{busy ? "Aplicando…" : unresolved > 0 ? `Faltan ${unresolved} decisiones` : "Aplicar conciliación"}</button>
+      </div>
+    </div>}
+  </Sheet>;
+}
+
 function EventSheet({ event, idToken, demoMode, onClose, onVerified }: { event: PurchaseEvent; idToken: string; demoMode: boolean; onClose(): void; onVerified(event: PurchaseEvent): void }) {
   const queryClient = useQueryClient();
   const [rawEmail, setRawEmail] = useState<string>();
@@ -584,7 +687,8 @@ function EventSheet({ event, idToken, demoMode, onClose, onVerified }: { event: 
     }
   };
   const isApplePayCapture = event.source.kind === "apple_pay_shortcut";
-  const hasRawEmail = !isApplePayCapture || event.hasRawEmail === true;
+  const isCsvCapture = !isApplePayCapture && event.source.contentType === "text/csv";
+  const hasRawSource = isCsvCapture || !isApplePayCapture || event.hasRawEmail === true;
   return <Sheet eyebrow="MOVIMIENTO OBSERVADO" title={event.merchantRaw} onClose={onClose}>
     <div className="event-detail">
       <div className="detail-amount"><strong>{eventMoney(event)}</strong><span className={`status ${event.status}`}>{statusLabel[event.status]}</span></div>
@@ -592,10 +696,10 @@ function EventSheet({ event, idToken, demoMode, onClose, onVerified }: { event: 
       {event.parseWarnings.length > 0 && <div className="warning"><span>!</span><div><strong>Necesita confirmación</strong><p>{event.parseWarnings[0]}</p></div><button onClick={verify}>Confirmar</button></div>}
       {error && <p className="form-error">{error}</p>}
       <dl className="facts"><div><dt>Fecha de compra</dt><dd>{longDateFormatter.format(eventDate(event))}</dd></div><div><dt>Procesado</dt><dd>{longDateFormatter.format(new Date(event.ingestedAt))}</dd></div><div><dt>Parser</dt><dd>{event.parserVersion}</dd></div><div><dt>Estado</dt><dd>{statusLabel[event.status]}</dd></div></dl>
-      <div className="detail-section-heading"><div><p className="eyebrow">EVIDENCIA</p><h3>{isApplePayCapture ? "Captura de Apple Pay" : "Correo original"}</h3></div>{hasRawEmail && <button className="secondary-button" onClick={toggleRaw}>{rawEmail ? "Ocultar" : isApplePayCapture ? "Ver correo" : "Ver fuente"}</button>}</div>
+      <div className="detail-section-heading"><div><p className="eyebrow">EVIDENCIA</p><h3>{isApplePayCapture ? "Captura de Apple Pay" : isCsvCapture ? "CSV de Santander" : "Correo original"}</h3></div>{hasRawSource && <button className="secondary-button" onClick={toggleRaw}>{rawEmail ? "Ocultar" : isApplePayCapture ? "Ver correo" : "Ver fuente"}</button>}</div>
       {rawEmail
         ? <pre className="raw-source">{rawEmail}</pre>
-        : <div className="source-summary"><Mark /><div><strong>{isApplePayCapture ? "Observación automática conservada" : "Mensaje original conservado"}</strong><p>{isApplePayCapture ? event.source.cardRaw : event.source.key}</p></div></div>}
+        : <div className="source-summary"><Mark /><div><strong>{isApplePayCapture ? "Observación automática conservada" : isCsvCapture ? "CSV original conservado" : "Mensaje original conservado"}</strong><p>{isApplePayCapture ? event.source.cardRaw : event.source.key}</p></div></div>}
     </div>
   </Sheet>;
 }
