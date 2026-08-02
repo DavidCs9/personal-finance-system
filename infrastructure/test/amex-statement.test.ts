@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { parseAmexStatementExtraction } from '../lambda/amex-statement.js';
+import {
+  amexMsiEvidenceLines,
+  parseAmexStatementExtraction,
+} from '../lambda/amex-statement.js';
 import type { TextractStatementExtraction } from '../lambda/textract-document.js';
 
 const asLines = (raw: string): readonly string[] =>
@@ -76,5 +79,41 @@ describe('parseAmexStatementExtraction', () => {
     expect(document.accountLastFour).toBe('1007');
     expect(document.period).toEqual({ from: '2026-06-07', to: '2026-07-06' });
     expect(document.charges.some((charge) => charge.msi && charge.amountMinor === 82_532)).toBe(true);
+  });
+
+  it('reads purchases when Textract puts the amount on the same dated line', () => {
+    const document = parseAmexStatementExtraction(fromLines('amex', [
+      'Período de Facturación Del 7 de Junio al 6 de Julio de 2026',
+      'Número de Cuenta: 3717-797421-21007',
+      'The Gold Elite Credit Card American Express',
+      'Fecha y Detalle de las operaciones Importe en MN.',
+      '7 de Junio CINEPOLIS WEB ALIMENTOS MI 192.00',
+      '11 de Junio CARLS JR CANTERA CD JUAREZ 222.00',
+      'Transacciones de Meses sin Intereses',
+      '6 de Julio MESES EN AUTOMÁTICO NACIONAL CARGO 03 DE 03 825.32',
+      'MESES EN AUTOMÁTICO NACIONAL Mensualidad=(Pago a capital + Interés + IVA)',
+      '6 de May 2,476.00 0.00% 0.00 3 de 3 825.32',
+    ]));
+    expect(document.charges.filter((charge) => !charge.msi)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ merchantRaw: 'CINEPOLIS WEB ALIMENTOS MI', amountMinor: 19_200 }),
+      expect.objectContaining({ merchantRaw: 'CARLS JR CANTERA CD JUAREZ', amountMinor: 22_200 }),
+    ]));
+    expect(document.charges.filter((charge) => charge.msi)).toHaveLength(1);
+    expect(amexMsiEvidenceLines(document)).toEqual([
+      expect.objectContaining({
+        amountMinor: 82_532,
+        installmentIndex: 3,
+        installmentMonths: 3,
+        originalAmountMinor: 247_600,
+      }),
+    ]);
+  });
+
+  it('dedupes MSI charge rows against plan summary rows', () => {
+    const document = parseAmexStatementExtraction(fromLines('amex', goldLines));
+    const evidence = amexMsiEvidenceLines(document);
+    expect(evidence).toHaveLength(2);
+    expect(evidence.map((row) => row.amountMinor).sort((left, right) => left - right)).toEqual([82_532, 224_967]);
+    expect(evidence.every((row) => row.originalAmountMinor !== undefined)).toBe(true);
   });
 });
