@@ -121,7 +121,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       return response(200, await previewSantanderStatementImport(event, principal(event)));
     }
     if (event.requestContext.http.method === 'POST' && event.rawPath === '/imports/amex/preview') {
-      return response(200, await previewAmexImport(requestBody(event), principal(event)));
+      return response(200, await previewAmexImport(event, principal(event)));
     }
     const importId = event.pathParameters?.importId;
     if (importId && event.rawPath.includes('/imports/santander-statement/')) {
@@ -132,10 +132,15 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
         return response(200, await applySantanderStatementImport(importId, principal(event)));
       }
     }
-    if (importId && event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/apply')) {
-      if (event.rawPath.includes('/imports/amex/')) {
+    if (importId && event.rawPath.includes('/imports/amex/')) {
+      if (event.requestContext.http.method === 'GET') {
+        return response(200, await getAmexImport(importId, principal(event)));
+      }
+      if (event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/apply')) {
         return response(200, await applyAmexImport(importId, principal(event)));
       }
+    }
+    if (importId && event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/apply')) {
       return response(200, await applySantanderImport(importId, principal(event), requestBody(event)));
     }
     const month = event.pathParameters?.month;
@@ -812,7 +817,11 @@ const applySantanderImport = async (importId: string, owner: string, decisionBod
   };
 };
 
-const amexSourceKey = (owner: string, sha256: string): string => `manual-imports/amex/${owner}/${sha256}.txt`;
+const amexSourceKey = (
+  owner: string,
+  sha256: string,
+  extension: 'pdf' | 'txt',
+): string => `manual-imports/amex/${owner}/${sha256}.${extension}`;
 const santanderStatementSourceKey = (
   owner: string,
   sha256: string,
@@ -831,8 +840,8 @@ const headerValue = (event: { readonly headers?: Record<string, string | undefin
 const requestBinaryBody = (event: {
   readonly body?: string | null;
   readonly isBase64Encoded?: boolean;
-}): Buffer => {
-  if (!event.body) throw new InvalidSantanderStatementError('El estado de cuenta Santander está vacío.');
+}): Buffer | undefined => {
+  if (!event.body) return undefined;
   return event.isBase64Encoded ? Buffer.from(event.body, 'base64') : Buffer.from(event.body, 'utf8');
 };
 
@@ -886,7 +895,9 @@ const previewSantanderStatementImport = async (
   const contentType = (headerValue(event, 'content-type') ?? 'application/pdf').toLowerCase();
   const isText = contentType.includes('text/plain');
   const bytes = requestBinaryBody(event);
-  if (bytes.length === 0) throw new InvalidSantanderStatementError('El estado de cuenta Santander está vacío.');
+  if (!bytes || bytes.length === 0) {
+    throw new InvalidSantanderStatementError('El estado de cuenta Santander está vacío.');
+  }
   const sha256 = createHash('sha256').update(bytes).digest('hex');
 
   if (isText) {
@@ -1252,23 +1263,9 @@ const applySantanderStatementImport = async (importId: string, owner: string): P
   };
 };
 
-const previewAmexImport = async (body: string | undefined, owner: string): Promise<JsonObject> => {
-  if (!body?.trim()) throw new InvalidAmexStatementError('El estado de cuenta Amex está vacío.');
-  const document = parseAmexStatementText(body);
-  const sha256 = createHash('sha256').update(body, 'utf8').digest('hex');
-  const source = {
-    bucket: rawSourceBucketName,
-    key: amexSourceKey(owner, sha256),
-    sha256,
-    contentType: 'text/plain' as const,
-  };
-  await s3.send(new PutObjectCommand({
-    Bucket: rawSourceBucketName,
-    Key: source.key,
-    Body: body,
-    ContentType: 'text/plain; charset=utf-8',
-  }));
-
+const buildAmexPreviewRows = async (
+  document: ReturnType<typeof parseAmexStatementText>,
+): Promise<readonly (EvidenceLine & { readonly status: string; readonly eventId?: string })[]> => {
   const events = await allStoredEvents();
   const msiLines: EvidenceLine[] = [
     ...document.msiPlans.map((plan, index) => ({
@@ -1305,7 +1302,7 @@ const previewAmexImport = async (body: string | undefined, owner: string): Promi
     return true;
   });
 
-  const rows = uniqueLines.map((line) => {
+  return uniqueLines.map((line) => {
     const match = matchEvidenceLine(line, events);
     return {
       ...line,
@@ -1313,7 +1310,93 @@ const previewAmexImport = async (body: string | undefined, owner: string): Promi
       eventId: match.kind === 'confirm' ? match.eventId : undefined,
     };
   });
+};
 
+const amexPreviewResponse = (
+  importId: string,
+  document: Pick<ReturnType<typeof parseAmexStatementText>, 'accountLastFour' | 'product' | 'period'>,
+  rows: readonly { readonly status: string }[],
+): JsonObject => ({
+  importId,
+  status: 'ready',
+  accountLastFour: document.accountLastFour,
+  product: document.product,
+  period: document.period,
+  summary: {
+    total: rows.length,
+    matched: rows.filter((row) => row.status === 'matched').length,
+    unplanned: rows.filter((row) => row.status === 'unplanned').length,
+    skipped: rows.filter((row) => row.status === 'skipped').length,
+  },
+  rows,
+});
+
+const previewAmexImport = async (
+  event: {
+    readonly body?: string | null;
+    readonly isBase64Encoded?: boolean;
+    readonly headers?: Record<string, string | undefined>;
+  },
+  owner: string,
+): Promise<JsonObject> => {
+  const contentType = (headerValue(event, 'content-type') ?? 'application/pdf').toLowerCase();
+  const isText = contentType.includes('text/plain');
+  const bytes = requestBinaryBody(event);
+  if (!bytes || bytes.length === 0) throw new InvalidAmexStatementError('El estado de cuenta Amex está vacío.');
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+
+  if (isText) {
+    const body = bytes.toString('utf8');
+    const document = parseAmexStatementText(body);
+    const source = {
+      bucket: rawSourceBucketName,
+      key: amexSourceKey(owner, sha256, 'txt'),
+      sha256,
+      contentType: 'text/plain' as const,
+    };
+    await s3.send(new PutObjectCommand({
+      Bucket: rawSourceBucketName,
+      Key: source.key,
+      Body: body,
+      ContentType: 'text/plain; charset=utf-8',
+    }));
+    const rows = await buildAmexPreviewRows(document);
+    await database.send(new PutCommand({
+      TableName: tableName,
+      Item: {
+        PK: `USER#${owner}`,
+        SK: `IMPORT#AMEX#${sha256}`,
+        entityType: 'amex_statement_import',
+        owner,
+        status: 'previewed',
+        createdAt: new Date().toISOString(),
+        source,
+        accountLastFour: document.accountLastFour,
+        product: document.product,
+        period: document.period,
+        rows,
+      },
+    }));
+    return amexPreviewResponse(sha256, document, rows);
+  }
+
+  if (!contentType.includes('pdf') && !contentType.includes('octet-stream')) {
+    throw new InvalidAmexStatementError('Sube el PDF del estado de cuenta Amex (o texto OCR para pruebas).');
+  }
+
+  const source = {
+    bucket: rawSourceBucketName,
+    key: amexSourceKey(owner, sha256, 'pdf'),
+    sha256,
+    contentType: 'application/pdf' as const,
+  };
+  await s3.send(new PutObjectCommand({
+    Bucket: rawSourceBucketName,
+    Key: source.key,
+    Body: bytes,
+    ContentType: 'application/pdf',
+  }));
+  const textractJobId = await startTextractTextDetection(textract, rawSourceBucketName, source.key);
   await database.send(new PutCommand({
     TableName: tableName,
     Item: {
@@ -1321,29 +1404,124 @@ const previewAmexImport = async (body: string | undefined, owner: string): Promi
       SK: `IMPORT#AMEX#${sha256}`,
       entityType: 'amex_statement_import',
       owner,
-      status: 'previewed',
+      status: 'processing',
       createdAt: new Date().toISOString(),
       source,
-      accountLastFour: document.accountLastFour,
-      product: document.product,
-      period: document.period,
-      rows,
+      textractJobId,
     },
   }));
-
   return {
     importId: sha256,
-    accountLastFour: document.accountLastFour,
-    product: document.product,
-    period: document.period,
-    summary: {
-      total: rows.length,
-      matched: rows.filter((row) => row.status === 'matched').length,
-      unplanned: rows.filter((row) => row.status === 'unplanned').length,
-      skipped: rows.filter((row) => row.status === 'skipped').length,
-    },
-    rows,
+    status: 'processing',
+    message: 'Leyendo el PDF con Textract. Consulta el estado en unos segundos.',
   };
+};
+
+const getAmexImport = async (importId: string, owner: string): Promise<JsonObject> => {
+  if (!/^[a-f0-9]{64}$/.test(importId)) {
+    throw new InvalidAmexStatementError('Identificador de importación inválido.');
+  }
+  const stored = await database.send(new GetCommand({
+    TableName: tableName,
+    Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
+    ConsistentRead: true,
+  }));
+  if (!stored.Item || stored.Item.owner !== owner) {
+    throw new InvalidAmexStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
+  }
+  if (stored.Item.status === 'previewed' || stored.Item.status === 'applied') {
+    const rows = Array.isArray(stored.Item.rows) ? stored.Item.rows as readonly { readonly status: string }[] : [];
+    return amexPreviewResponse(
+      importId,
+      {
+        accountLastFour: String(stored.Item.accountLastFour ?? ''),
+        product: String(stored.Item.product ?? 'American Express'),
+        period: stored.Item.period as { readonly from: string; readonly to: string },
+      },
+      rows,
+    );
+  }
+  if (stored.Item.status === 'failed') {
+    throw new InvalidAmexStatementError(
+      typeof stored.Item.errorMessage === 'string'
+        ? stored.Item.errorMessage
+        : 'No se pudo leer el estado Amex.',
+    );
+  }
+
+  const jobId = typeof stored.Item.textractJobId === 'string' ? stored.Item.textractJobId : undefined;
+  if (!jobId) throw new InvalidAmexStatementError('Falta el trabajo de Textract para este import.');
+
+  const job = await getTextractJobStatus(textract, jobId);
+  if (job.status === 'IN_PROGRESS') {
+    return {
+      importId,
+      status: 'processing',
+      message: 'Textract sigue leyendo el PDF…',
+    };
+  }
+  if (job.status === 'FAILED') {
+    const message = job.statusMessage ?? 'Textract falló al leer el PDF.';
+    await database.send(new UpdateCommand({
+      TableName: tableName,
+      Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
+      UpdateExpression: 'SET #status = :status, #errorMessage = :errorMessage',
+      ExpressionAttributeNames: { '#status': 'status', '#errorMessage': 'errorMessage' },
+      ExpressionAttributeValues: { ':status': 'failed', ':errorMessage': message },
+    }));
+    throw new TextractDocumentError(message);
+  }
+
+  try {
+    const text = await fetchTextractDocumentText(textract, jobId);
+    const document = parseAmexStatementText(text);
+    const rows = await buildAmexPreviewRows(document);
+    const source = stored.Item.source as JsonObject;
+    const ocrKey = typeof source.key === 'string'
+      ? source.key.replace(/\.pdf$/i, '.ocr.txt')
+      : amexSourceKey(owner, importId, 'txt');
+    await s3.send(new PutObjectCommand({
+      Bucket: rawSourceBucketName,
+      Key: ocrKey,
+      Body: text,
+      ContentType: 'text/plain; charset=utf-8',
+    }));
+    await database.send(new UpdateCommand({
+      TableName: tableName,
+      Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
+      UpdateExpression: 'SET #status = :status, #accountLastFour = :accountLastFour, #product = :product, #period = :period, #rows = :rows, #ocrKey = :ocrKey',
+      ExpressionAttributeNames: {
+        '#status': 'status',
+        '#accountLastFour': 'accountLastFour',
+        '#product': 'product',
+        '#period': 'period',
+        '#rows': 'rows',
+        '#ocrKey': 'ocrKey',
+      },
+      ExpressionAttributeValues: {
+        ':status': 'previewed',
+        ':accountLastFour': document.accountLastFour,
+        ':product': document.product,
+        ':period': document.period,
+        ':rows': rows,
+        ':ocrKey': ocrKey,
+      },
+    }));
+    return amexPreviewResponse(importId, document, rows);
+  } catch (error) {
+    const message = errorMessage(error);
+    await database.send(new UpdateCommand({
+      TableName: tableName,
+      Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
+      UpdateExpression: 'SET #status = :status, #errorMessage = :errorMessage',
+      ExpressionAttributeNames: { '#status': 'status', '#errorMessage': 'errorMessage' },
+      ExpressionAttributeValues: { ':status': 'failed', ':errorMessage': message },
+    }));
+    if (error instanceof InvalidAmexStatementError || error instanceof TextractDocumentError) {
+      throw error;
+    }
+    throw new InvalidAmexStatementError(message);
+  }
 };
 
 const applyAmexImport = async (importId: string, owner: string): Promise<JsonObject> => {
@@ -1357,6 +1535,16 @@ const applyAmexImport = async (importId: string, owner: string): Promise<JsonObj
   if (!stored.Item || stored.Item.owner !== owner || typeof source?.key !== 'string') {
     throw new InvalidAmexStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
   }
+  if (stored.Item.status === 'processing') {
+    throw new InvalidAmexStatementError('El PDF aún se está leyendo. Espera a que termine Textract.');
+  }
+  if (stored.Item.status === 'failed') {
+    throw new InvalidAmexStatementError(
+      typeof stored.Item.errorMessage === 'string'
+        ? stored.Item.errorMessage
+        : 'No se pudo leer el estado Amex.',
+    );
+  }
   if (stored.Item.status === 'applied') {
     const previous = stored.Item.result as JsonObject | undefined;
     return {
@@ -1366,14 +1554,12 @@ const applyAmexImport = async (importId: string, owner: string): Promise<JsonObj
       alreadyApplied: true,
     };
   }
-  const object = await s3.send(new GetObjectCommand({ Bucket: rawSourceBucketName, Key: source.key }));
-  if (!object.Body) throw new Error('The Amex statement source did not contain a body.');
-  const sourceBody = await object.Body.transformToString('utf8');
-  const actualHash = createHash('sha256').update(sourceBody, 'utf8').digest('hex');
-  if (actualHash !== importId) throw new Error('The stored Amex statement hash does not match the import identifier.');
+  if (stored.Item.status !== 'previewed' || !Array.isArray(stored.Item.rows)) {
+    throw new InvalidAmexStatementError('La previsualización aún no está lista.');
+  }
 
-  const document = parseAmexStatementText(sourceBody);
-  const previewRows = Array.isArray(stored.Item.rows) ? stored.Item.rows as readonly (EvidenceLine & { status?: string })[] : [];
+  const accountLastFour = String(stored.Item.accountLastFour ?? '');
+  const previewRows = stored.Item.rows as readonly (EvidenceLine & { status?: string })[];
   const appliedAt = new Date().toISOString();
   let eventsSnapshot = await allStoredEvents();
   let confirmed = 0;
@@ -1416,9 +1602,9 @@ const applyAmexImport = async (importId: string, owner: string): Promise<JsonObj
         status: 'needs_review',
         account: {
           institution: 'american_express_mx',
-          accountId: `american_express_mx:${document.accountLastFour}`,
-          displayName: `American Express · ${document.accountLastFour}`,
-          lastFour: document.accountLastFour,
+          accountId: `american_express_mx:${accountLastFour}`,
+          displayName: `American Express · ${accountLastFour}`,
+          lastFour: accountLastFour,
         },
         amount: { amountMinor: match.plan.principalMinor, currency: 'MXN' },
         merchantRaw: match.merchantRaw,
@@ -1426,7 +1612,7 @@ const applyAmexImport = async (importId: string, owner: string): Promise<JsonObj
         receivedAt: appliedAt,
         ingestedAt: appliedAt,
         source,
-        parserVersion: 'amex-mx-statement-v1',
+        parserVersion: 'amex-mx-statement-textract-v1',
         parseWarnings: ['MSI sin plan completo: confirma meses y cuota.'],
         captureSource: 'amex_statement',
         captureSources: ['amex_statement'],
@@ -1484,7 +1670,7 @@ const applyAmexImport = async (importId: string, owner: string): Promise<JsonObj
                 merchantRaw: match.merchantRaw,
                 occurredAt,
                 source,
-                parserVersion: 'amex-mx-statement-v1',
+                parserVersion: 'amex-mx-statement-textract-v1',
                 parseWarnings: purchase.parseWarnings,
               },
             },

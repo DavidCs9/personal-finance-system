@@ -339,13 +339,16 @@ export class PersonalFinanceV1Stack extends Stack {
     }));
     // Textract reads statement PDFs from the KMS-encrypted raw bucket.
     rawEmailBucket.addToResourcePolicy(new iam.PolicyStatement({
-      sid: 'AllowTextractReadSantanderStatements',
+      sid: 'AllowTextractReadStatementPdfs',
       principals: [new iam.ServicePrincipal('textract.amazonaws.com')],
       actions: ['s3:GetObject'],
-      resources: [rawEmailBucket.arnForObjects('manual-imports/santander-statement/*')],
+      resources: [
+        rawEmailBucket.arnForObjects('manual-imports/santander-statement/*'),
+        rawEmailBucket.arnForObjects('manual-imports/amex/*'),
+      ],
     }));
     encryptionKey.addToResourcePolicy(new iam.PolicyStatement({
-      sid: 'AllowTextractDecryptSantanderStatements',
+      sid: 'AllowTextractDecryptStatementPdfs',
       principals: [new iam.ServicePrincipal('textract.amazonaws.com')],
       actions: ['kms:Decrypt', 'kms:DescribeKey', 'kms:GenerateDataKey'],
       resources: ['*'],
@@ -460,6 +463,7 @@ export class PersonalFinanceV1Stack extends Stack {
       'POST /imports/santander/preview',
       'POST /imports/santander/{importId}/apply',
       'POST /imports/amex/preview',
+      'GET /imports/amex/{importId}',
       'POST /imports/amex/{importId}/apply',
       'POST /imports/santander-statement/preview',
       'GET /imports/santander-statement/{importId}',

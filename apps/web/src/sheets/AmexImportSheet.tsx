@@ -1,9 +1,10 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { ledgerApi } from "../api/client";
 import { Sheet } from "../components/Sheet";
 import { money } from "../lib/format";
-import { readStatementText } from "../lib/pdf-text";
 import type { AmexImportPreview, AmexImportResult } from "../types";
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function AmexImportSheet({
   idToken,
@@ -19,6 +20,24 @@ export function AmexImportSheet({
   const [result, setResult] = useState<AmexImportResult>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const cancelledRef = useRef(false);
+
+  useEffect(() => {
+    cancelledRef.current = false;
+    return () => {
+      cancelledRef.current = true;
+    };
+  }, []);
+
+  const waitUntilReady = async (importId: string): Promise<AmexImportPreview> => {
+    for (let attempt = 0; attempt < 45; attempt += 1) {
+      if (cancelledRef.current) throw new Error("Importación cancelada.");
+      const status = await ledgerApi.getAmexStatementImport(importId, idToken);
+      if (status.status === "ready" && status.rows) return status;
+      await sleep(2_000);
+    }
+    throw new Error("Textract tardó demasiado. Intenta de nuevo en un momento.");
+  };
 
   const inspect = async (event: FormEvent) => {
     event.preventDefault();
@@ -26,17 +45,24 @@ export function AmexImportSheet({
     setBusy(true);
     setError(undefined);
     try {
-      const text = await readStatementText(file);
-      setPreview(await ledgerApi.previewAmexStatement(text, idToken));
+      const started = await ledgerApi.previewAmexStatement(file, idToken);
+      if (started.status === "ready" && started.rows) {
+        setPreview(started);
+        return;
+      }
+      setPreview(started);
+      const ready = await waitUntilReady(started.importId);
+      if (!cancelledRef.current) setPreview(ready);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "No se pudo analizar el estado Amex.");
+      setPreview(undefined);
     } finally {
-      setBusy(false);
+      if (!cancelledRef.current) setBusy(false);
     }
   };
 
   const apply = async () => {
-    if (!preview) return;
+    if (!preview || preview.status !== "ready") return;
     setBusy(true);
     setError(undefined);
     try {
@@ -70,19 +96,30 @@ export function AmexImportSheet({
     );
   }
 
+  const readyPreview =
+    preview?.status === "ready" && preview.rows && preview.summary
+      ? preview
+      : undefined;
+
   return (
     <Sheet eyebrow="ESTADO AMEX" title="Reconciliar MSI" onClose={onClose}>
-      {!preview ? (
+      {!readyPreview ? (
         <form className="sheet-form" onSubmit={(event) => void inspect(event)}>
-          <p>Sube el PDF del estado de cuenta. Confirmamos cuotas MSI y marcamos las que falten por plan.</p>
+          <p>
+            Sube el PDF del estado de cuenta. Lo leemos con Textract y confirmamos las cuotas MSI
+            del periodo.
+          </p>
           <label className="file-field">
-            <span>Archivo PDF o texto</span>
+            <span>Archivo PDF</span>
             <input
               type="file"
               accept="application/pdf,text/plain,.pdf,.txt"
               onChange={(event) => setFile(event.target.files?.[0])}
             />
           </label>
+          {preview?.status === "processing" && (
+            <p className="form-hint">Leyendo el PDF con Textract… esto puede tomar un minuto.</p>
+          )}
           {error && <p className="form-error">{error}</p>}
           <button className="primary-button" type="submit" disabled={!file || busy}>
             {busy ? "Analizando…" : "Analizar estado"}
@@ -91,14 +128,15 @@ export function AmexImportSheet({
       ) : (
         <div className="import-preview">
           <p>
-            {preview.product} · {preview.accountLastFour} · {preview.period.from} a {preview.period.to}
+            {readyPreview.product} · {readyPreview.accountLastFour} · {readyPreview.period?.from} a{" "}
+            {readyPreview.period?.to}
           </p>
           <p>
-            {preview.summary.matched} a confirmar · {preview.summary.unplanned} sin plan ·{" "}
-            {preview.summary.skipped} omitidas
+            {readyPreview.summary?.matched} a confirmar · {readyPreview.summary?.unplanned} sin plan ·{" "}
+            {readyPreview.summary?.skipped} omitidas
           </p>
           <div className="payment-list">
-            {preview.rows.map((row) => (
+            {(readyPreview.rows ?? []).map((row) => (
               <div key={row.identity} className="payment-row" style={{ cursor: "default" }}>
                 <span className="date-block">
                   <small>MSI</small>

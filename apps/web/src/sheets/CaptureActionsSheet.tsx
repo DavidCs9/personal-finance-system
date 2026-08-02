@@ -53,7 +53,7 @@ export function CaptureActionsSheet({
         <button type="button" className="capture-action" role="menuitem" onClick={onImportAmex}>
           <span>
             <strong>Estado de cuenta Amex</strong>
-            <small>Confirmar cuotas MSI del periodo</small>
+            <small>PDF del periodo · confirmar cuotas MSI</small>
           </span>
           <span aria-hidden="true">›</span>
         </button>
