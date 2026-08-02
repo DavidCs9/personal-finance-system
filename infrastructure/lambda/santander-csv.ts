@@ -36,6 +36,15 @@ export type SantanderApplyAction =
   | { readonly kind: "link"; readonly eventId: string }
   | { readonly kind: "skip" };
 
+export const santanderImportCompletionUpdate = (
+  appliedAt: string,
+  result: { readonly created: number; readonly linked: number; readonly skipped: number },
+) => ({
+  UpdateExpression: "SET #status = :status, #appliedAt = :appliedAt, #result = :result",
+  ExpressionAttributeNames: { "#status": "status", "#appliedAt": "appliedAt", "#result": "result" },
+  ExpressionAttributeValues: { ":status": "applied", ":appliedAt": appliedAt, ":result": result },
+});
+
 export const santanderApplyAction = (
   current: SantanderReconciliationState,
   preview: SantanderReconciliationState | undefined,

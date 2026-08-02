@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InvalidSantanderCsvError, merchantsMatch, parseSantanderCsv, santanderApplyAction } from "../lambda/santander-csv.js";
+import { InvalidSantanderCsvError, merchantsMatch, parseSantanderCsv, santanderApplyAction, santanderImportCompletionUpdate } from "../lambda/santander-csv.js";
 
 const fixture = `No. de Tarjeta: 4262**6349
 Producto: UNIQUE REWARDS PLATINUM V
@@ -67,5 +67,18 @@ describe("Santander CSV", () => {
     expect(santanderApplyAction(state, state, { action: "create" })).toEqual({ kind: "create" });
     expect(santanderApplyAction(state, state, { action: "link", eventId: "email-2" })).toEqual({ kind: "link", eventId: "email-2" });
     expect(santanderApplyAction(state, state, { action: "link", eventId: "email-3" })).toEqual({ kind: "skip" });
+  });
+
+  it("aliases every import completion attribute used by DynamoDB", () => {
+    const update = santanderImportCompletionUpdate("2026-08-02T15:33:17.000Z", { created: 2, linked: 1, skipped: 3 });
+    expect(update).toEqual({
+      UpdateExpression: "SET #status = :status, #appliedAt = :appliedAt, #result = :result",
+      ExpressionAttributeNames: { "#status": "status", "#appliedAt": "appliedAt", "#result": "result" },
+      ExpressionAttributeValues: {
+        ":status": "applied",
+        ":appliedAt": "2026-08-02T15:33:17.000Z",
+        ":result": { created: 2, linked: 1, skipped: 3 },
+      },
+    });
   });
 });
