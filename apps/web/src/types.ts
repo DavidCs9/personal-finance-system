@@ -56,7 +56,13 @@ export interface IngestionException {
   readonly retry?: { readonly status: "queued" | "completed"; readonly eventId?: string };
 }
 
-export type SantanderImportRowStatus = "new" | "matched" | "ambiguous" | "duplicate" | "excluded";
+export type SantanderImportRowStatus =
+  | "new"
+  | "matched"
+  | "ambiguous"
+  | "duplicate"
+  | "excluded"
+  | "needs_decision";
 
 export interface SantanderImportCandidate {
   readonly id: string;
@@ -73,6 +79,7 @@ export interface SantanderImportRow {
   readonly identity: string;
   readonly status: SantanderImportRowStatus;
   readonly candidates: readonly SantanderImportCandidate[];
+  readonly candidateEventIds?: readonly string[];
 }
 
 export interface SantanderImportPreview {
@@ -87,13 +94,17 @@ export interface SantanderImportPreview {
     readonly ambiguous: number;
     readonly duplicate: number;
     readonly excluded: number;
+    readonly needsDecision?: number;
   };
   readonly rows: readonly SantanderImportRow[];
 }
 
 export interface SantanderImportDecision {
-  readonly action: "create" | "link";
+  readonly action: "create" | "link" | "confirm_msi" | "create_plan" | "skip";
   readonly eventId?: string;
+  readonly months?: number;
+  readonly cuotaMinor?: number;
+  readonly startMonth?: string;
 }
 
 export interface SantanderImportResult {
@@ -117,6 +128,7 @@ export type StatementRowStatus =
   | "ambiguous"
   | "duplicate"
   | "excluded"
+  | "needs_decision"
   | "unplanned"
   | "skipped";
 
@@ -149,7 +161,8 @@ export interface StatementImportSummary {
   readonly ambiguous: number;
   readonly duplicate: number;
   readonly excluded: number;
-  readonly unplanned: number;
+  readonly needsDecision?: number;
+  readonly unplanned?: number;
   readonly skipped: number;
   readonly purchases: number;
   readonly msi: number;

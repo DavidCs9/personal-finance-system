@@ -1,7 +1,6 @@
 import {
   amountsWithinTolerance,
   buildMsiSchedule,
-  findMsiEvidenceMatch,
   isMsiLikeMerchant,
   markInstallmentSpent,
   monthKeyInZone,
@@ -31,11 +30,9 @@ export type EvidenceMatchResult =
       readonly installmentIndex: number;
     }
   | {
-      readonly kind: "unplanned";
-      readonly plan: MsiPlan;
-      readonly merchantRaw: string;
-      readonly occurredOn: string;
-      readonly amountMinor: number;
+      readonly kind: "needs_decision";
+      readonly reason: string;
+      readonly candidates: readonly MsiEvidenceCandidate[];
     }
   | { readonly kind: "skip"; readonly reason: string };
 
@@ -56,6 +53,8 @@ export const evidenceCandidatesFromEvents = (
   for (const event of events) {
     const plan = asMsiPlan(event.msi);
     if (!plan || event.status === "rejected") continue;
+    // Incomplete stubs must not receive automatic confirms.
+    if (plan.needsScheduleCompletion) continue;
     for (const installment of plan.installments) {
       if (installment.status !== "committed") continue;
       candidates.push({
@@ -92,6 +91,17 @@ const confirmMatch = (
   installmentIndex: match.installment.index,
 });
 
+const looksLikeMsiEvidence = (line: EvidenceLine): boolean =>
+  line.installmentIndex !== undefined
+  || line.installmentMonths !== undefined
+  || line.originalAmountMinor !== undefined
+  || isMsiLikeMerchant(line.merchantRaw)
+  || isAutomaticAmexLabel(line.merchantRaw);
+
+/**
+ * Match statement/CSV MSI evidence to an existing complete plan.
+ * Never invents a schedule — unmatched MSI requires an explicit apply decision.
+ */
 export const matchEvidenceLine = (
   line: EvidenceLine,
   events: readonly JsonObject[],
@@ -114,23 +124,22 @@ export const matchEvidenceLine = (
       return false;
     }
     if (
-      line.installmentMonths !== undefined &&
-      candidate.plan.months !== line.installmentMonths
+      line.installmentMonths !== undefined
+      && candidate.plan.months !== line.installmentMonths
     ) {
       return false;
     }
     if (!amountsWithinTolerance(candidate.installment.amountMinor, line.amountMinor)) return false;
 
     if (isAutomaticAmexLabel(line.merchantRaw)) {
-      // Automatic labels omit the real merchant: principal (+ index/months/amount) must disambiguate.
       if (line.originalAmountMinor === undefined) return false;
       return amountsWithinTolerance(candidate.plan.principalMinor, line.originalAmountMinor);
     }
 
     if (
-      line.originalAmountMinor !== undefined &&
-      !amountsWithinTolerance(candidate.plan.principalMinor, line.originalAmountMinor) &&
-      !amexMerchantsMatch(candidate.merchantRaw, line.merchantRaw)
+      line.originalAmountMinor !== undefined
+      && !amountsWithinTolerance(candidate.plan.principalMinor, line.originalAmountMinor)
+      && !amexMerchantsMatch(candidate.merchantRaw, line.merchantRaw)
     ) {
       return false;
     }
@@ -138,51 +147,47 @@ export const matchEvidenceLine = (
   });
 
   if (indexed.length === 1) return confirmMatch(indexed[0], line);
-  if (indexed.length > 1) return { kind: "skip", reason: "ambiguous_msi_match" };
-
-  if (!isAutomaticAmexLabel(line.merchantRaw)) {
-    const loose = findMsiEvidenceMatch(candidates, {
-      merchantRaw: line.merchantRaw,
-      amountMinor: line.amountMinor,
-      month,
-      merchantsMatch: amexMerchantsMatch,
-    });
-    if (loose) return confirmMatch(loose, line);
+  if (indexed.length > 1) {
+    return { kind: "needs_decision", reason: "ambiguous_msi_match", candidates: indexed };
   }
-
-  if (line.installmentIndex !== undefined || isMsiLikeMerchant(line.merchantRaw) || line.originalAmountMinor) {
-    const months = line.installmentMonths ?? 3;
-    const principalMinor = line.originalAmountMinor ?? line.amountMinor * months;
-    const startOffset = (line.installmentIndex ?? 1) - 1;
-    const startDate = new Date(`${line.occurredOn}T12:00:00Z`);
-    startDate.setUTCMonth(startDate.getUTCMonth() - startOffset);
-    const startMonth = monthKeyInZone(startDate);
-    const plan = markInstallmentSpent(
-      buildMsiSchedule({
-        principalMinor,
-        months,
-        startMonth,
-        origin: "statement_unplanned",
-        cuotaMinor: line.amountMinor,
-        needsScheduleCompletion: true,
-      }),
-      line.installmentIndex ?? 1,
-      {
-        amountMinor: line.amountMinor,
-        confirmedAt: new Date().toISOString(),
-        evidenceObservationId: line.identity,
-      },
-    );
-    return {
-      kind: "unplanned",
-      merchantRaw: line.merchantRaw,
-      occurredOn: line.occurredOn,
-      amountMinor: line.amountMinor,
-      plan: { ...plan, needsScheduleCompletion: true, origin: "statement_unplanned" },
-    };
+  if (looksLikeMsiEvidence(line)) {
+    return { kind: "needs_decision", reason: "no_matching_plan", candidates: [] };
   }
-
   return { kind: "skip", reason: "not_msi_evidence" };
+};
+
+/** Build a complete manual MSI plan from an explicit create_plan decision. */
+export const buildPlanFromCreateDecision = (
+  line: EvidenceLine,
+  input: {
+    readonly months: number;
+    readonly cuotaMinor: number;
+    readonly startMonth?: string;
+  },
+): MsiPlan => {
+  const months = input.months;
+  const cuotaMinor = input.cuotaMinor;
+  let startMonth = input.startMonth;
+  if (!startMonth) {
+    const index = line.installmentIndex ?? 1;
+    const startDate = new Date(`${line.occurredOn}T12:00:00Z`);
+    startDate.setUTCMonth(startDate.getUTCMonth() - (index - 1));
+    startMonth = monthKeyInZone(startDate);
+  }
+  const principalMinor = line.originalAmountMinor ?? cuotaMinor * months;
+  const indexForSpent = line.installmentIndex ?? 1;
+  const plan = buildMsiSchedule({
+    principalMinor,
+    months,
+    startMonth,
+    origin: "manual",
+    cuotaMinor,
+  });
+  return markInstallmentSpent(plan, indexForSpent, {
+    amountMinor: line.amountMinor,
+    confirmedAt: new Date().toISOString(),
+    evidenceObservationId: line.identity,
+  });
 };
 
 export const isSantanderMsiRow = (merchantRaw: string): boolean => isMsiLikeMerchant(merchantRaw);

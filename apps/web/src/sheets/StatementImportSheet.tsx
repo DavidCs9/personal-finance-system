@@ -6,11 +6,25 @@ import type {
   AmexImportPreview,
   AmexImportResult,
   StatementImportDecision,
+  StatementImportRow,
 } from "../types";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 type Provider = "amex" | "santander";
+
+const msiNeedsDecision = (row: StatementImportRow): boolean =>
+  row.kind === "msi" && (row.status === "needs_decision" || row.status === "unplanned");
+
+const decisionResolved = (decision: StatementImportDecision | undefined): boolean => {
+  if (!decision) return false;
+  if (decision.action === "skip" || decision.action === "create" || decision.action === "link") return true;
+  if (decision.action === "confirm_msi") return Boolean(decision.eventId);
+  if (decision.action === "create_plan") {
+    return Number.isInteger(decision.months) && Number.isInteger(decision.cuotaMinor);
+  }
+  return false;
+};
 
 export function StatementImportSheet({
   provider,
@@ -26,13 +40,21 @@ export function StatementImportSheet({
   const [file, setFile] = useState<File>();
   const [preview, setPreview] = useState<AmexImportPreview>();
   const [decisions, setDecisions] = useState<Readonly<Record<string, StatementImportDecision>>>({});
+  const [planDrafts, setPlanDrafts] = useState<
+    Readonly<Record<string, { months: string; cuota: string }>>
+  >({});
   const [result, setResult] = useState<AmexImportResult>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const cancelledRef = useRef(false);
   const ambiguous = preview?.rows?.filter((row) => row.status === "ambiguous") ?? [];
-  const unresolved = ambiguous.filter((row) => !decisions[row.identity]).length;
+  const msiDecide = preview?.rows?.filter(msiNeedsDecision) ?? [];
+  const unresolved =
+    ambiguous.filter((row) => !decisionResolved(decisions[row.identity])).length
+    + msiDecide.filter((row) => !decisionResolved(decisions[row.identity])).length;
   const label = provider === "amex" ? "Amex" : "Santander";
+  const needsDecisionCount =
+    preview?.summary?.needsDecision ?? preview?.summary?.unplanned ?? msiDecide.length;
 
   useEffect(() => {
     cancelledRef.current = false;
@@ -67,6 +89,7 @@ export function StatementImportSheet({
       if (started.status === "ready" && started.rows) {
         setPreview(started);
         setDecisions({});
+        setPlanDrafts({});
         return;
       }
       setPreview(started);
@@ -74,6 +97,7 @@ export function StatementImportSheet({
       if (!cancelledRef.current) {
         setPreview(ready);
         setDecisions({});
+        setPlanDrafts({});
       }
     } catch (reason) {
       setError(
@@ -127,9 +151,6 @@ export function StatementImportSheet({
             <strong>{result.summary.msiConfirmed}</strong> cuotas MSI confirmadas
           </p>
           <p>
-            <strong>{result.summary.createdUnplanned}</strong> MSI sin plan
-          </p>
-          <p>
             <strong>{result.summary.skipped}</strong> omitidos
           </p>
           <button className="primary-button" onClick={() => onApplied(result)}>
@@ -156,7 +177,7 @@ export function StatementImportSheet({
         <form className="sheet-form" onSubmit={(event) => void inspect(event)}>
           <p>
             Sube el PDF del estado de cuenta. Conciliamos compras del periodo y confirmamos cuotas
-            MSI.
+            MSI existentes. Las cuotas sin plan requieren tu decisión.
           </p>
           <label className="file-field">
             <span>Archivo PDF</span>
@@ -190,8 +211,8 @@ export function StatementImportSheet({
                 <strong>{readyPreview.summary?.matched ?? 0}</strong>
                 <span>Conciliados</span>
               </div>
-              <div>
-                <strong>{readyPreview.summary?.unplanned ?? 0}</strong>
+              <div className={needsDecisionCount ? "attention" : ""}>
+                <strong>{needsDecisionCount}</strong>
                 <span>MSI sin plan</span>
               </div>
               <div className={readyPreview.summary?.ambiguous ? "attention" : ""}>
@@ -206,7 +227,7 @@ export function StatementImportSheet({
             )}
             {ambiguous.length > 0 && (
               <section className="ambiguous-list">
-                <p className="eyebrow">DECISIONES NECESARIAS</p>
+                <p className="eyebrow">COMPRAS AMBIGUAS</p>
                 {ambiguous.map((row) => (
                   <div className="ambiguous-row" key={row.identity}>
                     <div>
@@ -247,6 +268,120 @@ export function StatementImportSheet({
                 ))}
               </section>
             )}
+            {msiDecide.length > 0 && (
+              <section className="ambiguous-list">
+                <p className="eyebrow">MSI SIN PLAN</p>
+                {msiDecide.map((row) => {
+                  const draft = planDrafts[row.identity] ?? {
+                    months: String(row.installmentMonths ?? 3),
+                    cuota: (row.amountMinor / 100).toFixed(2),
+                  };
+                  const selected = decisions[row.identity];
+                  return (
+                    <div className="ambiguous-row" key={row.identity}>
+                      <div>
+                        <strong>{row.merchantRaw}</strong>
+                        <small>
+                          {row.occurredOn} · {money(row.amountMinor)}
+                          {row.installmentIndex ? ` · cuota ${row.installmentIndex}` : ""}
+                          {row.installmentMonths ? `/${row.installmentMonths}` : ""}
+                        </small>
+                      </div>
+                      <div className="msi-decide">
+                        {(row.candidates ?? []).length > 0 && (
+                          <select
+                            aria-label={`Confirmar MSI ${row.merchantRaw}`}
+                            value={
+                              selected?.action === "confirm_msi" || selected?.action === "link"
+                                ? selected.eventId ?? ""
+                                : ""
+                            }
+                            onChange={(event) => {
+                              const eventId = event.target.value;
+                              if (!eventId) return;
+                              setDecisions((current) => ({
+                                ...current,
+                                [row.identity]: { action: "confirm_msi", eventId },
+                              }));
+                            }}
+                          >
+                            <option value="" disabled>
+                              Confirmar en plan…
+                            </option>
+                            {(row.candidates ?? []).map((candidate) => (
+                              <option value={candidate.id} key={candidate.id}>
+                                {candidate.merchantRaw}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                        <label>
+                          Meses
+                          <input
+                            type="number"
+                            min={1}
+                            max={48}
+                            value={draft.months}
+                            onChange={(event) =>
+                              setPlanDrafts((current) => ({
+                                ...current,
+                                [row.identity]: { ...draft, months: event.target.value },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          Cuota
+                          <input
+                            type="number"
+                            min={0.01}
+                            step={0.01}
+                            value={draft.cuota}
+                            onChange={(event) =>
+                              setPlanDrafts((current) => ({
+                                ...current,
+                                [row.identity]: { ...draft, cuota: event.target.value },
+                              }))
+                            }
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() => {
+                            const months = Number.parseInt(draft.months, 10);
+                            const cuotaMajor = Number.parseFloat(draft.cuota);
+                            if (!Number.isInteger(months) || months < 1 || !(cuotaMajor > 0)) return;
+                            setDecisions((current) => ({
+                              ...current,
+                              [row.identity]: {
+                                action: "create_plan",
+                                months,
+                                cuotaMinor: Math.round(cuotaMajor * 100),
+                              },
+                            }));
+                          }}
+                        >
+                          {selected?.action === "create_plan" ? "Plan listo ✓" : "Crear plan"}
+                        </button>
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() =>
+                            setDecisions((current) => ({
+                              ...current,
+                              [row.identity]: { action: "skip" },
+                            }))
+                          }
+                        >
+                          {selected?.action === "skip" ? "Omitido ✓" : "Omitir"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+            )}
           </div>
           <div className="import-preview-list payment-list" role="list">
             {(readyPreview.rows ?? []).map((row) => (
@@ -268,7 +403,7 @@ export function StatementImportSheet({
                         ? row.kind === "msi"
                           ? "Cuota a confirmar"
                           : "Coincide"
-                        : row.status === "unplanned"
+                        : msiNeedsDecision(row)
                           ? "MSI sin plan"
                           : row.status === "ambiguous"
                             ? "Por decidir"

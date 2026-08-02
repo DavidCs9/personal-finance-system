@@ -14,7 +14,7 @@ export type StatementRowStatus =
   | "ambiguous"
   | "duplicate"
   | "excluded"
-  | "unplanned"
+  | "needs_decision"
   | "skipped";
 
 export interface StatementCandidate {
@@ -42,13 +42,26 @@ export interface StatementPreviewRow {
 
 export type StatementDecision =
   | { readonly action: "create" }
-  | { readonly action: "link"; readonly eventId: string };
+  | { readonly action: "link"; readonly eventId: string }
+  | { readonly action: "confirm_msi"; readonly eventId: string }
+  | {
+      readonly action: "create_plan";
+      readonly months: number;
+      readonly cuotaMinor: number;
+      readonly startMonth?: string;
+    }
+  | { readonly action: "skip" };
 
 export type StatementApplyAction =
   | { readonly kind: "create" }
   | { readonly kind: "link"; readonly eventId: string }
   | { readonly kind: "confirm_msi"; readonly eventId: string }
-  | { readonly kind: "create_unplanned_msi" }
+  | {
+      readonly kind: "create_plan";
+      readonly months: number;
+      readonly cuotaMinor: number;
+      readonly startMonth?: string;
+    }
   | { readonly kind: "skip" };
 
 export const statementClaimKey = (
@@ -159,6 +172,44 @@ export const statementPurchaseApplyAction = (
   return { kind: "skip" };
 };
 
+export const statementMsiApplyAction = (
+  current: StatementPreviewRow,
+  preview: StatementPreviewRow | undefined,
+  decision?: StatementDecision,
+): StatementApplyAction => {
+  if (current.kind !== "msi") return { kind: "skip" };
+  if (current.status === "skipped" || preview?.status === "skipped") return { kind: "skip" };
+  if (
+    current.status === "matched"
+    && preview?.status === "matched"
+    && current.eventId
+    && current.eventId === preview.eventId
+  ) {
+    return { kind: "confirm_msi", eventId: current.eventId };
+  }
+  if (current.status === "needs_decision" && preview?.status === "needs_decision") {
+    if (decision?.action === "skip") return { kind: "skip" };
+    if (decision?.action === "confirm_msi") {
+      const allowed = current.candidateEventIds.length === 0
+        || current.candidateEventIds.includes(decision.eventId);
+      if (allowed) return { kind: "confirm_msi", eventId: decision.eventId };
+    }
+    if (decision?.action === "create_plan") {
+      return {
+        kind: "create_plan",
+        months: decision.months,
+        cuotaMinor: decision.cuotaMinor,
+        ...(decision.startMonth ? { startMonth: decision.startMonth } : {}),
+      };
+    }
+    // Allow link as synonym for confirm when candidates exist (web reuse).
+    if (decision?.action === "link" && current.candidateEventIds.includes(decision.eventId)) {
+      return { kind: "confirm_msi", eventId: decision.eventId };
+    }
+  }
+  return { kind: "skip" };
+};
+
 export const statementPreviewSummary = (rows: readonly StatementPreviewRow[]) => {
   const count = (status: StatementRowStatus) => rows.filter((row) => row.status === status).length;
   return {
@@ -168,7 +219,9 @@ export const statementPreviewSummary = (rows: readonly StatementPreviewRow[]) =>
     ambiguous: count("ambiguous"),
     duplicate: count("duplicate"),
     excluded: count("excluded"),
-    unplanned: count("unplanned"),
+    needsDecision: count("needs_decision"),
+    /** @deprecated alias for needsDecision — kept for older UI snapshots */
+    unplanned: count("needs_decision"),
     skipped: count("skipped"),
     purchases: rows.filter((row) => row.kind === "purchase").length,
     msi: rows.filter((row) => row.kind === "msi").length,

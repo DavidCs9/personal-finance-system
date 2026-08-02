@@ -50,10 +50,10 @@ describe('matchEvidenceLine', () => {
       },
       [{ id: 'evt-1', merchantRaw: 'SOME STORE', status: 'accepted', msi: plan }],
     );
-    expect(match.kind).not.toBe('confirm');
+    expect(match.kind).toBe('needs_decision');
   });
 
-  it('skips ambiguous automatic Amex matches with the same cuota shape', () => {
+  it('returns needs_decision for ambiguous automatic Amex matches', () => {
     const left = buildMsiSchedule({
       principalMinor: 600_000,
       months: 3,
@@ -83,7 +83,11 @@ describe('matchEvidenceLine', () => {
         { id: 'evt-2', merchantRaw: 'STORE B', status: 'accepted', msi: right },
       ],
     );
-    expect(match).toEqual({ kind: 'skip', reason: 'ambiguous_msi_match' });
+    expect(match.kind).toBe('needs_decision');
+    if (match.kind === 'needs_decision') {
+      expect(match.reason).toBe('ambiguous_msi_match');
+      expect(match.candidates).toHaveLength(2);
+    }
   });
 
   it('skips evidence already confirmed by observation id', () => {
@@ -117,7 +121,7 @@ describe('matchEvidenceLine', () => {
     expect(match).toEqual({ kind: 'skip', reason: 'already_confirmed' });
   });
 
-  it('creates an unplanned MSI stub for unmatched statement cuotas', () => {
+  it('requires a decision when a statement cuota has no matching plan', () => {
     const match = matchEvidenceLine(
       {
         merchantRaw: 'AEROMEXICO 8697744',
@@ -130,11 +134,7 @@ describe('matchEvidenceLine', () => {
       },
       [],
     );
-    expect(match.kind).toBe('unplanned');
-    if (match.kind === 'unplanned') {
-      expect(match.plan.needsScheduleCompletion).toBe(true);
-      expect(match.plan.installments.some((item) => item.status === 'spent')).toBe(true);
-    }
+    expect(match).toEqual({ kind: 'needs_decision', reason: 'no_matching_plan', candidates: [] });
   });
 });
 
