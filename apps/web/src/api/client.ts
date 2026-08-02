@@ -38,7 +38,7 @@ const cognitoRequest = async (target: string, payload: Record<string, unknown>):
     body: JSON.stringify(payload),
   });
   const body = await response.json() as Record<string, unknown>;
-  if (!response.ok) throw new Error(String(body.message ?? "No fue posible iniciar sesión."));
+  if (!response.ok) throw new CognitoRequestError(String(body.message ?? "No fue posible iniciar sesión."));
   return body;
 };
 
@@ -54,19 +54,53 @@ const sessionFrom = (response: Record<string, unknown>): LedgerSession | undefin
 
 const refreshTokenKey = "ledger-refresh-token";
 const idTokenKey = "ledger-id-token";
+const refreshBeforeExpiryMs = 2 * 60 * 1000;
+export const sessionExpiredEvent = "olbia:session-expired";
 
-export const ledgerApi = {
-  saveSession: ({ idToken, refreshToken }: LedgerSession) => {
-    localStorage.setItem(idTokenKey, idToken);
-    localStorage.setItem(refreshTokenKey, refreshToken);
-  },
-  clearSession: () => {
-    localStorage.removeItem(idTokenKey);
-    localStorage.removeItem(refreshTokenKey);
-  },
-  async restoreSession(): Promise<string | undefined> {
-    const refreshToken = localStorage.getItem(refreshTokenKey);
-    if (!refreshToken) return undefined;
+class CognitoRequestError extends Error {}
+
+let refreshPromise: Promise<string | undefined> | undefined;
+
+const tokenExpiresAt = (token: string): number | undefined => {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return undefined;
+    const normalised = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalised.padEnd(Math.ceil(normalised.length / 4) * 4, "=");
+    const expiresAt = (JSON.parse(atob(padded)) as { exp?: unknown }).exp;
+    return typeof expiresAt === "number" ? expiresAt * 1000 : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+export const isTokenFresh = (token: string | null | undefined, now = Date.now()): token is string => {
+  if (!token) return false;
+  const expiresAt = tokenExpiresAt(token);
+  return expiresAt !== undefined && expiresAt - now > refreshBeforeExpiryMs;
+};
+
+const announceExpiredSession = () => {
+  window.dispatchEvent(new Event(sessionExpiredEvent));
+};
+
+const clearStoredSession = () => {
+  localStorage.removeItem(idTokenKey);
+  localStorage.removeItem(refreshTokenKey);
+};
+
+const endedSessionError = () => {
+  clearStoredSession();
+  announceExpiredSession();
+  return new Error("Tu sesión terminó. Vuelve a entrar.");
+};
+
+const refreshSession = async (): Promise<string | undefined> => {
+  if (refreshPromise) return refreshPromise;
+  const refreshToken = localStorage.getItem(refreshTokenKey);
+  if (!refreshToken) return undefined;
+
+  const operation = (async () => {
     try {
       const runtime = config();
       const result = await cognitoRequest("InitiateAuth", {
@@ -75,13 +109,38 @@ export const ledgerApi = {
         AuthParameters: { REFRESH_TOKEN: refreshToken },
       });
       const idToken = tokenFrom(result);
-      if (!idToken) throw new Error("No se pudo renovar la sesión.");
+      if (!idToken) throw new CognitoRequestError("No se pudo renovar la sesión.");
       localStorage.setItem(idTokenKey, idToken);
       return idToken;
-    } catch {
-      ledgerApi.clearSession();
-      return undefined;
+    } catch (error) {
+      if (error instanceof CognitoRequestError) {
+        clearStoredSession();
+        announceExpiredSession();
+        return undefined;
+      }
+      throw error;
     }
+  })();
+  refreshPromise = operation;
+  try {
+    return await operation;
+  } finally {
+    if (refreshPromise === operation) refreshPromise = undefined;
+  }
+};
+
+export const ledgerApi = {
+  saveSession: ({ idToken, refreshToken }: LedgerSession) => {
+    localStorage.setItem(idTokenKey, idToken);
+    localStorage.setItem(refreshTokenKey, refreshToken);
+  },
+  clearSession: () => {
+    clearStoredSession();
+  },
+  async restoreSession(): Promise<string | undefined> {
+    const idToken = localStorage.getItem(idTokenKey);
+    if (isTokenFresh(idToken)) return idToken;
+    return refreshSession();
   },
   async signIn(email: string, password: string): Promise<SignInResult> {
     const runtime = config();
@@ -149,10 +208,24 @@ export const ledgerApi = {
 };
 
 const request = async <T>(path: string, idToken: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(`${config().apiBaseUrl}${path}`, {
+  const storedToken = localStorage.getItem(idTokenKey);
+  let requestToken = isTokenFresh(storedToken)
+    ? storedToken
+    : isTokenFresh(idToken)
+      ? idToken
+      : await refreshSession();
+  if (!requestToken) throw endedSessionError();
+
+  const execute = (token: string) => fetch(`${config().apiBaseUrl}${path}`, {
     ...init,
-    headers: { ...init?.headers, Authorization: `Bearer ${idToken}` },
+    headers: { ...init?.headers, Authorization: `Bearer ${token}` },
   });
+  let response = await execute(requestToken);
+  if (response.status === 401) {
+    requestToken = await refreshSession();
+    if (!requestToken) throw endedSessionError();
+    response = await execute(requestToken);
+  }
   const body = await response.json() as T & { message?: string };
   if (!response.ok) throw new Error(body.message ?? "No se pudo completar la solicitud.");
   return body;
