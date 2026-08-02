@@ -14,6 +14,7 @@ import {
 } from "../monthly-plan";
 import { EventSheet } from "../sheets/EventSheet";
 import { IncomeSheet } from "../sheets/IncomeSheet";
+import { ManualEntrySheet } from "../sheets/ManualEntrySheet";
 import { PaymentSheet } from "../sheets/PaymentSheet";
 import { SantanderImportSheet } from "../sheets/SantanderImportSheet";
 import type { IngestionException, PurchaseEvent } from "../types";
@@ -41,6 +42,7 @@ export function Dashboard({
   const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
   const [movementSort, setMovementSort] = useState<"recent" | "largest">("recent");
   const [importOpen, setImportOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
 
   const eventsQuery = useQuery({
     queryKey: eventsQueryKey,
@@ -197,6 +199,7 @@ export function Dashboard({
             onDiscardException={discardException}
             onReadExceptionRaw={readExceptionRaw}
             onImport={() => setImportOpen(true)}
+            onRegisterCharge={() => setManualOpen(true)}
           />
         )}
       </AppShell>
@@ -255,6 +258,23 @@ export function Dashboard({
           onApplied={() => {
             setImportOpen(false);
             void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+          }}
+        />
+      )}
+      {manualOpen && (
+        <ManualEntrySheet
+          idToken={idToken}
+          demoMode={demoMode}
+          now={now}
+          onClose={() => setManualOpen(false)}
+          onCreated={(created) => {
+            setManualOpen(false);
+            queryClient.setQueryData<{ events: readonly PurchaseEvent[] }>(eventsQueryKey, (current) => ({
+              events: [created, ...(current?.events ?? [])],
+            }));
+            void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+            setActiveEvent(created);
+            setTab("movements");
           }}
         />
       )}

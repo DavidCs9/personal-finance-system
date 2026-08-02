@@ -121,6 +121,70 @@ describe('observed event persistence', () => {
     expect(Date.parse(to) - Date.parse(query.ExpressionAttributeValues[':from'])).toBe(36 * 60 * 60 * 1000);
   });
 
+  it('reconciles a delayed Amex email with a same-day manual observation', async () => {
+    const send = vi.fn()
+      .mockResolvedValueOnce({ Items: [{
+        reconciliationAt: '2026-08-01T12:00:00.000Z',
+        payload: {
+          id: 'manual-event-1',
+          merchantRaw: 'AMAZON MX',
+          occurredAt: '2026-08-01T12:00:00.000Z',
+          account: { lastFour: '1234' },
+          captureSources: ['manual'],
+        },
+      }] })
+      .mockResolvedValueOnce({});
+    const emailInput: SaveObservedEventInput = {
+      ...inputWith(send),
+      dedupeKey: 'email:amex-delayed',
+      captureSource: 'email',
+      reconciliationAt: '2026-08-02T01:10:00.000Z',
+      event: {
+        ...event,
+        id: 'email-amex-1',
+        institution: 'american_express_mx',
+        merchantRaw: 'AMAZON MX',
+        occurredAt: '2026-08-01T18:40:00.000Z',
+        account: { lastFour: '1234' },
+        source: { bucket: 'raw-email', key: 'inbound/amex', contentType: 'message/rfc822' },
+        parserVersion: 'amex-mx-card-purchase-v2',
+      },
+    };
+    await expect(saveObservedEvent(emailInput)).resolves.toMatchObject({
+      eventId: 'manual-event-1', created: false, reconciled: true,
+    });
+  });
+
+  it('does not reconcile a manual observation from a different calendar day', async () => {
+    const send = vi.fn()
+      .mockResolvedValueOnce({ Items: [{
+        reconciliationAt: '2026-07-31T12:00:00.000Z',
+        payload: {
+          id: 'manual-previous-day',
+          merchantRaw: 'AMAZON MX',
+          occurredAt: '2026-07-31T12:00:00.000Z',
+          captureSources: ['manual'],
+        },
+      }] })
+      .mockResolvedValueOnce({});
+    const emailInput: SaveObservedEventInput = {
+      ...inputWith(send),
+      dedupeKey: 'email:amex-other-day',
+      captureSource: 'email',
+      reconciliationAt: '2026-08-01T20:00:00.000Z',
+      event: {
+        ...event,
+        id: 'email-amex-other-day',
+        institution: 'american_express_mx',
+        merchantRaw: 'AMAZON MX',
+        occurredAt: '2026-08-01T18:00:00.000Z',
+        source: { bucket: 'raw-email', key: 'inbound/amex-2', contentType: 'message/rfc822' },
+        parserVersion: 'amex-mx-card-purchase-v2',
+      },
+    };
+    await expect(saveObservedEvent(emailInput)).resolves.toMatchObject({ created: true, reconciled: false });
+  });
+
   it('does not reconcile a CSV observation from a different calendar day', async () => {
     const send = vi.fn()
       .mockResolvedValueOnce({ Items: [{
