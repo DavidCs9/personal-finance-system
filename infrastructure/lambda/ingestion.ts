@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SendEmailCommand, SESClient } from '@aws-sdk/client-ses';
-import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { SQSHandler } from 'aws-lambda';
 import { ingestionExceptionAlert, type IngestionExceptionAlertInput } from './ingestion-notifications.js';
 
@@ -16,6 +16,7 @@ interface IngestionJob {
   readonly receivedAt: string;
   readonly sourceMessageId?: string;
   readonly source: { readonly bucket: string; readonly key: string };
+  readonly retryExceptionId?: string;
 }
 
 const tableName = process.env.METADATA_TABLE_NAME;
@@ -66,7 +67,7 @@ const ingest = async (job: IngestionJob): Promise<void> => {
   const mime = await object.Body.transformToString();
   const sha256 = createHash('sha256').update(mime).digest('hex');
   const sourceMessageId = normaliseMessageId(job.sourceMessageId);
-  const dedupeKey = createHash('sha256').update(`${sourceMessageId ?? 'no-message-id'}:${sha256}`).digest('hex');
+  const dedupeKey = createHash('sha256').update(job.retryExceptionId ?? `${sourceMessageId ?? 'no-message-id'}:${sha256}`).digest('hex');
 
   try {
     await database.send(new PutCommand({
@@ -139,6 +140,7 @@ const ingest = async (job: IngestionJob): Promise<void> => {
         payload: purchase,
       },
     }));
+    if (job.retryExceptionId) await markRetryCompleted(job.retryExceptionId, purchase.id);
     try {
       await notifyObservedPurchase(purchase);
     } catch (error) {
@@ -157,6 +159,15 @@ const ingest = async (job: IngestionJob): Promise<void> => {
       source,
     });
   }
+};
+
+const markRetryCompleted = async (exceptionId: string, eventId: string): Promise<void> => {
+  await database.send(new UpdateCommand({
+    TableName: tableName, Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' },
+    UpdateExpression: 'SET #payload.#retry.#status = :status, #payload.#retry.#completedAt = :completedAt, #payload.#retry.#eventId = :eventId',
+    ExpressionAttributeNames: { '#payload': 'payload', '#retry': 'retry', '#status': 'status', '#completedAt': 'completedAt', '#eventId': 'eventId' },
+    ExpressionAttributeValues: { ':status': 'completed', ':completedAt': new Date().toISOString(), ':eventId': eventId },
+  }));
 };
 
 type NewIngestionException = Omit<IngestionExceptionAlertInput, 'id'>;

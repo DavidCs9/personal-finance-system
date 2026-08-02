@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan, type MonthlyPlanInput } from './monthly-plan.js';
 
@@ -28,8 +28,15 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       return response(405, { message: 'Method not allowed.' });
     }
     const eventId = event.pathParameters?.eventId;
+    const exceptionId = event.pathParameters?.exceptionId;
     if (event.requestContext.http.method === 'GET' && event.rawPath === '/events') {
       return response(200, { events: await listEvents() });
+    }
+    if (event.requestContext.http.method === 'GET' && event.rawPath === '/exceptions') {
+      return response(200, { exceptions: await listExceptions() });
+    }
+    if (exceptionId && event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/retry')) {
+      return response(202, await requestRetry(exceptionId, principal(event)));
     }
     if (!eventId) return response(404, { message: 'Route not found.' });
     if (event.requestContext.http.method === 'GET' && event.rawPath.endsWith('/raw')) {
@@ -99,6 +106,40 @@ const listEvents = async (): Promise<readonly JsonObject[]> => {
     Limit: 100,
   }));
   return (result.Items ?? []).map((item) => toPublicEvent(item.payload as JsonObject));
+};
+
+const listExceptions = async (): Promise<readonly JsonObject[]> => {
+  const result = await database.send(new QueryCommand({
+    TableName: tableName, IndexName: 'GSI1', KeyConditionExpression: 'GSI1PK = :partition',
+    ExpressionAttributeValues: { ':partition': 'EXCEPTIONS' }, ScanIndexForward: false, Limit: 100,
+  }));
+  return (result.Items ?? []).map((item) => toPublicException(item.payload as JsonObject));
+};
+
+const toPublicException = (payload: JsonObject): JsonObject => ({
+  id: payload.id, receivedAt: payload.receivedAt, institution: payload.institution, reason: payload.reason,
+  details: payload.details, retry: payload.retry,
+});
+
+const requestRetry = async (exceptionId: string, requestedBy: string): Promise<JsonObject> => {
+  const existing = await database.send(new GetCommand({ TableName: tableName, Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' }, ConsistentRead: true }));
+  const exception = existing.Item?.payload as JsonObject | undefined;
+  const source = exception?.source as JsonObject | undefined;
+  if (!exception || !source?.bucket || !source.key) throw new Error('Exception not found.');
+  const requestedAt = new Date().toISOString();
+  const retry = { status: 'queued', requestedAt, requestedBy };
+  await database.send(new TransactWriteCommand({ TransactItems: [
+    { Update: {
+      TableName: tableName, Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' },
+      UpdateExpression: 'SET #payload.#retry = :retry', ConditionExpression: 'attribute_not_exists(#payload.#retry)',
+      ExpressionAttributeNames: { '#payload': 'payload', '#retry': 'retry' }, ExpressionAttributeValues: { ':retry': retry },
+    } },
+    { Put: { TableName: tableName, Item: {
+      PK: `RETRY#${exceptionId}`, SK: 'DISPATCH', entityType: 'ingestion_retry', status: 'pending',
+      job: { receivedAt: exception.receivedAt, source, retryExceptionId: exceptionId }, createdAt: requestedAt,
+    }, ConditionExpression: 'attribute_not_exists(PK)' } },
+  ] }));
+  return { id: exceptionId, retry };
 };
 
 const getEventDetail = async (eventId: string): Promise<JsonObject | undefined> => {
