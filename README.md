@@ -25,12 +25,12 @@ flowchart TB
   classDef system fill:#1168BD,stroke:#0B4884,color:#fff,stroke-width:1px
   classDef external fill:#999999,stroke:#6B6B6B,color:#fff,stroke-width:1px
 
-  owner["Owner\nPerson\nReviews spend, recovers failures,\nreconciles statements"]
-  olbia["Olbia\nSoftware System\nPersonal monthly spending ledger.\nObserves purchases without bank credentials"]
-  issuers["Card and billing alerts\nSoftware System\nAmex, Santander, Nu, AWS Billing"]
-  gmail["Gmail\nSoftware System\nForwards matching alerts to Olbia"]
-  shortcuts["Apple Shortcuts\nSoftware System\nPosts Apple Pay captures"]
-  webpush["Web Push network\nSoftware System\nDelivers browser notifications"]
+  owner["Owner\n«Person»\nReviews spend, recovers failures,\nreconciles statements"]
+  olbia["Olbia\n«Software System»\nPersonal monthly spending ledger.\nObserves purchases without bank credentials"]
+  issuers["Card and billing alerts\n«Software System»\nAmex, Santander, Nu, AWS Billing"]
+  gmail["Gmail\n«Software System»\nForwards matching alerts to Olbia"]
+  shortcuts["Apple Shortcuts\n«Software System»\nPosts Apple Pay captures"]
+  webpush["Web Push network\n«Software System»\nDelivers browser notifications"]
 
   issuers -->|"Sends alerts"| gmail
   gmail -->|"Forwards matching alerts"| olbia
@@ -47,9 +47,9 @@ flowchart TB
 
 | Colour | Meaning |
 | --- | --- |
-| Dark blue | Person |
-| Mid blue | Software system in scope |
-| Grey | External software system |
+| Dark blue | «Person» |
+| Mid blue | «Software System» in scope |
+| Grey | External «Software System» |
 
 Everything runs on AWS (`us-east-2`), defined with CDK in TypeScript. Deploys from `main` via GitHub Actions with OIDC — no AWS keys stored in the repository.
 
