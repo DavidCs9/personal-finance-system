@@ -25,12 +25,24 @@ flowchart TB
   classDef system fill:#1168BD,stroke:#0B4884,color:#fff,stroke-width:1px
   classDef external fill:#999999,stroke:#6B6B6B,color:#fff,stroke-width:1px
 
-  owner["Owner\n«Person»\nReviews spend, recovers failures,\nreconciles statements"]
-  olbia["Olbia\n«Software System»\nPersonal monthly spending ledger.\nObserves purchases without bank credentials"]
-  issuers["Card and billing alerts\n«Software System»\nAmex, Santander, Nu, AWS Billing"]
-  gmail["Gmail\n«Software System»\nForwards matching alerts to Olbia"]
-  shortcuts["Apple Shortcuts\n«Software System»\nPosts Apple Pay captures"]
-  webpush["Web Push network\n«Software System»\nDelivers browser notifications"]
+  owner["`**Owner**
+«Person»
+_Reviews spend, recovers failures, reconciles statements_`"]
+  olbia["`**Olbia**
+«Software System»
+_Personal monthly spending ledger. Observes purchases without bank credentials_`"]
+  issuers["`**Card and billing alerts**
+«Software System»
+_Amex, Santander, Nu, AWS Billing_`"]
+  gmail["`**Gmail**
+«Software System»
+_Forwards matching alerts to Olbia_`"]
+  shortcuts["`**Apple Shortcuts**
+«Software System»
+_Posts Apple Pay captures_`"]
+  webpush["`**Web Push network**
+«Software System»
+_Delivers browser notifications_`"]
 
   issuers -->|"Sends alerts"| gmail
   gmail -->|"Forwards matching alerts"| olbia
