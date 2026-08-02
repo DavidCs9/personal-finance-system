@@ -41,10 +41,11 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .text-button { border: 0; color: var(--ink-soft); background: transparent; padding: 7px; font-size: 12px; }
 .banner-error, .form-error { color: var(--red-dark); background: #f9e4e0; border: 1px solid #e9b6ae; border-radius: 10px; padding: 11px 13px; font-size: 12px; }
 .banner-error { margin: 14px 0 0; }
-.summary-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.refresh-button { border: 0; background: transparent; color: var(--muted); font-size: 12px; padding: 7px 4px; white-space: nowrap; }
-.refresh-button:hover:not(:disabled) { color: var(--ink); }
+.refresh-button { display: grid; place-items: center; width: 27px; height: 27px; border: 1px solid transparent; border-radius: 50%; color: var(--muted); background: transparent; padding: 0; font-size: 15px; line-height: 1; }
+.refresh-button:hover:not(:disabled) { border-color: var(--line); color: var(--ink); background: #f8f4ed; }
 .refresh-button:disabled { opacity: .55; }
+.refresh-button.refreshing { animation: refresh-spin .8s linear infinite; }
+@keyframes refresh-spin { to { transform: rotate(360deg); } }
 
 .desktop-tabs { display: none; }
 .month-selector { height: 82px; display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; gap: 6px; border-bottom: 1px solid var(--line); }
