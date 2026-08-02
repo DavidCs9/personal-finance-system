@@ -1,0 +1,30 @@
+{
+  "id": "/",
+  "name": "Olbia — tu gasto mensual",
+  "short_name": "Olbia",
+  "description": "Tu gasto mensual, compromisos y proyección en un solo lugar.",
+  "lang": "es-MX",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f2eee6",
+  "theme_color": "#f2eee6",
+  "icons": [
+    {
+      "src": "/icons/olbia-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/olbia-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/olbia-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

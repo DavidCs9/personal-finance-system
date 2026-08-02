@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ledgerApi, type LedgerSession, type SignInResult } from "./api/client";
+import { ledgerApi, sessionExpiredEvent, type LedgerSession, type SignInResult } from "./api/client";
 import { mockEventFeed } from "./api/mock-data";
 import {
   demoPlans,
@@ -43,17 +43,34 @@ export function App() {
   useEffect(() => {
     if (demoMode) return;
     let active = true;
-    void ledgerApi.restoreSession().then((token) => { if (active) setIdToken(token ?? null); });
-    return () => { active = false; };
-  }, [demoMode]);
+    const restore = (fallbackToSignIn: boolean) => {
+      void ledgerApi.restoreSession()
+        .then((token) => { if (active) setIdToken(token ?? null); })
+        .catch(() => { if (active && fallbackToSignIn) setIdToken(null); });
+    };
+    const restoreWhenVisible = () => {
+      if (document.visibilityState === "visible") restore(false);
+    };
+    const resume = () => restore(false);
+    const expire = () => {
+      if (!active) return;
+      queryClient.clear();
+      setIdToken(null);
+    };
 
-  useEffect(() => {
-    if (!idToken || demoMode) return undefined;
-    const interval = window.setInterval(() => {
-      void ledgerApi.restoreSession().then((token) => setIdToken(token ?? null));
-    }, 45 * 60 * 1000);
-    return () => window.clearInterval(interval);
-  }, [demoMode, idToken]);
+    restore(true);
+    const interval = window.setInterval(resume, 5 * 60 * 1000);
+    window.addEventListener("pageshow", resume);
+    window.addEventListener(sessionExpiredEvent, expire);
+    document.addEventListener("visibilitychange", restoreWhenVisible);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener("pageshow", resume);
+      window.removeEventListener(sessionExpiredEvent, expire);
+      document.removeEventListener("visibilitychange", restoreWhenVisible);
+    };
+  }, [demoMode, queryClient]);
 
   const onSignedIn = (session: LedgerSession) => {
     queryClient.clear();
