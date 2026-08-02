@@ -8,6 +8,7 @@ import {
   money,
   statusLabel,
 } from "../lib/format";
+import { CaptureActionsSheet } from "../sheets/CaptureActionsSheet";
 import { RecoveryReviewSheet } from "../sheets/RecoveryReviewSheet";
 import type { IngestionException, PurchaseEvent } from "../types";
 
@@ -37,6 +38,7 @@ export function MovementsView({
   onRegisterCharge(): void;
 }) {
   const [activeException, setActiveException] = useState<IngestionException>();
+  const [captureOpen, setCaptureOpen] = useState(false);
   const sorted = [...events].sort((a, b) =>
     sort === "largest"
       ? b.amount.amountMinor - a.amount.amountMinor
@@ -57,14 +59,13 @@ export function MovementsView({
           </p>
         </div>
         <div className="movement-actions">
-          <div className="movement-action-buttons">
-            <button className="secondary-button import-button" onClick={onRegisterCharge}>
-              Registrar cobro
-            </button>
-            <button className="secondary-button import-button" onClick={onImport}>
-              Conciliar CSV
-            </button>
-          </div>
+          <button
+            type="button"
+            className="secondary-button import-button"
+            onClick={() => setCaptureOpen(true)}
+          >
+            Añadir
+          </button>
           <label className="sort-control">
             <span>Ordenar</span>
             <select
@@ -77,6 +78,19 @@ export function MovementsView({
           </label>
         </div>
       </header>
+      {captureOpen && (
+        <CaptureActionsSheet
+          onClose={() => setCaptureOpen(false)}
+          onRegisterCharge={() => {
+            setCaptureOpen(false);
+            onRegisterCharge();
+          }}
+          onImport={() => {
+            setCaptureOpen(false);
+            onImport();
+          }}
+        />
+      )}
       {exceptions.length > 0 && (
         <details className="recovery-section">
           <summary>
