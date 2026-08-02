@@ -5,7 +5,7 @@ import { BatchGetCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryC
 import type { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan, type MonthlyPlanInput } from './monthly-plan.js';
 import { reconciliationPartition } from './observed-events.js';
-import { InvalidSantanderCsvError, merchantsMatch, parseSantanderCsv, santanderApplyAction, type SantanderCsvDocument, type SantanderCsvRow, type SantanderReconciliationDecision, type SantanderReconciliationStatus } from './santander-csv.js';
+import { InvalidSantanderCsvError, merchantsMatch, parseSantanderCsv, santanderApplyAction, santanderImportCompletionUpdate, type SantanderCsvDocument, type SantanderCsvRow, type SantanderReconciliationDecision, type SantanderReconciliationStatus } from './santander-csv.js';
 
 const database = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -456,9 +456,7 @@ const applySantanderImport = async (importId: string, owner: string, decisionBod
   await database.send(new UpdateCommand({
     TableName: tableName,
     Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER#${importId}` },
-    UpdateExpression: 'SET #status = :status, appliedAt = :appliedAt, result = :result',
-    ExpressionAttributeNames: { '#status': 'status' },
-    ExpressionAttributeValues: { ':status': 'applied', ':appliedAt': appliedAt, ':result': { created: created.length, linked, skipped } },
+    ...santanderImportCompletionUpdate(appliedAt, { created: created.length, linked, skipped }),
   }));
   return { importId, created, summary: { created: created.length, linked, skipped } };
 };
