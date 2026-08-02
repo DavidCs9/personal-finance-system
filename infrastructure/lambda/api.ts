@@ -1092,6 +1092,13 @@ const getSantanderStatementImport = async (importId: string, owner: string): Pro
   try {
     const extraction = await fetchTextractStatementExtraction(textract, jobId, 'santander');
     answers = extraction.answers;
+    console.info('Santander Textract extraction ready', {
+      importId,
+      jobId,
+      answers: Object.keys(extraction.answers),
+      tables: extraction.tables.length,
+      lines: extraction.lines.length,
+    });
     extractionKey = await persistTextractExtraction(sourceKey, extraction);
     const document = parseSantanderStatementExtraction(extraction);
     const rows = await buildSantanderStatementPreviewRows(document);
@@ -1724,6 +1731,13 @@ const getAmexImport = async (importId: string, owner: string): Promise<JsonObjec
   try {
     const extraction = await fetchTextractStatementExtraction(textract, jobId, 'amex');
     answers = extraction.answers;
+    console.info('Amex Textract extraction ready', {
+      importId,
+      jobId,
+      answers: Object.keys(extraction.answers),
+      tables: extraction.tables.length,
+      lines: extraction.lines.length,
+    });
     extractionKey = await persistTextractExtraction(sourceKey, extraction);
     const document = parseAmexStatementExtraction(extraction);
     const rows = await buildAmexPreviewRows(document);

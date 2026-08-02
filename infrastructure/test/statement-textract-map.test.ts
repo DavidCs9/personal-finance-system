@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { parseAmexStatementExtraction } from '../lambda/amex-statement.js';
 import { parseSantanderStatementExtraction } from '../lambda/santander-statement.js';
-import { parseFlexibleDate } from '../lambda/statement-dates.js';
+import { findPeriodInLooseText, parseFlexibleDate } from '../lambda/statement-dates.js';
 import { normalizeTextractAnalysis, textractLinesToText } from '../lambda/textract-document.js';
 
 describe('statement date helpers', () => {
   it('parses Spanish query answers into ISO dates', () => {
     expect(parseFlexibleDate('7 de Junio de 2026')).toBe('2026-06-07');
     expect(parseFlexibleDate('05-Jun-2026')).toBe('2026-06-05');
+  });
+
+  it('finds Amex billing period in noisy LINE text', () => {
+    expect(findPeriodInLooseText(
+      'Periodo de Facturacion Del 7 de Junio al 6 de Julio de 2026 Dias del periodo',
+    )).toEqual({ from: '2026-06-07', to: '2026-07-06' });
   });
 });
 
