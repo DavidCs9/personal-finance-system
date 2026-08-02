@@ -143,6 +143,7 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
   const [planLoading, setPlanLoading] = useState(!demoMode);
   const [planLoadError, setPlanLoadError] = useState<string>();
   const [planRefresh, setPlanRefresh] = useState(0);
+  const [dataRefresh, setDataRefresh] = useState(0);
   const [editingIncome, setEditingIncome] = useState(false);
   const [editingPayment, setEditingPayment] = useState<PlannedPayment | null | undefined>();
   const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
@@ -155,12 +156,18 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
     void request.then(({ events: result }) => setEvents(result))
       .catch((reason) => setError(reason instanceof Error ? reason.message : "No se pudieron cargar los movimientos."))
       .finally(() => setLoading(false));
-  }, [demoMode, idToken]);
+  }, [dataRefresh, demoMode, idToken]);
 
   useEffect(() => {
     if (demoMode) return;
     void ledgerApi.listExceptions(idToken).then(({ exceptions: result }) => setExceptions(result)).catch(() => undefined);
-  }, [demoMode, idToken]);
+  }, [dataRefresh, demoMode, idToken]);
+  const refreshSummary = () => {
+    setLoading(true);
+    setError(undefined);
+    setDataRefresh((current) => current + 1);
+    setPlanRefresh((current) => current + 1);
+  };
   const retryException = async (exceptionId: string) => {
     const result = await ledgerApi.retryException(exceptionId, idToken);
     setExceptions((current) => current.map((item) => item.id === exceptionId ? { ...item, retry: result.retry } : item));
@@ -245,6 +252,8 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
       onAddPayment={() => setEditingPayment(null)}
       onEditPayment={(payment) => setEditingPayment(payment)}
       onReviewLargest={reviewLargest}
+      onRefresh={refreshSummary}
+      refreshing={loading || planLoading}
     /> : <Movements
       month={selectedMonth}
       onMonthChange={setSelectedMonth}
@@ -322,13 +331,15 @@ interface SummaryProps {
   readonly onAddPayment: () => void;
   readonly onEditPayment: (payment: PlannedPayment) => void;
   readonly onReviewLargest: () => void;
+  readonly onRefresh: () => void;
+  readonly refreshing: boolean;
 }
 
 function Summary(props: SummaryProps) {
   const hasIncome = props.plan.configured && props.plan.incomeMinor > 0;
   const paymentMonth = new Intl.DateTimeFormat("es-MX", { month: "short", timeZone: "UTC" }).format(monthDate(props.month)).replace(".", "").toUpperCase();
   return <section className={`summary-view risk-${props.risk}`}>
-    <MonthSelector value={props.month} onChange={props.onMonthChange} />
+    <div className="summary-tools"><MonthSelector value={props.month} onChange={props.onMonthChange} /><button className="refresh-button" type="button" onClick={props.onRefresh} disabled={props.refreshing}>{props.refreshing ? "Actualizando…" : "↻ Actualizar"}</button></div>
     {props.loading ? <section className="setup-card plan-loading">
       <p className="eyebrow">CONFIGURACIÓN MENSUAL</p>
       <h1>Cargando este mes…</h1>
