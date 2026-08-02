@@ -22,12 +22,21 @@ import * as ses from 'aws-cdk-lib/aws-ses';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53targets from 'aws-cdk-lib/aws-route53-targets';
+import type { IConstruct } from 'constructs';
 import { Construct } from 'constructs';
 import * as path from 'node:path';
 
 export class PersonalFinanceV1Stack extends Stack {
   public constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
+
+    cdk.Aspects.of(this).add({
+      visit: (node: IConstruct): void => {
+        if (node instanceof lambda.CfnFunction && node.reservedConcurrentExecutions !== undefined) {
+          throw new Error(`Reserved Lambda concurrency is not allowed in this project: ${node.node.path}`);
+        }
+      },
+    });
 
     const tags = {
       Project: 'personal-finance-system',
@@ -299,7 +308,6 @@ export class PersonalFinanceV1Stack extends Stack {
         METADATA_TABLE_NAME: metadataTable.tableName,
         APPLE_PAY_CAPTURE_SECRET_ARN: applePayCaptureSecret.secretArn,
       },
-      reservedConcurrentExecutions: 4,
     });
     metadataTable.grantReadWriteData(applePayCaptureFunction);
     applePayCaptureSecret.grantRead(applePayCaptureFunction);
