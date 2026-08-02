@@ -23,7 +23,7 @@ export interface RawSourcePointer {
   readonly bucket: string;
   readonly key: string;
   readonly sha256: string;
-  readonly contentType: "message/rfc822" | "text/csv" | "application/json";
+  readonly contentType: "message/rfc822" | "text/csv" | "application/json" | "text/plain";
 }
 
 export interface ApplePayShortcutSourcePointer {

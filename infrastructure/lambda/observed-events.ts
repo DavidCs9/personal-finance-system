@@ -2,10 +2,14 @@ import { randomUUID } from 'node:crypto';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { GetCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 
-export type CaptureSource = 'email' | 'apple_pay_shortcut' | 'santander_csv' | 'manual';
+export type CaptureSource = 'email' | 'apple_pay_shortcut' | 'santander_csv' | 'manual' | 'amex_statement';
 
 const isCaptureSource = (value: unknown): value is CaptureSource =>
-  value === 'email' || value === 'apple_pay_shortcut' || value === 'santander_csv' || value === 'manual';
+  value === 'email'
+  || value === 'apple_pay_shortcut'
+  || value === 'santander_csv'
+  || value === 'manual'
+  || value === 'amex_statement';
 
 export interface ObservedEventInput {
   readonly id: string;
