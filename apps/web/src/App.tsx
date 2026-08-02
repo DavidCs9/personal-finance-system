@@ -1,11 +1,11 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ledgerApi, type LedgerSession, type SignInResult } from "./api/client";
 import { mockEventFeed } from "./api/mock-data";
 import {
   demoPlans,
   planFor,
   type MonthlyPlan,
-  type MonthlyPlans,
   type PlannedPayment,
 } from "./monthly-plan";
 import type { IngestionException } from "./types";
@@ -31,8 +31,12 @@ const monthKey = (date: Date) => {
 const dayInZone = (date: Date) => Number(new Intl.DateTimeFormat("en-US", { day: "numeric", timeZone }).format(date));
 
 type Tab = "summary" | "movements";
+const eventsQueryKey = ["events"] as const;
+const exceptionsQueryKey = ["exceptions"] as const;
+const monthlyPlanQueryKey = (month: string) => ["monthly-plan", month] as const;
 
 export function App() {
+  const queryClient = useQueryClient();
   const demoMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get("demo") === "1";
   const [idToken, setIdToken] = useState<string | null | undefined>(demoMode ? "demo" : undefined);
 
@@ -52,13 +56,14 @@ export function App() {
   }, [demoMode, idToken]);
 
   const onSignedIn = (session: LedgerSession) => {
+    queryClient.clear();
     ledgerApi.saveSession(session);
     setIdToken(session.idToken);
   };
 
   if (idToken === undefined) return <LoadingScreen />;
   if (!idToken) return <SignIn onSignedIn={onSignedIn} />;
-  return <Dashboard idToken={idToken} demoMode={demoMode} onSignOut={() => { ledgerApi.clearSession(); setIdToken(null); }} />;
+  return <Dashboard idToken={idToken} demoMode={demoMode} onSignOut={() => { queryClient.clear(); ledgerApi.clearSession(); setIdToken(null); }} />;
 }
 
 function Mark() {
@@ -135,66 +140,48 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode: boolean; onSignOut(): void }) {
   const now = useMemo(() => demoMode ? new Date("2026-07-12T18:00:00-06:00") : new Date(), [demoMode]);
-  const [events, setEvents] = useState<readonly PurchaseEvent[]>([]);
-  const [exceptions, setExceptions] = useState<readonly IngestionException[]>([]);
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("summary");
   const [selectedMonth, setSelectedMonth] = useState(monthKey(now));
-  const [plans, setPlans] = useState<MonthlyPlans>(() => demoMode ? demoPlans : {});
-  const [planLoading, setPlanLoading] = useState(!demoMode);
-  const [planLoadError, setPlanLoadError] = useState<string>();
-  const [planRefresh, setPlanRefresh] = useState(0);
-  const [dataRefresh, setDataRefresh] = useState(0);
   const [editingIncome, setEditingIncome] = useState(false);
   const [editingPayment, setEditingPayment] = useState<PlannedPayment | null | undefined>();
   const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
   const [movementSort, setMovementSort] = useState<"recent" | "largest">("recent");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string>();
-
-  useEffect(() => {
-    const request = demoMode ? Promise.resolve(mockEventFeed) : ledgerApi.listEvents(idToken);
-    void request.then(({ events: result }) => setEvents(result))
-      .catch((reason) => setError(reason instanceof Error ? reason.message : "No se pudieron cargar los movimientos."))
-      .finally(() => setLoading(false));
-  }, [dataRefresh, demoMode, idToken]);
-
-  useEffect(() => {
-    if (demoMode) return;
-    void ledgerApi.listExceptions(idToken).then(({ exceptions: result }) => setExceptions(result)).catch(() => undefined);
-  }, [dataRefresh, demoMode, idToken]);
+  const eventsQuery = useQuery({
+    queryKey: eventsQueryKey,
+    queryFn: () => demoMode ? Promise.resolve(mockEventFeed) : ledgerApi.listEvents(idToken),
+  });
+  const exceptionsQuery = useQuery({
+    queryKey: exceptionsQueryKey,
+    queryFn: () => demoMode ? Promise.resolve({ exceptions: [] as readonly IngestionException[] }) : ledgerApi.listExceptions(idToken),
+  });
+  const monthlyPlanQuery = useQuery({
+    queryKey: monthlyPlanQueryKey(selectedMonth),
+    queryFn: () => demoMode ? Promise.resolve(planFor(demoPlans, selectedMonth)) : ledgerApi.monthlyPlan(selectedMonth, idToken),
+  });
+  const events = eventsQuery.data?.events ?? [];
+  const exceptions = exceptionsQuery.data?.exceptions ?? [];
+  const plan = monthlyPlanQuery.data ?? planFor({}, selectedMonth);
+  const loading = eventsQuery.isPending || eventsQuery.isFetching;
+  const error = eventsQuery.error instanceof Error ? eventsQuery.error.message : eventsQuery.error ? "No se pudieron cargar los movimientos." : undefined;
+  const planLoading = monthlyPlanQuery.isPending || monthlyPlanQuery.isFetching;
+  const planLoadError = monthlyPlanQuery.error instanceof Error ? monthlyPlanQuery.error.message : monthlyPlanQuery.error ? "No se pudo cargar la configuración del mes." : undefined;
   const refreshSummary = () => {
-    setLoading(true);
-    setError(undefined);
-    setDataRefresh((current) => current + 1);
-    setPlanRefresh((current) => current + 1);
+    void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+    void queryClient.invalidateQueries({ queryKey: exceptionsQueryKey });
+    void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
   };
-  const retryException = async (exceptionId: string) => {
-    const result = await ledgerApi.retryException(exceptionId, idToken);
-    setExceptions((current) => current.map((item) => item.id === exceptionId ? { ...item, retry: result.retry } : item));
-  };
-  const discardException = async (exceptionId: string) => {
-    await ledgerApi.discardException(exceptionId, idToken);
-    setExceptions((current) => current.filter((item) => item.id !== exceptionId));
-  };
+  const retryExceptionMutation = useMutation({
+    mutationFn: (exceptionId: string) => ledgerApi.retryException(exceptionId, idToken),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: exceptionsQueryKey }),
+  });
+  const retryException = async (exceptionId: string) => { await retryExceptionMutation.mutateAsync(exceptionId); };
+  const discardExceptionMutation = useMutation({
+    mutationFn: (exceptionId: string) => ledgerApi.discardException(exceptionId, idToken),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: exceptionsQueryKey }),
+  });
+  const discardException = async (exceptionId: string) => { await discardExceptionMutation.mutateAsync(exceptionId); };
   const readExceptionRaw = (exceptionId: string) => ledgerApi.rawException(exceptionId, idToken);
-
-  useEffect(() => {
-    if (demoMode) return;
-    let active = true;
-    setPlanLoading(true);
-    setPlanLoadError(undefined);
-    void ledgerApi.monthlyPlan(selectedMonth, idToken)
-      .then((monthlyPlan) => {
-        if (active) setPlans((current) => ({ ...current, [selectedMonth]: monthlyPlan }));
-      })
-      .catch((reason) => {
-        if (active) setPlanLoadError(reason instanceof Error ? reason.message : "No se pudo cargar la configuración del mes.");
-      })
-      .finally(() => { if (active) setPlanLoading(false); });
-    return () => { active = false; };
-  }, [demoMode, idToken, planRefresh, selectedMonth]);
-
-  const plan = planFor(plans, selectedMonth);
   const monthEvents = useMemo(() => events.filter((event) => monthKey(eventDate(event)) === selectedMonth), [events, selectedMonth]);
   const spendEvents = useMemo(() => monthEvents.filter((event) => event.status !== "rejected"), [monthEvents]);
   const spentMinor = spendEvents.reduce((sum, event) => sum + event.amount.amountMinor, 0);
@@ -211,7 +198,8 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
 
   const savePlan = async (nextPlan: MonthlyPlan) => {
     const saved = demoMode ? nextPlan : await ledgerApi.saveMonthlyPlan(selectedMonth, nextPlan, idToken);
-    setPlans((current) => ({ ...current, [selectedMonth]: saved }));
+    queryClient.setQueryData(monthlyPlanQueryKey(selectedMonth), saved);
+    await queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
   };
 
   const reviewLargest = () => {
@@ -243,7 +231,7 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
       plan={plan}
       loading={planLoading}
       loadError={planLoadError}
-      onRetry={() => setPlanRefresh((current) => current + 1)}
+      onRetry={() => { void monthlyPlanQuery.refetch(); }}
       spentMinor={spentMinor}
       uncertainMinor={uncertainMinor}
       upcomingMinor={upcomingMinor}
@@ -288,10 +276,7 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
       await savePlan({ ...plan, upcomingPayments: plan.upcomingPayments.filter((item) => item.id !== editingPayment.id) });
       setEditingPayment(undefined);
     } : undefined} />}
-    {activeEvent && <EventSheet event={activeEvent} idToken={idToken} demoMode={demoMode} onClose={() => setActiveEvent(undefined)} onVerified={(updated) => {
-      setEvents((current) => current.map((event) => event.id === updated.id ? updated : event));
-      setActiveEvent(updated);
-    }} />}
+    {activeEvent && <EventSheet event={activeEvent} idToken={idToken} demoMode={demoMode} onClose={() => setActiveEvent(undefined)} onVerified={setActiveEvent} />}
   </main>;
 }
 
@@ -552,8 +537,20 @@ function PaymentSheet({ payment, onClose, onSave, onDelete }: { payment?: Planne
 }
 
 function EventSheet({ event, idToken, demoMode, onClose, onVerified }: { event: PurchaseEvent; idToken: string; demoMode: boolean; onClose(): void; onVerified(event: PurchaseEvent): void }) {
+  const queryClient = useQueryClient();
   const [rawEmail, setRawEmail] = useState<string>();
   const [error, setError] = useState<string>();
+  const verifyMutation = useMutation({
+    mutationFn: () => demoMode ? Promise.resolve({ ...event, status: "accepted" as const, parseWarnings: [] }) : ledgerApi.markVerified(event.id, idToken),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<{ events: readonly PurchaseEvent[] }>(eventsQueryKey, (current) => current ? {
+        ...current,
+        events: current.events.map((item) => item.id === updated.id ? updated : item),
+      } : current);
+      void queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+      onVerified(updated);
+    },
+  });
   const toggleRaw = async () => {
     if (rawEmail) { setRawEmail(undefined); return; }
     try {
@@ -564,8 +561,7 @@ function EventSheet({ event, idToken, demoMode, onClose, onVerified }: { event: 
   };
   const verify = async () => {
     try {
-      const updated = demoMode ? { ...event, status: "accepted" as const, parseWarnings: [] } : await ledgerApi.markVerified(event.id, idToken);
-      onVerified(updated);
+      await verifyMutation.mutateAsync();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "No se pudo actualizar el movimiento.");
     }
