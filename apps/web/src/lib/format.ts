@@ -1,6 +1,7 @@
 import type { PurchaseEvent, ReviewStatus } from "../types";
+import { FINANCE_TIME_ZONE, dayInZone as dayInZoneShared, formatMxnWhole, monthKeyInZone } from "@finance/domain";
 
-export const timeZone = "America/Chihuahua";
+export const timeZone = FINANCE_TIME_ZONE;
 
 export const dateFormatter = new Intl.DateTimeFormat("es-MX", {
   day: "numeric",
@@ -22,12 +23,6 @@ export const monthFormatter = new Intl.DateTimeFormat("es-MX", {
   timeZone: "UTC",
 });
 
-const moneyFormatter = new Intl.NumberFormat("es-MX", {
-  style: "currency",
-  currency: "MXN",
-  maximumFractionDigits: 0,
-});
-
 export const institutionLabel = (value: PurchaseEvent["institution"]) =>
   value === "american_express_mx"
     ? "American Express"
@@ -43,7 +38,7 @@ export const statusLabel: Record<ReviewStatus, string> = {
   rejected: "Rechazado",
 };
 
-export const money = (amountMinor: number) => moneyFormatter.format(amountMinor / 100);
+export const money = (amountMinor: number) => formatMxnWhole(amountMinor);
 
 export const eventMoney = (event: PurchaseEvent) =>
   new Intl.NumberFormat("es-MX", {
@@ -55,16 +50,6 @@ export const eventDate = (event: PurchaseEvent) => new Date(event.occurredAt ?? 
 
 export const monthDate = (month: string) => new Date(`${month}-01T12:00:00Z`);
 
-export const monthKey = (date: Date) => {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    year: "numeric",
-    month: "2-digit",
-    timeZone,
-  }).formatToParts(date);
-  const year = parts.find((part) => part.type === "year")?.value;
-  const month = parts.find((part) => part.type === "month")?.value;
-  return `${year}-${month}`;
-};
+export const monthKey = (date: Date) => monthKeyInZone(date);
 
-export const dayInZone = (date: Date) =>
-  Number(new Intl.DateTimeFormat("en-US", { day: "numeric", timeZone }).format(date));
+export const dayInZone = (date: Date) => dayInZoneShared(date);

@@ -22,7 +22,7 @@ El sistema puede suspender la app en segundo plano. Al volver al frente, Olbia n
 
 iOS no requiere service worker para instalar una app web. Olbia tampoco tiene todavía un requisito de operación offline. Añadirlo introduciría una segunda capa de caché y una política de actualización para el shell, la configuración de runtime y datos sensibles. Mientras no exista una experiencia offline explícita y verificable, se conserva la caché HTTP/CDN existente y todas las consultas financieras siguen siendo de red.
 
-Declarative Web Push permite suscribirse y mostrar avisos sin service worker en apps web de pantalla de inicio. La primera versión envía un push al registrar un movimiento observado; detalle en [Avisos push de movimientos observados](push-on-new-observable.md).
+Declarative Web Push permite suscribirse y mostrar avisos sin service worker en apps web de pantalla de inicio. Olbia envía push al registrar un movimiento observado y un resumen diario a las 07:00; detalle en [Avisos push de movimientos observados](push-on-new-observable.md) y [Push diario del balance](daily-balance-push.md).
 
 WebKit documenta que el almacenamiento de una app web puede recibir tratamiento persistente, pero sigue sujeto a las políticas de almacenamiento del sistema: [Updates to Storage Policy](https://webkit.org/blog/14403/updates-to-storage-policy/).
 
