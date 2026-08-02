@@ -27,6 +27,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 
 .app-shell { width: min(1120px, 100%); height: 100vh; height: 100dvh; min-height: 0; margin: 0 auto; padding: env(safe-area-inset-top) max(18px, env(safe-area-inset-right)) 0 max(18px, env(safe-area-inset-left)); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
 .app-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding-bottom: calc(104px + env(safe-area-inset-bottom)); }
+.app-content.movements-active { display: flex; flex-direction: column; overflow: hidden; }
 .topbar { height: 68px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 10px; font: 700 21px/1 "Fraunces", serif; letter-spacing: -.035em; }
 .brand-mark { position: relative; display: inline-block; width: 31px; height: 31px; border: 1px solid #433e39; border-radius: 9px; background: var(--ink); overflow: hidden; box-shadow: inset 0 0 0 1px #ffffff12; }
@@ -120,6 +121,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .empty-action small { color: var(--muted); font-size: 10px; }
 
 .movements-view { padding-bottom: 20px; }
+.movements-active .movements-view { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; width: 100%; }
 .movements-heading { display: flex; align-items: end; justify-content: space-between; gap: 15px; padding: 28px 0 20px; }
 .movements-heading h1 { font-size: 34px; }
 .movements-heading > div > p:last-child { margin: 7px 0 0; color: var(--muted); font-size: 11px; }
@@ -154,6 +156,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .movement-actions { display: flex; align-items: end; gap: 8px; }
 .import-button { min-height: 34px; white-space: nowrap; }
 .movement-list { border: 1px solid var(--line); border-radius: 16px; background: var(--paper); overflow: hidden; box-shadow: 0 8px 24px #322b220d; }
+.movements-active .movement-list { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .movement-row { width: 100%; display: grid; grid-template-columns: 38px minmax(0, 1fr) auto 8px; align-items: center; gap: 10px; border: 0; border-bottom: 1px solid #e7e1d8; color: var(--ink); background: transparent; padding: 14px 12px; text-align: left; }
 .movement-row:last-child { border-bottom: 0; }
 .movement-row:hover { background: #f8f4ed; }

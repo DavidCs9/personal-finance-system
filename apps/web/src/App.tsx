@@ -236,7 +236,7 @@ function Dashboard({ idToken, demoMode, onSignOut }: { idToken: string; demoMode
       </div>
     </header>
 
-    <div className="app-content">
+    <div className={`app-content${tab === "movements" ? " movements-active" : ""}`}>
     {error && <p className="banner-error">{error}</p>}
     <div className="desktop-tabs" role="tablist" aria-label="Secciones">
       <TabButton active={tab === "summary"} onClick={() => setTab("summary")} icon="summary">Resumen</TabButton>
