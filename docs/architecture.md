@@ -24,38 +24,38 @@ flowchart TB
   classDef container fill:#438DD5,stroke:#2E6295,color:#fff,stroke-width:1px
   classDef store fill:#438DD5,stroke:#2E6295,color:#fff,stroke-width:1px
 
-  owner["Owner<br/><i>Person</i>"]
-  gmail["Gmail<br/><i>Software System</i>"]
-  shortcuts["Apple Shortcuts<br/><i>Software System</i>"]
-  webpush["Web Push network<br/><i>Software System</i>"]
+  owner["Owner\nPerson"]
+  gmail["Gmail\nSoftware System"]
+  shortcuts["Apple Shortcuts\nSoftware System"]
+  webpush["Web Push network\nSoftware System"]
 
   subgraph olbia["Olbia"]
     direction TB
 
     subgraph presentation["Presentation"]
-      spa["Web SPA<br/><i>Container: React · Vite · CloudFront</i><br/>Resumen, Movimientos, imports, push prefs"]
-      cognito["Identity<br/><i>Container: Cognito</i><br/>Single-user sign-in, JWT issuer"]
+      spa["Web SPA\nContainer: React · Vite · CloudFront\nResumen, Movimientos, imports, push prefs"]
+      cognito["Identity\nContainer: Cognito\nSingle-user sign-in, JWT issuer"]
     end
 
     subgraph edge["HTTP edge"]
-      api["Ledger API<br/><i>Container: HTTP API + Lambda</i><br/>Events, plans, imports, push subscriptions"]
-      apple["Apple Pay Capture<br/><i>Container: HTTP API + Lambda</i><br/>Bearer Shortcut intake"]
+      api["Ledger API\nContainer: HTTP API + Lambda\nEvents, plans, imports, push subscriptions"]
+      apple["Apple Pay Capture\nContainer: HTTP API + Lambda\nBearer Shortcut intake"]
     end
 
     subgraph pipeline["Email ingestion"]
-      ses["Email Gateway<br/><i>Container: SES</i><br/>Inbound receive + exception mail"]
-      receipt["Email Receipt<br/><i>Container: Lambda</i><br/>Enqueues pointer-only jobs"]
-      queue[("Ingestion Queue<br/><i>Container: SQS + DLQ</i>")]
-      ingest["Ingestion Worker<br/><i>Container: Lambda</i><br/>Parse, dedupe, reconcile, notify"]
-      retry["Retry Dispatcher<br/><i>Container: Lambda</i><br/>Re-queues recoverable exceptions"]
+      ses["Email Gateway\nContainer: SES\nInbound receive + exception mail"]
+      receipt["Email Receipt\nContainer: Lambda\nEnqueues pointer-only jobs"]
+      queue[("Ingestion Queue\nContainer: SQS + DLQ")]
+      ingest["Ingestion Worker\nContainer: Lambda\nParse, dedupe, reconcile, notify"]
+      retry["Retry Dispatcher\nContainer: Lambda\nRe-queues recoverable exceptions"]
     end
 
     subgraph data["Data"]
-      ddb[("Metadata Store<br/><i>Container: DynamoDB</i><br/>Events, observations, plans, dedupe, push")]
-      raw[("Raw Source Store<br/><i>Container: S3 + KMS</i><br/>Encrypted MIME, CSV, evidence")]
+      ddb[("Metadata Store\nContainer: DynamoDB\nEvents, observations, plans, dedupe, push")]
+      raw[("Raw Source Store\nContainer: S3 + KMS\nEncrypted MIME, CSV, evidence")]
     end
 
-    daily["Daily Balance Push<br/><i>Container: Lambda + Scheduler</i><br/>07:00 America/Chihuahua summary"]
+    daily["Daily Balance Push\nContainer: Lambda + Scheduler\n07:00 America/Chihuahua summary"]
   end
 
   owner -->|"Uses · HTTPS"| spa
@@ -102,21 +102,21 @@ flowchart TB
   classDef component fill:#85BBF0,stroke:#5D8AB3,color:#000,stroke-width:1px
   classDef external fill:#999999,stroke:#6B6B6B,color:#fff,stroke-width:1px
 
-  queue[("Ingestion Queue<br/><i>Container: SQS</i>")]
-  raw[("Raw Source Store<br/><i>Container: S3 + KMS</i>")]
-  ddb[("Metadata Store<br/><i>Container: DynamoDB</i>")]
-  ses["Email Gateway<br/><i>Container: SES</i>"]
-  webpush["Web Push network<br/><i>Software System</i>"]
+  queue[("Ingestion Queue\nContainer: SQS")]
+  raw[("Raw Source Store\nContainer: S3 + KMS")]
+  ddb[("Metadata Store\nContainer: DynamoDB")]
+  ses["Email Gateway\nContainer: SES"]
+  webpush["Web Push network\nSoftware System"]
 
   subgraph ingest["Ingestion Worker"]
     direction TB
-    consumer["SQS Consumer<br/><i>Component: TypeScript</i><br/>Loads jobs, reports batch failures"]
-    dedupe["Source Dedupe<br/><i>Component: TypeScript</i><br/>Claims message-id + SHA-256"]
-    parsers["Email Parsers<br/><i>Component: TypeScript</i><br/>Amex, Santander, Nu, AWS Billing"]
-    reconcile["Observed Event Writer<br/><i>Component: TypeScript</i><br/>Persists observations, links matches"]
-    exceptions["Exception Recorder<br/><i>Component: TypeScript</i><br/>Stores failures for UI recovery"]
-    mail["Exception Mailer<br/><i>Component: TypeScript</i><br/>SES alerts for ingestion failures"]
-    push["Purchase Push<br/><i>Component: TypeScript</i><br/>Notifies on accepted events"]
+    consumer["SQS Consumer\nComponent: TypeScript\nLoads jobs, reports batch failures"]
+    dedupe["Source Dedupe\nComponent: TypeScript\nClaims message-id + SHA-256"]
+    parsers["Email Parsers\nComponent: TypeScript\nAmex, Santander, Nu, AWS Billing"]
+    reconcile["Observed Event Writer\nComponent: TypeScript\nPersists observations, links matches"]
+    exceptions["Exception Recorder\nComponent: TypeScript\nStores failures for UI recovery"]
+    mail["Exception Mailer\nComponent: TypeScript\nSES alerts for ingestion failures"]
+    push["Purchase Push\nComponent: TypeScript\nNotifies on accepted events"]
   end
 
   queue -->|"Delivers jobs"| consumer
@@ -148,19 +148,19 @@ flowchart TB
   classDef component fill:#85BBF0,stroke:#5D8AB3,color:#000,stroke-width:1px
   classDef external fill:#999999,stroke:#6B6B6B,color:#fff,stroke-width:1px
 
-  spa["Web SPA<br/><i>Container: React · Vite</i>"]
-  ddb[("Metadata Store<br/><i>Container: DynamoDB</i>")]
-  raw[("Raw Source Store<br/><i>Container: S3 + KMS</i>")]
+  spa["Web SPA\nContainer: React · Vite"]
+  ddb[("Metadata Store\nContainer: DynamoDB")]
+  raw[("Raw Source Store\nContainer: S3 + KMS")]
 
   subgraph api["Ledger API"]
     direction TB
-    router["HTTP Router<br/><i>Component: TypeScript</i><br/>JWT-authenticated request routing"]
-    events["Events API<br/><i>Component: TypeScript</i><br/>List, patch, serve raw evidence"]
-    manual["Manual Entry<br/><i>Component: TypeScript</i><br/>Observed charges without automation"]
-    exceptions["Exceptions API<br/><i>Component: TypeScript</i><br/>List, retry, discard recovery items"]
-    months["Monthly Plan API<br/><i>Component: TypeScript</i><br/>Income and upcoming payments"]
-    csv["Santander CSV Import<br/><i>Component: TypeScript</i><br/>Preview and apply reconciliation"]
-    pushsubs["Push Subscriptions<br/><i>Component: TypeScript</i><br/>Register and remove endpoints"]
+    router["HTTP Router\nComponent: TypeScript\nJWT-authenticated request routing"]
+    events["Events API\nComponent: TypeScript\nList, patch, serve raw evidence"]
+    manual["Manual Entry\nComponent: TypeScript\nObserved charges without automation"]
+    exceptions["Exceptions API\nComponent: TypeScript\nList, retry, discard recovery items"]
+    months["Monthly Plan API\nComponent: TypeScript\nIncome and upcoming payments"]
+    csv["Santander CSV Import\nComponent: TypeScript\nPreview and apply reconciliation"]
+    pushsubs["Push Subscriptions\nComponent: TypeScript\nRegister and remove endpoints"]
   end
 
   spa -->|"JSON/HTTPS + JWT"| router
@@ -193,18 +193,18 @@ flowchart TB
   classDef component fill:#85BBF0,stroke:#5D8AB3,color:#000,stroke-width:1px
   classDef external fill:#999999,stroke:#6B6B6B,color:#fff,stroke-width:1px
 
-  cognito["Identity<br/><i>Container: Cognito</i>"]
-  api["Ledger API<br/><i>Container: HTTP API + Lambda</i>"]
-  webpush["Web Push network<br/><i>Software System</i>"]
+  cognito["Identity\nContainer: Cognito"]
+  api["Ledger API\nContainer: HTTP API + Lambda"]
+  webpush["Web Push network\nSoftware System"]
 
   subgraph spa["Web SPA"]
     direction TB
-    auth["Auth Session<br/><i>Component: React</i><br/>Cognito sign-in and JWT refresh"]
-    summary["Summary View<br/><i>Component: React</i><br/>Spend, remaining, pace"]
-    movements["Movements View<br/><i>Component: React</i><br/>Events, recovery, capture actions"]
-    sheets["Action Sheets<br/><i>Component: React</i><br/>Income, payments, detail, CSV, recovery"]
-    pushpref["Push Preference<br/><i>Component: React</i><br/>Device subscribe and content mode"]
-    client["Ledger API Client<br/><i>Component: TypeScript</i><br/>TanStack Query + fetch boundary"]
+    auth["Auth Session\nComponent: React\nCognito sign-in and JWT refresh"]
+    summary["Summary View\nComponent: React\nSpend, remaining, pace"]
+    movements["Movements View\nComponent: React\nEvents, recovery, capture actions"]
+    sheets["Action Sheets\nComponent: React\nIncome, payments, detail, CSV, recovery"]
+    pushpref["Push Preference\nComponent: React\nDevice subscribe and content mode"]
+    client["Ledger API Client\nComponent: TypeScript\nTanStack Query + fetch boundary"]
   end
 
   auth -->|"Signs in · SRP"| cognito
