@@ -180,13 +180,15 @@ No añadir chips, stats ni CTAs en el hero de Resumen.
 
 ## Alcance de la primera entrega
 
-**Incluye**
+**Incluye (implementado)**
 
 - `CaptureSource` + puntero `manual_entry`
 - `POST /events/manual` + evidencia S3 + observación
 - Sheet “Registrar cobro” en Movimientos
 - Listado y detalle con origen manual
-- Tests de dominio/API del alta e idempotencia básica
+- `PATCH` con `action: reject` (“No cuenta en el mes”)
+- Reconciliación mismo día con correo posterior
+- Tests de alta, fingerprint e idempotencia / reconciliación
 
 **Fuera (siguiente)**
 

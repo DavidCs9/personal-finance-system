@@ -22,6 +22,7 @@ export function MovementsView({
   onDiscardException,
   onReadExceptionRaw,
   onImport,
+  onRegisterCharge,
 }: {
   events: readonly PurchaseEvent[];
   exceptions: readonly IngestionException[];
@@ -33,6 +34,7 @@ export function MovementsView({
   onDiscardException(id: string): Promise<void>;
   onReadExceptionRaw(id: string): Promise<string>;
   onImport(): void;
+  onRegisterCharge(): void;
 }) {
   const [activeException, setActiveException] = useState<IngestionException>();
   const sorted = [...events].sort((a, b) =>
@@ -55,9 +57,14 @@ export function MovementsView({
           </p>
         </div>
         <div className="movement-actions">
-          <button className="secondary-button import-button" onClick={onImport}>
-            Conciliar CSV
-          </button>
+          <div className="movement-action-buttons">
+            <button className="secondary-button import-button" onClick={onRegisterCharge}>
+              Registrar cobro
+            </button>
+            <button className="secondary-button import-button" onClick={onImport}>
+              Conciliar CSV
+            </button>
+          </div>
           <label className="sort-control">
             <span>Ordenar</span>
             <select

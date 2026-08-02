@@ -1,4 +1,10 @@
-import type { EventRevision, Institution, Money, ObservedSourcePointer } from "@finance/domain";
+import type {
+  CaptureSource,
+  EventRevision,
+  Institution,
+  Money,
+  ObservedSourcePointer,
+} from "@finance/domain";
 
 export type ReviewStatus = "accepted" | "needs_review" | "rejected";
 
@@ -17,10 +23,21 @@ export interface PurchaseEvent {
   readonly ingestedAt: string;
   readonly parserVersion: string;
   readonly source: ObservedSourcePointer;
+  readonly captureSource?: CaptureSource;
+  readonly captureSources?: readonly CaptureSource[];
   readonly hasRawEmail?: boolean;
   readonly parseWarnings: readonly string[];
   readonly rawEmail?: string;
   readonly revisions: readonly EventRevision[];
+}
+
+export interface ManualEventInput {
+  readonly institution: Institution;
+  readonly merchantRaw: string;
+  readonly amountMinor: number;
+  readonly occurredOn: string;
+  readonly accountLastFour?: string;
+  readonly note?: string;
 }
 
 export interface EventFeed {

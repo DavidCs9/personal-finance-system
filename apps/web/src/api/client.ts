@@ -191,7 +191,43 @@ export const ledgerApi = {
     return result.rawEmail;
   },
   async markVerified(eventId: string, idToken: string): Promise<PurchaseEvent> {
-    return request<PurchaseEvent>(`/events/${encodeURIComponent(eventId)}`, idToken, { method: "PATCH" });
+    return request<PurchaseEvent>(`/events/${encodeURIComponent(eventId)}`, idToken, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "verify" }),
+    });
+  },
+  async markRejected(eventId: string, idToken: string): Promise<PurchaseEvent> {
+    return request<PurchaseEvent>(`/events/${encodeURIComponent(eventId)}`, idToken, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reject" }),
+    });
+  },
+  async createManualEvent(
+    input: {
+      readonly institution: string;
+      readonly merchantRaw: string;
+      readonly amountMinor: number;
+      readonly occurredOn: string;
+      readonly accountLastFour?: string;
+      readonly note?: string;
+    },
+    idToken: string,
+  ): Promise<PurchaseEvent> {
+    return request<PurchaseEvent>("/events/manual", idToken, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        institution: input.institution,
+        merchantRaw: input.merchantRaw,
+        amountMinor: input.amountMinor,
+        currency: "MXN",
+        occurredOn: input.occurredOn,
+        accountLastFour: input.accountLastFour,
+        note: input.note,
+      }),
+    });
   },
   async monthlyPlan(month: string, idToken: string): Promise<MonthlyPlan> {
     return request<MonthlyPlan>(`/months/${encodeURIComponent(month)}`, idToken);
