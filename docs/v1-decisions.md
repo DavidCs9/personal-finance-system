@@ -57,3 +57,9 @@
 
 - Los parsers se prueban con fixtures `.eml` anonimizadas y fieles a los formatos reales; los correos reales no se versionan.
 - V1 está lista cuando los flujos de ambos bancos capturan una compra una sola vez, conservan su fuente, avisan por push si está activo, la muestran en UI y hacen recuperables los fallos de parser.
+
+## Fuera de V1 (patrimonio)
+
+- Ahorros e inversiones (Bitso, IBKR, etc.) son un dominio aparte del gasto observado: snapshots diarios de saldos/posiciones, no eventos de compra.
+- Sin datos en vivo ni APIs de trading; sync programado una vez al día.
+- Plan: [Patrimonio diario (Bitso + IBKR)](wealth-daily-sync.md).
