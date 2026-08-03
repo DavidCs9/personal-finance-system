@@ -222,12 +222,10 @@ export function Dashboard({
             events={monthEvents}
             month={selectedMonth}
             spentMinor={spentMinor}
-            monthMsiRows={monthMsiRows}
             loading={loading}
             sort={movementSort}
             onSortChange={setMovementSort}
             onOpen={setActiveEvent}
-            onOpenMsiEvent={openMsiEvent}
             exceptions={exceptions}
             onRetryException={retryException}
             onDiscardException={discardException}
