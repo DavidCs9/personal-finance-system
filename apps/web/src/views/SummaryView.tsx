@@ -1,6 +1,8 @@
 import type { MonthMsiRow } from "@finance/domain";
 import { money, monthDate } from "../lib/format";
 import type { MonthlyPlan, PlannedPayment } from "../monthly-plan";
+import type { CardCycle } from "../card-cycle";
+import { CardCycleSection } from "../components/CardCycleSection";
 import { MsiMonthSection } from "../components/MsiMonthSection";
 import { PushPreference } from "../components/PushPreference";
 
@@ -26,6 +28,12 @@ export interface SummaryViewProps {
   readonly onEditPayment: (payment: PlannedPayment) => void;
   readonly onOpenMsiEvent: (eventId: string) => void;
   readonly onReviewLargest: () => void;
+  readonly cards: readonly CardCycle[];
+  readonly cardsLoading: boolean;
+  readonly cardsLoadError?: string;
+  readonly onRetryCards: () => void;
+  readonly onAddCard: () => void;
+  readonly onEditCard: (card: CardCycle) => void;
   readonly idToken: string;
   readonly demoMode: boolean;
 }
@@ -186,6 +194,18 @@ export function SummaryView(props: SummaryViewProps) {
               </button>
             )}
           </section>
+        )}
+
+        {!props.loading && !props.loadError && (
+          <CardCycleSection
+            month={props.month}
+            cards={props.cards}
+            loading={props.cardsLoading}
+            loadError={props.cardsLoadError}
+            onRetry={props.onRetryCards}
+            onAdd={props.onAddCard}
+            onEdit={props.onEditCard}
+          />
         )}
 
         {!props.loading && !props.loadError && (

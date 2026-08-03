@@ -5,7 +5,7 @@ import { ledgerApi } from "../api/client";
 import { mockEventFeed } from "../api/mock-data";
 import { AppShell } from "../layout/AppShell";
 import { eventDate, monthKey } from "../lib/format";
-import { eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey } from "../lib/query-keys";
+import { eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, cardsQueryKey } from "../lib/query-keys";
 import type { Tab } from "../lib/tabs";
 import {
   demoPlans,
@@ -13,10 +13,13 @@ import {
   type MonthlyPlan,
   type PlannedPayment,
 } from "../monthly-plan";
+import { demoCards } from "../card-cycle-demo";
+import type { CardCycle } from "../card-cycle";
 import { EventSheet } from "../sheets/EventSheet";
 import { IncomeSheet } from "../sheets/IncomeSheet";
 import { ManualEntrySheet } from "../sheets/ManualEntrySheet";
 import { PaymentSheet } from "../sheets/PaymentSheet";
+import { CardSheet } from "../sheets/CardSheet";
 import { SantanderImportSheet } from "../sheets/SantanderImportSheet";
 import { StatementImportSheet } from "../sheets/StatementImportSheet";
 import type { EventFeed, IngestionException, PurchaseEvent } from "../types";
@@ -41,6 +44,7 @@ export function Dashboard({
   const [selectedMonth, setSelectedMonth] = useState(monthKey(now));
   const [editingIncome, setEditingIncome] = useState(false);
   const [editingPayment, setEditingPayment] = useState<PlannedPayment | null | undefined>();
+  const [editingCard, setEditingCard] = useState<CardCycle | null | undefined>();
   const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
   const [movementSort, setMovementSort] = useState<"recent" | "largest">("recent");
   const [importOpen, setImportOpen] = useState(false);
@@ -67,11 +71,19 @@ export function Dashboard({
         ? Promise.resolve(planFor(demoPlans, selectedMonth))
         : ledgerApi.monthlyPlan(selectedMonth, idToken),
   });
+  const cardsQuery = useQuery({
+    queryKey: cardsQueryKey,
+    queryFn: () =>
+      demoMode
+        ? Promise.resolve({ cards: demoCards })
+        : ledgerApi.listCards(idToken),
+  });
 
   const events = eventsQuery.data?.events ?? [];
   const msiRelated = eventsQuery.data?.msiRelated ?? [];
   const exceptions = exceptionsQuery.data?.exceptions ?? [];
   const plan = monthlyPlanQuery.data ?? planFor({}, selectedMonth);
+  const cards = cardsQuery.data?.cards ?? [];
   const loading = eventsQuery.isPending || eventsQuery.isFetching;
   const error =
     eventsQuery.error instanceof Error
@@ -86,11 +98,19 @@ export function Dashboard({
       : monthlyPlanQuery.error
         ? "No se pudo cargar la configuración del mes."
         : undefined;
+  const cardsLoading = cardsQuery.isPending || cardsQuery.isFetching;
+  const cardsLoadError =
+    cardsQuery.error instanceof Error
+      ? cardsQuery.error.message
+      : cardsQuery.error
+        ? "No se pudieron cargar tus tarjetas."
+        : undefined;
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
     void queryClient.invalidateQueries({ queryKey: exceptionsQueryKey });
     void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
+    void queryClient.invalidateQueries({ queryKey: cardsQueryKey });
   };
 
   const retryExceptionMutation = useMutation({
@@ -214,6 +234,14 @@ export function Dashboard({
             onEditPayment={(payment) => setEditingPayment(payment)}
             onOpenMsiEvent={openMsiEvent}
             onReviewLargest={reviewLargest}
+            cards={cards}
+            cardsLoading={cardsLoading}
+            cardsLoadError={cardsLoadError}
+            onRetryCards={() => {
+              void cardsQuery.refetch();
+            }}
+            onAddCard={() => setEditingCard(null)}
+            onEditCard={(card) => setEditingCard(card)}
             idToken={idToken}
             demoMode={demoMode}
           />
@@ -271,6 +299,38 @@ export function Dashboard({
                     ),
                   });
                   setEditingPayment(undefined);
+                }
+              : undefined
+          }
+        />
+      )}
+      {editingCard !== undefined && (
+        <CardSheet
+          card={editingCard ?? undefined}
+          onClose={() => setEditingCard(undefined)}
+          onSave={async (card) => {
+            const saved = demoMode ? card : await ledgerApi.saveCard(card, idToken);
+            queryClient.setQueryData<{ cards: readonly CardCycle[] }>(cardsQueryKey, (current) => {
+              const existing = (current?.cards ?? cards).filter((item) => item.id !== saved.id);
+              return {
+                cards: [...existing, saved].sort(
+                  (left, right) =>
+                    left.name.localeCompare(right.name, "es") || left.id.localeCompare(right.id),
+                ),
+              };
+            });
+            await queryClient.invalidateQueries({ queryKey: cardsQueryKey });
+            setEditingCard(undefined);
+          }}
+          onDelete={
+            editingCard
+              ? async () => {
+                  if (!demoMode) await ledgerApi.deleteCard(editingCard.id, idToken);
+                  queryClient.setQueryData<{ cards: readonly CardCycle[] }>(cardsQueryKey, (current) => ({
+                    cards: (current?.cards ?? cards).filter((item) => item.id !== editingCard.id),
+                  }));
+                  await queryClient.invalidateQueries({ queryKey: cardsQueryKey });
+                  setEditingCard(undefined);
                 }
               : undefined
           }

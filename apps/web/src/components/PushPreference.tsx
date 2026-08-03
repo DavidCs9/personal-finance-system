@@ -106,7 +106,7 @@ export function PushPreference({
         <small>
           {permission === "denied"
             ? "El permiso está bloqueado en el sistema. Cámbialo en Ajustes."
-            : "Balance diario a las 07:00 y aviso cuando llegue una compra nueva."}
+            : "Balance diario, compras nuevas y recordatorios de corte/pago de tarjetas."}
         </small>
         {message && <p className="push-preference-message">{message}</p>}
       </div>

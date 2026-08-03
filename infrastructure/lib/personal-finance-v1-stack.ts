@@ -429,6 +429,45 @@ export class PersonalFinanceV1Stack extends Stack {
       }),
     });
 
+    const cardCyclePushDlq = new sqs.Queue(this, 'CardCyclePushDlq', {
+      queueName: 'personal-finance-v1-card-cycle-push-dlq',
+      retentionPeriod: Duration.days(14),
+      encryption: sqs.QueueEncryption.KMS_MANAGED,
+    });
+    const cardCyclePushFunction = new NodejsFunction(this, 'CardCyclePushFunction', {
+      ...pushLambdaDefaults,
+      functionName: 'personal-finance-v1-card-cycle-push',
+      logGroup: this.createLogGroup('CardCyclePushLogGroup', 'personal-finance-v1-card-cycle-push'),
+      entry: path.join(__dirname, '..', 'lambda', 'card-cycle-push.ts'),
+      handler: 'handler',
+      description: 'Sends Web Push reminders on card cut-off and payment days at 07:05 America/Chihuahua.',
+      timeout: Duration.minutes(2),
+      environment: {
+        METADATA_TABLE_NAME: metadataTable.tableName,
+        VAPID_SECRET_ARN: vapidSecret.secretArn,
+        WEB_APP_URL: webAppUrl,
+      },
+    });
+    metadataTable.grantReadWriteData(cardCyclePushFunction);
+    vapidSecret.grantRead(cardCyclePushFunction);
+    new scheduler.Schedule(this, 'CardCyclePushSchedule', {
+      scheduleName: 'personal-finance-v1-card-cycle-push',
+      description: 'Invokes card cut-off and payment push reminders at 07:05 America/Chihuahua.',
+      schedule: scheduler.ScheduleExpression.cron({
+        minute: '5',
+        hour: '7',
+        day: '*',
+        month: '*',
+        year: '*',
+        timeZone: cdk.TimeZone.of('America/Chihuahua'),
+      }),
+      timeWindow: scheduler.TimeWindow.off(),
+      target: new LambdaInvoke(cardCyclePushFunction, {
+        deadLetterQueue: cardCyclePushDlq,
+        retryAttempts: 2,
+      }),
+    });
+
     const httpApi = new apigatewayv2.HttpApi(this, 'HttpApi', {
       apiName: 'personal-finance-v1',
       description: 'Authenticated personal-finance API.',
@@ -477,6 +516,9 @@ export class PersonalFinanceV1Stack extends Stack {
       'GET /push/subscriptions',
       'PUT /push/subscriptions/{subscriptionId}',
       'DELETE /push/subscriptions/{subscriptionId}',
+      'GET /cards',
+      'PUT /cards/{cardId}',
+      'DELETE /cards/{cardId}',
     ]) {
       httpApi.addRoutes({
         path: route.split(' ')[1],
@@ -577,6 +619,16 @@ export class PersonalFinanceV1Stack extends Stack {
       threshold: 1,
       evaluationPeriods: 1,
     });
+    const cardCyclePushErrorAlarm = new cdk.aws_cloudwatch.Alarm(this, 'CardCyclePushErrorsAlarm', {
+      metric: cardCyclePushFunction.metricErrors({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
+    const cardCyclePushDlqAlarm = new cdk.aws_cloudwatch.Alarm(this, 'CardCyclePushDlqAlarm', {
+      metric: cardCyclePushDlq.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
 
     new cdk.CfnOutput(this, 'RawEmailBucketName', { value: rawEmailBucket.bucketName });
     new cdk.CfnOutput(this, 'MetadataTableName', { value: metadataTable.tableName });
@@ -598,6 +650,8 @@ export class PersonalFinanceV1Stack extends Stack {
     new cdk.CfnOutput(this, 'DeadLetterMessagesAlarmName', { value: deadLetterAlarm.alarmName });
     new cdk.CfnOutput(this, 'DailyBalancePushErrorsAlarmName', { value: dailyBalancePushErrorAlarm.alarmName });
     new cdk.CfnOutput(this, 'DailyBalancePushDlqAlarmName', { value: dailyBalancePushDlqAlarm.alarmName });
+    new cdk.CfnOutput(this, 'CardCyclePushErrorsAlarmName', { value: cardCyclePushErrorAlarm.alarmName });
+    new cdk.CfnOutput(this, 'CardCyclePushDlqAlarmName', { value: cardCyclePushDlqAlarm.alarmName });
   }
 
   private createLogGroup(id: string, functionName: string): logs.LogGroup {
