@@ -166,7 +166,7 @@ export function SummaryView(props: SummaryViewProps) {
                 </p>
               </div>
               <button
-                className="icon-button"
+                className="add-button"
                 aria-label="Agregar gasto fijo"
                 onClick={props.onAddPayment}
               >

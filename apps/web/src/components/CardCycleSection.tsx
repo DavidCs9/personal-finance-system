@@ -36,7 +36,7 @@ export function CardCycleSection(props: CardCycleSectionProps) {
           <p className="section-lede">Corte y pago este mes. No afectan cuánto te queda.</p>
         </div>
         {canAdd && (
-          <button className="icon-button" aria-label="Agregar tarjeta" onClick={props.onAdd}>
+          <button className="add-button" aria-label="Agregar tarjeta" onClick={props.onAdd}>
             +
           </button>
         )}
