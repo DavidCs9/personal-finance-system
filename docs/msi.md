@@ -23,6 +23,8 @@ El plan vive en el evento de la compra (`msi`). El ingreso y los gastos fijos vi
 3. Las cuotas anteriores a la del estado también se marcan gastadas (ya se pagaron antes).
 4. Si liquidas antes de tiempo, cancelas el resto a mano.
 
+El plan **siempre** arranca en `1/n`. Si el PDF trae `2/3`, Olbia retrocede el calendario, marca `1/3` como gastada y ancla el movimiento al mes de la primera cuota para que aparezca en mayo, junio y julio.
+
 ## Cómo entra a Olbia
 
 **Estado de cuenta PDF (Amex / Santander)** — el camino bueno para MSI. Trae comercio, cuota, `i/N` y a veces el total.

@@ -37,7 +37,13 @@ import {
 import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan, type MonthlyPlanInput } from './monthly-plan.js';
 import { buildPlanFromCreateDecision, isSantanderMsiRow, matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
 import { reconciliationPartition } from './observed-events.js';
-import { eventMonthIndexKeys, eventMonthPartition, priorCalendarMonths } from './event-month-index.js';
+import {
+  eventMonthIndexKeys,
+  eventMonthPartition,
+  msiPlanPurchaseOccurredAt,
+  nextCalendarMonths,
+  priorCalendarMonths,
+} from './event-month-index.js';
 import { buildMonthEventFeed, type MonthFeedEvent } from './event-month-feed.js';
 import {
   deletePushSubscription,
@@ -623,7 +629,8 @@ const claimAndCreateCsvEvent = async (
 ): Promise<JsonObject | undefined> => {
   const id = randomUUID();
   const observationId = randomUUID();
-  const occurredAt = `${row.occurredOn}T12:00:00.000Z`;
+  const evidenceOccurredAt = `${row.occurredOn}T12:00:00.000Z`;
+  const occurredAt = msiPlanPurchaseOccurredAt(row.occurredOn, msi?.installments[0]?.month);
   const purchase: JsonObject = {
     id,
     institution: 'santander_mx',
@@ -661,13 +668,13 @@ const claimAndCreateCsvEvent = async (
     eventId: id,
     captureSource: 'santander_csv',
     observedAt: appliedAt,
-    reconciliationAt: occurredAt,
+    reconciliationAt: evidenceOccurredAt,
     institution: 'santander_mx',
     eventType: 'card_purchase',
     account: purchase.account,
     amount: purchase.amount,
     merchantRaw: row.merchantRaw,
-    occurredAt,
+    occurredAt: evidenceOccurredAt,
     source,
     parserVersion: 'santander-mx-csv-v1',
     parseWarnings: [],
@@ -701,7 +708,7 @@ const claimAndCreateCsvEvent = async (
         TableName: tableName,
         Item: {
           PK: `EVENT#${id}`,
-          SK: `OBSERVATION#${occurredAt}#${observationId}`,
+          SK: `OBSERVATION#${evidenceOccurredAt}#${observationId}`,
           entityType: 'event_observation',
           payload: observation,
         },
@@ -1433,7 +1440,8 @@ const claimAndCreateStatementEvent = async (input: {
     : 'santander-mx-statement-textract-v1';
   const id = randomUUID();
   const observationId = randomUUID();
-  const occurredAt = `${input.row.occurredOn}T12:00:00.000Z`;
+  const evidenceOccurredAt = `${input.row.occurredOn}T12:00:00.000Z`;
+  const occurredAt = msiPlanPurchaseOccurredAt(input.row.occurredOn, input.msi?.installments[0]?.month);
   const amountMinor = input.msi?.principalMinor ?? input.row.amountMinor;
   const purchase: JsonObject = {
     id,
@@ -1500,20 +1508,20 @@ const claimAndCreateStatementEvent = async (input: {
         TableName: tableName,
         Item: {
           PK: `EVENT#${id}`,
-          SK: `OBSERVATION#${occurredAt}#${observationId}`,
+          SK: `OBSERVATION#${evidenceOccurredAt}#${observationId}`,
           entityType: 'event_observation',
           payload: {
             id: observationId,
             eventId: id,
             captureSource,
             observedAt: input.appliedAt,
-            reconciliationAt: occurredAt,
+            reconciliationAt: evidenceOccurredAt,
             institution,
             eventType: 'card_purchase',
             account: purchase.account,
             amount: purchase.amount,
             merchantRaw: input.row.merchantRaw,
-            occurredAt,
+            occurredAt: evidenceOccurredAt,
             source: input.source,
             parserVersion,
             parseWarnings: purchase.parseWarnings,
@@ -2104,19 +2112,23 @@ const queryEventsForMonthPartition = async (month: string): Promise<readonly Jso
   return events;
 };
 
-/** Spend-month events plus MSI plans whose cuota falls in `month` but purchase was earlier. */
+/** Spend-month events plus MSI plans whose cuota falls in `month` but purchase lives elsewhere. */
 const listEventsForMonth = async (
   month: string,
 ): Promise<{ readonly events: readonly JsonObject[]; readonly msiRelated: readonly JsonObject[] }> => {
   const events = await queryEventsForMonthPartition(month);
-  const lookback: JsonObject[] = [];
-  for (const priorMonth of priorCalendarMonths(month, MSI_LOOKBACK_MONTHS)) {
-    lookback.push(...await queryEventsForMonthPartition(priorMonth));
+  const nearby: JsonObject[] = [];
+  const nearbyMonths = [
+    ...priorCalendarMonths(month, MSI_LOOKBACK_MONTHS),
+    ...nextCalendarMonths(month, MSI_LOOKBACK_MONTHS),
+  ];
+  for (const nearbyMonth of nearbyMonths) {
+    nearby.push(...await queryEventsForMonthPartition(nearbyMonth));
   }
   const feed = buildMonthEventFeed(
     month,
     events as unknown as readonly MonthFeedEvent[],
-    lookback as unknown as readonly MonthFeedEvent[],
+    nearby as unknown as readonly MonthFeedEvent[],
   );
   return {
     events: feed.events as unknown as readonly JsonObject[],

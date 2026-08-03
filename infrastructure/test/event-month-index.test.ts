@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { buildMonthEventFeed, eventHasInstallmentInMonth } from '../lambda/event-month-feed.js';
-import { eventMonthIndexKeys, eventMonthPartition, priorCalendarMonths } from '../lambda/event-month-index.js';
+import {
+  eventMonthIndexKeys,
+  eventMonthPartition,
+  msiPlanPurchaseOccurredAt,
+  nextCalendarMonths,
+  priorCalendarMonths,
+} from '../lambda/event-month-index.js';
 import { isValidMonth } from '../lambda/monthly-plan.js';
 
 describe('GET /events month query contract', () => {
@@ -37,6 +43,17 @@ describe('event month index', () => {
     expect(priorCalendarMonths('2026-01', 2)).toEqual(['2025-12', '2025-11']);
     expect(priorCalendarMonths('bad', 3)).toEqual([]);
   });
+
+  it('lists next calendar months without including the target month', () => {
+    expect(nextCalendarMonths('2026-05', 3)).toEqual(['2026-06', '2026-07', '2026-08']);
+    expect(nextCalendarMonths('2026-11', 2)).toEqual(['2026-12', '2027-01']);
+    expect(nextCalendarMonths('bad', 3)).toEqual([]);
+  });
+
+  it('anchors MSI purchase occurredAt on cuota 1 month', () => {
+    expect(msiPlanPurchaseOccurredAt('2026-06-23', '2026-05')).toBe('2026-05-23T12:00:00.000Z');
+    expect(msiPlanPurchaseOccurredAt('2026-06-23', undefined)).toBe('2026-06-23T12:00:00.000Z');
+  });
 });
 
 describe('month event feed', () => {
@@ -52,6 +69,16 @@ describe('month event feed', () => {
   };
   const augustPurchase = { id: 'aug-1' };
   const julyNoMsi = { id: 'july-plain' };
+  const juneOpenedFromJulyEvidence = {
+    id: 'aero-midplan',
+    msi: {
+      installments: [
+        { month: '2026-05', status: 'spent' },
+        { month: '2026-06', status: 'spent' },
+        { month: '2026-07', status: 'committed' },
+      ],
+    },
+  };
 
   it('keeps August spend events out of a July feed', () => {
     const feed = buildMonthEventFeed('2026-07', [julyNoMsi], [augustPurchase]);
@@ -64,6 +91,11 @@ describe('month event feed', () => {
     const feed = buildMonthEventFeed('2026-08', [augustPurchase], [julyPurchase, julyNoMsi]);
     expect(feed.events.map((event) => event.id)).toEqual(['aug-1']);
     expect(feed.msiRelated.map((event) => event.id)).toEqual(['july-1']);
+  });
+
+  it('surfaces early MSI cuotas when the purchase was indexed on a later evidence month', () => {
+    const feed = buildMonthEventFeed('2026-05', [], [juneOpenedFromJulyEvidence]);
+    expect(feed.msiRelated.map((event) => event.id)).toEqual(['aero-midplan']);
   });
 
   it('does not duplicate an event that already appears in the spend-month list', () => {
