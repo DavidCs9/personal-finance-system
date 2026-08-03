@@ -36,6 +36,7 @@ import {
 } from './cards.js';
 import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan, type MonthlyPlanInput } from './monthly-plan.js';
 import { buildPlanFromCreateDecision, isSantanderMsiRow, matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
+import { findDeferralPurchaseSubset } from './amex-deferral.js';
 import { reconciliationPartition } from './observed-events.js';
 import {
   eventMonthIndexKeys,
@@ -917,6 +918,28 @@ const applySantanderImport = async (importId: string, owner: string, decisionBod
     }
 
     if (action.kind === 'create_plan' && msiEvidence) {
+      const existing = matchEvidenceLine(msiEvidence, eventsSnapshot);
+      if (existing.kind === 'confirm') {
+        const updated = await persistEventMsi(
+          existing.eventId,
+          owner,
+          existing.previous,
+          existing.next,
+          'Cuota MSI confirmada con CSV Santander.',
+        );
+        if (updated) {
+          msiConfirmed += 1;
+          linked += 1;
+          eventsSnapshot = eventsSnapshot.map((event) => event.id === existing.eventId ? { ...event, msi: existing.next } : event);
+          continue;
+        }
+        skipped += 1;
+        continue;
+      }
+      if (existing.kind === 'skip') {
+        skipped += 1;
+        continue;
+      }
       const plan = buildPlanFromCreateDecision(msiEvidence, {
         months: action.months,
         cuotaMinor: action.cuotaMinor,
@@ -1743,6 +1766,23 @@ const applyStatementImport = async (input: {
         continue;
       }
       if (action.kind === 'create_plan') {
+        // Prefer confirming an existing plan (merchant+principal) over opening a duplicate.
+        const existing = matchEvidenceLine(evidence, eventsSnapshot);
+        if (existing.kind === 'confirm') {
+          const updated = await persistEventMsi(existing.eventId, input.owner, existing.previous, existing.next, msiNote);
+          if (updated) {
+            msiConfirmed += 1;
+            linked += 1;
+            eventsSnapshot = eventsSnapshot.map((event) => (
+              event.id === existing.eventId ? { ...event, msi: existing.next } : event
+            ));
+          } else skipped += 1;
+          continue;
+        }
+        if (existing.kind === 'skip') {
+          skipped += 1;
+          continue;
+        }
         const plan = buildPlanFromCreateDecision(evidence, {
           months: action.months,
           cuotaMinor: action.cuotaMinor,
@@ -2038,21 +2078,127 @@ const applyAmexImport = async (
   importId: string,
   owner: string,
   decisionBody: string | undefined,
-): Promise<JsonObject> => applyStatementImport({
-  provider: 'amex',
-  importId,
-  owner,
-  decisionBody,
-  rebuildRows: async () => {
-    const stored = await database.send(new GetCommand({
-      TableName: tableName,
-      Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
-      ConsistentRead: true,
-    }));
+): Promise<JsonObject> => {
+  const result = await applyStatementImport({
+    provider: 'amex',
+    importId,
+    owner,
+    decisionBody,
+    rebuildRows: async () => {
+      const stored = await database.send(new GetCommand({
+        TableName: tableName,
+        Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
+        ConsistentRead: true,
+      }));
+      const extraction = await loadStatementTextractExtraction(stored.Item as JsonObject);
+      return buildAmexPreviewRows(parseAmexStatementExtraction(extraction));
+    },
+  });
+
+  const stored = await database.send(new GetCommand({
+    TableName: tableName,
+    Key: { PK: `USER#${owner}`, SK: `IMPORT#AMEX#${importId}` },
+    ConsistentRead: true,
+  }));
+  const accountLastFour = String(stored.Item?.accountLastFour ?? '');
+  try {
     const extraction = await loadStatementTextractExtraction(stored.Item as JsonObject);
-    return buildAmexPreviewRows(parseAmexStatementExtraction(extraction));
-  },
-});
+    const document = parseAmexStatementExtraction(extraction);
+    const deferred = await applyAmexDeferralCredits({
+      owner,
+      accountLastFour: document.accountLastFour || accountLastFour,
+      deferralCredits: document.deferralCredits,
+    });
+    const summary = {
+      ...(result.summary as JsonObject),
+      deferredMsi: deferred,
+    };
+    return { ...result, summary };
+  } catch {
+    return result;
+  }
+};
+
+const markDeferredMsi = async (
+  eventId: string,
+  changedBy: string,
+  deferralIdentity: string,
+): Promise<boolean> => {
+  const existing = await getEventDetail(eventId);
+  if (!existing) return false;
+  if (existing.status === 'deferred_msi' || existing.status === 'rejected') return false;
+  if (existing.msi) return false;
+  const previousWarnings = Array.isArray(existing.parseWarnings) ? existing.parseWarnings : [];
+  const warnings = [
+    ...previousWarnings.filter((item) => typeof item === 'string' && !/Diferido a MSI/i.test(item)),
+    'Diferido a MSI automático Amex (no cuenta en el mes).',
+  ];
+  await database.send(new UpdateCommand({
+    TableName: tableName,
+    Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
+    UpdateExpression: 'SET #payload.#status = :status, #payload.#warnings = :warnings',
+    ExpressionAttributeNames: { '#payload': 'payload', '#status': 'status', '#warnings': 'parseWarnings' },
+    ExpressionAttributeValues: { ':status': 'deferred_msi', ':warnings': warnings },
+  }));
+  const revision = {
+    id: randomUUID(),
+    observedPurchaseId: eventId,
+    createdAt: new Date().toISOString(),
+    changedBy,
+    reason: `Compra diferida a MSI automático (${deferralIdentity}).`,
+    changes: {
+      status: { previous: existing.status, next: 'deferred_msi' },
+    },
+  };
+  await database.send(new PutCommand({
+    TableName: tableName,
+    Item: {
+      PK: `EVENT#${eventId}`,
+      SK: `REVISION#${revision.createdAt}#${revision.id}`,
+      entityType: 'event_revision',
+      payload: revision,
+    },
+  }));
+  return true;
+};
+
+const applyAmexDeferralCredits = async (input: {
+  readonly owner: string;
+  readonly accountLastFour: string;
+  readonly deferralCredits: AmexStatementDocument['deferralCredits'];
+}): Promise<number> => {
+  if (input.deferralCredits.length === 0) return 0;
+  const events = await allStoredEvents();
+  const candidates = events.filter((event) => {
+    if (event.institution !== 'american_express_mx') return false;
+    if (event.status === 'rejected' || event.status === 'deferred_msi') return false;
+    if (event.msi) return false;
+    const account = event.account as JsonObject | undefined;
+    if (String(account?.lastFour ?? '') !== input.accountLastFour) return false;
+    const amount = event.amount as { amountMinor?: number } | undefined;
+    return Number.isSafeInteger(amount?.amountMinor) && (amount?.amountMinor ?? 0) > 0;
+  });
+
+  let deferred = 0;
+  const usedIds = new Set<string>();
+  for (const credit of input.deferralCredits) {
+    const available = candidates
+      .filter((event) => !usedIds.has(String(event.id)))
+      .map((event) => ({
+        id: String(event.id),
+        amountMinor: Number((event.amount as { amountMinor?: number }).amountMinor),
+      }));
+    const matchedIds = findDeferralPurchaseSubset(available, credit.amountMinor);
+    if (!matchedIds) continue;
+    for (const eventId of matchedIds) {
+      if (await markDeferredMsi(eventId, input.owner, credit.identity)) {
+        usedIds.add(eventId);
+        deferred += 1;
+      }
+    }
+  }
+  return deferred;
+};
 
 const getMonthlyPlan = async (owner: string, month: string): Promise<JsonObject> => {
   const result = await database.send(new GetCommand({

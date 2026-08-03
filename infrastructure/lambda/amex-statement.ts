@@ -28,12 +28,21 @@ export interface AmexMsiPlanSummary {
   readonly cuotaMinor: number;
 }
 
+export interface AmexDeferralCredit {
+  readonly occurredOn: string;
+  readonly amountMinor: number;
+  readonly merchantRaw: string;
+  readonly identity: string;
+}
+
 export interface AmexStatementDocument {
   readonly accountLastFour: string;
   readonly product: string;
   readonly period: { readonly from: string; readonly to: string };
   readonly charges: readonly AmexStatementCharge[];
   readonly msiPlans: readonly AmexMsiPlanSummary[];
+  /** Credits that move purchases into MESES EN AUTOMÁTICO (excluded from spend). */
+  readonly deferralCredits: readonly AmexDeferralCredit[];
 }
 
 const monthNames: Readonly<Record<string, string>> = {
@@ -258,14 +267,15 @@ const chargesFromTables = (
         continue;
       }
 
-      const msi = Boolean(installment) || /MESES EN AUTOM[AÁ]TICO/i.test(merchantRaw);
+      const isDeferral = /MONTO A DIFERIR/i.test(merchantRaw) || /DIFERIR MESES EN AUTOM/i.test(merchantRaw);
+      const msi = !isDeferral && (Boolean(installment) || /MESES EN AUTOM[AÁ]TICO/i.test(merchantRaw));
       if (msi && !installment) continue;
 
       charges.push({
         occurredOn,
         merchantRaw,
         amountMinor: parsedAmount.amountMinor,
-        credit: parsedAmount.credit,
+        credit: parsedAmount.credit || isDeferral,
         installmentIndex: installment?.index,
         installmentMonths: installment?.months,
         msi,
@@ -275,7 +285,7 @@ const chargesFromTables = (
           occurredOn,
           merchantRaw,
           String(parsedAmount.amountMinor),
-          installment ? `${installment.index}/${installment.months}` : "full",
+          installment ? `${installment.index}/${installment.months}` : (isDeferral ? "deferral" : "full"),
           String(charges.length + 1),
         ].join(":"),
       });
@@ -343,13 +353,14 @@ const parseChargesAndPlansFromLines = (
     }
     if (!merchantRaw || merchantRaw.length < 3) continue;
     if (amountMinor === undefined || amountMinor <= 0) continue;
-    const msi = Boolean(installment) || /MESES EN AUTOM[AÁ]TICO/i.test(merchantRaw);
+    const isDeferral = /MONTO A DIFERIR/i.test(merchantRaw) || /DIFERIR MESES EN AUTOM/i.test(merchantRaw);
+    const msi = !isDeferral && (Boolean(installment) || /MESES EN AUTOM[AÁ]TICO/i.test(merchantRaw));
     if (msi && !installment) continue;
     charges.push({
       occurredOn,
       merchantRaw,
       amountMinor,
-      credit,
+      credit: credit || isDeferral,
       installmentIndex: installment?.index,
       installmentMonths: installment?.months,
       msi,
@@ -359,7 +370,53 @@ const parseChargesAndPlansFromLines = (
         occurredOn,
         merchantRaw,
         String(amountMinor),
-        installment ? `${installment.index}/${installment.months}` : "full",
+        installment ? `${installment.index}/${installment.months}` : (isDeferral ? "deferral" : "full"),
+        String(charges.length + 1),
+      ].join(":"),
+    });
+  }
+
+  // OCR often puts "MONTO A DIFERIR…" on its own line with date/amount/CR nearby.
+  for (let index = scanStart; index < scanEnd; index += 1) {
+    const line = lines[index];
+    if (!/MONTO A DIFERIR|DIFERIR MESES EN AUTOM/i.test(line)) continue;
+    let occurredOn: string | undefined;
+    let amountMinor: number | undefined;
+    for (let look = -2; look <= 4; look += 1) {
+      const nearby = lines[index + look];
+      if (!nearby) continue;
+      const dated = /(\d{1,2})\s+de\s+([A-Za-zÁÉÍÓÚáéíóú]+)/i.exec(nearby);
+      if (dated && !occurredOn) {
+        occurredOn = parseSpanishDate(dated[1], dated[2], period.to);
+      }
+      const money = parseMoneyMinor(nearby);
+      if (money !== undefined && moneyPattern.test(nearby.replace(/\$/g, "").trim()) && money > 0) {
+        amountMinor = Math.abs(money);
+      }
+    }
+    if (!occurredOn || amountMinor === undefined) continue;
+    const merchantRaw = "MONTO A DIFERIR MESES EN AUTOMÁTICO";
+    const already = charges.some(
+      (charge) =>
+        charge.credit
+        && charge.amountMinor === amountMinor
+        && charge.occurredOn === occurredOn
+        && /DIFERIR/i.test(charge.merchantRaw),
+    );
+    if (already) continue;
+    charges.push({
+      occurredOn,
+      merchantRaw,
+      amountMinor,
+      credit: true,
+      msi: false,
+      identity: [
+        "amex_statement",
+        accountLastFour,
+        occurredOn,
+        merchantRaw,
+        String(amountMinor),
+        "deferral",
         String(charges.length + 1),
       ].join(":"),
     });
@@ -525,6 +582,29 @@ export const parseAmexStatementExtraction = (
     charge.installmentMonths ?? "",
   ].join("|");
 
+  const isDeferralCredit = (charge: AmexStatementCharge): boolean =>
+    charge.credit
+    && (
+      /MONTO A DIFERIR\s+MESES EN AUTOM/i.test(charge.merchantRaw)
+      || /DIFERIR MESES EN AUTOM/i.test(charge.merchantRaw)
+    );
+
+  const deferralCredits: AmexDeferralCredit[] = [];
+  const seenDeferral = new Set<string>();
+  for (const charge of [...fromTables, ...fromLines.charges]) {
+    if (!isDeferralCredit(charge)) continue;
+    // Same deferral often appears once in TABLES and again in mangled LINE OCR with a wrong date.
+    const key = String(charge.amountMinor);
+    if (seenDeferral.has(key)) continue;
+    seenDeferral.add(key);
+    deferralCredits.push({
+      occurredOn: charge.occurredOn,
+      amountMinor: charge.amountMinor,
+      merchantRaw: charge.merchantRaw,
+      identity: charge.identity,
+    });
+  }
+
   const charges: AmexStatementCharge[] = [];
   // Prefer TABLES: they preserve date/merchant/amount columns that LINE OCR often splits.
   // Keep duplicate table rows (two identical compras the same day are valid).
@@ -568,6 +648,7 @@ export const parseAmexStatementExtraction = (
     period,
     charges,
     msiPlans,
+    deferralCredits,
   };
 };
 

@@ -36,6 +36,7 @@ export const statusLabel: Record<ReviewStatus, string> = {
   accepted: "Confirmado",
   needs_review: "Por confirmar",
   rejected: "Rechazado",
+  deferred_msi: "Diferido a MSI",
 };
 
 export const money = (amountMinor: number) => formatMxnWhole(amountMinor);

@@ -50,6 +50,50 @@ describe('computeMonthSummary', () => {
     expect(summary.spentMinor).toBe(0);
     expect(summary.remainingMinor).toBe(10_000_00);
   });
+
+  it('ignores Amex purchases deferred into MESES EN AUTOMÁTICO', () => {
+    const summary = computeMonthSummary({
+      events: [
+        {
+          amountMinor: 309_900,
+          status: 'deferred_msi',
+          receivedAt: '2026-05-08T12:00:00Z',
+          occurredAt: '2026-05-08T12:00:00Z',
+        },
+        {
+          amountMinor: 365_000,
+          status: 'deferred_msi',
+          receivedAt: '2026-06-03T12:00:00Z',
+          occurredAt: '2026-06-03T12:00:00Z',
+        },
+        {
+          amountMinor: 674_900,
+          status: 'accepted',
+          receivedAt: '2026-06-06T12:00:00Z',
+          occurredAt: '2026-06-06T12:00:00Z',
+          merchantRaw: 'MESES EN AUTOMÁTICO NACIONAL',
+          msi: {
+            months: 3,
+            principalMinor: 674_900,
+            cuotaMinor: 224_967,
+            installments: [
+              { index: 1, month: '2026-06', amountMinor: 224_967, status: 'spent' },
+              { index: 2, month: '2026-07', amountMinor: 224_967, status: 'committed' },
+              { index: 3, month: '2026-08', amountMinor: 224_967, status: 'committed' },
+            ],
+          },
+        },
+      ],
+      month: '2026-06',
+      incomeMinor: 50_000_00,
+      incomeConfigured: true,
+      upcomingPaymentsMinor: 0,
+      now: new Date('2026-06-15T12:00:00-06:00'),
+    });
+    expect(summary.spentMinor).toBe(224_967);
+    expect(summary.discretionarySpentMinor).toBe(0);
+    expect(summary.msiSpentMinor).toBe(224_967);
+  });
 });
 
 describe('dailyBalancePushMessage', () => {

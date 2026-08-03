@@ -4,7 +4,7 @@ export const INSTITUTIONS = ["american_express_mx", "santander_mx", "nu_mx", "am
 
 export type Institution = (typeof INSTITUTIONS)[number];
 
-export type EventStatus = "accepted" | "needs_review" | "rejected";
+export type EventStatus = "accepted" | "needs_review" | "rejected" | "deferred_msi";
 
 export interface Money {
   readonly amountMinor: number;
@@ -109,6 +109,7 @@ export const isInstitution = (value: string): value is Institution =>
 export {
   FINANCE_TIME_ZONE,
   computeMonthSummary,
+  countsTowardMonthSpend,
   dailyBalancePushMessage,
   dayInZone,
   dayKeyInZone,
