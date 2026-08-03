@@ -100,6 +100,7 @@ npm workspaces, strict TypeScript, and Vitest. Parsers are tested against real A
 
 - [Architecture (C4)](docs/architecture.md) — containers and components
 - [V1 decisions](docs/v1-decisions.md) — scope, data model, and infrastructure
+- [Meses sin intereses (MSI)](docs/msi.md) — plans, imports, UI, and month math
 - [UI direction](docs/ui-design-brief.md) — hierarchy, personality, and mobile navigation
 - [Gmail → SES forwarding](docs/gmail-forwarding.md)
 - [Apple Pay Shortcut](docs/apple-pay-shortcut.md)
