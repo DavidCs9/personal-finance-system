@@ -917,6 +917,28 @@ const applySantanderImport = async (importId: string, owner: string, decisionBod
     }
 
     if (action.kind === 'create_plan' && msiEvidence) {
+      const existing = matchEvidenceLine(msiEvidence, eventsSnapshot);
+      if (existing.kind === 'confirm') {
+        const updated = await persistEventMsi(
+          existing.eventId,
+          owner,
+          existing.previous,
+          existing.next,
+          'Cuota MSI confirmada con CSV Santander.',
+        );
+        if (updated) {
+          msiConfirmed += 1;
+          linked += 1;
+          eventsSnapshot = eventsSnapshot.map((event) => event.id === existing.eventId ? { ...event, msi: existing.next } : event);
+          continue;
+        }
+        skipped += 1;
+        continue;
+      }
+      if (existing.kind === 'skip') {
+        skipped += 1;
+        continue;
+      }
       const plan = buildPlanFromCreateDecision(msiEvidence, {
         months: action.months,
         cuotaMinor: action.cuotaMinor,
@@ -1743,6 +1765,23 @@ const applyStatementImport = async (input: {
         continue;
       }
       if (action.kind === 'create_plan') {
+        // Prefer confirming an existing plan (merchant+principal) over opening a duplicate.
+        const existing = matchEvidenceLine(evidence, eventsSnapshot);
+        if (existing.kind === 'confirm') {
+          const updated = await persistEventMsi(existing.eventId, input.owner, existing.previous, existing.next, msiNote);
+          if (updated) {
+            msiConfirmed += 1;
+            linked += 1;
+            eventsSnapshot = eventsSnapshot.map((event) => (
+              event.id === existing.eventId ? { ...event, msi: existing.next } : event
+            ));
+          } else skipped += 1;
+          continue;
+        }
+        if (existing.kind === 'skip') {
+          skipped += 1;
+          continue;
+        }
         const plan = buildPlanFromCreateDecision(evidence, {
           months: action.months,
           cuotaMinor: action.cuotaMinor,

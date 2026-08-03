@@ -48,5 +48,6 @@ Amex **MESES EN AUTOMÁTICO** no es un comercio real, pero el PDF sí trae `i/N`
 3. CSV: llena el mes y confirma cuotas ya planeadas; no armes planes a ciegas.
 4. Gastos fijos ≠ MSI.
 5. Cierre anticipado: manual.
+6. Un plan = un comercio + principal. Si ya existe, la siguiente cuota **confirma**; no abras otro plan.
 
 Detalle de producto/API: [`v1-decisions.md`](v1-decisions.md). Código: `packages/domain/src/msi.ts`, `infrastructure/lambda/msi-reconciliation.ts`.

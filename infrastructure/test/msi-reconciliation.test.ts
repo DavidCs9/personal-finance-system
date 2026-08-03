@@ -136,6 +136,90 @@ describe('matchEvidenceLine', () => {
     );
     expect(match).toEqual({ kind: 'needs_decision', reason: 'no_matching_plan', candidates: [] });
   });
+
+  it('confirms by merchant+principal when calendar months drifted from a mid-plan create', () => {
+    // Plan opened from 2/3 on June 23 → start May. Later import of 1/3 must not spawn a duplicate.
+    const plan = markInstallmentSpent(
+      buildMsiSchedule({
+        principalMinor: 452_600,
+        months: 3,
+        startMonth: '2026-05',
+        origin: 'manual',
+        cuotaMinor: 150_867,
+      }),
+      2,
+      {
+        amountMinor: 150_867,
+        confirmedAt: '2026-06-23T12:00:00Z',
+        evidenceObservationId: 'amex-2-of-3',
+      },
+    );
+    const withPriorSpent = {
+      ...plan,
+      installments: plan.installments.map((installment) =>
+        installment.index === 1 ? { ...installment, status: 'spent' as const } : installment,
+      ),
+    };
+    const match = matchEvidenceLine(
+      {
+        merchantRaw: 'AEROMEXICO 8697744 NUEVO PORTAL',
+        amountMinor: 150_867,
+        occurredOn: '2026-06-04',
+        installmentIndex: 1,
+        installmentMonths: 3,
+        originalAmountMinor: 452_600,
+        identity: 'amex-1-of-3',
+      },
+      [{ id: 'evt-aero', merchantRaw: 'AEROMEXICO 8697744 NUEVO PORTAL', status: 'accepted', msi: withPriorSpent }],
+    );
+    expect(match.kind).toBe('confirm');
+    if (match.kind === 'confirm') {
+      expect(match.eventId).toBe('evt-aero');
+      expect(match.installmentIndex).toBe(1);
+      expect(match.next.installments[0]?.evidenceObservationId).toBe('amex-1-of-3');
+    }
+  });
+
+  it('confirms Santander AMAZON by principal across statement months', () => {
+    const plan = markInstallmentSpent(
+      buildMsiSchedule({
+        principalMinor: 285_500,
+        months: 12,
+        startMonth: '2026-05',
+        origin: 'manual',
+        cuotaMinor: 23_792,
+      }),
+      3,
+      {
+        amountMinor: 23_792,
+        confirmedAt: '2026-07-03T12:00:00Z',
+        evidenceObservationId: 'san-3-of-12',
+      },
+    );
+    const withPriors = {
+      ...plan,
+      installments: plan.installments.map((installment) =>
+        installment.index < 3 ? { ...installment, status: 'spent' as const } : installment,
+      ),
+    };
+    const match = matchEvidenceLine(
+      {
+        merchantRaw: 'AMAZON A MESES',
+        amountMinor: 23_792,
+        occurredOn: '2026-05-04',
+        installmentIndex: 1,
+        installmentMonths: 12,
+        originalAmountMinor: 285_500,
+        identity: 'san-1-of-12',
+      },
+      [{ id: 'evt-amz', merchantRaw: 'AMAZON A MESES', status: 'accepted', msi: withPriors }],
+    );
+    expect(match.kind).toBe('confirm');
+    if (match.kind === 'confirm') {
+      expect(match.eventId).toBe('evt-amz');
+      expect(match.installmentIndex).toBe(1);
+    }
+  });
 });
 
 describe('replaceMsiSchedule', () => {

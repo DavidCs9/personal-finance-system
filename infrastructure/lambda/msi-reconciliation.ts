@@ -5,6 +5,7 @@ import {
   markInstallmentSpent,
   monthKeyInZone,
   type MsiEvidenceCandidate,
+  type MsiInstallment,
   type MsiPlan,
 } from "@finance/domain";
 import { merchantsMatch as santanderMerchantsMatch } from "./santander-csv.js";
@@ -69,6 +70,60 @@ export const evidenceCandidatesFromEvents = (
   return candidates;
 };
 
+type PlanCandidate = {
+  readonly eventId: string;
+  readonly merchantRaw: string;
+  readonly plan: MsiPlan;
+};
+
+/** Plans that could own this evidence (merchant + principal/cuota), ignoring calendar drift. */
+export const matchingPlansForEvidence = (
+  line: EvidenceLine,
+  events: readonly JsonObject[],
+): readonly PlanCandidate[] => {
+  const matches: PlanCandidate[] = [];
+  for (const event of events) {
+    const plan = asMsiPlan(event.msi);
+    if (!plan || event.status === "rejected") continue;
+    if (plan.needsScheduleCompletion) continue;
+    if (
+      line.installmentMonths !== undefined
+      && plan.months !== line.installmentMonths
+    ) {
+      continue;
+    }
+    if (!amountsWithinTolerance(plan.cuotaMinor, line.amountMinor)) continue;
+
+    if (isAutomaticAmexLabel(line.merchantRaw)) {
+      if (line.originalAmountMinor === undefined) continue;
+      if (!amountsWithinTolerance(plan.principalMinor, line.originalAmountMinor)) continue;
+      // Automatic labels collapse many merchants — principal is the identity.
+      matches.push({
+        eventId: String(event.id),
+        merchantRaw: String(event.merchantRaw ?? ""),
+        plan,
+      });
+      continue;
+    }
+
+    if (!amexMerchantsMatch(String(event.merchantRaw ?? ""), line.merchantRaw)) continue;
+
+    if (
+      line.originalAmountMinor !== undefined
+      && !amountsWithinTolerance(plan.principalMinor, line.originalAmountMinor)
+    ) {
+      continue;
+    }
+
+    matches.push({
+      eventId: String(event.id),
+      merchantRaw: String(event.merchantRaw ?? ""),
+      plan,
+    });
+  }
+  return matches;
+};
+
 /** Merchant equality for statement matching. Automatic Amex labels never match arbitrary merchants. */
 export const amexMerchantsMatch = (left: string, right: string): boolean => {
   if (isAutomaticAmexLabel(left) || isAutomaticAmexLabel(right)) {
@@ -92,6 +147,31 @@ const confirmMatch = (
   installmentIndex: match.installment.index,
 });
 
+const toEvidenceCandidate = (
+  planMatch: PlanCandidate,
+  installment: MsiInstallment,
+): MsiEvidenceCandidate => ({
+  eventId: planMatch.eventId,
+  merchantRaw: planMatch.merchantRaw,
+  plan: planMatch.plan,
+  installment,
+});
+
+const resolveTargetInstallment = (
+  plan: MsiPlan,
+  line: EvidenceLine,
+  month: string,
+): MsiInstallment | undefined => {
+  if (line.installmentIndex !== undefined) {
+    return plan.installments.find((installment) => installment.index === line.installmentIndex);
+  }
+  return plan.installments.find(
+    (installment) =>
+      installment.month === month
+      && amountsWithinTolerance(installment.amountMinor, line.amountMinor),
+  );
+};
+
 const looksLikeMsiEvidence = (line: EvidenceLine): boolean =>
   line.installmentIndex !== undefined
   || line.installmentMonths !== undefined
@@ -101,6 +181,8 @@ const looksLikeMsiEvidence = (line: EvidenceLine): boolean =>
 
 /**
  * Match statement/CSV MSI evidence to an existing complete plan.
+ * Prefer calendar+index on committed cuotas; fall back to merchant+principal so
+ * mid-schedule imports confirm instead of spawning duplicate plans.
  * Never invents a schedule — unmatched MSI requires an explicit apply decision.
  */
 export const matchEvidenceLine = (
@@ -151,6 +233,33 @@ export const matchEvidenceLine = (
   if (indexed.length > 1) {
     return { kind: "needs_decision", reason: "ambiguous_msi_match", candidates: indexed };
   }
+
+  // Calendar drifted (plan opened from a different cuota) — match the plan, then the index.
+  const planMatches = matchingPlansForEvidence(line, events);
+  if (planMatches.length > 1) {
+    return {
+      kind: "needs_decision",
+      reason: "ambiguous_msi_match",
+      candidates: planMatches.flatMap((planMatch) => {
+        const installment = resolveTargetInstallment(planMatch.plan, line, month);
+        return installment ? [toEvidenceCandidate(planMatch, installment)] : [];
+      }),
+    };
+  }
+  if (planMatches.length === 1) {
+    const planMatch = planMatches[0];
+    const installment = resolveTargetInstallment(planMatch.plan, line, month);
+    if (!installment) {
+      return { kind: "needs_decision", reason: "no_matching_plan", candidates: [] };
+    }
+    if (installment.status === "cancelled") {
+      return { kind: "needs_decision", reason: "no_matching_plan", candidates: [] };
+    }
+    // Spent without this evidence still confirms so we attach the observation id
+    // instead of opening a duplicate plan from an earlier statement.
+    return confirmMatch(toEvidenceCandidate(planMatch, installment), line);
+  }
+
   if (looksLikeMsiEvidence(line)) {
     return { kind: "needs_decision", reason: "no_matching_plan", candidates: [] };
   }
