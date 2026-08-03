@@ -2,6 +2,7 @@ import type { MonthMsiRow } from "@finance/domain";
 import { money, monthDate } from "../lib/format";
 import type { MonthlyPlan, PlannedPayment } from "../monthly-plan";
 import type { CardCycle } from "../card-cycle";
+import { Amt } from "../components/Amt";
 import { CardCycleSection } from "../components/CardCycleSection";
 import { MsiMonthSection } from "../components/MsiMonthSection";
 import { PushPreference } from "../components/PushPreference";
@@ -88,17 +89,23 @@ export function SummaryView(props: SummaryViewProps) {
                 </div>
                 <button className="income-button" onClick={props.onEditIncome}>
                   <span>Ingreso</span>
-                  <strong>{money(props.plan.incomeMinor)}</strong>
+                  <strong>
+                    <Amt>{money(props.plan.incomeMinor)}</Amt>
+                  </strong>
                 </button>
               </div>
-              <strong className="hero-amount">{money(props.spentMinor)}</strong>
+              <strong className="hero-amount">
+                <Amt>{money(props.spentMinor)}</Amt>
+              </strong>
               <div className="spend-meta">
-                <strong>{props.spendPercent}%</strong>
+                <strong>
+                  <Amt>{props.spendPercent}%</Amt>
+                </strong>
                 <span>de tu ingreso mensual</span>
               </div>
               {props.uncertainMinor > 0 && (
                 <p className="uncertain-note">
-                  <span>!</span> Incluye {money(props.uncertainMinor)} por confirmar
+                  <span>!</span> Incluye <Amt>{money(props.uncertainMinor)}</Amt> por confirmar
                 </p>
               )}
             </section>
@@ -106,14 +113,18 @@ export function SummaryView(props: SummaryViewProps) {
             <div className="number-grid">
               <section className="number-card">
                 <p>Te quedan</p>
-                <strong>{money(Math.max(props.remainingMinor, 0))}</strong>
+                <strong>
+                  <Amt>{money(Math.max(props.remainingMinor, 0))}</Amt>
+                </strong>
                 <span>después de MSI y gastos fijos</span>
               </section>
               <section className={`projection-card ${props.risk}`}>
                 <p>{props.isCurrentMonth ? "A este ritmo" : "Cierre del mes"}</p>
                 {props.projectedRemainingMinor < 0 ? (
                   <>
-                    <strong>Te faltarán {money(Math.abs(props.projectedRemainingMinor))}</strong>
+                    <strong>
+                      Te faltarán <Amt>{money(Math.abs(props.projectedRemainingMinor))}</Amt>
+                    </strong>
                     <span>si mantienes este paso</span>
                     <button onClick={props.onReviewLargest}>
                       Revisar gastos grandes <span>→</span>
@@ -121,7 +132,9 @@ export function SummaryView(props: SummaryViewProps) {
                   </>
                 ) : (
                   <>
-                    <strong>Cerrarás con {money(props.projectedRemainingMinor)}</strong>
+                    <strong>
+                      Cerrarás con <Amt>{money(props.projectedRemainingMinor)}</Amt>
+                    </strong>
                     <span>
                       {props.isCurrentMonth ? "si mantienes este paso" : "según tus registros"}
                     </span>
@@ -176,13 +189,17 @@ export function SummaryView(props: SummaryViewProps) {
                       <strong>{payment.name}</strong>
                       <small>Cada mes · sin fecha de fin</small>
                     </span>
-                    <strong className="payment-amount">{money(payment.amountMinor)}</strong>
+                    <strong className="payment-amount">
+                      <Amt>{money(payment.amountMinor)}</Amt>
+                    </strong>
                     <span className="chevron">›</span>
                   </button>
                 ))}
                 <div className="payment-total">
                   <span>Total de gastos fijos</span>
-                  <strong>{money(props.billUpcomingMinor)}</strong>
+                  <strong>
+                    <Amt>{money(props.billUpcomingMinor)}</Amt>
+                  </strong>
                 </div>
               </div>
             ) : (

@@ -2,9 +2,10 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { computeMonthSummary } from "@finance/domain";
 import { ledgerApi } from "../api/client";
-import { mockEventFeed } from "../api/mock-data";
+import { mockExceptionRawEmail, mockExceptions, mockFeedForMonth } from "../api/mock-data";
 import { AppShell } from "../layout/AppShell";
 import { eventDate, monthKey } from "../lib/format";
+import { usePrivateMode } from "../lib/private-mode";
 import { eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, cardsQueryKey } from "../lib/query-keys";
 import type { Tab } from "../lib/tabs";
 import {
@@ -22,7 +23,7 @@ import { PaymentSheet } from "../sheets/PaymentSheet";
 import { CardSheet } from "../sheets/CardSheet";
 import { SantanderImportSheet } from "../sheets/SantanderImportSheet";
 import { StatementImportSheet } from "../sheets/StatementImportSheet";
-import type { EventFeed, IngestionException, PurchaseEvent } from "../types";
+import type { EventFeed, PurchaseEvent } from "../types";
 import { MovementsView } from "../views/MovementsView";
 import { SummaryView } from "../views/SummaryView";
 
@@ -51,17 +52,18 @@ export function Dashboard({
   const [amexImportOpen, setAmexImportOpen] = useState(false);
   const [santanderStatementOpen, setSantanderStatementOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
+  const { privateMode, togglePrivateMode } = usePrivateMode();
 
   const eventsQuery = useQuery({
     queryKey: eventsQueryKey(selectedMonth),
     queryFn: () =>
-      demoMode ? Promise.resolve(mockEventFeed) : ledgerApi.listEvents(idToken, selectedMonth),
+      demoMode ? Promise.resolve(mockFeedForMonth(selectedMonth)) : ledgerApi.listEvents(idToken, selectedMonth),
   });
   const exceptionsQuery = useQuery({
     queryKey: exceptionsQueryKey,
     queryFn: () =>
       demoMode
-        ? Promise.resolve({ exceptions: [] as readonly IngestionException[] })
+        ? Promise.resolve({ exceptions: mockExceptions })
         : ledgerApi.listExceptions(idToken),
   });
   const monthlyPlanQuery = useQuery({
@@ -114,20 +116,47 @@ export function Dashboard({
   };
 
   const retryExceptionMutation = useMutation({
-    mutationFn: (exceptionId: string) => ledgerApi.retryException(exceptionId, idToken),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: exceptionsQueryKey }),
+    mutationFn: async (exceptionId: string) => {
+      if (demoMode) {
+        queryClient.setQueryData<{ exceptions: typeof mockExceptions }>(exceptionsQueryKey, (current) => ({
+          exceptions: (current?.exceptions ?? mockExceptions).map((item) =>
+            item.id === exceptionId
+              ? { ...item, retry: { status: "queued" as const } }
+              : item,
+          ),
+        }));
+        return;
+      }
+      return ledgerApi.retryException(exceptionId, idToken);
+    },
+    onSuccess: () => {
+      if (!demoMode) void queryClient.invalidateQueries({ queryKey: exceptionsQueryKey });
+    },
   });
   const retryException = async (exceptionId: string) => {
     await retryExceptionMutation.mutateAsync(exceptionId);
   };
   const discardExceptionMutation = useMutation({
-    mutationFn: (exceptionId: string) => ledgerApi.discardException(exceptionId, idToken),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: exceptionsQueryKey }),
+    mutationFn: async (exceptionId: string) => {
+      if (demoMode) {
+        queryClient.setQueryData<{ exceptions: typeof mockExceptions }>(exceptionsQueryKey, (current) => ({
+          exceptions: (current?.exceptions ?? mockExceptions).filter((item) => item.id !== exceptionId),
+        }));
+        return;
+      }
+      return ledgerApi.discardException(exceptionId, idToken);
+    },
+    onSuccess: () => {
+      if (!demoMode) void queryClient.invalidateQueries({ queryKey: exceptionsQueryKey });
+    },
   });
   const discardException = async (exceptionId: string) => {
     await discardExceptionMutation.mutateAsync(exceptionId);
   };
-  const readExceptionRaw = (exceptionId: string) => ledgerApi.rawException(exceptionId, idToken);
+  const readExceptionRaw = (exceptionId: string) =>
+    demoMode
+      ? Promise.resolve(mockExceptionRawEmail(exceptionId))
+      : ledgerApi.rawException(exceptionId, idToken);
 
   const monthEvents = events;
   const summaryEvents = useMemo(
@@ -205,8 +234,17 @@ export function Dashboard({
         syncing={loading}
         refreshing={loading || planLoading}
         onRefresh={refresh}
+        privateMode={privateMode}
+        onTogglePrivateMode={togglePrivateMode}
+        demoMode={demoMode}
         showSignOut={!demoMode}
-        onSignOut={onSignOut}
+        onSignOut={
+          demoMode
+            ? () => {
+                window.location.assign("/");
+              }
+            : onSignOut
+        }
         error={error}
       >
         {tab === "summary" ? (

@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { defaultCuotaMinor, monthKeyInZone, replaceMsiSchedule, addCalendarMonths } from "@finance/domain";
 import { ledgerApi } from "../api/client";
+import { Amt } from "../components/Amt";
 import { Mark } from "../components/Brand";
 import { Field } from "../components/Field";
 import { Sheet } from "../components/Sheet";
@@ -232,7 +233,9 @@ export function EventSheet({
     <Sheet eyebrow="MOVIMIENTO OBSERVADO" title={event.merchantRaw} onClose={onClose}>
       <div className="event-detail">
         <div className="detail-amount">
-          <strong>{eventMoney(event)}</strong>
+          <strong>
+            <Amt>{eventMoney(event)}</Amt>
+          </strong>
           <span className={`status ${event.status}`}>{statusLabel[event.status]}</span>
         </div>
         <p className="detail-subtitle">
@@ -384,7 +387,9 @@ export function EventSheet({
                   </strong>
                   <small>{installment.status}</small>
                 </span>
-                <strong className="payment-amount">{money(installment.amountMinor)}</strong>
+                <strong className="payment-amount">
+                  <Amt>{money(installment.amountMinor)}</Amt>
+                </strong>
               </div>
             ))}
           </div>

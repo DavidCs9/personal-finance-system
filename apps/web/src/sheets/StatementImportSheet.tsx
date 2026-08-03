@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { ledgerApi } from "../api/client";
+import { Amt } from "../components/Amt";
 import { Sheet } from "../components/Sheet";
 import { money } from "../lib/format";
 import type {
@@ -236,7 +237,7 @@ export function StatementImportSheet({
                     <div>
                       <strong>{row.merchantRaw}</strong>
                       <small>
-                        {row.occurredOn} · {money(row.amountMinor)}
+                        {row.occurredOn} · <Amt>{money(row.amountMinor)}</Amt>
                       </small>
                     </div>
                     <select
@@ -291,12 +292,15 @@ export function StatementImportSheet({
                       <div>
                         <strong>{row.merchantRaw}</strong>
                         <small>
-                          {row.occurredOn} · {money(row.amountMinor)}
+                          {row.occurredOn} · <Amt>{money(row.amountMinor)}</Amt>
                           {row.installmentIndex ? ` · cuota ${row.installmentIndex}` : ""}
                           {row.installmentMonths ? `/${row.installmentMonths}` : ""}
-                          {row.originalAmountMinor
-                            ? ` · total ${money(row.originalAmountMinor)}`
-                            : ""}
+                          {row.originalAmountMinor ? (
+                            <>
+                              {" "}
+                              · total <Amt>{money(row.originalAmountMinor)}</Amt>
+                            </>
+                          ) : null}
                         </small>
                         {autoLabel && (
                           <small>
@@ -454,7 +458,9 @@ export function StatementImportSheet({
                                 : "Sin acción"}
                   </small>
                 </span>
-                <strong className="payment-amount">{money(row.amountMinor)}</strong>
+                <strong className="payment-amount">
+                  <Amt>{money(row.amountMinor)}</Amt>
+                </strong>
               </div>
             ))}
           </div>
