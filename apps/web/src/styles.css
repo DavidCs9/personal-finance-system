@@ -72,6 +72,12 @@ html.private-mode .amt {
   user-select: none;
   transition: filter .15s ease;
 }
+html.private-mode .hero-amount .amt {
+  /* Large hero type needs denser cover than filter blur alone. */
+  color: transparent;
+  text-shadow: 0 0 22px #3f3a35, 0 0 36px #3f3a35;
+  filter: none;
+}
 @media (prefers-reduced-motion: reduce) {
   html.private-mode .amt { transition: none; }
 }
