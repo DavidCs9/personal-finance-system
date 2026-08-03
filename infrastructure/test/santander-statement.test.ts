@@ -69,6 +69,20 @@ describe('parseSantanderStatementExtraction', () => {
     expect(purchases.filter((charge) => /DRAFTEA/i.test(charge.merchantRaw) && charge.amountMinor === 20_000)).toHaveLength(7);
     expect(msi).toHaveLength(2);
     expect(msi.every((charge) => charge.occurredOn === '2026-07-03')).toBe(true);
+    expect(msi).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        amountMinor: 23_792,
+        installmentIndex: 3,
+        installmentMonths: 12,
+        originalAmountMinor: 285_500,
+      }),
+      expect.objectContaining({
+        amountMinor: 18_726,
+        installmentIndex: 2,
+        installmentMonths: 3,
+        originalAmountMinor: 56_177,
+      }),
+    ]));
     expect(document.charges.some((charge) => charge.occurredOn === '2026-04-07')).toBe(false);
     expect(purchases.every((charge) => !/\d{2}-[A-Za-z]{3}-\d{4}/.test(charge.merchantRaw))).toBe(true);
     expect(purchases.find((charge) => /MANGO/i.test(charge.merchantRaw))).toMatchObject({

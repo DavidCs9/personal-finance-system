@@ -1,6 +1,4 @@
 import { useState } from "react";
-import type { MonthMsiRow } from "@finance/domain";
-import { MsiMonthSection } from "../components/MsiMonthSection";
 import { RecoveryNotice } from "../components/RecoveryNotice";
 import {
   dateFormatter,
@@ -19,13 +17,11 @@ export function MovementsView({
   events,
   month,
   spentMinor,
-  monthMsiRows,
   exceptions,
   loading,
   sort,
   onSortChange,
   onOpen,
-  onOpenMsiEvent,
   onRetryException,
   onDiscardException,
   onReadExceptionRaw,
@@ -39,13 +35,11 @@ export function MovementsView({
   month: string;
   /** Month spend including MSI cuotas whose purchase may live in another month. */
   spentMinor: number;
-  monthMsiRows: readonly MonthMsiRow[];
   exceptions: readonly IngestionException[];
   loading: boolean;
   sort: "recent" | "largest";
   onSortChange(value: "recent" | "largest"): void;
   onOpen(event: PurchaseEvent): void;
-  onOpenMsiEvent(eventId: string): void;
   onRetryException(id: string): Promise<void>;
   onDiscardException(id: string): Promise<void>;
   onReadExceptionRaw(id: string): Promise<string>;
@@ -129,11 +123,6 @@ export function MovementsView({
             ))}
           </div>
         </details>
-      )}
-      {monthMsiRows.length > 0 && (
-        <div className="msi-movements-section">
-          <MsiMonthSection rows={monthMsiRows} onOpen={onOpenMsiEvent} />
-        </div>
       )}
       <div className="movement-list">
         {sorted.map((event) => (

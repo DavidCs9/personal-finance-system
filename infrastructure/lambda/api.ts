@@ -1070,6 +1070,9 @@ const buildSantanderStatementPreviewRows = async (
     amountMinor: charge.amountMinor,
     occurredOn: charge.occurredOn,
     identity: charge.identity,
+    installmentIndex: charge.installmentIndex,
+    installmentMonths: charge.installmentMonths,
+    originalAmountMinor: charge.originalAmountMinor,
   }, events));
   return [...purchaseRows, ...msiRows];
 };

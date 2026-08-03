@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { merchantsMatch as santanderMerchantsMatch } from "./santander-csv.js";
-import { amexMerchantsMatch, isAutomaticAmexLabel } from "./msi-reconciliation.js";
+import { amexMerchantsMatch, canCreateMsiPlanFromEvidence } from "./msi-reconciliation.js";
 import type { StatementProvider } from "./textract-document.js";
 
 export type { StatementProvider };
@@ -188,14 +188,30 @@ export const statementMsiApplyAction = (
     return { kind: "confirm_msi", eventId: current.eventId };
   }
   if (current.status === "needs_decision" && preview?.status === "needs_decision") {
-    if (decision?.action === "skip") return { kind: "skip" };
+    if (decision?.action === "skip") {
+      // With n/N + cuota on the statement, omit means "accept the plan as printed".
+      if (
+        canCreateMsiPlanFromEvidence({
+          amountMinor: current.amountMinor,
+          installmentIndex: current.installmentIndex,
+          installmentMonths: current.installmentMonths,
+          originalAmountMinor: current.originalAmountMinor,
+        })
+      ) {
+        return {
+          kind: "create_plan",
+          months: current.installmentMonths!,
+          cuotaMinor: current.amountMinor,
+        };
+      }
+      return { kind: "skip" };
+    }
     if (decision?.action === "confirm_msi") {
       const allowed = current.candidateEventIds.length === 0
         || current.candidateEventIds.includes(decision.eventId);
       if (allowed) return { kind: "confirm_msi", eventId: decision.eventId };
     }
     if (decision?.action === "create_plan") {
-      if (isAutomaticAmexLabel(current.merchantRaw)) return { kind: "skip" };
       return {
         kind: "create_plan",
         months: decision.months,
