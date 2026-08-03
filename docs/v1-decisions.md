@@ -58,9 +58,9 @@
 - Los parsers se prueban con fixtures `.eml` anonimizadas y fieles a los formatos reales; los correos reales no se versionan.
 - V1 está lista cuando los flujos de ambos bancos capturan una compra una sola vez, conservan su fuente, avisan por push si está activo, la muestran en UI y hacen recuperables los fallos de parser.
 
-## Fuera de V1 (patrimonio)
+## Fuera de V1 (visibilidad completa)
 
-- Ahorros e inversiones son un dominio aparte del gasto observado: snapshots diarios de saldos/posiciones, no eventos de compra.
-- Fondo de emergencia: Cajita Nu (entrada manual; sin API retail). Luego Bitso e IBKR Flex en sync diario.
-- Sin datos en vivo ni APIs de trading; sync programado una vez al día donde haya API.
-- Plan: [Patrimonio diario (Cajita Nu + Bitso + IBKR)](wealth-daily-sync.md).
+- **Ingreso:** la empresa manda XML de todos los pagos; capturarlos siempre como ingresos observados con evidencia (hoy el mes usa una cifra manual).
+- **Patrimonio:** snapshots diarios — Cajita Nu (fondo de emergencia, manual), Bitso e IBKR Flex. Dominio aparte del gasto observado.
+- Sin datos en vivo ni APIs de trading.
+- Plan: [Visibilidad completa](full-visibility.md).
