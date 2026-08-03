@@ -121,7 +121,8 @@ html.private-mode .hero-amount .amt {
 .number-card { color: var(--ink); background: var(--paper); border: 1px solid var(--line); box-shadow: 0 8px 24px #322b2210; }
 .number-card p, .projection-card p { margin: 0 0 17px; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
 .number-card strong { display: block; font-size: 31px; line-height: 1; letter-spacing: -.055em; font-variant-numeric: tabular-nums; }
-.number-card span, .projection-card > span { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }
+.number-card > span,
+.projection-card > span { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }
 .projection-card { color: #f8f3ea; background: var(--ink); border: 1px solid #161412; box-shadow: 0 12px 28px #24211f25; }
 .projection-card p { color: #bcb4aa; }
 .projection-card strong { display: block; max-width: 280px; font: 600 24px/1.12 "Fraunces", serif; letter-spacing: -.03em; }
