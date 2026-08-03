@@ -61,6 +61,7 @@ Assume at least 95% of usage is mobile.
 - Show a dedicated **Meses sin intereses / Planes con fin** section (Resumen and Movimientos) listing this month’s spent and committed cuotas with principal total and start–end range. Keep MSI rows in the Movimientos list as well.
 - Keep **Gastos fijos / Servicios y suscripciones** for indefinite recurring charges only. Do not mix MSI plans into that list.
 - A cuota is never in both committed and spent. Committed MSI rows appear in the MSI section, not mixed into gastos fijos.
+- On statement import, when an MSI row includes `n/N` (and total when available), creating the plan — including Amex “MESES EN AUTOMÁTICO” labels — is preferred over discarding the cuota.
 - Projection paces discretionary (non-MSI) spend only, then adds spent MSI cuotas and pending commitments.
 - Purchases needing review remain in totals, with the uncertain amount disclosed.
 - Rejected purchases do not count toward spending.

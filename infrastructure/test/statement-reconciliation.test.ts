@@ -134,9 +134,23 @@ describe('statementMsiApplyAction', () => {
     msi: true,
   };
 
-  it('requires create_plan or skip for unmatched MSI', () => {
-    expect(statementMsiApplyAction(needsDecisionRow, needsDecisionRow)).toEqual({ kind: 'skip' });
-    expect(statementMsiApplyAction(needsDecisionRow, needsDecisionRow, { action: 'skip' })).toEqual({ kind: 'skip' });
+  it('creates a plan from skip when the statement already has n/N metadata', () => {
+    const withSchedule = {
+      ...needsDecisionRow,
+      merchantRaw: 'MESES EN AUTOMÁTICO NACIONAL',
+      installmentIndex: 2,
+      installmentMonths: 3,
+      originalAmountMinor: 674_900,
+      amountMinor: 224_967,
+    };
+    expect(statementMsiApplyAction(withSchedule, withSchedule, { action: 'skip' })).toEqual({
+      kind: 'create_plan',
+      months: 3,
+      cuotaMinor: 224_967,
+    });
+  });
+
+  it('honors explicit create_plan decisions', () => {
     expect(statementMsiApplyAction(needsDecisionRow, needsDecisionRow, {
       action: 'create_plan',
       months: 3,
@@ -144,16 +158,26 @@ describe('statementMsiApplyAction', () => {
     })).toEqual({ kind: 'create_plan', months: 3, cuotaMinor: 50_000 });
   });
 
-  it('refuses create_plan for automatic Amex labels', () => {
+  it('still skips when MSI metadata is incomplete', () => {
+    expect(statementMsiApplyAction(needsDecisionRow, needsDecisionRow, { action: 'skip' })).toEqual({
+      kind: 'skip',
+    });
+  });
+
+  it('allows create_plan for automatic Amex labels when deciding explicitly', () => {
     const auto = {
       ...needsDecisionRow,
       merchantRaw: 'MESES EN AUTOMÁTICO NACIONAL',
+      installmentIndex: 2,
+      installmentMonths: 3,
+      originalAmountMinor: 674_900,
+      amountMinor: 224_967,
     };
     expect(statementMsiApplyAction(auto, auto, {
       action: 'create_plan',
       months: 3,
       cuotaMinor: 224_967,
-    })).toEqual({ kind: 'skip' });
+    })).toEqual({ kind: 'create_plan', months: 3, cuotaMinor: 224_967 });
   });
 
   it('auto-confirms matched MSI rows', () => {
@@ -183,20 +207,26 @@ describe('buildPlanFromCreateDecision', () => {
     expect(plan.installments[2]?.status).toBe('committed');
   });
 
-  it('rejects create_plan for automatic Amex labels', () => {
-    expect(() =>
-      buildPlanFromCreateDecision(
-        {
-          merchantRaw: 'MESES EN AUTOMÁTICO NACIONAL',
-          amountMinor: 224_967,
-          occurredOn: '2026-07-06',
-          installmentIndex: 2,
-          installmentMonths: 3,
-          originalAmountMinor: 674_900,
-          identity: 'auto-1',
-        },
-        { months: 3, cuotaMinor: 224_967 },
-      ),
-    ).toThrow(/MESES EN AUTOMÁTICO/);
+  it('builds a plan from automatic Amex labels using statement totals', () => {
+    const plan = buildPlanFromCreateDecision(
+      {
+        merchantRaw: 'MESES EN AUTOMÁTICO NACIONAL',
+        amountMinor: 224_967,
+        occurredOn: '2026-07-06',
+        installmentIndex: 2,
+        installmentMonths: 3,
+        originalAmountMinor: 674_900,
+        identity: 'auto-1',
+      },
+      { months: 3, cuotaMinor: 224_967 },
+    );
+    expect(plan.origin).toBe('amex_auto');
+    expect(plan.principalMinor).toBe(674_900);
+    expect(plan.installments[0]?.status).toBe('spent');
+    expect(plan.installments[1]?.status).toBe('spent');
+    expect(plan.installments[2]?.status).toBe('committed');
+    expect(plan.installments[0]?.month).toBe('2026-06');
+    expect(plan.installments[1]?.month).toBe('2026-07');
+    expect(plan.installments[2]?.month).toBe('2026-08');
   });
 });

@@ -157,6 +157,17 @@ export const matchEvidenceLine = (
   return { kind: "skip", reason: "not_msi_evidence" };
 };
 
+/** True when the statement row has enough MSI schedule metadata to open a plan. */
+export const canCreateMsiPlanFromEvidence = (
+  line: Pick<EvidenceLine, "amountMinor" | "installmentIndex" | "installmentMonths" | "originalAmountMinor">,
+  months?: number,
+): boolean => {
+  const resolvedMonths = months ?? line.installmentMonths;
+  if (!resolvedMonths || resolvedMonths < 1 || line.amountMinor <= 0) return false;
+  const index = line.installmentIndex ?? 1;
+  return index >= 1 && index <= resolvedMonths;
+};
+
 /** Build a complete manual MSI plan from an explicit create_plan decision. */
 export const buildPlanFromCreateDecision = (
   line: EvidenceLine,
@@ -166,8 +177,8 @@ export const buildPlanFromCreateDecision = (
     readonly startMonth?: string;
   },
 ): MsiPlan => {
-  if (isAutomaticAmexLabel(line.merchantRaw)) {
-    throw new Error("No se puede crear un plan MSI desde una etiqueta MESES EN AUTOMÁTICO.");
+  if (!canCreateMsiPlanFromEvidence(line, input.months)) {
+    throw new Error("Faltan meses o cuota para crear el plan MSI.");
   }
   const months = input.months;
   const cuotaMinor = input.cuotaMinor;
@@ -184,7 +195,7 @@ export const buildPlanFromCreateDecision = (
     principalMinor,
     months,
     startMonth,
-    origin: "manual",
+    origin: isAutomaticAmexLabel(line.merchantRaw) ? "amex_auto" : "manual",
     cuotaMinor,
   });
   // Prior cuotas are assumed already paid on earlier statements — never leave them committed.

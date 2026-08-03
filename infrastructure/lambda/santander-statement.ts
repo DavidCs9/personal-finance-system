@@ -15,6 +15,9 @@ export interface SantanderStatementCharge {
   readonly credit: boolean;
   readonly msi: boolean;
   readonly identity: string;
+  readonly installmentIndex?: number;
+  readonly installmentMonths?: number;
+  readonly originalAmountMinor?: number;
 }
 
 export interface SantanderStatementDocument {
@@ -23,6 +26,15 @@ export interface SantanderStatementDocument {
   readonly period: { readonly from: string; readonly to: string };
   readonly charges: readonly SantanderStatementCharge[];
   readonly msiCharges: readonly SantanderStatementCharge[];
+}
+
+interface SantanderMsiPlanHint {
+  readonly merchantRaw: string;
+  readonly installmentIndex: number;
+  readonly installmentMonths: number;
+  readonly originalAmountMinor: number;
+  readonly cuotaMinor: number;
+  readonly startOn?: string;
 }
 
 const monthNumbers: Readonly<Record<string, string>> = {
@@ -101,11 +113,6 @@ const parseAccountLastFour = (
 const isMsiMerchant = (merchantRaw: string): boolean =>
   /\bA\s*MESES\b/i.test(merchantRaw) || /\bMSI\b/i.test(merchantRaw);
 
-/** Plan-summary rows list original purchase + pending + cuota; period cuotas appear in movimientos. */
-const isMsiPlanSummaryRow = (cells: readonly string[], joined: string): boolean =>
-  /\b\d{1,2}\s+DE\s+\d{1,2}\b/i.test(joined)
-  || cells.some((cell) => /^(Monto original|Saldo pendiente|Pago requerido|N[uú]m\.?\s*de pago)$/i.test(cell));
-
 const cleanMerchant = (raw: string): string =>
   raw
     .replace(/[\[\]|]/g, " ")
@@ -113,6 +120,116 @@ const cleanMerchant = (raw: string): string =>
     .replace(/\bMOM\b.*$/i, "")
     .replace(/\s+/g, " ")
     .trim();
+
+const parseInstallmentProgress = (
+  raw: string,
+): { readonly index: number; readonly months: number } | undefined => {
+  const match = /(\d{1,2})\s+DE\s+(\d{1,2})\b/i.exec(raw);
+  if (!match) return undefined;
+  const index = Number(match[1]);
+  const months = Number(match[2]);
+  if (!Number.isInteger(index) || !Number.isInteger(months) || index < 1 || months < index) {
+    return undefined;
+  }
+  return { index, months };
+};
+
+const monthsFromMerchantLabel = (merchantRaw: string): number | undefined => {
+  const match = /\b(\d{1,2})\s*M\b/i.exec(merchantRaw);
+  if (!match) return undefined;
+  const months = Number(match[1]);
+  return Number.isInteger(months) && months >= 1 ? months : undefined;
+};
+
+const amountsWithin = (left: number, right: number, tolerance = 200): boolean =>
+  Math.abs(left - right) <= tolerance;
+
+/** Plan-summary rows list original purchase + pending + cuota; period cuotas appear in movimientos. */
+const isMsiPlanSummaryRow = (cells: readonly string[], joined: string): boolean =>
+  Boolean(parseInstallmentProgress(joined))
+  || cells.some((cell) => Boolean(parseInstallmentProgress(cell)))
+  || cells.some((cell) => /^(Monto original|Saldo pendiente|Pago requerido|N[uú]m\.?\s*de pago)$/i.test(cell));
+
+const planHintFromCells = (cells: readonly string[]): SantanderMsiPlanHint | undefined => {
+  const joined = cells.join(" ");
+  const progress =
+    cells.map((cell) => parseInstallmentProgress(cell)).find(Boolean)
+    ?? parseInstallmentProgress(joined);
+  if (!progress) return undefined;
+  const merchantRaw = cleanMerchant(
+    cells.find((cell) => isMsiMerchant(cell) || /\d+\s*M\s*S\/?INT/i.test(cell)) ?? "",
+  );
+  if (!merchantRaw) return undefined;
+  const amounts = cells
+    .map((cell) => parseMoneyMinor(cell))
+    .filter((value): value is number => value !== undefined && value > 0);
+  if (amounts.length < 2) return undefined;
+  const originalAmountMinor = Math.max(...amounts);
+  const months = monthsFromMerchantLabel(merchantRaw) ?? progress.months;
+  const expectedCuota = Math.round(originalAmountMinor / months);
+  const cuotaMinor =
+    amounts.find((amount) => amountsWithin(amount, expectedCuota))
+    ?? amounts
+      .filter((amount) => amount < originalAmountMinor)
+      .sort((left, right) => Math.abs(left - expectedCuota) - Math.abs(right - expectedCuota))[0];
+  if (cuotaMinor === undefined || cuotaMinor <= 0) return undefined;
+  const startOn = cells
+    .map((cell) => parseDayMonthYear(cell) ?? parseFlexibleDate(cell))
+    .find((value): value is string => Boolean(value));
+  return {
+    merchantRaw,
+    installmentIndex: progress.index,
+    installmentMonths: months,
+    originalAmountMinor,
+    cuotaMinor,
+    ...(startOn ? { startOn } : {}),
+  };
+};
+
+const plansFromTables = (tables: readonly TextractTable[]): readonly SantanderMsiPlanHint[] => {
+  const plans: SantanderMsiPlanHint[] = [];
+  for (const table of tables) {
+    for (const row of table.rows) {
+      const cells = row.map((cell) => cell.trim()).filter(Boolean);
+      if (cells.length < 3) continue;
+      const plan = planHintFromCells(cells);
+      if (plan) plans.push(plan);
+    }
+  }
+  return plans;
+};
+
+const enrichMsiCharges = (
+  charges: readonly SantanderStatementCharge[],
+  plans: readonly SantanderMsiPlanHint[],
+): readonly SantanderStatementCharge[] => {
+  if (plans.length === 0) return charges;
+  const used = new Set<number>();
+  return charges.map((charge) => {
+    if (!charge.msi) return charge;
+    let bestIndex = -1;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < plans.length; index += 1) {
+      if (used.has(index)) continue;
+      const plan = plans[index]!;
+      const distance = Math.abs(plan.cuotaMinor - charge.amountMinor);
+      if (distance > 200) continue;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    }
+    if (bestIndex < 0) return charge;
+    used.add(bestIndex);
+    const plan = plans[bestIndex]!;
+    return {
+      ...charge,
+      installmentIndex: plan.installmentIndex,
+      installmentMonths: plan.installmentMonths,
+      originalAmountMinor: plan.originalAmountMinor,
+    };
+  });
+};
 
 const chargesFromTables = (
   tables: readonly TextractTable[],
@@ -261,8 +378,10 @@ export const parseSantanderStatementExtraction = (
     charges.push(charge);
   }
 
-  const msiCharges = charges.filter((charge) => charge.msi);
-  if (charges.length === 0) {
+  const msiPlans = plansFromTables(extraction.tables);
+  const enrichedCharges = enrichMsiCharges(charges, msiPlans);
+  const msiCharges = enrichedCharges.filter((charge) => charge.msi);
+  if (enrichedCharges.length === 0) {
     throw new InvalidSantanderStatementError(
       `Textract no encontró movimientos Santander (answers=${Object.keys(extraction.answers).join(",") || "∅"}, tables=${extraction.tables.length}, lines=${extraction.lines.length}).`,
     );
@@ -272,7 +391,7 @@ export const parseSantanderStatementExtraction = (
     accountLastFour,
     product,
     period,
-    charges,
+    charges: enrichedCharges,
     msiCharges,
   };
 };
