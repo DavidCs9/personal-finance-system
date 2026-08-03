@@ -55,6 +55,7 @@ Assume at least 95% of usage is mobile.
 - If income is missing or failed to load, say so prominently and do not present availability or projections as valid.
 - Upcoming payments and committed MSI installments affect remaining money and the month-end projection.
 - For MSI purchases, “Has gastado” counts only installments marked `spent` for that month. The full principal must not inflate the month total.
+- In **Movimientos**, MSI rows show and sort by the selected month’s cuota (not the principal).
 - A cuota is never in both committed and spent. Committed MSI rows appear under Dinero comprometido as `Merchant · MSI i/N`.
 - Projection paces discretionary (non-MSI) spend only, then adds spent MSI cuotas and pending commitments.
 - Purchases needing review remain in totals, with the uncertain amount disclosed.

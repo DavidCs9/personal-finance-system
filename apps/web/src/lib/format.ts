@@ -40,11 +40,24 @@ export const statusLabel: Record<ReviewStatus, string> = {
 
 export const money = (amountMinor: number) => formatMxnWhole(amountMinor);
 
+/** Amount shown in Movimientos for the selected month (MSI → that month's cuota, else principal). */
+export const movementAmountMinor = (event: PurchaseEvent, month: string): number => {
+  const installment = event.msi?.installments.find((item) => item.month === month);
+  if (installment) return installment.amountMinor;
+  return event.amount.amountMinor;
+};
+
 export const eventMoney = (event: PurchaseEvent) =>
   new Intl.NumberFormat("es-MX", {
     style: "currency",
     currency: event.amount.currency,
   }).format(event.amount.amountMinor / 100);
+
+export const movementMoney = (event: PurchaseEvent, month: string) =>
+  new Intl.NumberFormat("es-MX", {
+    style: "currency",
+    currency: event.amount.currency,
+  }).format(movementAmountMinor(event, month) / 100);
 
 export const eventDate = (event: PurchaseEvent) => new Date(event.occurredAt ?? event.receivedAt);
 

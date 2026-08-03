@@ -3,9 +3,10 @@ import { RecoveryNotice } from "../components/RecoveryNotice";
 import {
   dateFormatter,
   eventDate,
-  eventMoney,
   institutionLabel,
   money,
+  movementAmountMinor,
+  movementMoney,
   statusLabel,
 } from "../lib/format";
 import { CaptureActionsSheet } from "../sheets/CaptureActionsSheet";
@@ -14,6 +15,7 @@ import type { IngestionException, PurchaseEvent } from "../types";
 
 export function MovementsView({
   events,
+  month,
   spentMinor,
   exceptions,
   loading,
@@ -29,6 +31,8 @@ export function MovementsView({
   onRegisterCharge,
 }: {
   events: readonly PurchaseEvent[];
+  /** Selected calendar month (YYYY-MM); MSI rows show that month's cuota. */
+  month: string;
   /** Month spend including MSI cuotas whose purchase may live in another month. */
   spentMinor: number;
   exceptions: readonly IngestionException[];
@@ -48,7 +52,7 @@ export function MovementsView({
   const [captureOpen, setCaptureOpen] = useState(false);
   const sorted = [...events].sort((a, b) =>
     sort === "largest"
-      ? b.amount.amountMinor - a.amount.amountMinor
+      ? movementAmountMinor(b, month) - movementAmountMinor(a, month)
       : eventDate(b).getTime() - eventDate(a).getTime(),
   );
 
@@ -129,7 +133,16 @@ export function MovementsView({
             <span className="movement-main">
               <strong>
                 {event.merchantRaw}
-                {event.msi ? <span className="msi-badge">MSI {event.msi.months}</span> : null}
+                {event.msi ? (
+                  <span className="msi-badge">
+                    {(() => {
+                      const installment = event.msi.installments.find((item) => item.month === month);
+                      return installment
+                        ? `MSI ${installment.index}/${event.msi.months}`
+                        : `MSI ${event.msi.months}`;
+                    })()}
+                  </span>
+                ) : null}
               </strong>
               <small>
                 {institutionLabel(event.institution)} · {dateFormatter.format(eventDate(event))}
@@ -137,7 +150,7 @@ export function MovementsView({
               </small>
             </span>
             <span className="movement-value">
-              <strong>{eventMoney(event)}</strong>
+              <strong>{movementMoney(event, month)}</strong>
               <small className={event.status}>{statusLabel[event.status]}</small>
             </span>
             <span className="chevron">›</span>

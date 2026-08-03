@@ -214,6 +214,7 @@ export function Dashboard({
         ) : (
           <MovementsView
             events={monthEvents}
+            month={selectedMonth}
             spentMinor={spentMinor}
             loading={loading}
             sort={movementSort}
