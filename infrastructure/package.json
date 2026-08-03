@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc --noEmit",
     "check": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "synth": "cdk synth",
     "diff": "cdk diff"
   },
@@ -30,6 +30,9 @@
     "@finance/domain": "*",
     "aws-cdk-lib": "^2.181.0",
     "constructs": "^10.4.2",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "@finance/api": "*",
+    "@finance/ingestion": "*",
+    "@finance/notify": "*"
   }
 }

@@ -7,7 +7,7 @@
  */
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import { eventMonthIndexKeys } from '../lambda/event-month-index.js';
+import { eventMonthIndexKeys } from '@finance/ingestion';
 
 const tableName = process.env.METADATA_TABLE_NAME;
 if (!tableName) {

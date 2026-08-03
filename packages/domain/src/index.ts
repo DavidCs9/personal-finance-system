@@ -106,6 +106,9 @@ export interface IngestionException {
 export const isInstitution = (value: string): value is Institution =>
   (INSTITUTIONS as readonly string[]).includes(value);
 
+/** Calendar month key YYYY-MM. */
+export const isValidMonth = (month: string): boolean => /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
+
 export {
   FINANCE_TIME_ZONE,
   computeMonthSummary,

@@ -68,20 +68,22 @@ Everything runs on AWS (`us-east-2`), defined with CDK in TypeScript. Deploys fr
 
 | Layer | Responsibility |
 | --- | --- |
-| Ingestion | Deduplicate, parse, persist metadata, and link evidence |
-| Domain | Shared types, minor-unit money, cross-service rules |
-| API | Ledger, monthly plan, CSV reconciliation, Apple Pay observations |
-| Web | Mobile-first summary and movements with evidence |
-| Infrastructure | SES, S3, SQS, Lambda, DynamoDB, Cognito, CloudFront |
+| Web | Mobile-first summary and movements with evidence (`apps/web`) |
+| Domain | Shared types, minor-unit money, cross-service rules (`packages/domain`) |
+| API | Ledger HTTP use-cases, imports, Apple Pay, scheduled pushes (`services/api`) |
+| Ingestion | Deduplicate, parse, persist metadata, and link evidence (`services/ingestion`) |
+| Notify | Web Push subscriptions and delivery (`services/notify`) |
+| Infrastructure | CDK + thin Lambda adapters only (`infrastructure`) |
 
 ## Monorepo
 
 ```text
 apps/web              Review UI (React + Vite)
-services/api          HTTP handlers for the ledger
-services/ingestion    Email pipeline and bank parsers
+services/api          Ledger API, imports, Apple Pay, card/daily push jobs
+services/ingestion    Email parsers, observed-event writer, SES worker
+services/notify       Web Push subscriptions and send helpers
 packages/domain       Shared contract across services
-infrastructure        CDK: product stack + CI bootstrap
+infrastructure        CDK stacks + thin Lambda entrypoints (re-export services)
 docs                  Product, UI, and operational decisions
 tests/fixtures/email  Anonymized .eml fixtures — never real mail
 ```

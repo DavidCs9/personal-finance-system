@@ -91,7 +91,7 @@ describe("IngestionPipeline", () => {
       account: { lastFour: "1234" },
     });
     expect(result.purchase.source.kind).not.toBe("apple_pay_shortcut");
-    if (result.purchase.source.kind !== "apple_pay_shortcut") {
+    if (result.purchase.source.kind === undefined || result.purchase.source.kind === "email") {
       expect(await rawSources.get(result.purchase.source)).toBe(amexEmail);
     }
     expect(ledger.purchases.size).toBe(1);
@@ -180,7 +180,7 @@ describe("IngestionPipeline", () => {
       amount: { amountMinor: 5236, currency: "MXN" },
       account: { lastFour: "6349" },
       occurredAt: "2026-07-31T12:00:00.000Z",
-      parserVersion: "santander-mx-card-purchase-v2",
+      parserVersion: "santander-mx-card-purchase-v3",
     });
   });
 
@@ -254,7 +254,7 @@ describe("IngestionPipeline", () => {
       folio: "QUFAS5PYN",
       trackingKey: "NU3TESTTRACKINGKEY",
       occurredAt: "2026-08-01T22:06:00.000Z",
-      parserVersion: "nu-mx-outgoing-transfer-v2",
+      parserVersion: "nu-mx-outgoing-transfer-v3",
     });
   });
 
