@@ -1,4 +1,4 @@
-import { clampDayInMonth, daysInCalendarMonth } from "@finance/domain";
+import { clampDayInMonth, dayInZone, daysInCalendarMonth, monthKeyInZone } from "@finance/domain";
 import type { CardCycle } from "../card-cycle";
 
 const WEEKDAYS = ["L", "M", "X", "J", "V", "S", "D"] as const;
@@ -6,6 +6,7 @@ const CARD_TONES = ["tone-a", "tone-b", "tone-c"] as const;
 
 export interface CardCycleSectionProps {
   readonly month: string;
+  readonly now: Date;
   readonly cards: readonly CardCycle[];
   readonly loading: boolean;
   readonly loadError?: string;
@@ -23,6 +24,8 @@ export function CardCycleSection(props: CardCycleSectionProps) {
   const canAdd = props.cards.length < 3;
   const cells = monthCells(props.month);
   const marksByDay = marksForMonth(props.month, props.cards);
+  const todayDay =
+    monthKeyInZone(props.now) === props.month ? dayInZone(props.now) : undefined;
 
   return (
     <section className="card-cycle-section">
@@ -62,12 +65,21 @@ export function CardCycleSection(props: CardCycleSectionProps) {
                   return <div key={`pad-${index}`} className="card-calendar-cell is-empty" />;
                 }
                 const marks = marksByDay.get(day) ?? [];
+                const isToday = todayDay === day;
                 return (
                   <div
                     key={day}
-                    className={`card-calendar-cell${marks.length ? " has-marks" : ""}`}
+                    className={[
+                      "card-calendar-cell",
+                      marks.length ? "has-marks" : "",
+                      isToday ? "is-today" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    aria-current={isToday ? "date" : undefined}
                   >
                     <strong>{day}</strong>
+                    {isToday && <span className="card-calendar-today">Hoy</span>}
                     {marks.length > 0 && (
                       <span className="card-calendar-marks">
                         {marks.map((mark) => (
