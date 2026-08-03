@@ -1,113 +1,50 @@
 # Meses sin intereses (MSI)
 
-Cómo Olbia modela, importa y muestra compras a plazos. La UI operativa vive en [`apps/web/AGENTS.md`](../apps/web/AGENTS.md) y [`ui-design-brief.md`](ui-design-brief.md); las decisiones de producto compactas siguen en [`v1-decisions.md`](v1-decisions.md).
+Compras a plazos con **total fijo, cuota y fecha de fin**. No son gastos fijos (renta, subs): esos no tienen fin.
 
-## Idea central
+El plan vive en el evento de la compra (`msi`). El ingreso y los gastos fijos viven aparte, en el plan del mes.
 
-Un MSI **no es un gasto fijo indefinido**. Es un plan con:
+## Qué ve el mes
 
-- **Principal** (total de la compra)
-- **Cuota** mensual
-- **N meses** con inicio y fin
-- Una fila por mes: `committed` → `spent` (nunca ambos a la vez)
+- **Has gastado** = compras normales + cuotas MSI ya reconciliadas (`spent`).
+- **Te quedan** resta también las cuotas MSI aún pendientes (`committed`).
+- Solo cuenta la **cuota del mes**, nunca el ticket completo.
 
-El plan vive en el evento observado (`ObservedPurchase.msi`), no en `MonthlyPlan` (ahí solo van ingreso y gastos fijos tipo renta/subs).
+## Dónde se ve en la app
 
-## Cómo cuenta el mes
+- **Resumen → Planes con fin:** cuotas del mes (gastadas y pendientes).
+- **Resumen → Gastos fijos:** servicios/subs indefinidos. Sin MSI.
+- **Movimientos:** lista simple. Si hay MSI, badge `MSI i/N` y monto = cuota del mes.
 
-| Concepto | Qué suma |
-| --- | --- |
-| **Has gastado** | Compras discrecionales del mes + cuotas MSI en `spent` para ese `YYYY-MM` |
-| **Te quedan / compromisos** | Gastos fijos del mes + cuotas MSI aún `committed` |
-| **A este ritmo** | Ritmo solo sobre gasto discrecional; luego suma MSI gastadas y compromisos pendientes |
+## Cómo avanza una cuota
 
-El **principal completo no infla** el mes: solo la cuota del mes.
+1. Al abrir el plan, las cuotas futuras quedan **pendientes**.
+2. Cuando el estado o el CSV confirma esa cuota, pasa a **gastada**.
+3. Las cuotas anteriores a la del estado también se marcan gastadas (ya se pagaron antes).
+4. Si liquidas antes de tiempo, cancelas el resto a mano.
 
-## UI
+## Cómo entra a Olbia
 
-- **Resumen → Planes con fin:** lista de cuotas del mes seleccionado (gastadas y pendientes), con total, `i/N` y rango inicio–fin.
-- **Resumen → Gastos fijos:** renta, iCloud, etc. Sin fecha de fin. No mezclar MSI aquí.
-- **Movimientos:** lista raw ordenable. Si un evento tiene MSI, badge `MSI i/N` y monto = **cuota del mes** (no el ticket). No se duplica el bloque “Planes con fin”.
+**Estado de cuenta PDF (Amex / Santander)** — el camino bueno para MSI. Trae comercio, cuota, `i/N` y a veces el total.
 
-## Ciclo de una cuota
+- Si la cuota encaja con un plan → se confirma.
+- Si no hay plan → decides en la UI:
+  - **Crear plan** / **Usar plan del estado:** abre el calendario. Si el PDF dice `3/12`, las 1–2 quedan gastadas, la 3 gastada con evidencia, el resto pendiente.
+  - **Omitir** sin `i/N`: no guarda nada (pierdes ese gasto en el tablero).
+  - Si el PDF ya trae `i/N`, omitir **crea el plan** con esos datos (no tira el gasto).
 
-1. Al crear el plan, las cuotas futuras quedan `committed` (restan de “Te quedan”).
-2. Al reconciliar evidencia del estado/CSV (o al crear el plan sobre la cuota del periodo), esa cuota pasa a `spent` (suma a “Has gastado”).
-3. Las cuotas **anteriores** al índice evidenciado se marcan `spent` (se asume que ya se pagaron en estados previos). Nunca se dejan `committed` en el pasado.
-4. `cancelled` se usa en liquidación anticipada (manual).
+Santander usa la tabla de “a meses” (`12M`, `03 DE 12`, total) para no asumir por error que la cuota es la `1/N`.
 
-## Orígenes del plan (`msi.origin`)
+Amex **MESES EN AUTOMÁTICO** no es un comercio real, pero el PDF sí trae `i/N` y montos. Se puede abrir plan con eso para no perder el mes; lo ideal sería la compra original si aparece.
 
-| Origen | Cuándo |
-| --- | --- |
-| `amex_auto` | Alerta Amex con importe **> $2,500** → asume 3 MSI al crear el evento; también al crear plan desde etiqueta “MESES EN AUTOMÁTICO” con metadata del estado |
-| `manual` | `create_plan` explícito en import (comercio real, Amazon, etc.) |
-| `statement_unplanned` | Legado / stubs incompletos; **ya no se inventan** en apply de estados |
+**CSV Santander** — más viejo. Sirve para movimientos del mes y para **confirmar** cuotas de planes que ya existen. Casi nunca trae `i/N`: no inventes un plan nuevo desde el CSV; confirma u omite. Para MSI nuevos, usa el PDF.
 
-## Import: estado de cuenta (Amex / Santander PDF)
+## Reglas cortas
 
-Path preferido para MSI porque trae **comercio, cuota, `i/N`, total y fechas**.
-
-1. `POST /imports/{amex\|santander-statement}/preview` → Textract AnalyzeDocument → poll → filas de compra + filas MSI.
-2. Compras: `new` / `matched` / `ambiguous` / `duplicate` (como el CSV).
-3. MSI:
-   - **`matched`:** la cuota encaja con un plan existente → apply confirma (`spent`).
-   - **`needs_decision`:** no hay plan → la UI pide decisión. **No se inventa schedule solo.**
-
-### Decisiones MSI en apply
-
-| Acción | Efecto |
-| --- | --- |
-| **Crear plan** | Abre schedule con meses/cuota (y total si viene en la fila). Índice `i` del estado: cuotas `< i` → `spent`; cuota `i` → `spent` con evidencia; resto → `committed`. El mes de inicio se retrocede desde la fecha de la cuota: `start = mes(cuota) − (i − 1)`. |
-| **Usar plan del estado / omitir con `n/N`** | Si la fila ya trae `installmentIndex` + `installmentMonths` (y monto), omitir **crea el plan** con esos datos en lugar de tirar el gasto. |
-| **Omitir sin metadata** | No crea evento ni plan (la cuota no entra al tablero). |
-| **Confirmar en plan…** | Enlaza la cuota a un candidato existente. |
-
-### Santander PDF
-
-La tabla de “compras a meses” (`12M S/INT`, `03 DE 12`, monto original, pago requerido) **enriquece** las filas de movimiento `AMAZON A MESES` con `installmentIndex`, `installmentMonths` y `originalAmountMinor`. Sin eso, un `create_plan` puede asumir cuota `1/N` desde la fecha del cargo y desalinear el calendario.
-
-### Amex “MESES EN AUTOMÁTICO”
-
-No es el comercio real: es una etiqueta agregada. El PDF suele traer igual `CARGO i DE N`, cuota y monto original. Con esa metadata **sí se puede abrir un plan** bajo ese nombre para no perder el gasto mensual. Idealmente el plan viviría en la compra original; si el estado no la trae, el plan sobre la etiqueta es el fallback consciente.
-
-Tolerancia de importe MSI: **$2.00** (`MSI_AMOUNT_TOLERANCE_MINOR`).
-
-## Import: CSV Santander
-
-Path más viejo, útil para **movimientos del periodo** y para **confirmar** cuotas de planes ya existentes.
-
-- Dedupe por identidad de fila; preview antes de apply.
-- Filas MSI-like (`A MESES`, etc.): si matchean un plan → confirman cuota; si no → `needs_decision`.
-- El CSV **casi nunca trae `n/N` ni total**. No uses `create_plan` desde CSV si el plan ya existe o si desconoces el plazo: confirma u omite.
-- Para abrir MSI nuevos con calendario correcto, preferir el **estado PDF**.
-
-## Reglas operativas (checklist)
-
-1. En decide: si ves `i/N` y total, **crear / usar plan del estado** — no omitir a ciegas.
-2. No inventar meses “porque sí”; el PDF manda.
-3. CSV de un mes nuevo: llenar compras + confirmar cuotas Amazon/Amex ya planeadas; evitar `create_plan` improvisado.
+1. Si el PDF trae `i/N` (y total), crea o usa el plan del estado.
+2. No inventes meses; manda el PDF.
+3. CSV: llena el mes y confirma cuotas ya planeadas; no armes planes a ciegas.
 4. Gastos fijos ≠ MSI.
-5. Liquidación anticipada: cancelar cuotas restantes a mano y registrar el cargo de cierre si aplica.
+5. Cierre anticipado: manual.
 
-## Modelo en datos (resumen)
-
-```ts
-msi: {
-  months: number;
-  cuotaMinor: number;
-  principalMinor: number;
-  origin: "amex_auto" | "manual" | "statement_unplanned";
-  status: "active" | "completed" | "cancelled";
-  installments: Array<{
-    index: number;          // 1..months
-    month: string;          // YYYY-MM
-    amountMinor: number;
-    status: "committed" | "spent" | "cancelled";
-    evidenceObservationId?: string;
-    confirmedAt?: string;
-  }>;
-}
-```
-
-Implementación de dominio: `packages/domain/src/msi.ts` y `month-summary.ts`. Conciliación: `infrastructure/lambda/msi-reconciliation.ts`, `statement-reconciliation.ts`, parsers Amex/Santander statement y CSV.
+Detalle de producto/API: [`v1-decisions.md`](v1-decisions.md). Código: `packages/domain/src/msi.ts`, `infrastructure/lambda/msi-reconciliation.ts`.
