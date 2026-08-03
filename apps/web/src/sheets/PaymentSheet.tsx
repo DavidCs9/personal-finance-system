@@ -41,14 +41,22 @@ export function PaymentSheet({
   };
 
   return (
-    <Sheet eyebrow="DINERO COMPROMETIDO" title={payment ? "Editar pago" : "Nuevo pago próximo"} onClose={onClose}>
+    <Sheet
+      eyebrow="GASTOS FIJOS"
+      title={payment ? "Editar gasto fijo" : "Nuevo gasto fijo"}
+      onClose={onClose}
+    >
+      <p className="sheet-lede">
+        Servicios, suscripciones y otros cargos que se repiten cada mes, sin fecha de fin. Los MSI
+        se gestionan desde el plan de la compra.
+      </p>
       <form className="sheet-form" onSubmit={submit}>
         <Field label="Nombre">
           <input
             autoFocus
             value={name}
             onChange={(event) => setName(event.target.value)}
-            placeholder="Ej. Renta"
+            placeholder="Ej. iCloud, renta, celular"
             required
           />
         </Field>
@@ -79,7 +87,7 @@ export function PaymentSheet({
         </Field>
         {error && <p className="form-error">{error}</p>}
         <button className="primary-button" type="submit" disabled={saving}>
-          {saving ? "Guardando…" : "Guardar pago"}
+          {saving ? "Guardando…" : "Guardar gasto fijo"}
         </button>
         {onDelete && (
           <button
@@ -91,12 +99,12 @@ export function PaymentSheet({
               setError(undefined);
               void onDelete()
                 .catch((reason) =>
-                  setError(reason instanceof Error ? reason.message : "No se pudo eliminar el pago."),
+                  setError(reason instanceof Error ? reason.message : "No se pudo eliminar el gasto."),
                 )
                 .finally(() => setSaving(false));
             }}
           >
-            Eliminar pago
+            Eliminar gasto fijo
           </button>
         )}
       </form>

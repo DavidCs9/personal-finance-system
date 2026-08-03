@@ -140,12 +140,19 @@ export function Dashboard({
   const {
     spentMinor,
     uncertainMinor,
-    upcomingMinor,
+    billUpcomingMinor,
     remainingMinor,
     projectedRemainingMinor,
     isCurrentMonth,
-    committedMsiRows,
+    msiSpentMinor,
+    msiCommittedMinor,
+    monthMsiRows,
   } = summary;
+
+  const openMsiEvent = (eventId: string) => {
+    const found = summaryEvents.find((event) => event.id === eventId);
+    if (found) setActiveEvent(found);
+  };
   const spendPercent = plan.incomeMinor > 0 ? Math.round((spentMinor / plan.incomeMinor) * 100) : 0;
   const risk =
     plan.incomeMinor > 0 && projectedRemainingMinor < 0
@@ -193,20 +200,19 @@ export function Dashboard({
             }}
             spentMinor={spentMinor}
             uncertainMinor={uncertainMinor}
-            upcomingMinor={upcomingMinor}
+            billUpcomingMinor={billUpcomingMinor}
             remainingMinor={remainingMinor}
             projectedRemainingMinor={projectedRemainingMinor}
             spendPercent={spendPercent}
             isCurrentMonth={isCurrentMonth}
             risk={risk}
-            committedMsiRows={committedMsiRows}
+            monthMsiRows={monthMsiRows}
+            msiSpentMinor={msiSpentMinor}
+            msiCommittedMinor={msiCommittedMinor}
             onEditIncome={() => setEditingIncome(true)}
             onAddPayment={() => setEditingPayment(null)}
             onEditPayment={(payment) => setEditingPayment(payment)}
-            onOpenMsiEvent={(eventId) => {
-              const found = events.find((event) => event.id === eventId);
-              if (found) setActiveEvent(found);
-            }}
+            onOpenMsiEvent={openMsiEvent}
             onReviewLargest={reviewLargest}
             idToken={idToken}
             demoMode={demoMode}
@@ -216,10 +222,12 @@ export function Dashboard({
             events={monthEvents}
             month={selectedMonth}
             spentMinor={spentMinor}
+            monthMsiRows={monthMsiRows}
             loading={loading}
             sort={movementSort}
             onSortChange={setMovementSort}
             onOpen={setActiveEvent}
+            onOpenMsiEvent={openMsiEvent}
             exceptions={exceptions}
             onRetryException={retryException}
             onDiscardException={discardException}

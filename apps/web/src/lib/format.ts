@@ -63,6 +63,16 @@ export const eventDate = (event: PurchaseEvent) => new Date(event.occurredAt ?? 
 
 export const monthDate = (month: string) => new Date(`${month}-01T12:00:00Z`);
 
+/** Short calendar label for a YYYY-MM key, e.g. "ago 2026". */
+export const monthKeyLabel = (month: string) =>
+  new Intl.DateTimeFormat("es-MX", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  })
+    .format(monthDate(month))
+    .replace(".", "");
+
 export const monthKey = (date: Date) => monthKeyInZone(date);
 
 export const dayInZone = (date: Date) => dayInZoneShared(date);

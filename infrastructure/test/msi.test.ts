@@ -90,6 +90,17 @@ describe('computeMonthSummary with MSI', () => {
     expect(beforeEvidence.msiCommittedMinor).toBe(3_000_00);
     expect(beforeEvidence.upcomingMinor).toBe(4_000_00);
     expect(beforeEvidence.committedMsiRows[0]?.name).toBe(msiLabel('Liverpool', { index: 1 }, 3));
+    expect(beforeEvidence.monthMsiRows).toEqual([
+      expect.objectContaining({
+        merchantRaw: 'Liverpool',
+        status: 'committed',
+        installmentIndex: 1,
+        amountMinor: 3_000_00,
+        principalMinor: 9_000_00,
+        startMonth: '2026-08',
+        endMonth: '2026-10',
+      }),
+    ]);
 
     const afterEvidence = computeMonthSummary({
       events: [{
@@ -108,6 +119,17 @@ describe('computeMonthSummary with MSI', () => {
     expect(afterEvidence.spentMinor).toBe(3_000_00);
     expect(afterEvidence.msiCommittedMinor).toBe(0);
     expect(afterEvidence.remainingMinor).toBe(50_000_00 - 3_000_00 - 1_000_00);
+    expect(afterEvidence.monthMsiRows).toEqual([
+      expect.objectContaining({
+        merchantRaw: 'Liverpool',
+        status: 'spent',
+        installmentIndex: 1,
+        amountMinor: 3_000_00,
+        principalMinor: 9_000_00,
+        startMonth: '2026-08',
+        endMonth: '2026-10',
+      }),
+    ]);
   });
 
   it('paces only discretionary spend', () => {

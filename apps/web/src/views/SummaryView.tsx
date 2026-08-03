@@ -1,6 +1,7 @@
-import type { CommittedMsiRow } from "@finance/domain";
+import type { MonthMsiRow } from "@finance/domain";
 import { money, monthDate } from "../lib/format";
 import type { MonthlyPlan, PlannedPayment } from "../monthly-plan";
+import { MsiMonthSection } from "../components/MsiMonthSection";
 import { PushPreference } from "../components/PushPreference";
 
 export interface SummaryViewProps {
@@ -11,13 +12,15 @@ export interface SummaryViewProps {
   readonly onRetry: () => void;
   readonly spentMinor: number;
   readonly uncertainMinor: number;
-  readonly upcomingMinor: number;
+  readonly billUpcomingMinor: number;
   readonly remainingMinor: number;
   readonly projectedRemainingMinor: number;
   readonly spendPercent: number;
   readonly isCurrentMonth: boolean;
   readonly risk: "danger" | "watch" | "steady";
-  readonly committedMsiRows: readonly CommittedMsiRow[];
+  readonly monthMsiRows: readonly MonthMsiRow[];
+  readonly msiSpentMinor: number;
+  readonly msiCommittedMinor: number;
   readonly onEditIncome: () => void;
   readonly onAddPayment: () => void;
   readonly onEditPayment: (payment: PlannedPayment) => void;
@@ -95,7 +98,7 @@ export function SummaryView(props: SummaryViewProps) {
               <section className="number-card">
                 <p>Te quedan</p>
                 <strong>{money(Math.max(props.remainingMinor, 0))}</strong>
-                <span>después de pagos próximos</span>
+                <span>después de MSI y gastos fijos</span>
               </section>
               <section className={`projection-card ${props.risk}`}>
                 <p>{props.isCurrentMonth ? "A este ritmo" : "Cierre del mes"}</p>
@@ -121,42 +124,35 @@ export function SummaryView(props: SummaryViewProps) {
         )}
 
         {!props.loading && !props.loadError && hasIncome && (
+          <MsiMonthSection
+            rows={props.monthMsiRows}
+            msiSpentMinor={props.msiSpentMinor}
+            msiCommittedMinor={props.msiCommittedMinor}
+            showTotals
+            onOpen={props.onOpenMsiEvent}
+          />
+        )}
+
+        {!props.loading && !props.loadError && hasIncome && (
           <section className="payments-section">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">DINERO COMPROMETIDO</p>
-                <h2>Próximos pagos</h2>
+                <p className="eyebrow">GASTOS FIJOS</p>
+                <h2>Servicios y suscripciones</h2>
+                <p className="section-lede">
+                  Cargos que se repiten cada mes, sin fecha de fin.
+                </p>
               </div>
               <button
                 className="icon-button"
-                aria-label="Agregar pago próximo"
+                aria-label="Agregar gasto fijo"
                 onClick={props.onAddPayment}
               >
                 +
               </button>
             </div>
-            {props.plan.upcomingPayments.length > 0 || props.committedMsiRows.length > 0 ? (
+            {props.plan.upcomingPayments.length > 0 ? (
               <div className="payment-list">
-                {props.committedMsiRows.map((row) => (
-                  <button
-                    key={`${row.eventId ?? row.name}-${row.installmentIndex}`}
-                    className="payment-row"
-                    onClick={() => {
-                      if (row.eventId) props.onOpenMsiEvent(row.eventId);
-                    }}
-                  >
-                    <span className="date-block">
-                      <small>MSI</small>
-                      <strong>{String(row.installmentIndex).padStart(2, "0")}</strong>
-                    </span>
-                    <span className="payment-name">
-                      <strong>{row.name}</strong>
-                      <small>Cuota pendiente de reconciliar</small>
-                    </span>
-                    <strong className="payment-amount">{money(row.amountMinor)}</strong>
-                    <span className="chevron">›</span>
-                  </button>
-                ))}
                 {props.plan.upcomingPayments.map((payment) => (
                   <button
                     key={payment.id}
@@ -169,23 +165,23 @@ export function SummaryView(props: SummaryViewProps) {
                     </span>
                     <span className="payment-name">
                       <strong>{payment.name}</strong>
-                      <small>Pago programado</small>
+                      <small>Cada mes · sin fecha de fin</small>
                     </span>
                     <strong className="payment-amount">{money(payment.amountMinor)}</strong>
                     <span className="chevron">›</span>
                   </button>
                 ))}
                 <div className="payment-total">
-                  <span>Total comprometido</span>
-                  <strong>{money(props.upcomingMinor)}</strong>
+                  <span>Total de gastos fijos</span>
+                  <strong>{money(props.billUpcomingMinor)}</strong>
                 </div>
               </div>
             ) : (
               <button className="empty-action" onClick={props.onAddPayment}>
                 <span>+</span>
                 <div>
-                  <strong>Agrega tus pagos próximos</strong>
-                  <small>Renta, servicios, seguros, MSI y otras obligaciones.</small>
+                  <strong>Agrega tus gastos fijos</strong>
+                  <small>Renta, iCloud, OpenAI, celular y otros cargos indefinidos.</small>
                 </div>
               </button>
             )}

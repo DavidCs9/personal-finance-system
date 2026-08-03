@@ -10,7 +10,10 @@ export interface MonthSpendEvent {
   readonly occurredAt?: string;
   readonly receivedAt: string;
   readonly merchantRaw?: string;
-  readonly msi?: Pick<MsiPlan, "months" | "installments" | "needsScheduleCompletion">;
+  readonly msi?: Pick<
+    MsiPlan,
+    "months" | "installments" | "needsScheduleCompletion" | "principalMinor" | "cuotaMinor"
+  >;
 }
 
 export interface MonthSummaryInput {
@@ -31,6 +34,16 @@ export interface CommittedMsiRow {
   readonly merchantRaw: string;
 }
 
+export interface MonthMsiRow extends CommittedMsiRow {
+  readonly status: "spent" | "committed";
+  /** First installment month of the finite plan. */
+  readonly startMonth: string;
+  /** Last installment month of the finite plan. */
+  readonly endMonth: string;
+  readonly principalMinor: number;
+  readonly cuotaMinor: number;
+}
+
 export interface MonthSummary {
   readonly month: string;
   readonly spentMinor: number;
@@ -48,6 +61,8 @@ export interface MonthSummary {
   readonly daysInMonth: number;
   readonly elapsedDays: number;
   readonly committedMsiRows: readonly CommittedMsiRow[];
+  /** Spent and committed cuotas for the selected month (UI MSI section). */
+  readonly monthMsiRows: readonly MonthMsiRow[];
 }
 
 export type PushContentMode = "amounts" | "private";
@@ -116,16 +131,22 @@ const installmentAmountFor = (
     );
   }, 0);
 
-export const listCommittedMsiRows = (
+export const listMonthMsiRows = (
   events: readonly (MonthSpendEvent & { readonly id?: string })[],
   month: string,
-): readonly CommittedMsiRow[] => {
-  const rows: CommittedMsiRow[] = [];
+): readonly MonthMsiRow[] => {
+  const rows: MonthMsiRow[] = [];
   for (const event of events) {
     if (event.status === "rejected" || !event.msi) continue;
-    if (event.msi.needsScheduleCompletion) continue;
+    const schedule = [...event.msi.installments].sort((left, right) => left.index - right.index);
+    const startMonth = schedule[0]?.month;
+    const endMonth = schedule[schedule.length - 1]?.month;
+    if (!startMonth || !endMonth) continue;
     for (const installment of event.msi.installments) {
-      if (installment.month !== month || installment.status !== "committed") continue;
+      if (installment.month !== month) continue;
+      if (installment.status !== "spent" && installment.status !== "committed") continue;
+      // Incomplete stubs must not appear as pending commitments.
+      if (installment.status === "committed" && event.msi.needsScheduleCompletion) continue;
       const merchantRaw = event.merchantRaw ?? "Compra";
       rows.push({
         eventId: event.id,
@@ -134,11 +155,36 @@ export const listCommittedMsiRows = (
         installmentIndex: installment.index,
         months: event.msi.months,
         merchantRaw,
+        status: installment.status,
+        startMonth,
+        endMonth,
+        principalMinor: event.msi.principalMinor,
+        cuotaMinor: event.msi.cuotaMinor,
       });
     }
   }
-  return rows.sort((left, right) => left.name.localeCompare(right.name, "es"));
+  return rows.sort((left, right) => {
+    if (left.status !== right.status) return left.status === "committed" ? -1 : 1;
+    return left.name.localeCompare(right.name, "es");
+  });
 };
+
+export const listCommittedMsiRows = (
+  events: readonly (MonthSpendEvent & { readonly id?: string })[],
+  month: string,
+): readonly CommittedMsiRow[] =>
+  listMonthMsiRows(events, month)
+    .filter((row) => row.status === "committed")
+    .map(
+      ({
+        status: _status,
+        startMonth: _startMonth,
+        endMonth: _endMonth,
+        principalMinor: _principalMinor,
+        cuotaMinor: _cuotaMinor,
+        ...row
+      }) => row,
+    );
 
 export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
   const activeEvents = input.events.filter((event) => event.status !== "rejected");
@@ -191,6 +237,7 @@ export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
     daysInMonth,
     elapsedDays,
     committedMsiRows: listCommittedMsiRows(activeEvents, input.month),
+    monthMsiRows: listMonthMsiRows(activeEvents, input.month),
   };
 };
 
