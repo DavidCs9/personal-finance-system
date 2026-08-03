@@ -128,6 +128,16 @@ export {
 } from "./month-summary.js";
 
 export {
+  cardCyclePushMessage,
+  cardRemindersForDay,
+  clampDayInMonth,
+  type CardCycleKind,
+  type CardCycleProfile,
+  type CardCyclePushMessage,
+  type CardCycleReminder,
+} from "./card-cycle.js";
+
+export {
   AMEX_AUTO_MSI_MONTHS,
   AMEX_AUTO_MSI_THRESHOLD_MINOR,
   MSI_AMOUNT_TOLERANCE_MINOR,

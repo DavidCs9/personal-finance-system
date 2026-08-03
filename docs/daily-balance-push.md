@@ -9,7 +9,8 @@ Operativo: cada mañana a las **07:00 America/Chihuahua**, Olbia envía un Web P
 Un solo control en Resumen — **Avisos de Olbia** — activa:
 
 1. el balance diario a las 07:00;
-2. el aviso al registrar una compra nueva.
+2. el aviso al registrar una compra nueva;
+3. los recordatorios de corte y pago de tarjetas a las 07:05.
 
 La petición de permiso ocurre sólo tras ese toque. Desactivar cancela la suscripción en el dispositivo y en el servidor.
 

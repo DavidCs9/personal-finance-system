@@ -25,6 +25,15 @@ import {
   parseAmexStatementExtraction,
   type AmexStatementDocument,
 } from './amex-statement.js';
+import {
+  deleteCard,
+  InvalidCardError,
+  isValidCardId,
+  listCards,
+  parseCardInput,
+  saveCard,
+  toPublicCard,
+} from './cards.js';
 import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan, type MonthlyPlanInput } from './monthly-plan.js';
 import { buildPlanFromCreateDecision, isSantanderMsiRow, matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
 import { reconciliationPartition } from './observed-events.js';
@@ -84,6 +93,40 @@ interface SantanderPreviewRow extends SantanderCsvRow {
 
 export const handler: APIGatewayProxyHandlerV2 = async (event) => {
   try {
+    if (event.requestContext.http.method === 'GET' && event.rawPath === '/cards') {
+      const cards = await listCards({
+        database,
+        tableName,
+        owner: principal(event),
+      });
+      return response(200, { cards: cards.map(toPublicCard) });
+    }
+    const cardId = event.pathParameters?.cardId;
+    if (cardId && event.rawPath.startsWith('/cards/')) {
+      const owner = principal(event);
+      if (!isValidCardId(cardId)) return response(400, { message: 'cardId is invalid.' });
+      if (event.requestContext.http.method === 'PUT') {
+        const input = parseCardInput(requestBody(event));
+        const saved = await saveCard({
+          database,
+          tableName,
+          owner,
+          cardId,
+          body: input,
+        });
+        return response(200, toPublicCard(saved));
+      }
+      if (event.requestContext.http.method === 'DELETE') {
+        await deleteCard({
+          database,
+          tableName,
+          owner,
+          cardId,
+        });
+        return response(200, { deleted: true });
+      }
+      return response(405, { message: 'Method not allowed.' });
+    }
     if (event.requestContext.http.method === 'GET' && event.rawPath === '/push/subscriptions') {
       const subscriptions = await listOwnerPushSubscriptions({
         database,
@@ -219,6 +262,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       || error instanceof InvalidPushSubscriptionError
       || error instanceof InvalidManualEntryError
       || error instanceof InvalidMsiError
+      || error instanceof InvalidCardError
     ) {
       return response(400, { message: error.message });
     }

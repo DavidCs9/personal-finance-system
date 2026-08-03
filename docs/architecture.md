@@ -83,6 +83,9 @@ _Encrypted MIME, CSV, evidence_`")]
     daily["`**Daily Balance Push**
 «Container: Lambda + Scheduler»
 _07:00 America/Chihuahua summary_`"]
+    cardsPush["`**Card Cycle Push**
+«Container: Lambda + Scheduler»
+_07:05 cut-off and payment reminders_`"]
   end
 
   owner -->|"Uses · HTTPS"| spa
@@ -112,11 +115,13 @@ _07:00 America/Chihuahua summary_`"]
 
   daily -->|"Reads month state"| ddb
   daily -->|"Pushes daily summary"| webpush
+  cardsPush -->|"Reads cards + subscriptions"| ddb
+  cardsPush -->|"Pushes cut-off/payment"| webpush
   webpush -->|"Notifies devices"| owner
 
   class owner person
   class gmail,shortcuts,webpush external
-  class spa,cognito,api,apple,ses,receipt,ingest,retry,daily container
+  class spa,cognito,api,apple,ses,receipt,ingest,retry,daily,cardsPush container
   class queue,ddb,raw store
 ```
 
@@ -305,3 +310,4 @@ _TanStack Query + fetch boundary_`"]
 - [Apple Pay Shortcut](apple-pay-shortcut.md)
 - [Push on new observable](push-on-new-observable.md)
 - [Daily balance push](daily-balance-push.md)
+- [Card cycle push](card-cycle-push.md)

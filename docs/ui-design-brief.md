@@ -12,6 +12,7 @@ Las reglas operativas que deben seguir futuras implementaciones del frontend est
 4. **Incluye por confirmar** — incertidumbre del parser expuesta dentro del total.
 5. **Meses sin intereses** — en **Resumen**, sección “Planes con fin”: cuotas del mes con total fijo, inicio y última cuota (`Merchant · cuota i/N · total · rango`). Detalle operativo en [`msi.md`](msi.md).
 6. **Gastos fijos** — servicios y suscripciones indefinidos (renta, iCloud, etc.), sin fecha de fin. Las cuotas MSI no se mezclan aquí.
+7. **Fechas de corte** — en **Resumen**, calendario del mes con día de corte y día de pago de hasta tres tarjetas. Son recordatorios de ciclo; no restan de “Te quedan” ni se mezclan con gastos fijos.
 
 El ingreso mensual se captura manualmente como una sola cifra, aunque provenga de dos depósitos de nómina. El periodo siempre es un mes calendario.
 
@@ -35,7 +36,7 @@ El ingreso mensual se captura manualmente como una sola cifra, aunque provenga d
 
 La experiencia se diseña primero para móvil (95% del uso esperado):
 
-- **Resumen** — estado mensual, proyección, Planes con fin (MSI) y gastos fijos.
+- **Resumen** — estado mensual, proyección, Planes con fin (MSI), gastos fijos y fechas de corte/pago de tarjetas.
 - **Movimientos** — lista ordenable de evidencia/compras (sin duplicar el bloque de planes MSI).
 
 En escritorio se conserva la misma arquitectura con un ancho de lectura contenido; no se convierte en un dashboard distinto.

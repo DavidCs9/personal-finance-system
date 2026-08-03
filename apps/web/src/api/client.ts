@@ -12,6 +12,7 @@ import type {
   StatementImportDecision,
 } from "../types";
 import type { MonthlyPlan } from "../monthly-plan";
+import type { CardCycle } from "../card-cycle";
 
 interface LedgerRuntimeConfig {
   readonly apiBaseUrl: string;
@@ -254,6 +255,24 @@ export const ledgerApi = {
         upcomingPayments: plan.upcomingPayments,
       }),
     });
+  },
+  async listCards(idToken: string): Promise<{ cards: readonly CardCycle[] }> {
+    return request<{ cards: readonly CardCycle[] }>("/cards", idToken);
+  },
+  async saveCard(card: CardCycle, idToken: string): Promise<CardCycle> {
+    return request<CardCycle>(`/cards/${encodeURIComponent(card.id)}`, idToken, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: card.name,
+        cutOffDay: card.cutOffDay,
+        paymentDueDay: card.paymentDueDay,
+        ...(card.institution ? { institution: card.institution } : {}),
+      }),
+    });
+  },
+  async deleteCard(cardId: string, idToken: string): Promise<void> {
+    await request(`/cards/${encodeURIComponent(cardId)}`, idToken, { method: "DELETE" });
   },
   async previewSantanderCsv(file: File, idToken: string): Promise<SantanderImportPreview> {
     return request<SantanderImportPreview>("/imports/santander/preview", idToken, {

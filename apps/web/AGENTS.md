@@ -14,7 +14,8 @@ New features must preserve this information hierarchy:
 4. Explicit uncertainty for unconfirmed data.
 5. Meses sin intereses — dedicated “Planes con fin” section on **Resumen** for this month’s MSI cuotas (fixed total, start and end).
 6. Gastos fijos — indefinite recurring services/subscriptions, kept separate from MSI.
-7. Supporting detail and evidence.
+7. Fechas de corte — month calendar on **Resumen** for up to three cards’ cut-off and payment days. Cycle reminders only; they do not affect remaining money.
+8. Supporting detail and evidence.
 
 Do not let secondary analytics, transaction metadata, or decorative content compete with the monthly spending state.
 
@@ -47,7 +48,7 @@ Assume at least 95% of usage is mobile.
 - Design and verify at a narrow mobile viewport before adapting to desktop.
 - The primary state must be understandable in a few seconds without horizontal scrolling.
 - Keep primary actions reachable and touch targets comfortable.
-- Preserve the two-destination model: **Resumen** (state + MSI plans + gastos fijos) and **Movimientos** (sortable raw list).
+- Preserve the two-destination model: **Resumen** (state + MSI plans + gastos fijos + card cut-off calendar) and **Movimientos** (sortable raw list).
 - Desktop should be a contained adaptation of the same experience, not a separate dashboard with extra density.
 
 ## Financial-state rules
@@ -60,6 +61,7 @@ Assume at least 95% of usage is mobile.
 - In **Movimientos**, keep a simple sortable raw list. MSI purchases appear as normal rows with badge `MSI i/N` and sort/show by the selected month’s cuota (not the principal). Do not duplicate the Planes con fin block here.
 - Show **Meses sin intereses / Planes con fin** only on **Resumen**, listing this month’s spent and committed cuotas with principal total and start–end range.
 - Keep **Gastos fijos / Servicios y suscripciones** for indefinite recurring charges only. Do not mix MSI plans into that list.
+- Show **Fechas de corte** on **Resumen** after gastos fijos and before push preferences. Card cut-off/payment days are durable profile data, not monthly plan amounts, and must not change “Te quedan”.
 - A cuota is never in both committed and spent. Committed MSI rows appear in the Resumen MSI section, not mixed into gastos fijos.
 - On statement import, when an MSI row includes `n/N` (and total when available), creating the plan — including Amex “MESES EN AUTOMÁTICO” labels — is preferred over discarding the cuota.
 - Projection paces discretionary (non-MSI) spend only, then adds spent MSI cuotas and pending commitments.
