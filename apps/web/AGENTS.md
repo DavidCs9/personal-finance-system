@@ -12,7 +12,7 @@ New features must preserve this information hierarchy:
 2. Projected month-end result at the current pace.
 3. Money remaining after upcoming commitments.
 4. Explicit uncertainty for unconfirmed data.
-5. Meses sin intereses — dedicated “Planes con fin” section for this month’s MSI cuotas (fixed total, start and end).
+5. Meses sin intereses — dedicated “Planes con fin” section on **Resumen** for this month’s MSI cuotas (fixed total, start and end).
 6. Gastos fijos — indefinite recurring services/subscriptions, kept separate from MSI.
 7. Supporting detail and evidence.
 
@@ -47,7 +47,7 @@ Assume at least 95% of usage is mobile.
 - Design and verify at a narrow mobile viewport before adapting to desktop.
 - The primary state must be understandable in a few seconds without horizontal scrolling.
 - Keep primary actions reachable and touch targets comfortable.
-- Preserve the two-destination model: **Resumen** and **Movimientos**.
+- Preserve the two-destination model: **Resumen** (state + MSI plans + gastos fijos) and **Movimientos** (sortable raw list).
 - Desktop should be a contained adaptation of the same experience, not a separate dashboard with extra density.
 
 ## Financial-state rules
@@ -57,10 +57,10 @@ Assume at least 95% of usage is mobile.
 - If income is missing or failed to load, say so prominently and do not present availability or projections as valid.
 - Upcoming payments and committed MSI installments affect remaining money and the month-end projection.
 - For MSI purchases, “Has gastado” counts only installments marked `spent` for that month. The full principal must not inflate the month total.
-- In **Movimientos**, MSI rows show and sort by the selected month’s cuota (not the principal).
-- Show a dedicated **Meses sin intereses / Planes con fin** section (Resumen and Movimientos) listing this month’s spent and committed cuotas with principal total and start–end range. Keep MSI rows in the Movimientos list as well.
+- In **Movimientos**, keep a simple sortable raw list. MSI purchases appear as normal rows with badge `MSI i/N` and sort/show by the selected month’s cuota (not the principal). Do not duplicate the Planes con fin block here.
+- Show **Meses sin intereses / Planes con fin** only on **Resumen**, listing this month’s spent and committed cuotas with principal total and start–end range.
 - Keep **Gastos fijos / Servicios y suscripciones** for indefinite recurring charges only. Do not mix MSI plans into that list.
-- A cuota is never in both committed and spent. Committed MSI rows appear in the MSI section, not mixed into gastos fijos.
+- A cuota is never in both committed and spent. Committed MSI rows appear in the Resumen MSI section, not mixed into gastos fijos.
 - Projection paces discretionary (non-MSI) spend only, then adds spent MSI cuotas and pending commitments.
 - Purchases needing review remain in totals, with the uncertain amount disclosed.
 - Rejected purchases do not count toward spending.
