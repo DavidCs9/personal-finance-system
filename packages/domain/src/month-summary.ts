@@ -3,6 +3,10 @@ import { msiLabel } from "./msi.js";
 
 export const FINANCE_TIME_ZONE = "America/Chihuahua";
 
+/** Rejected and Amex auto-MSI deferred purchases do not inflate Has gastado. */
+export const countsTowardMonthSpend = (status: string): boolean =>
+  status !== "rejected" && status !== "deferred_msi";
+
 export interface MonthSpendEvent {
   readonly id?: string;
   readonly amountMinor: number;
@@ -120,7 +124,7 @@ const installmentAmountFor = (
   status: MsiInstallment["status"],
 ): number =>
   events.reduce((sum, event) => {
-    if (event.status === "rejected" || !event.msi) return sum;
+    if (event.status === "rejected" || event.status === "deferred_msi" || !event.msi) return sum;
     // Incomplete stubs must not pollute committed totals.
     if (status === "committed" && event.msi.needsScheduleCompletion) return sum;
     return (
@@ -137,7 +141,7 @@ export const listMonthMsiRows = (
 ): readonly MonthMsiRow[] => {
   const rows: MonthMsiRow[] = [];
   for (const event of events) {
-    if (event.status === "rejected" || !event.msi) continue;
+    if (event.status === "rejected" || event.status === "deferred_msi" || !event.msi) continue;
     const schedule = [...event.msi.installments].sort((left, right) => left.index - right.index);
     const startMonth = schedule[0]?.month;
     const endMonth = schedule[schedule.length - 1]?.month;
@@ -187,7 +191,7 @@ export const listCommittedMsiRows = (
     );
 
 export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
-  const activeEvents = input.events.filter((event) => event.status !== "rejected");
+  const activeEvents = input.events.filter((event) => countsTowardMonthSpend(event.status));
   let discretionarySpentMinor = 0;
   let uncertainMinor = 0;
 

@@ -67,6 +67,7 @@ Assume at least 95% of usage is mobile.
 - Projection paces discretionary (non-MSI) spend only, then adds spent MSI cuotas and pending commitments.
 - Purchases needing review remain in totals, with the uncertain amount disclosed.
 - Rejected purchases do not count toward spending.
+- Amex Gold purchases deferred via `MONTO A DIFERIR MESES EN AUTOMÁTICO` use status `deferred_msi`: visible in Movimientos as “Diferido a MSI”, excluded from Has gastado; only the MESES EN AUTOMÁTICO cuota counts.
 - Preserve access to transaction provenance and original evidence.
 
 ## Review checklist

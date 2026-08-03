@@ -394,7 +394,7 @@ export function EventSheet({
             ))}
           </div>
         )}
-        {event.status !== "rejected" && (
+        {event.status !== "rejected" && event.status !== "deferred_msi" && (
           <button
             className="delete-button"
             type="button"
@@ -403,6 +403,12 @@ export function EventSheet({
           >
             {rejectMutation.isPending ? "Rechazando…" : "No cuenta en el mes"}
           </button>
+        )}
+        {event.status === "deferred_msi" && (
+          <p className="detail-subtitle">
+            Diferida a MSI automático Amex. No suma en Has gastado; la cuota vive en el plan
+            MESES EN AUTOMÁTICO.
+          </p>
         )}
       </div>
     </Sheet>
