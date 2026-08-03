@@ -34,6 +34,7 @@ export interface SummaryViewProps {
   readonly onRetryCards: () => void;
   readonly onAddCard: () => void;
   readonly onEditCard: (card: CardCycle) => void;
+  readonly now: Date;
   readonly idToken: string;
   readonly demoMode: boolean;
 }
@@ -199,6 +200,7 @@ export function SummaryView(props: SummaryViewProps) {
         {!props.loading && !props.loadError && (
           <CardCycleSection
             month={props.month}
+            now={props.now}
             cards={props.cards}
             loading={props.cardsLoading}
             loadError={props.cardsLoadError}

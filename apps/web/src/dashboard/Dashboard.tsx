@@ -242,6 +242,7 @@ export function Dashboard({
             }}
             onAddCard={() => setEditingCard(null)}
             onEditCard={(card) => setEditingCard(card)}
+            now={now}
             idToken={idToken}
             demoMode={demoMode}
           />
