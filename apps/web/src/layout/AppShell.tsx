@@ -12,6 +12,9 @@ export function AppShell({
   syncing,
   refreshing,
   onRefresh,
+  privateMode,
+  onTogglePrivateMode,
+  demoMode,
   showSignOut,
   onSignOut,
   error,
@@ -24,6 +27,9 @@ export function AppShell({
   syncing: boolean;
   refreshing: boolean;
   onRefresh(): void;
+  privateMode: boolean;
+  onTogglePrivateMode(): void;
+  demoMode: boolean;
   showSignOut: boolean;
   onSignOut(): void;
   error?: string;
@@ -35,6 +41,9 @@ export function AppShell({
         syncing={syncing}
         refreshing={refreshing}
         onRefresh={onRefresh}
+        privateMode={privateMode}
+        onTogglePrivateMode={onTogglePrivateMode}
+        demoMode={demoMode}
         showSignOut={showSignOut}
         onSignOut={onSignOut}
       />

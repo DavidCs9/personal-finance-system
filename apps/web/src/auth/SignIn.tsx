@@ -91,6 +91,18 @@ export function SignIn({ onSignedIn }: { onSignedIn(session: LedgerSession): voi
             {busy ? "Un momento…" : challenge ? "Guardar y entrar" : "Entrar"}
           </button>
         </form>
+        {import.meta.env.DEV && !challenge && (
+          <div className="auth-mock">
+            <p>Sin API: revisa Resumen y Movimientos con datos locales.</p>
+            <button
+              className="secondary-button auth-mock-button"
+              type="button"
+              onClick={() => window.location.assign("/?demo=1")}
+            >
+              Usar datos de ejemplo
+            </button>
+          </div>
+        )}
       </section>
     </main>
   );

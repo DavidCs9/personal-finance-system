@@ -1,4 +1,5 @@
 import type { MonthMsiRow } from "@finance/domain";
+import { Amt } from "./Amt";
 import { money, monthKeyLabel } from "../lib/format";
 
 export function MsiMonthSection({
@@ -28,7 +29,9 @@ export function MsiMonthSection({
             Compra a plazos con monto total fijo, inicio y última cuota.
           </p>
         </div>
-        <strong className="section-total">{money(total)}</strong>
+        <strong className="section-total">
+          <Amt>{money(total)}</Amt>
+        </strong>
       </div>
       <div className="payment-list">
         {rows.map((row) => (
@@ -47,22 +50,32 @@ export function MsiMonthSection({
             <span className="payment-name">
               <strong>{row.merchantRaw}</strong>
               <small>
-                Cuota {row.installmentIndex}/{row.months} · Total {money(row.principalMinor)} ·{" "}
-                {monthKeyLabel(row.startMonth)} – {monthKeyLabel(row.endMonth)}
+                Cuota {row.installmentIndex}/{row.months} · Total{" "}
+                <Amt>{money(row.principalMinor)}</Amt> · {monthKeyLabel(row.startMonth)} –{" "}
+                {monthKeyLabel(row.endMonth)}
                 {row.status === "spent" ? " · reconciliada" : " · pendiente"}
               </small>
             </span>
-            <strong className="payment-amount">{money(row.amountMinor)}</strong>
+            <strong className="payment-amount">
+              <Amt>{money(row.amountMinor)}</Amt>
+            </strong>
             <span className="chevron">›</span>
           </button>
         ))}
         {showTotals && msiSpentMinor !== undefined && msiCommittedMinor !== undefined && (
           <div className="payment-total msi-totals">
             <span>
-              Gastadas {money(msiSpentMinor)}
-              {msiCommittedMinor > 0 ? ` · Pendientes ${money(msiCommittedMinor)}` : ""}
+              Gastadas <Amt>{money(msiSpentMinor)}</Amt>
+              {msiCommittedMinor > 0 ? (
+                <>
+                  {" "}
+                  · Pendientes <Amt>{money(msiCommittedMinor)}</Amt>
+                </>
+              ) : null}
             </span>
-            <strong>{money(msiSpentMinor + msiCommittedMinor)}</strong>
+            <strong>
+              <Amt>{money(msiSpentMinor + msiCommittedMinor)}</Amt>
+            </strong>
           </div>
         )}
       </div>

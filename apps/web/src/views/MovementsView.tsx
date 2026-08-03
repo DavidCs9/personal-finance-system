@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Amt } from "../components/Amt";
 import { RecoveryNotice } from "../components/RecoveryNotice";
 import {
   dateFormatter,
@@ -63,7 +64,7 @@ export function MovementsView({
           <p className="eyebrow">TRAZABILIDAD</p>
           <h1>Movimientos</h1>
           <p>
-            {events.length} registros · {money(spentMinor)}
+            {events.length} registros · <Amt>{money(spentMinor)}</Amt>
           </p>
         </div>
         <div className="movement-actions">
@@ -150,7 +151,9 @@ export function MovementsView({
               </small>
             </span>
             <span className="movement-value">
-              <strong>{movementMoney(event, month)}</strong>
+              <strong>
+                <Amt>{movementMoney(event, month)}</Amt>
+              </strong>
               <small className={event.status}>{statusLabel[event.status]}</small>
             </span>
             <span className="chevron">›</span>
