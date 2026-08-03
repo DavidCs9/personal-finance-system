@@ -21,13 +21,13 @@
 - La conciliación del CSV compara tarjeta, fecha, importe y concepto normalizado contra observaciones de correo o Apple Pay. Una coincidencia única enlaza el CSV como evidencia del evento existente; múltiples coincidencias exigen una decisión explícita antes de aplicar.
 - Los pagos y abonos negativos del CSV no se incorporan al gasto mensual.
 - Los cobros que no llegan por automatismo (p. ej. Amex sin alerta) se registran como eventos observados con fuente `manual`, no como pagos próximos. Detalle en [Cobros manuales](manual-observed-charges.md).
-- MSI (meses sin intereses) vive en el evento observado como `msi` (schedule multi-mes). No se guarda en `MonthlyPlan`.
+- MSI (meses sin intereses) vive en el evento observado como `msi` (schedule multi-mes). No se guarda en `MonthlyPlan`. Guía completa: [Meses sin intereses (MSI)](msi.md).
 - Amex con importe **> $2,500.00** asume 3 MSI al crear el evento (`amex_auto`); el usuario puede overridear meses/cuota en la UI.
-- El ciclo de cada cuota es `committed` → `spent` (nunca ambos). Hasta reconciliar, la cuota resta de “Te quedan” vía dinero comprometido; al confirmar evidencia pasa a “Has gastado”.
-- Evidencia MSI y conciliación total: CSV Santander, y estados de cuenta Amex/Santander vía Amazon Textract **AnalyzeDocument** (`QUERIES` + `TABLES`) async. El import de estado concilia **todas** las compras del periodo (new/matched/ambiguous como el CSV) y, en paralelo, confirma cuotas MSI (`matched`/`unplanned`). Queries cubren periodo/cuenta/producto; tablas y bloques LINE del mismo AnalyzeDocument cubren movimientos. Coincidencia de compra por tarjeta+fecha+importe+comercio; MSI con tolerancia de $2.00. El único contrato es la extracción Textract (sin TextDetection ni upload de `.txt` OCR).
-- Una cuota del estado sin plan previo **no inventa** un schedule: queda como fila `needs_decision` y el apply exige `create_plan` (meses/cuota), confirmar en un plan existente, u omitir.
+- El ciclo de cada cuota es `committed` → `spent` (nunca ambos). Hasta reconciliar, la cuota resta de “Te quedan”; al confirmar evidencia pasa a “Has gastado”. En Resumen, “Planes con fin” lista las cuotas del mes; Movimientos muestra la lista raw con badge `MSI i/N`.
+- Evidencia MSI y conciliación: CSV Santander (respaldo / movimientos), y estados Amex/Santander vía Textract **AnalyzeDocument** (`QUERIES` + `TABLES`). El estado es el path preferido para abrir planes (trae `i/N` y total). Santander PDF enriquece cuotas desde la tabla de planes (`12M`, `03 DE 12`, etc.).
+- Una cuota del estado sin plan previo **no inventa** un schedule sola: queda `needs_decision`. Apply: `create_plan`, confirmar en plan existente, u omitir. Si la fila ya trae `n/N` completo, omitir **crea el plan** con esa metadata (incluye etiquetas Amex “MESES EN AUTOMÁTICO”).
 - Liquidación anticipada de MSI es manual (cancelar cuotas restantes + registrar el cargo de cierre si aplica).
-- PDF de estado (Amex y Santander): `POST /imports/{amex|santander-statement}/preview` → poll `GET` → `POST …/apply` con decisiones para filas ambiguas. Se persiste `.textract.json` (extracción completa) y el apply reconstruye desde ese JSON. El CSV Santander sigue como respaldo.
+- PDF de estado (Amex y Santander): `POST /imports/{amex|santander-statement}/preview` → poll `GET` → `POST …/apply` con decisiones. Se persiste `.textract.json` y el apply reconstruye desde ese JSON.
 
 ## Modelo de datos
 
