@@ -43,7 +43,8 @@ const asMsiPlan = (value: unknown): MsiPlan | undefined => {
   return plan;
 };
 
-const isAutomaticAmexLabel = (merchantRaw: string): boolean =>
+/** True for Amex statement labels that omit the real merchant. */
+export const isAutomaticAmexLabel = (merchantRaw: string): boolean =>
   /MESES EN AUTOM[AÁ]TICO/i.test(merchantRaw);
 
 export const evidenceCandidatesFromEvents = (
@@ -165,6 +166,9 @@ export const buildPlanFromCreateDecision = (
     readonly startMonth?: string;
   },
 ): MsiPlan => {
+  if (isAutomaticAmexLabel(line.merchantRaw)) {
+    throw new Error("No se puede crear un plan MSI desde una etiqueta MESES EN AUTOMÁTICO.");
+  }
   const months = input.months;
   const cuotaMinor = input.cuotaMinor;
   let startMonth = input.startMonth;
@@ -183,7 +187,16 @@ export const buildPlanFromCreateDecision = (
     origin: "manual",
     cuotaMinor,
   });
-  return markInstallmentSpent(plan, indexForSpent, {
+  // Prior cuotas are assumed already paid on earlier statements — never leave them committed.
+  const withPriorSpent: MsiPlan = {
+    ...plan,
+    installments: plan.installments.map((installment) =>
+      installment.index < indexForSpent
+        ? { ...installment, status: "spent" as const }
+        : installment,
+    ),
+  };
+  return markInstallmentSpent(withPriorSpent, indexForSpent, {
     amountMinor: line.amountMinor,
     confirmedAt: new Date().toISOString(),
     evidenceObservationId: line.identity,

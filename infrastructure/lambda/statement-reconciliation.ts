@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { merchantsMatch as santanderMerchantsMatch } from "./santander-csv.js";
-import { amexMerchantsMatch } from "./msi-reconciliation.js";
+import { amexMerchantsMatch, isAutomaticAmexLabel } from "./msi-reconciliation.js";
 import type { StatementProvider } from "./textract-document.js";
 
 export type { StatementProvider };
@@ -195,6 +195,7 @@ export const statementMsiApplyAction = (
       if (allowed) return { kind: "confirm_msi", eventId: decision.eventId };
     }
     if (decision?.action === "create_plan") {
+      if (isAutomaticAmexLabel(current.merchantRaw)) return { kind: "skip" };
       return {
         kind: "create_plan",
         months: decision.months,

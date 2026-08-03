@@ -10,7 +10,8 @@ Las reglas operativas que deben seguir futuras implementaciones del frontend est
 2. **A este ritmo** — proyección de cierre; el ritmo diario usa gasto discrecional (no MSI) y suma cuotas/compromisos pendientes.
 3. **Te quedan** — disponible después de gasto realizado y dinero comprometido (bills + cuotas MSI aún no reconciliadas).
 4. **Incluye por confirmar** — incertidumbre del parser expuesta dentro del total.
-5. **Dinero comprometido** — pagos próximos fijos y cuotas MSI del mes en estado `committed`, con etiqueta `Merchant · MSI i/N`.
+5. **Meses sin intereses** — sección propia “Planes con fin”: cuotas del mes con total fijo, inicio y última cuota (`Merchant · cuota i/N · total · rango`).
+6. **Gastos fijos** — servicios y suscripciones indefinidos (renta, iCloud, etc.), sin fecha de fin. Las cuotas MSI no se mezclan aquí.
 
 El ingreso mensual se captura manualmente como una sola cifra, aunque provenga de dos depósitos de nómina. El periodo siempre es un mes calendario.
 

@@ -40,15 +40,38 @@ export const statusLabel: Record<ReviewStatus, string> = {
 
 export const money = (amountMinor: number) => formatMxnWhole(amountMinor);
 
+/** Amount shown in Movimientos for the selected month (MSI → that month's cuota, else principal). */
+export const movementAmountMinor = (event: PurchaseEvent, month: string): number => {
+  const installment = event.msi?.installments.find((item) => item.month === month);
+  if (installment) return installment.amountMinor;
+  return event.amount.amountMinor;
+};
+
 export const eventMoney = (event: PurchaseEvent) =>
   new Intl.NumberFormat("es-MX", {
     style: "currency",
     currency: event.amount.currency,
   }).format(event.amount.amountMinor / 100);
 
+export const movementMoney = (event: PurchaseEvent, month: string) =>
+  new Intl.NumberFormat("es-MX", {
+    style: "currency",
+    currency: event.amount.currency,
+  }).format(movementAmountMinor(event, month) / 100);
+
 export const eventDate = (event: PurchaseEvent) => new Date(event.occurredAt ?? event.receivedAt);
 
 export const monthDate = (month: string) => new Date(`${month}-01T12:00:00Z`);
+
+/** Short calendar label for a YYYY-MM key, e.g. "ago 2026". */
+export const monthKeyLabel = (month: string) =>
+  new Intl.DateTimeFormat("es-MX", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  })
+    .format(monthDate(month))
+    .replace(".", "");
 
 export const monthKey = (date: Date) => monthKeyInZone(date);
 

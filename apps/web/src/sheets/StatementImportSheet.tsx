@@ -16,6 +16,9 @@ type Provider = "amex" | "santander";
 const msiNeedsDecision = (row: StatementImportRow): boolean =>
   row.kind === "msi" && (row.status === "needs_decision" || row.status === "unplanned");
 
+const isAutomaticAmexLabel = (merchantRaw: string): boolean =>
+  /MESES EN AUTOM[AÁ]TICO/i.test(merchantRaw);
+
 const decisionResolved = (decision: StatementImportDecision | undefined): boolean => {
   if (!decision) return false;
   if (decision.action === "skip" || decision.action === "create" || decision.action === "link") return true;
@@ -277,6 +280,7 @@ export function StatementImportSheet({
                     cuota: (row.amountMinor / 100).toFixed(2),
                   };
                   const selected = decisions[row.identity];
+                  const autoLabel = isAutomaticAmexLabel(row.merchantRaw);
                   return (
                     <div className="ambiguous-row" key={row.identity}>
                       <div>
@@ -286,6 +290,11 @@ export function StatementImportSheet({
                           {row.installmentIndex ? ` · cuota ${row.installmentIndex}` : ""}
                           {row.installmentMonths ? `/${row.installmentMonths}` : ""}
                         </small>
+                        {autoLabel && (
+                          <small>
+                            Etiqueta automática Amex — omite; el plan debe vivir en la compra real.
+                          </small>
+                        )}
                       </div>
                       <div className="msi-decide">
                         {(row.candidates ?? []).length > 0 && (
@@ -315,55 +324,59 @@ export function StatementImportSheet({
                             ))}
                           </select>
                         )}
-                        <label>
-                          Meses
-                          <input
-                            type="number"
-                            min={1}
-                            max={48}
-                            value={draft.months}
-                            onChange={(event) =>
-                              setPlanDrafts((current) => ({
-                                ...current,
-                                [row.identity]: { ...draft, months: event.target.value },
-                              }))
-                            }
-                          />
-                        </label>
-                        <label>
-                          Cuota
-                          <input
-                            type="number"
-                            min={0.01}
-                            step={0.01}
-                            value={draft.cuota}
-                            onChange={(event) =>
-                              setPlanDrafts((current) => ({
-                                ...current,
-                                [row.identity]: { ...draft, cuota: event.target.value },
-                              }))
-                            }
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          className="text-button"
-                          onClick={() => {
-                            const months = Number.parseInt(draft.months, 10);
-                            const cuotaMajor = Number.parseFloat(draft.cuota);
-                            if (!Number.isInteger(months) || months < 1 || !(cuotaMajor > 0)) return;
-                            setDecisions((current) => ({
-                              ...current,
-                              [row.identity]: {
-                                action: "create_plan",
-                                months,
-                                cuotaMinor: Math.round(cuotaMajor * 100),
-                              },
-                            }));
-                          }}
-                        >
-                          {selected?.action === "create_plan" ? "Plan listo ✓" : "Crear plan"}
-                        </button>
+                        {!autoLabel && (
+                          <>
+                            <label>
+                              Meses
+                              <input
+                                type="number"
+                                min={1}
+                                max={48}
+                                value={draft.months}
+                                onChange={(event) =>
+                                  setPlanDrafts((current) => ({
+                                    ...current,
+                                    [row.identity]: { ...draft, months: event.target.value },
+                                  }))
+                                }
+                              />
+                            </label>
+                            <label>
+                              Cuota
+                              <input
+                                type="number"
+                                min={0.01}
+                                step={0.01}
+                                value={draft.cuota}
+                                onChange={(event) =>
+                                  setPlanDrafts((current) => ({
+                                    ...current,
+                                    [row.identity]: { ...draft, cuota: event.target.value },
+                                  }))
+                                }
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              className="text-button"
+                              onClick={() => {
+                                const months = Number.parseInt(draft.months, 10);
+                                const cuotaMajor = Number.parseFloat(draft.cuota);
+                                if (!Number.isInteger(months) || months < 1 || !(cuotaMajor > 0)) return;
+                                setDecisions((current) => ({
+                                  ...current,
+                                  [row.identity]: {
+                                    action: "create_plan",
+                                    months,
+                                    cuotaMinor: Math.round(cuotaMajor * 100),
+                                  },
+                                }));
+                              }}
+                            >
+                              {selected?.action === "create_plan" ? "Plan listo ✓" : "Crear plan"}
+                            </button>
+                          </>
+                        )}
                         <button
                           type="button"
                           className="text-button"
