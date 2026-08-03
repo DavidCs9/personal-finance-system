@@ -60,6 +60,7 @@
 
 ## Fuera de V1 (patrimonio)
 
-- Ahorros e inversiones (Bitso, IBKR, etc.) son un dominio aparte del gasto observado: snapshots diarios de saldos/posiciones, no eventos de compra.
-- Sin datos en vivo ni APIs de trading; sync programado una vez al día.
-- Plan: [Patrimonio diario (Bitso + IBKR)](wealth-daily-sync.md).
+- Ahorros e inversiones son un dominio aparte del gasto observado: snapshots diarios de saldos/posiciones, no eventos de compra.
+- Fondo de emergencia: Cajita Nu (entrada manual; sin API retail). Luego Bitso e IBKR Flex en sync diario.
+- Sin datos en vivo ni APIs de trading; sync programado una vez al día donde haya API.
+- Plan: [Patrimonio diario (Cajita Nu + Bitso + IBKR)](wealth-daily-sync.md).
