@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { BatchGetCommand, GetCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { MsiPlan } from '@finance/domain';
-import { eventMonthIndexKeys, msiPlanPurchaseOccurredAt, reconciliationPartition } from '@finance/ingestion';
+import { eventMonthIndexKeys, msiPlanPurchaseOccurredAt, reconciliationPartition } from '@finance/ledger';
 import { buildPlanFromCreateDecision, matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
 import { InvalidAmexStatementError } from './amex-statement.js';
 import { InvalidSantanderStatementError } from './santander-statement.js';

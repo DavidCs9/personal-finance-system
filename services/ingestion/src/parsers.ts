@@ -1,4 +1,4 @@
-import type { CardPurchaseParser, IncomingEmail, ParsedPurchase } from "./types.js";
+import type { ParsedPurchase } from "./types.js";
 
 export interface EmailParser {
   readonly institution: ParsedPurchase["institution"];
@@ -241,50 +241,3 @@ export const emailParsers: readonly EmailParser[] = [
     },
   },
 ];
-
-const parserForInstitution = (institution: EmailParser["institution"]): EmailParser => {
-  const parser = emailParsers.find((candidate) => candidate.institution === institution);
-  if (!parser) throw new Error(`Missing email parser for institution: ${institution}`);
-  return parser;
-};
-
-abstract class EmailParserAdapter implements CardPurchaseParser {
-  protected abstract readonly emailParser: EmailParser;
-
-  get institution(): EmailParser["institution"] {
-    return this.emailParser.institution;
-  }
-
-  get version(): string {
-    return this.emailParser.version;
-  }
-
-  matches(email: IncomingEmail): boolean {
-    return this.emailParser.matches(email.mime);
-  }
-
-  parse(email: IncomingEmail): ParsedPurchase {
-    return this.emailParser.parse(email.mime);
-  }
-}
-
-export class AmexMxCardPurchaseParser extends EmailParserAdapter {
-  protected readonly emailParser = parserForInstitution("american_express_mx");
-}
-
-export class SantanderMxCardPurchaseParser extends EmailParserAdapter {
-  protected readonly emailParser = parserForInstitution("santander_mx");
-}
-
-export class NuMxOutgoingTransferParser extends EmailParserAdapter {
-  protected readonly emailParser = parserForInstitution("nu_mx");
-}
-
-export class AwsMxBillingStatementParser extends EmailParserAdapter {
-  protected readonly emailParser = parserForInstitution("amazon_web_services");
-}
-
-export const defaultCardPurchaseParsers = (): readonly CardPurchaseParser[] =>
-  emailParsers.map((parser) => new class extends EmailParserAdapter {
-    protected readonly emailParser = parser;
-  }());

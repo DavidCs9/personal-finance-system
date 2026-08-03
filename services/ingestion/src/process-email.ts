@@ -7,7 +7,7 @@ import { DynamoDBDocumentClient, PutCommand, TransactWriteCommand, UpdateCommand
 import type { SQSHandler } from 'aws-lambda';
 import { ingestionExceptionAlert, type IngestionExceptionAlertInput } from './notifications.js';
 import { maybeAutoAmexMsi } from '@finance/domain';
-import { saveObservedEvent } from './observed-events.js';
+import { saveObservedEvent } from '@finance/ledger';
 import { notifyObservedPurchasePush } from '@finance/notify';
 import { emailParsers, header, shouldIgnoreEmail } from './parsers.js';
 import type { ParsedPurchase } from './types.js';

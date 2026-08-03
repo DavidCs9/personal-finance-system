@@ -15,7 +15,7 @@ Start with the [system context diagram in the root README](../README.md#architec
 
 **Scope:** Olbia. **Audience:** engineers and operators.
 
-Shows how responsibilities split across the SPA, HTTP edge, email ingestion pipeline, scheduled push, and data stores. Application logic lives in `services/*` and `packages/domain`. `infrastructure/lambda/` holds thin adapters that re-export service handlers (plus a few infra-only functions: SES receipt, retry dispatcher, VAPID custom resource).
+Shows how responsibilities split across the SPA, HTTP edge, email ingestion pipeline, scheduled push, and data stores. Application logic lives in `services/*` and `packages/domain`. Shared observed-event persistence and month indexing live in `services/ledger`. `infrastructure/lambda/` holds thin adapters that re-export service handlers (plus a few infra-only functions: SES receipt, retry dispatcher, VAPID custom resource).
 
 ```mermaid
 flowchart TB

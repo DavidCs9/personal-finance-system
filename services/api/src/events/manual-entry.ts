@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { GetCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { maybeAutoAmexMsi } from '@finance/domain';
-import { eventMonthIndexKeys, reconciliationPartition } from '@finance/ingestion';
+import { eventMonthIndexKeys, reconciliationPartition } from '@finance/ledger';
 import {
   manualEntryFingerprint,
   manualEntrySourceKey,

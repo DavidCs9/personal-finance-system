@@ -1,5 +1,5 @@
 {
-  "name": "@finance/api",
+  "name": "@finance/ledger",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,16 +13,10 @@
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.883.0",
-    "@aws-sdk/client-s3": "^3.883.0",
-    "@aws-sdk/client-secrets-manager": "^3.1101.0",
-    "@aws-sdk/client-textract": "^3.1101.0",
     "@aws-sdk/lib-dynamodb": "^3.883.0",
-    "@finance/domain": "*",
-    "@finance/notify": "*",
-    "@finance/ledger": "*"
+    "@finance/domain": "*"
   },
   "devDependencies": {
-    "@types/aws-lambda": "^8.10.147",
     "vitest": "^3.0.8"
   }
 }

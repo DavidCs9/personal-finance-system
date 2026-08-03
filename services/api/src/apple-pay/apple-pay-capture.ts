@@ -4,7 +4,7 @@ import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-sec
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import { InvalidApplePayCaptureError, parseApplePayCapture } from './apple-pay-input.js';
-import { saveObservedEvent } from '@finance/ingestion';
+import { saveObservedEvent } from '@finance/ledger';
 import { notifyObservedPurchasePush } from '@finance/notify';
 
 const database = DynamoDBDocumentClient.from(new DynamoDBClient({}), {

@@ -9,7 +9,7 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { MsiPlan } from '@finance/domain';
-import { eventMonthIndexKeys, msiPlanPurchaseOccurredAt } from '@finance/ingestion';
+import { eventMonthIndexKeys, msiPlanPurchaseOccurredAt } from '@finance/ledger';
 
 const tableName = process.env.METADATA_TABLE_NAME;
 if (!tableName) {

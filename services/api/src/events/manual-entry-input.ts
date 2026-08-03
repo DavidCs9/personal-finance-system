@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { normaliseMerchant } from '@finance/ingestion';
+import { normaliseMerchant } from '@finance/ledger';
 
 export class InvalidManualEntryError extends Error {}
 

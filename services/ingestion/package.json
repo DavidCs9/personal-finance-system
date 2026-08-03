@@ -18,7 +18,8 @@
     "@aws-sdk/client-ses": "^3.883.0",
     "@aws-sdk/lib-dynamodb": "^3.883.0",
     "@finance/domain": "*",
-    "@finance/notify": "*"
+    "@finance/notify": "*",
+    "@finance/ledger": "*"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.147",

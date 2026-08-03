@@ -6,7 +6,7 @@ import {
   nextCalendarMonths,
   priorCalendarMonths,
   type MonthFeedEvent,
-} from '@finance/ingestion';
+} from '@finance/ledger';
 import { database, s3, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
 

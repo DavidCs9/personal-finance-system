@@ -71,7 +71,8 @@ Everything runs on AWS (`us-east-2`), defined with CDK in TypeScript. Deploys fr
 | Web | Mobile-first summary and movements with evidence (`apps/web`) |
 | Domain | Shared types, minor-unit money, cross-service rules (`packages/domain`) |
 | API | Ledger HTTP use-cases, imports, Apple Pay, scheduled pushes (`services/api`) |
-| Ingestion | Deduplicate, parse, persist metadata, and link evidence (`services/ingestion`) |
+| Ingestion | Email parsers and SES worker (`services/ingestion`) |
+| Ledger | Observed-event persistence and month-index helpers (`services/ledger`) |
 | Notify | Web Push subscriptions and delivery (`services/notify`) |
 | Infrastructure | CDK + thin Lambda adapters only (`infrastructure`) |
 
@@ -80,7 +81,8 @@ Everything runs on AWS (`us-east-2`), defined with CDK in TypeScript. Deploys fr
 ```text
 apps/web              Review UI (React + Vite)
 services/api          Ledger API, imports, Apple Pay, card/daily push jobs
-services/ingestion    Email parsers, observed-event writer, SES worker
+services/ingestion    Email parsers + SES ingestion worker
+services/ledger       Observed-event persistence and month-index helpers
 services/notify       Web Push subscriptions and send helpers
 packages/domain       Shared contract across services
 infrastructure        CDK stacks + thin Lambda entrypoints (re-export services)
