@@ -1,8 +1,5 @@
-export { handler as ledgerApiHandler } from "./http/ledger-api.js";
-export { handler as applePayCaptureHandler } from "./apple-pay/apple-pay-capture.js";
-export { handler as dailyBalancePushHandler } from "./push/daily-balance-push.js";
-export { handler as cardCyclePushHandler } from "./push/card-cycle-push.js";
-
+/** Library exports only — Lambda handlers live on dedicated package subpaths so
+ * each function can be bundled without loading sibling handlers' env requirements. */
 export * from "./apple-pay/apple-pay-input.js";
 export * from "./cards/cards.js";
 export * from "./events/manual-entry-input.js";

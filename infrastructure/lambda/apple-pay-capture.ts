@@ -1,1 +1,1 @@
-export { applePayCaptureHandler as handler } from '@finance/api';
+export { handler } from '@finance/api/apple-pay-capture';

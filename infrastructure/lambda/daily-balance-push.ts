@@ -1,1 +1,1 @@
-export { dailyBalancePushHandler as handler } from '@finance/api';
+export { handler } from '@finance/api/daily-balance-push';
