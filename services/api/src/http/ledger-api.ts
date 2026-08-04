@@ -54,7 +54,7 @@ const json = (statusCode: number, body: Record<string, unknown>) => ({
 
 const ownerOf = (event: APIGatewayProxyEventV2): string => principal(event);
 
-const asHttpEvent = (event: unknown): APIGatewayProxyEventV2 => asHttpEvent(event);
+const asHttpEvent = (event: unknown): APIGatewayProxyEventV2 => event as APIGatewayProxyEventV2;
 
 const clientErrors = [
   InvalidMonthlyPlanError,
