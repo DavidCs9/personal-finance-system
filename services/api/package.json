@@ -12,14 +12,15 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-lambda-powertools/event-handler": "^2.34.0",
     "@aws-sdk/client-dynamodb": "^3.883.0",
     "@aws-sdk/client-s3": "^3.883.0",
     "@aws-sdk/client-secrets-manager": "^3.1101.0",
     "@aws-sdk/client-textract": "^3.1101.0",
     "@aws-sdk/lib-dynamodb": "^3.883.0",
     "@finance/domain": "*",
-    "@finance/notify": "*",
-    "@finance/ledger": "*"
+    "@finance/ledger": "*",
+    "@finance/notify": "*"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.147",

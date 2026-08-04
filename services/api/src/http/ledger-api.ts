@@ -1,4 +1,8 @@
-import type { APIGatewayProxyHandlerV2 } from 'aws-lambda';
+import {
+  HttpStatusCodes,
+  Router,
+} from '@aws-lambda-powertools/event-handler/http';
+import type { APIGatewayProxyEventV2, Context } from 'aws-lambda';
 import {
   deleteCard,
   InvalidCardError,
@@ -38,184 +42,239 @@ import {
   savePushSubscription,
 } from '@finance/notify';
 import { database, tableName } from './clients.js';
-import { errorMessage, principal, requestBody, response } from './response.js';
+import { errorMessage, principal, requestBody } from './response.js';
 
-export const handler: APIGatewayProxyHandlerV2 = async (event) => {
-  try {
-    if (event.requestContext.http.method === 'GET' && event.rawPath === '/cards') {
-      const cards = await listCards({
-        database,
-        tableName,
-        owner: principal(event),
-      });
-      return response(200, { cards: cards.map(toPublicCard) });
-    }
-    const cardId = event.pathParameters?.cardId;
-    if (cardId && event.rawPath.startsWith('/cards/')) {
-      const owner = principal(event);
-      if (!isValidCardId(cardId)) return response(400, { message: 'cardId is invalid.' });
-      if (event.requestContext.http.method === 'PUT') {
-        const input = parseCardInput(requestBody(event));
-        const saved = await saveCard({
-          database,
-          tableName,
-          owner,
-          cardId,
-          body: input,
-        });
-        return response(200, toPublicCard(saved));
-      }
-      if (event.requestContext.http.method === 'DELETE') {
-        await deleteCard({
-          database,
-          tableName,
-          owner,
-          cardId,
-        });
-        return response(200, { deleted: true });
-      }
-      return response(405, { message: 'Method not allowed.' });
-    }
-    if (event.requestContext.http.method === 'GET' && event.rawPath === '/push/subscriptions') {
-      const subscriptions = await listOwnerPushSubscriptions({
-        database,
-        tableName,
-        owner: principal(event),
-      });
-      return response(200, {
-        subscriptions: subscriptions.map((subscription) => ({
-          subscriptionId: subscription.subscriptionId,
-          contentMode: subscription.contentMode,
-          createdAt: subscription.createdAt,
-          updatedAt: subscription.updatedAt,
-        })),
-      });
-    }
-    const pushSubscriptionId = event.pathParameters?.subscriptionId;
-    if (pushSubscriptionId && event.rawPath.startsWith('/push/subscriptions/')) {
-      const owner = principal(event);
-      if (event.requestContext.http.method === 'PUT') {
-        const input = parsePushSubscriptionInput(requestBody(event), pushSubscriptionId);
-        const saved = await savePushSubscription({
-          database,
-          tableName,
-          owner,
-          endpoint: input.endpoint,
-          keys: input.keys,
-          contentMode: input.contentMode,
-        });
-        return response(200, {
-          subscriptionId: saved.subscriptionId,
-          contentMode: saved.contentMode,
-          createdAt: saved.createdAt,
-          updatedAt: saved.updatedAt,
-        });
-      }
-      if (event.requestContext.http.method === 'DELETE') {
-        await deletePushSubscription({
-          database,
-          tableName,
-          owner,
-          subscriptionId: pushSubscriptionId.toLowerCase(),
-        });
-        return response(200, { deleted: true });
-      }
-      return response(405, { message: 'Method not allowed.' });
-    }
-    if (event.requestContext.http.method === 'POST' && event.rawPath === '/events/manual') {
-      return response(201, await createManualEvent(requestBody(event), principal(event)));
-    }
-    if (event.requestContext.http.method === 'POST' && event.rawPath === '/imports/santander/preview') {
-      return response(200, await previewSantanderImport(requestBody(event), principal(event)));
-    }
-    if (event.requestContext.http.method === 'POST' && event.rawPath === '/imports/santander-statement/preview') {
-      return response(200, await previewSantanderStatementImport(event, principal(event)));
-    }
-    if (event.requestContext.http.method === 'POST' && event.rawPath === '/imports/amex/preview') {
-      return response(200, await previewAmexImport(event, principal(event)));
-    }
-    const importId = event.pathParameters?.importId;
-    if (importId && event.rawPath.includes('/imports/santander-statement/')) {
-      if (event.requestContext.http.method === 'GET') {
-        return response(200, await getSantanderStatementImport(importId, principal(event)));
-      }
-      if (event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/apply')) {
-        return response(200, await applySantanderStatementImport(importId, principal(event), requestBody(event)));
-      }
-    }
-    if (importId && event.rawPath.includes('/imports/amex/')) {
-      if (event.requestContext.http.method === 'GET') {
-        return response(200, await getAmexImport(importId, principal(event)));
-      }
-      if (event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/apply')) {
-        return response(200, await applyAmexImport(importId, principal(event), requestBody(event)));
-      }
-    }
-    if (importId && event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/apply')) {
-      return response(200, await applySantanderImport(importId, principal(event), requestBody(event)));
-    }
-    const month = event.pathParameters?.month;
-    if (month !== undefined) {
-      if (!isValidMonth(month)) return response(400, { message: 'Month must use YYYY-MM format.' });
-      const owner = principal(event);
-      if (event.requestContext.http.method === 'GET') {
-        return response(200, await getMonthlyPlan(owner, month));
-      }
-      if (event.requestContext.http.method === 'PUT') {
-        const input = parseMonthlyPlan(requestBody(event));
-        return response(200, await saveMonthlyPlan(owner, month, input));
-      }
-      return response(405, { message: 'Method not allowed.' });
-    }
-    const eventId = event.pathParameters?.eventId;
-    const exceptionId = event.pathParameters?.exceptionId;
-    if (event.requestContext.http.method === 'GET' && event.rawPath === '/events') {
-      const month = event.queryStringParameters?.month;
-      if (!month || !isValidMonth(month)) {
-        return response(400, { message: 'Query parameter month (YYYY-MM) is required.' });
-      }
-      return response(200, await listEventsForMonth(month));
-    }
-    if (event.requestContext.http.method === 'GET' && event.rawPath === '/exceptions') {
-      return response(200, { exceptions: await listExceptions() });
-    }
-    if (exceptionId && event.requestContext.http.method === 'POST' && event.rawPath.endsWith('/retry')) {
-      return response(202, await requestRetry(exceptionId, principal(event)));
-    }
-    if (exceptionId && event.requestContext.http.method === 'GET' && event.rawPath.endsWith('/raw')) {
-      return response(200, { rawEmail: await readExceptionRawEmail(exceptionId) });
-    }
-    if (exceptionId && event.requestContext.http.method === 'DELETE') {
-      return response(200, await discardException(exceptionId, principal(event)));
-    }
-    if (!eventId) return response(404, { message: 'Route not found.' });
-    if (event.requestContext.http.method === 'GET' && event.rawPath.endsWith('/raw')) {
-      return response(200, { rawEmail: await readRawEmail(eventId) });
-    }
-    if (event.requestContext.http.method === 'GET') {
-      const detail = await getEventDetail(eventId);
-      return detail ? response(200, detail) : response(404, { message: 'Event not found.' });
-    }
-    if (event.requestContext.http.method === 'PATCH') {
-      const updated = await patchEvent(eventId, principal(event), requestBody(event));
-      return updated ? response(200, updated) : response(404, { message: 'Event not found.' });
-    }
-    return response(405, { message: 'Method not allowed.' });
-  } catch (error) {
-    if (
-      error instanceof InvalidMonthlyPlanError
-      || error instanceof InvalidSantanderCsvError
-      || error instanceof InvalidSantanderStatementError
-      || error instanceof InvalidAmexStatementError
-      || error instanceof TextractDocumentError
-      || error instanceof InvalidPushSubscriptionError
-      || error instanceof InvalidManualEntryError
-      || error instanceof InvalidMsiError
-      || error instanceof InvalidCardError
-    ) {
-      return response(400, { message: error.message });
-    }
-    console.error('API request failed', { message: errorMessage(error) });
-    return response(500, { message: 'Unable to complete this request.' });
+const app = new Router();
+
+const json = (statusCode: number, body: Record<string, unknown>) => ({
+  statusCode,
+  headers: { 'content-type': 'application/json; charset=utf-8' },
+  body: JSON.stringify(body),
+});
+
+const ownerOf = (event: APIGatewayProxyEventV2): string => principal(event);
+
+const asHttpEvent = (event: unknown): APIGatewayProxyEventV2 => asHttpEvent(event);
+
+const clientErrors = [
+  InvalidMonthlyPlanError,
+  InvalidSantanderCsvError,
+  InvalidSantanderStatementError,
+  InvalidAmexStatementError,
+  TextractDocumentError,
+  InvalidPushSubscriptionError,
+  InvalidManualEntryError,
+  InvalidMsiError,
+  InvalidCardError,
+] as const;
+
+app.errorHandler([...clientErrors], async (error) =>
+  json(HttpStatusCodes.BAD_REQUEST, { message: error.message }),
+);
+
+app.notFound(async () =>
+  json(HttpStatusCodes.NOT_FOUND, { message: 'Route not found.' }),
+);
+
+app.methodNotAllowed(async () =>
+  json(HttpStatusCodes.METHOD_NOT_ALLOWED, { message: 'Method not allowed.' }),
+);
+
+app.errorHandler(Error, async (error) => {
+  console.error('API request failed', { message: errorMessage(error) });
+  return json(HttpStatusCodes.INTERNAL_SERVER_ERROR, { message: 'Unable to complete this request.' });
+});
+
+app.get('/cards', async ({ event }) => {
+  const cards = await listCards({
+    database,
+    tableName,
+    owner: ownerOf(asHttpEvent(event)),
+  });
+  return json(HttpStatusCodes.OK, { cards: cards.map(toPublicCard) });
+});
+
+app.put('/cards/:cardId', async ({ event, params }) => {
+  const cardId = params.cardId;
+  if (!isValidCardId(cardId)) return json(HttpStatusCodes.BAD_REQUEST, { message: 'cardId is invalid.' });
+  const input = parseCardInput(requestBody(asHttpEvent(event)));
+  const saved = await saveCard({
+    database,
+    tableName,
+    owner: ownerOf(asHttpEvent(event)),
+    cardId,
+    body: input,
+  });
+  return json(HttpStatusCodes.OK, toPublicCard(saved));
+});
+
+app.delete('/cards/:cardId', async ({ event, params }) => {
+  const cardId = params.cardId;
+  if (!isValidCardId(cardId)) return json(HttpStatusCodes.BAD_REQUEST, { message: 'cardId is invalid.' });
+  await deleteCard({
+    database,
+    tableName,
+    owner: ownerOf(asHttpEvent(event)),
+    cardId,
+  });
+  return json(HttpStatusCodes.OK, { deleted: true });
+});
+
+app.get('/push/subscriptions', async ({ event }) => {
+  const subscriptions = await listOwnerPushSubscriptions({
+    database,
+    tableName,
+    owner: ownerOf(asHttpEvent(event)),
+  });
+  return json(HttpStatusCodes.OK, {
+    subscriptions: subscriptions.map((subscription) => ({
+      subscriptionId: subscription.subscriptionId,
+      contentMode: subscription.contentMode,
+      createdAt: subscription.createdAt,
+      updatedAt: subscription.updatedAt,
+    })),
+  });
+});
+
+app.put('/push/subscriptions/:subscriptionId', async ({ event, params }) => {
+  const gatewayEvent = asHttpEvent(event);
+  const input = parsePushSubscriptionInput(requestBody(gatewayEvent), params.subscriptionId);
+  const saved = await savePushSubscription({
+    database,
+    tableName,
+    owner: ownerOf(gatewayEvent),
+    endpoint: input.endpoint,
+    keys: input.keys,
+    contentMode: input.contentMode,
+  });
+  return json(HttpStatusCodes.OK, {
+    subscriptionId: saved.subscriptionId,
+    contentMode: saved.contentMode,
+    createdAt: saved.createdAt,
+    updatedAt: saved.updatedAt,
+  });
+});
+
+app.delete('/push/subscriptions/:subscriptionId', async ({ event, params }) => {
+  await deletePushSubscription({
+    database,
+    tableName,
+    owner: ownerOf(asHttpEvent(event)),
+    subscriptionId: params.subscriptionId.toLowerCase(),
+  });
+  return json(HttpStatusCodes.OK, { deleted: true });
+});
+
+app.post('/events/manual', async ({ event }) => {
+  const gatewayEvent = asHttpEvent(event);
+  return json(HttpStatusCodes.CREATED, await createManualEvent(requestBody(gatewayEvent), ownerOf(gatewayEvent)));
+});
+
+app.get('/events', async ({ event }) => {
+  const month = (asHttpEvent(event)).queryStringParameters?.month;
+  if (!month || !isValidMonth(month)) {
+    return json(HttpStatusCodes.BAD_REQUEST, { message: 'Query parameter month (YYYY-MM) is required.' });
   }
-};
+  return json(HttpStatusCodes.OK, await listEventsForMonth(month));
+});
+
+app.get('/events/:eventId/raw', async ({ params }) =>
+  json(HttpStatusCodes.OK, { rawEmail: await readRawEmail(params.eventId) }),
+);
+
+app.get('/events/:eventId', async ({ params }) => {
+  const detail = await getEventDetail(params.eventId);
+  return detail
+    ? json(HttpStatusCodes.OK, detail)
+    : json(HttpStatusCodes.NOT_FOUND, { message: 'Event not found.' });
+});
+
+app.patch('/events/:eventId', async ({ event, params }) => {
+  const gatewayEvent = asHttpEvent(event);
+  const updated = await patchEvent(params.eventId, ownerOf(gatewayEvent), requestBody(gatewayEvent));
+  return updated
+    ? json(HttpStatusCodes.OK, updated)
+    : json(HttpStatusCodes.NOT_FOUND, { message: 'Event not found.' });
+});
+
+app.get('/exceptions', async () =>
+  json(HttpStatusCodes.OK, { exceptions: await listExceptions() }),
+);
+
+app.get('/exceptions/:exceptionId/raw', async ({ params }) =>
+  json(HttpStatusCodes.OK, { rawEmail: await readExceptionRawEmail(params.exceptionId) }),
+);
+
+app.post('/exceptions/:exceptionId/retry', async ({ event, params }) =>
+  json(HttpStatusCodes.ACCEPTED, await requestRetry(params.exceptionId, ownerOf(asHttpEvent(event)))),
+);
+
+app.delete('/exceptions/:exceptionId', async ({ event, params }) =>
+  json(HttpStatusCodes.OK, await discardException(params.exceptionId, ownerOf(asHttpEvent(event)))),
+);
+
+app.get('/months/:month', async ({ event, params }) => {
+  if (!isValidMonth(params.month)) {
+    return json(HttpStatusCodes.BAD_REQUEST, { message: 'Month must use YYYY-MM format.' });
+  }
+  return json(HttpStatusCodes.OK, await getMonthlyPlan(ownerOf(asHttpEvent(event)), params.month));
+});
+
+app.put('/months/:month', async ({ event, params }) => {
+  if (!isValidMonth(params.month)) {
+    return json(HttpStatusCodes.BAD_REQUEST, { message: 'Month must use YYYY-MM format.' });
+  }
+  const gatewayEvent = asHttpEvent(event);
+  const input = parseMonthlyPlan(requestBody(gatewayEvent));
+  return json(HttpStatusCodes.OK, await saveMonthlyPlan(ownerOf(gatewayEvent), params.month, input));
+});
+
+app.post('/imports/santander/preview', async ({ event }) => {
+  const gatewayEvent = asHttpEvent(event);
+  return json(HttpStatusCodes.OK, await previewSantanderImport(requestBody(gatewayEvent), ownerOf(gatewayEvent)));
+});
+
+app.post('/imports/santander/:importId/apply', async ({ event, params }) => {
+  const gatewayEvent = asHttpEvent(event);
+  return json(
+    HttpStatusCodes.OK,
+    await applySantanderImport(params.importId, ownerOf(gatewayEvent), requestBody(gatewayEvent)),
+  );
+});
+
+app.post('/imports/santander-statement/preview', async ({ event }) => {
+  const gatewayEvent = asHttpEvent(event);
+  return json(HttpStatusCodes.OK, await previewSantanderStatementImport(gatewayEvent, ownerOf(gatewayEvent)));
+});
+
+app.get('/imports/santander-statement/:importId', async ({ event, params }) =>
+  json(HttpStatusCodes.OK, await getSantanderStatementImport(params.importId, ownerOf(asHttpEvent(event)))),
+);
+
+app.post('/imports/santander-statement/:importId/apply', async ({ event, params }) => {
+  const gatewayEvent = asHttpEvent(event);
+  return json(
+    HttpStatusCodes.OK,
+    await applySantanderStatementImport(params.importId, ownerOf(gatewayEvent), requestBody(gatewayEvent)),
+  );
+});
+
+app.post('/imports/amex/preview', async ({ event }) => {
+  const gatewayEvent = asHttpEvent(event);
+  return json(HttpStatusCodes.OK, await previewAmexImport(gatewayEvent, ownerOf(gatewayEvent)));
+});
+
+app.get('/imports/amex/:importId', async ({ event, params }) =>
+  json(HttpStatusCodes.OK, await getAmexImport(params.importId, ownerOf(asHttpEvent(event)))),
+);
+
+app.post('/imports/amex/:importId/apply', async ({ event, params }) => {
+  const gatewayEvent = asHttpEvent(event);
+  return json(
+    HttpStatusCodes.OK,
+    await applyAmexImport(params.importId, ownerOf(gatewayEvent), requestBody(gatewayEvent)),
+  );
+});
+
+export const handler = async (event: APIGatewayProxyEventV2, context: Context) =>
+  app.resolve(event, context);
