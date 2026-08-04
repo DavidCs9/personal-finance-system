@@ -51,4 +51,4 @@ Amex **MESES EN AUTOMÁTICO** no es un comercio real, pero el PDF sí trae `i/N`
 6. Un plan = un comercio + principal. Si ya existe, la siguiente cuota **confirma**; no abras otro plan.
 7. Amex Gold: compras cubiertas por `MONTO A DIFERIR MESES EN AUTOMÁTICO` quedan **diferidas** (`deferred_msi`). No cuentan en el mes; solo la cuota del plan auto.
 
-Detalle de producto/API: [`v1-decisions.md`](v1-decisions.md). Código: `packages/domain/src/msi.ts`, `infrastructure/lambda/msi-reconciliation.ts`.
+Detalle de producto/API: [`v1-decisions.md`](v1-decisions.md). Código: `packages/domain/src/msi.ts`, `services/api/src/imports/msi-reconciliation.ts`.
