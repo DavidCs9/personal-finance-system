@@ -1,1 +1,1 @@
-export { cardCyclePushHandler as handler } from '@finance/api';
+export { handler } from '@finance/api/card-cycle-push';

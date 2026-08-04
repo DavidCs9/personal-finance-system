@@ -1,1 +1,1 @@
-export { ledgerApiHandler as handler } from '@finance/api';
+export { handler } from '@finance/api/ledger-api';

@@ -4,7 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./ledger-api": "./src/http/ledger-api.ts",
+    "./apple-pay-capture": "./src/apple-pay/apple-pay-capture.ts",
+    "./daily-balance-push": "./src/push/daily-balance-push.ts",
+    "./card-cycle-push": "./src/push/card-cycle-push.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",
