@@ -10,7 +10,6 @@ export interface PlannedPaymentRecord {
 }
 
 export interface MonthlyPlanInput {
-  readonly incomeMinor: number;
   readonly currency: "MXN";
   readonly upcomingPayments: readonly PlannedPaymentRecord[];
 }
@@ -33,17 +32,14 @@ export const parseMonthlyPlan = (body: string | undefined): MonthlyPlanInput => 
     throw new InvalidMonthlyPlanError("A monthly plan object is required.");
   }
   const input = candidate as Record<string, unknown>;
-  if (!Number.isSafeInteger(input.incomeMinor) || Number(input.incomeMinor) <= 0) {
-    throw new InvalidMonthlyPlanError("incomeMinor must be a positive integer.");
-  }
-  if (input.currency !== "MXN") {
+  if (input.currency !== undefined && input.currency !== "MXN") {
     throw new InvalidMonthlyPlanError("currency must be MXN.");
   }
   if (!Array.isArray(input.upcomingPayments) || input.upcomingPayments.length > 100) {
     throw new InvalidMonthlyPlanError("upcomingPayments must contain at most 100 items.");
   }
   const upcomingPayments = input.upcomingPayments.map((payment, index) => parsePayment(payment, index));
-  return { incomeMinor: Number(input.incomeMinor), currency: "MXN", upcomingPayments };
+  return { currency: "MXN", upcomingPayments };
 };
 
 const parsePayment = (candidate: unknown, index: number): PlannedPaymentRecord => {

@@ -68,8 +68,8 @@ Assume at least 95% of usage is mobile.
 
 - The calendar month is the reporting period for spend.
 - Wealth snapshots use calendar days in `America/Chihuahua`.
-- Each month requires its own editable income configuration.
-- If income is missing or failed to load, say so prominently and do not present availability or projections as valid.
+- Each month’s income comes from uploaded CFDI nómina XMLs (net `Total` by `FechaPago`). With one ordinary payslip in the current month, Resumen estimates the second quincena; the estimate clears when a second ordinary arrives or the calendar month closes.
+- If income is missing or failed to load, say so prominently and do not present availability or projections as valid. Prompt to upload the nómina XML instead of typing a manual total.
 - Upcoming payments and committed MSI installments affect remaining money and the month-end projection.
 - For MSI purchases, “Has gastado” counts only installments marked `spent` for that month. The full principal must not inflate the month total.
 - In **Movimientos**, keep a simple sortable raw list. MSI purchases appear as normal rows with badge `MSI i/N` and sort/show by the selected month’s cuota (not the principal). Do not duplicate the Planes con fin block here.

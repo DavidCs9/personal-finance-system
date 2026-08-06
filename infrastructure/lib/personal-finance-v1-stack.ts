@@ -405,6 +405,7 @@ export class PersonalFinanceV1Stack extends Stack {
       timeout: Duration.minutes(2),
       environment: {
         METADATA_TABLE_NAME: metadataTable.tableName,
+        RAW_EMAIL_BUCKET_NAME: rawEmailBucket.bucketName,
         VAPID_SECRET_ARN: vapidSecret.secretArn,
         WEB_APP_URL: webAppUrl,
       },
@@ -626,6 +627,8 @@ export class PersonalFinanceV1Stack extends Stack {
       'PATCH /events/{eventId}',
       'GET /months/{month}',
       'PUT /months/{month}',
+      'GET /months/{month}/payslips/{uuid}',
+      'POST /imports/nomina',
       'POST /imports/santander/preview',
       'POST /imports/santander/{importId}/apply',
       'POST /imports/amex/preview',

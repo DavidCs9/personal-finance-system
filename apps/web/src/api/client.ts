@@ -38,6 +38,22 @@ export interface LedgerSession {
 
 export type SignInResult = ({ readonly kind: "signed_in" } & LedgerSession) | CognitoChallenge;
 
+export interface NominaUploadResultItem {
+  readonly filename: string;
+  readonly status: "created" | "duplicate" | "failed";
+  readonly uuid?: string;
+  readonly month?: string;
+  readonly totalMinor?: number;
+  readonly error?: string;
+}
+
+export interface NominaUploadResponse {
+  readonly results: readonly NominaUploadResultItem[];
+  readonly created: number;
+  readonly duplicates: number;
+  readonly failed: number;
+}
+
 declare global {
   interface Window { __LEDGER_CONFIG__?: LedgerRuntimeConfig; }
 }
@@ -252,10 +268,25 @@ export const ledgerApi = {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        incomeMinor: plan.incomeMinor,
         currency: plan.currency,
         upcomingPayments: plan.upcomingPayments,
       }),
+    });
+  },
+  async uploadNominas(
+    files: readonly File[],
+    idToken: string,
+  ): Promise<NominaUploadResponse> {
+    const documents = await Promise.all(
+      files.map(async (file) => ({
+        filename: file.name,
+        xml: await file.text(),
+      })),
+    );
+    return request<NominaUploadResponse>("/imports/nomina", idToken, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ documents }),
     });
   },
   async listCards(idToken: string): Promise<{ cards: readonly CardCycle[] }> {

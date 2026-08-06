@@ -139,17 +139,28 @@ export function WealthView(props: {
                 props.selectedAccountId !== "bitso" &&
                 props.selectedAccountId !== "ibkr" && (
                 <p className="uncertain-note wealth-stale-note">
-                  <span>!</span> Cajita sin actualizar hace <Amt>{cajitaAge}</Amt> días
+                  <span className="note-icon" aria-hidden="true">
+                    !
+                  </span>
+                  <span className="note-copy">
+                    Cajita sin actualizar hace <Amt>{cajitaAge}</Amt> días
+                  </span>
                 </p>
               )}
               {props.bitsoSyncError && (
                 <p className="uncertain-note wealth-stale-note">
-                  <span>!</span> {props.bitsoSyncError}
+                  <span className="note-icon" aria-hidden="true">
+                    !
+                  </span>
+                  <span className="note-copy">{props.bitsoSyncError}</span>
                 </p>
               )}
               {props.ibkrSyncError && (
                 <p className="uncertain-note wealth-stale-note">
-                  <span>!</span> {props.ibkrSyncError}
+                  <span className="note-icon" aria-hidden="true">
+                    !
+                  </span>
+                  <span className="note-copy">{props.ibkrSyncError}</span>
                 </p>
               )}
             </section>

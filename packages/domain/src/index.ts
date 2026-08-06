@@ -185,3 +185,15 @@ export {
   type WealthSnapshotEvidence,
   type WealthSnapshotSource,
 } from "./wealth.js";
+
+export {
+  deriveMonthIncome,
+  isOrdinaryNomina,
+  monthFromFechaPago,
+  payslipLineGroup,
+  type MonthIncomeDerivation,
+  type PayslipLine,
+  type PayslipLineGroup,
+  type PayslipLineKind,
+  type PayslipSummary,
+} from "./payroll.js";

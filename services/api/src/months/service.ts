@@ -1,21 +1,62 @@
 import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { database, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
+import { incomeFieldsForMonth } from '../imports/cfdi-nomina-flow.js';
 import { monthlyPlanKey, type MonthlyPlanInput } from './monthly-plan.js';
 
 export const getMonthlyPlan = async (owner: string, month: string): Promise<JsonObject> => {
-  const result = await database.send(new GetCommand({
-    TableName: tableName,
-    Key: monthlyPlanKey(owner, month),
-    ConsistentRead: true,
-  }));
+  const [result, income] = await Promise.all([
+    database.send(new GetCommand({
+      TableName: tableName,
+      Key: monthlyPlanKey(owner, month),
+      ConsistentRead: true,
+    })),
+    incomeFieldsForMonth(owner, month),
+  ]);
   const plan = result.Item?.payload as JsonObject | undefined;
-  return plan ? toPublicMonthlyPlan(month, plan, true) : toPublicMonthlyPlan(month, {}, false);
+  const upcomingPayments =
+    plan && Array.isArray(plan.upcomingPayments) ? plan.upcomingPayments : [];
+  return {
+    month,
+    configured: income.configured,
+    incomeMinor: income.incomeMinor,
+    depositedMinor: income.depositedMinor,
+    estimatedMinor: income.estimatedMinor,
+    estimateActive: income.estimateActive,
+    currency: 'MXN',
+    upcomingPayments,
+    payslips: income.payslips.map((payslip) => ({
+      uuid: payslip.uuid,
+      fechaPago: payslip.fechaPago,
+      month: payslip.month,
+      tipoNomina: payslip.tipoNomina,
+      totalMinor: payslip.totalMinor,
+      totalPercepcionesMinor: payslip.totalPercepcionesMinor,
+      totalDeduccionesMinor: payslip.totalDeduccionesMinor,
+      totalOtrosPagosMinor: payslip.totalOtrosPagosMinor,
+      lines: payslip.lines,
+      ...(payslip.employerName ? { employerName: payslip.employerName } : {}),
+      ...(payslip.fechaInicialPago ? { fechaInicialPago: payslip.fechaInicialPago } : {}),
+      ...(payslip.fechaFinalPago ? { fechaFinalPago: payslip.fechaFinalPago } : {}),
+    })),
+    ...(plan && typeof plan.updatedAt === 'string' ? { updatedAt: plan.updatedAt } : {}),
+  };
 };
 
 export const saveMonthlyPlan = async (owner: string, month: string, input: MonthlyPlanInput): Promise<JsonObject> => {
   const updatedAt = new Date().toISOString();
-  const payload = { ...input, updatedAt };
+  const existing = await database.send(new GetCommand({
+    TableName: tableName,
+    Key: monthlyPlanKey(owner, month),
+    ConsistentRead: true,
+  }));
+  const previous = existing.Item?.payload as JsonObject | undefined;
+  const payload = {
+    incomeMinor: typeof previous?.incomeMinor === 'number' ? previous.incomeMinor : 0,
+    currency: 'MXN' as const,
+    upcomingPayments: input.upcomingPayments,
+    updatedAt,
+  };
   await database.send(new PutCommand({
     TableName: tableName,
     Item: {
@@ -27,14 +68,5 @@ export const saveMonthlyPlan = async (owner: string, month: string, input: Month
       payload,
     },
   }));
-  return toPublicMonthlyPlan(month, payload, true);
+  return getMonthlyPlan(owner, month);
 };
-
-const toPublicMonthlyPlan = (month: string, payload: JsonObject, configured: boolean): JsonObject => ({
-  month,
-  configured,
-  incomeMinor: configured ? payload.incomeMinor : 0,
-  currency: 'MXN',
-  upcomingPayments: configured && Array.isArray(payload.upcomingPayments) ? payload.upcomingPayments : [],
-  ...(configured && typeof payload.updatedAt === 'string' ? { updatedAt: payload.updatedAt } : {}),
-});

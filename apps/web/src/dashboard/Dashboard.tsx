@@ -17,7 +17,9 @@ import {
 import { demoCards } from "../card-cycle-demo";
 import type { CardCycle } from "../card-cycle";
 import { EventSheet } from "../sheets/EventSheet";
-import { IncomeSheet } from "../sheets/IncomeSheet";
+import { NominaUploadSheet } from "../sheets/NominaUploadSheet";
+import { PayslipSheet } from "../sheets/PayslipSheet";
+import type { Payslip } from "../monthly-plan";
 import { CajitaSheet } from "../sheets/CajitaSheet";
 import { ManualEntrySheet } from "../sheets/ManualEntrySheet";
 import { PaymentSheet } from "../sheets/PaymentSheet";
@@ -48,7 +50,8 @@ export function Dashboard({
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("summary");
   const [selectedMonth, setSelectedMonth] = useState(monthKey(now));
-  const [editingIncome, setEditingIncome] = useState(false);
+  const [activePayslip, setActivePayslip] = useState<Payslip>();
+  const [uploadingNomina, setUploadingNomina] = useState(false);
   const [editingPayment, setEditingPayment] = useState<PlannedPayment | null | undefined>();
   const [editingCard, setEditingCard] = useState<CardCycle | null | undefined>();
   const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
@@ -425,7 +428,8 @@ export function Dashboard({
             monthMsiRows={monthMsiRows}
             msiSpentMinor={msiSpentMinor}
             msiCommittedMinor={msiCommittedMinor}
-            onEditIncome={() => setEditingIncome(true)}
+            onUploadNomina={() => setUploadingNomina(true)}
+            onOpenPayslip={setActivePayslip}
             onAddPayment={() => setEditingPayment(null)}
             onEditPayment={(payment) => setEditingPayment(payment)}
             onOpenMsiEvent={openMsiEvent}
@@ -511,16 +515,20 @@ export function Dashboard({
         )}
       </AppShell>
 
-      {editingIncome && (
-        <IncomeSheet
+      {uploadingNomina && (
+        <NominaUploadSheet
           month={selectedMonth}
-          incomeMinor={plan.incomeMinor}
-          onClose={() => setEditingIncome(false)}
-          onSave={async (incomeMinor) => {
-            await savePlan({ ...plan, month: selectedMonth, configured: true, incomeMinor });
-            setEditingIncome(false);
+          demoMode={demoMode}
+          onClose={() => setUploadingNomina(false)}
+          onUpload={async (files) => {
+            const response = await ledgerApi.uploadNominas(files, idToken);
+            await queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
+            return response;
           }}
         />
+      )}
+      {activePayslip && (
+        <PayslipSheet payslip={activePayslip} onClose={() => setActivePayslip(undefined)} />
       )}
       {editingPayment !== undefined && (
         <PaymentSheet

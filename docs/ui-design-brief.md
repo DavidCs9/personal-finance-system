@@ -16,7 +16,7 @@ Las reglas operativas que deben seguir futuras implementaciones del frontend est
 6. **Gastos fijos** — servicios y suscripciones indefinidos (renta, iCloud, etc.), sin fecha de fin. Las cuotas MSI no se mezclan aquí.
 7. **Fechas de corte** — en **Resumen**, calendario del mes con día de corte y día de pago de hasta tres tarjetas. Son recordatorios de ciclo; no restan de “Te quedan” ni se mezclan con gastos fijos.
 
-El ingreso mensual se captura manualmente como una sola cifra, aunque provenga de dos depósitos de nómina. El periodo siempre es un mes calendario.
+El ingreso mensual se deriva de los XML de CFDI nómina subidos (`FechaPago` → mes). Con una sola nómina ordinaria en el mes actual, Resumen estima la 2ª quincena. Sin XML del mes, Resumen queda bloqueado. El periodo siempre es un mes calendario.
 
 ### Patrimonio (activos)
 
@@ -55,8 +55,8 @@ En escritorio se conserva la misma arquitectura con un ancho de lectura contenid
 
 ## Persistencia mensual
 
-Las compras continúan viniendo de la API existente. El ingreso mensual y los pagos próximos se guardan en DynamoDB mediante `GET /months/{month}` y `PUT /months/{month}`. Cada registro queda aislado por el identificador autenticado del usuario y el mes calendario.
+Las compras continúan viniendo de la API existente. El ingreso del mes se deriva de `GET /months/{month}` a partir de las nóminas CFDI (`payslips`, `incomeMinor`, `estimateActive`). Los pagos próximos se guardan con `PUT /months/{month}` (solo `upcomingPayments`). Cada registro queda aislado por el identificador autenticado del usuario y el mes calendario.
 
-Un mes sin registro se considera no configurado. La UI debe pedir explícitamente el ingreso antes de calcular disponibilidad o permitir administrar pagos próximos; el ingreso se puede editar en cualquier momento.
+Un mes sin nóminas se considera no configurado. La UI debe pedir subir el XML antes de calcular disponibilidad; el desglose de cada nómina se abre desde Resumen.
 
 Los snapshots de patrimonio viven en la misma tabla (`GET /wealth`, `POST /wealth/accounts/.../snapshots`, `POST /wealth/sync/bitso`, `POST /wealth/sync/ibkr`) con día calendario `America/Chihuahua`.
