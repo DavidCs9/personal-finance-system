@@ -1,29 +1,44 @@
-/** Minimal line sparkline: scale from series min→max (not zero). */
+const formatSparkDay = (day: string): string => {
+  const [year, month, date] = day.split("-").map(Number);
+  return new Intl.DateTimeFormat("es-MX", {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year, month - 1, date, 12)));
+};
+
+/** Minimal line sparkline: scale from series min→max (not zero), with day labels. */
 export function WealthSparkline(props: {
-  readonly values: readonly number[];
+  readonly points: readonly { readonly day: string; readonly value: number }[];
 }) {
-  if (props.values.length === 0) return null;
+  if (props.points.length === 0) return null;
 
   const width = 240;
   const height = 40;
-  const padX = 4;
+  const padX = 6;
   const padY = 6;
-  const min = Math.min(...props.values);
-  const max = Math.max(...props.values);
+  const values = props.points.map((point) => point.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
   const range = max - min || 1;
-  const last = props.values.length - 1;
+  const last = props.points.length - 1;
 
-  const points = props.values.map((value, index) => {
+  const plotted = props.points.map((point, index) => {
     const x =
-      props.values.length === 1
+      props.points.length === 1
         ? width / 2
         : padX + (index / last) * (width - padX * 2);
-    const y = padY + (1 - (value - min) / range) * (height - padY * 2);
-    return { x, y };
+    const y = padY + (1 - (point.value - min) / range) * (height - padY * 2);
+    return { x, y, day: point.day };
   });
 
-  const polyline = points.map((point) => `${point.x},${point.y}`).join(" ");
-  const end = points[points.length - 1];
+  const polyline = plotted.map((point) => `${point.x},${point.y}`).join(" ");
+  const end = plotted[plotted.length - 1];
+  // Enough labels to orient without crowding: all if ≤5, else first / mid / last.
+  const labelIndexes =
+    plotted.length <= 5
+      ? plotted.map((_, index) => index)
+      : [0, Math.floor(last / 2), last];
 
   return (
     <div className="wealth-spark" aria-hidden="true">
@@ -49,6 +64,23 @@ export function WealthSparkline(props: {
           />
         ) : null}
       </svg>
+      <div className="wealth-spark-axis">
+        {plotted.map((point, index) => {
+          if (!labelIndexes.includes(index)) {
+            return <span key={point.day} className="wealth-spark-tick" />;
+          }
+          const align =
+            index === 0 ? "start" : index === last ? "end" : "center";
+          return (
+            <span
+              key={point.day}
+              className={`wealth-spark-tick wealth-spark-tick-${align}`}
+            >
+              {formatSparkDay(point.day)}
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }

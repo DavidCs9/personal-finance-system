@@ -389,7 +389,12 @@ export function WealthView(props: {
               ) : (
                 <>
                   {history.length > 1 ? (
-                    <WealthSparkline values={history.map((point) => point.totalMxnMinor)} />
+                    <WealthSparkline
+                      points={history.map((point) => ({
+                        day: point.day,
+                        value: point.totalMxnMinor,
+                      }))}
+                    />
                   ) : null}
                   <div className="payment-list wealth-history-list">
                     {historyNewestFirst.map((point) => (
