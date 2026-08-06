@@ -9,7 +9,9 @@ import {
   isWealthAccountId,
   WEALTH_ACCOUNTS,
   type WealthAccountId,
+  type WealthHolding,
   type WealthSnapshot,
+  type WealthSnapshotSource,
 } from '@finance/domain';
 import { database, rawSourceBucketName, s3, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
@@ -21,8 +23,8 @@ import {
   wealthSnapshotVersionKey,
 } from './keys.js';
 
-const cajitaEvidenceKey = (owner: string, sha256: string): string =>
-  `wealth-manual/${owner}/${sha256}.json`;
+const evidenceObjectKey = (kind: 'manual' | 'api', owner: string, sha256: string): string =>
+  kind === 'manual' ? `wealth-manual/${owner}/${sha256}.json` : `wealth-api/${owner}/${sha256}.json`;
 
 const toPublicSnapshot = (item: Record<string, unknown>): WealthSnapshot | undefined => {
   const accountId = item.accountId;
@@ -128,36 +130,33 @@ export const getWealthOverview = async (owner: string): Promise<JsonObject> => {
   };
 };
 
-export const createCajitaSnapshot = async (body: string | undefined, owner: string): Promise<JsonObject> => {
-  const input = parseCajitaSnapshot(body);
+export const persistWealthSnapshot = async (input: {
+  readonly owner: string;
+  readonly accountId: WealthAccountId;
+  readonly source: WealthSnapshotSource;
+  readonly holdings: readonly WealthHolding[];
+  readonly evidenceKind: 'manual' | 'api';
+  readonly evidenceBody: string;
+  readonly fxSource?: string;
+}): Promise<WealthSnapshot> => {
   const capturedAt = new Date().toISOString();
   const day = dayKeyInZone(new Date(capturedAt), FINANCE_TIME_ZONE);
-  const holdings = [cajitaEmergencyHolding(input.amountMinor)];
-  const evidenceBody = JSON.stringify({
-    kind: 'wealth_manual_snapshot',
-    createdAt: capturedAt,
-    owner,
-    accountId: CAJITA_ACCOUNT_ID,
-    day,
-    amountMinor: input.amountMinor,
-    currency: 'MXN',
-    holdings,
-  });
-  const sourceHash = createHash('sha256').update(evidenceBody, 'utf8').digest('hex');
+  const totalMxnMinor = input.holdings.reduce((sum, holding) => sum + holding.valueMxnMinor, 0);
+  const sourceHash = createHash('sha256').update(input.evidenceBody, 'utf8').digest('hex');
   const evidence = {
     bucket: rawSourceBucketName,
-    key: cajitaEvidenceKey(owner, sourceHash),
+    key: evidenceObjectKey(input.evidenceKind, input.owner, sourceHash),
     sha256: sourceHash,
     contentType: 'application/json' as const,
   };
   await s3.send(new PutObjectCommand({
     Bucket: rawSourceBucketName,
     Key: evidence.key,
-    Body: evidenceBody,
+    Body: input.evidenceBody,
     ContentType: 'application/json; charset=utf-8',
   }));
 
-  const key = wealthSnapshotKey(owner, CAJITA_ACCOUNT_ID, day);
+  const key = wealthSnapshotKey(input.owner, input.accountId, day);
   const existing = await database.send(new GetCommand({
     TableName: tableName,
     Key: key,
@@ -170,10 +169,10 @@ export const createCajitaSnapshot = async (body: string | undefined, owner: stri
     await database.send(new PutCommand({
       TableName: tableName,
       Item: {
-        ...wealthSnapshotVersionKey(owner, CAJITA_ACCOUNT_ID, day, previousCapturedAt),
+        ...wealthSnapshotVersionKey(input.owner, input.accountId, day, previousCapturedAt),
         entityType: 'wealth_snapshot_version',
-        owner,
-        accountId: CAJITA_ACCOUNT_ID,
+        owner: input.owner,
+        accountId: input.accountId,
         day,
         capturedAt: previousCapturedAt,
         supersededAt: capturedAt,
@@ -188,24 +187,51 @@ export const createCajitaSnapshot = async (body: string | undefined, owner: stri
   }
 
   const snapshot: WealthSnapshot = {
-    accountId: CAJITA_ACCOUNT_ID,
+    accountId: input.accountId,
     day,
     capturedAt,
-    source: 'manual',
+    source: input.source,
     currency: 'MXN',
-    totalMxnMinor: input.amountMinor,
-    holdings,
+    totalMxnMinor,
+    holdings: input.holdings,
     evidence,
+    ...(input.fxSource ? { fxSource: input.fxSource } : {}),
   };
   await database.send(new PutCommand({
     TableName: tableName,
     Item: {
       ...key,
       entityType: 'wealth_snapshot',
-      owner,
+      owner: input.owner,
       ...snapshot,
     },
   }));
+  return snapshot;
+};
+
+export const createCajitaSnapshot = async (body: string | undefined, owner: string): Promise<JsonObject> => {
+  const input = parseCajitaSnapshot(body);
+  const holdings = [cajitaEmergencyHolding(input.amountMinor)];
+  const capturedAt = new Date().toISOString();
+  const day = dayKeyInZone(new Date(capturedAt), FINANCE_TIME_ZONE);
+  const evidenceBody = JSON.stringify({
+    kind: 'wealth_manual_snapshot',
+    createdAt: capturedAt,
+    owner,
+    accountId: CAJITA_ACCOUNT_ID,
+    day,
+    amountMinor: input.amountMinor,
+    currency: 'MXN',
+    holdings,
+  });
+  const snapshot = await persistWealthSnapshot({
+    owner,
+    accountId: CAJITA_ACCOUNT_ID,
+    source: 'manual',
+    holdings,
+    evidenceKind: 'manual',
+    evidenceBody,
+  });
   return snapshot as unknown as JsonObject;
 };
 

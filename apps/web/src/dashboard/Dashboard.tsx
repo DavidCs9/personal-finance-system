@@ -30,7 +30,7 @@ import { SummaryView } from "../views/SummaryView";
 import { WealthView } from "../views/WealthView";
 import { demoWealthOverview } from "../wealth-demo";
 import type { WealthOverview, WealthAccountView, WealthHistoryPoint } from "../wealth";
-import { CAJITA_ACCOUNT_ID, WEALTH_ACCOUNTS, dayKeyInZone, type WealthAccountId } from "@finance/domain";
+import { CAJITA_ACCOUNT_ID, BITSO_ACCOUNT_ID, WEALTH_ACCOUNTS, dayKeyInZone, type WealthAccountId, type WealthSnapshot } from "@finance/domain";
 
 export function Dashboard({
   idToken,
@@ -91,6 +91,74 @@ export function Dashboard({
     queryKey: wealthQueryKey,
     queryFn: () =>
       demoMode ? Promise.resolve(demoWealthOverview) : ledgerApi.wealth(idToken),
+  });
+
+  const bitsoSyncMutation = useMutation({
+    mutationFn: async () => {
+      if (demoMode) {
+        const day = dayKeyInZone(now);
+        const snapshot: WealthSnapshot = {
+          accountId: BITSO_ACCOUNT_ID,
+          day,
+          capturedAt: now.toISOString(),
+          source: "api",
+          currency: "MXN",
+          totalMxnMinor: 1_250_000,
+          fxSource: "bitso_ticker",
+          holdings: demoWealthOverview.accounts.find((account) => account.id === BITSO_ACCOUNT_ID)
+            ?.latestSnapshot?.holdings ?? [],
+        };
+        return { snapshot, skipped: [] as string[] };
+      }
+      return ledgerApi.syncBitso(idToken);
+    },
+    onSuccess: async (result) => {
+      if (demoMode) {
+        const snapshot = result.snapshot;
+        queryClient.setQueryData<WealthOverview>(wealthQueryKey, (current) => {
+          const base: WealthOverview = current ?? demoWealthOverview;
+          const accounts: WealthAccountView[] = base.accounts.map((account: WealthAccountView) =>
+            account.id === BITSO_ACCOUNT_ID
+              ? { ...account, connected: true, latestSnapshot: snapshot }
+              : account,
+          );
+          const previous: readonly WealthHistoryPoint[] = base.history.byAccount.bitso ?? [];
+          const bitsoHistory: WealthHistoryPoint[] = [
+            ...previous.filter((point) => point.day !== snapshot.day),
+            { day: snapshot.day, totalMxnMinor: snapshot.totalMxnMinor },
+          ].sort((left, right) => left.day.localeCompare(right.day));
+          const allByDay = new Map<string, number>();
+          for (const account of accounts) {
+            for (const point of (
+              account.id === BITSO_ACCOUNT_ID
+                ? bitsoHistory
+                : (base.history.byAccount[account.id] ?? [])
+            )) {
+              allByDay.set(point.day, (allByDay.get(point.day) ?? 0) + point.totalMxnMinor);
+            }
+          }
+          return {
+            currency: "MXN",
+            totalMxnMinor: accounts.reduce(
+              (sum, account) => sum + (account.latestSnapshot?.totalMxnMinor ?? 0),
+              0,
+            ),
+            accounts,
+            history: {
+              all: [...allByDay.entries()]
+                .sort(([left], [right]) => left.localeCompare(right))
+                .map(([day, totalMxnMinor]) => ({ day, totalMxnMinor })),
+              byAccount: {
+                ...base.history.byAccount,
+                bitso: bitsoHistory,
+              },
+            },
+          };
+        });
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: wealthQueryKey });
+    },
   });
 
   const events = eventsQuery.data?.events ?? [];
@@ -327,6 +395,18 @@ export function Dashboard({
             selectedAccountId={selectedWealthAccount}
             onSelectAccount={setSelectedWealthAccount}
             onRegisterCajita={() => setCajitaOpen(true)}
+            onSyncBitso={() => {
+              bitsoSyncMutation.reset();
+              bitsoSyncMutation.mutate();
+            }}
+            syncingBitso={bitsoSyncMutation.isPending}
+            bitsoSyncError={
+              bitsoSyncMutation.error instanceof Error
+                ? bitsoSyncMutation.error.message
+                : bitsoSyncMutation.error
+                  ? "No se pudo sincronizar Bitso."
+                  : undefined
+            }
             now={now}
           />
         ) : (

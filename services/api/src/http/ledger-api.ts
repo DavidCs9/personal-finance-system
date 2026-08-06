@@ -40,6 +40,7 @@ import {
   createCajitaSnapshot,
   getWealthOverview,
 } from '../wealth/service.js';
+import { syncBitsoForOwner } from '../wealth/bitso-sync.js';
 import {
   deletePushSubscription,
   InvalidPushSubscriptionError,
@@ -248,6 +249,10 @@ app.post('/wealth/accounts/:accountId/snapshots', async ({ event, params }) => {
     await createCajitaSnapshot(requestBody(gatewayEvent), ownerOf(gatewayEvent)),
   );
 });
+
+app.post('/wealth/sync/bitso', async ({ event }) =>
+  json(HttpStatusCodes.OK, await syncBitsoForOwner(ownerOf(asHttpEvent(event)))),
+);
 
 app.post('/imports/santander/preview', async ({ event }) => {
   const gatewayEvent = asHttpEvent(event);

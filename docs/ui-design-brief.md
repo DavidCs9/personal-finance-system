@@ -59,4 +59,4 @@ Las compras continúan viniendo de la API existente. El ingreso mensual y los pa
 
 Un mes sin registro se considera no configurado. La UI debe pedir explícitamente el ingreso antes de calcular disponibilidad o permitir administrar pagos próximos; el ingreso se puede editar en cualquier momento.
 
-Los snapshots de patrimonio viven en la misma tabla (`GET /wealth`, `POST /wealth/accounts/.../snapshots`) con día calendario `America/Chihuahua`.
+Los snapshots de patrimonio viven en la misma tabla (`GET /wealth`, `POST /wealth/accounts/.../snapshots`, `POST /wealth/sync/bitso`) con día calendario `America/Chihuahua`.

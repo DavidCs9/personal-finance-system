@@ -290,6 +290,13 @@ export const ledgerApi = {
       },
     );
   },
+  async syncBitso(idToken: string): Promise<{ snapshot: WealthSnapshot; skipped: readonly string[] }> {
+    return request<{ snapshot: WealthSnapshot; skipped: readonly string[] }>(
+      "/wealth/sync/bitso",
+      idToken,
+      { method: "POST" },
+    );
+  },
   async previewSantanderCsv(file: File, idToken: string): Promise<SantanderImportPreview> {
     return request<SantanderImportPreview>("/imports/santander/preview", idToken, {
       method: "POST",

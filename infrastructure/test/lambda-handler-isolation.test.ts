@@ -48,4 +48,10 @@ describe('lambda handler bundle isolation', () => {
     const code = await bundleEntry('apple-pay-capture.ts');
     expect(code).toContain('APPLE_PAY_CAPTURE_SECRET_ARN');
   });
+
+  it('bitso-sync entry does not load apple-pay capture env requirements', async () => {
+    const code = await bundleEntry('bitso-sync.ts');
+    expect(code).toContain('BITSO_SECRET_ARN');
+    expect(code).not.toContain('APPLE_PAY_CAPTURE_SECRET_ARN');
+  });
 });

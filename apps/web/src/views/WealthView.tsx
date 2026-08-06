@@ -1,4 +1,5 @@
 import {
+  BITSO_ACCOUNT_ID,
   CAJITA_ACCOUNT_ID,
   CAJITA_STALE_DAYS,
   isWealthSnapshotStale,
@@ -17,6 +18,7 @@ const accountRoleLabel = (role: WealthAccountView["role"]): string => {
 
 const pendingCopy = (account: WealthAccountView): string => {
   if (account.id === CAJITA_ACCOUNT_ID) return "Sin saldo";
+  if (account.id === BITSO_ACCOUNT_ID) return "Sin sync";
   return "Pendiente";
 };
 
@@ -37,6 +39,9 @@ export function WealthView(props: {
   readonly selectedAccountId: WealthAccountId | "all";
   readonly onSelectAccount: (accountId: WealthAccountId | "all") => void;
   readonly onRegisterCajita: () => void;
+  readonly onSyncBitso: () => void;
+  readonly syncingBitso: boolean;
+  readonly bitsoSyncError?: string;
   readonly now: Date;
 }) {
   const selectedAccount =
@@ -60,6 +65,11 @@ export function WealthView(props: {
     : undefined;
   const showCajitaStart =
     !cajita?.latestSnapshot && (props.selectedAccountId === "all" || props.selectedAccountId === CAJITA_ACCOUNT_ID);
+  const showBitsoHoldings =
+    selectedAccount?.id === BITSO_ACCOUNT_ID && Boolean(selectedAccount.latestSnapshot);
+  const showBitsoEmpty =
+    selectedAccount?.id === BITSO_ACCOUNT_ID && !selectedAccount.latestSnapshot;
+  const showIbkrPending = selectedAccount?.id === "ibkr";
 
   return (
     <section className="wealth-view">
@@ -93,12 +103,16 @@ export function WealthView(props: {
                     <span>Vista</span>
                     <strong>Total</strong>
                   </button>
-                ) : cajita?.latestSnapshot ? (
-                  <button className="income-button" onClick={props.onRegisterCajita}>
-                    <span>Cajita</span>
-                    <strong>Actualizar</strong>
+                ) : (
+                  <button
+                    className="income-button"
+                    onClick={props.onSyncBitso}
+                    disabled={props.syncingBitso}
+                  >
+                    <span>Bitso</span>
+                    <strong>{props.syncingBitso ? "Sync…" : "Actualizar"}</strong>
                   </button>
-                ) : null}
+                )}
               </div>
               <strong className="hero-amount">
                 <Amt>
@@ -120,6 +134,11 @@ export function WealthView(props: {
                 props.selectedAccountId !== "ibkr" && (
                 <p className="uncertain-note wealth-stale-note">
                   <span>!</span> Cajita sin actualizar hace <Amt>{cajitaAge}</Amt> días
+                </p>
+              )}
+              {props.bitsoSyncError && (
+                <p className="uncertain-note wealth-stale-note">
+                  <span>!</span> {props.bitsoSyncError}
                 </p>
               )}
             </section>
@@ -217,13 +236,77 @@ export function WealthView(props: {
               </section>
             )}
 
-            {selectedAccount && selectedAccount.id !== CAJITA_ACCOUNT_ID && (
+            {showBitsoHoldings && selectedAccount?.latestSnapshot && (
               <section className="wealth-detail">
                 <div className="section-heading">
                   <div>
-                    <p className="eyebrow">{selectedAccount.institution.toUpperCase()}</p>
-                    <h2>{selectedAccount.name}</h2>
-                    <p className="section-lede">Sync automático en un siguiente paso.</p>
+                    <p className="eyebrow">BITSO</p>
+                    <h2>Holdings</h2>
+                  </div>
+                  <button
+                    className="add-button"
+                    onClick={props.onSyncBitso}
+                    disabled={props.syncingBitso}
+                    aria-label="Actualizar Bitso"
+                  >
+                    {props.syncingBitso ? "…" : "↻"}
+                  </button>
+                </div>
+                <div className="payment-list">
+                  {selectedAccount.latestSnapshot.holdings.map((holding) => (
+                    <div key={holding.id} className="payment-row wealth-holding-row">
+                      <span className="payment-dot wealth-role-crypto" aria-hidden="true" />
+                      <span className="payment-name">
+                        <strong>{holding.name}</strong>
+                        <small>
+                          {holding.quantity} {holding.symbol}
+                        </small>
+                      </span>
+                      <strong className="payment-amount">
+                        <Amt>{money(holding.valueMxnMinor)}</Amt>
+                      </strong>
+                      <span aria-hidden="true" />
+                    </div>
+                  ))}
+                  <div className="payment-total">
+                    <span>Último sync</span>
+                    <strong>{formatDay(selectedAccount.latestSnapshot.day)}</strong>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {showBitsoEmpty && (
+              <section className="wealth-detail">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">BITSO</p>
+                    <h2>Crypto</h2>
+                    <p className="section-lede">Sincroniza saldos con la API de Bitso.</p>
+                  </div>
+                </div>
+                <button
+                  className="empty-action"
+                  type="button"
+                  onClick={props.onSyncBitso}
+                  disabled={props.syncingBitso}
+                >
+                  <span>↻</span>
+                  <div>
+                    <strong>{props.syncingBitso ? "Sincronizando…" : "Actualizar ahora"}</strong>
+                    <small>Lee balances y tickers MXN. Se conserva el último sync bueno si falla.</small>
+                  </div>
+                </button>
+              </section>
+            )}
+
+            {showIbkrPending && (
+              <section className="wealth-detail">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">IBKR</p>
+                    <h2>Broker</h2>
+                    <p className="section-lede">Flex Query en un siguiente paso.</p>
                   </div>
                 </div>
                 <div className="empty-action wealth-pending-card" aria-disabled="true">

@@ -11,6 +11,8 @@ export type WealthSnapshotSource = "manual" | "api" | "flex";
 export const CAJITA_STALE_DAYS = 7;
 
 export const CAJITA_ACCOUNT_ID: WealthAccountId = "nu_cajita_emergencia";
+export const BITSO_ACCOUNT_ID: WealthAccountId = "bitso";
+export const IBKR_ACCOUNT_ID: WealthAccountId = "ibkr";
 
 export interface WealthHolding {
   readonly id: string;
