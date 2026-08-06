@@ -1,9 +1,9 @@
 import type { WealthOverview } from "./wealth";
 
-/** Demo seed for local walkthrough — Cajita + Bitso connected; IBKR pending. */
+/** Demo seed for local walkthrough — Cajita + Bitso + IBKR connected. */
 export const demoWealthOverview: WealthOverview = {
   currency: "MXN",
-  totalMxnMinor: 9_750_000,
+  totalMxnMinor: 22_250_500,
   accounts: [
     {
       id: "nu_cajita_emergencia",
@@ -75,15 +75,44 @@ export const demoWealthOverview: WealthOverview = {
       institution: "IBKR",
       role: "brokerage",
       sync: "flex",
-      connected: false,
-      latestSnapshot: null,
+      connected: true,
+      latestSnapshot: {
+        accountId: "ibkr",
+        day: "2026-07-10",
+        capturedAt: "2026-07-10T12:45:00.000Z",
+        source: "flex",
+        currency: "MXN",
+        totalMxnMinor: 12_500_500,
+        fxRate: 20,
+        fxSource: "banxico_sf43718",
+        holdings: [
+          {
+            id: "ibkr:3000",
+            symbol: "VOO",
+            name: "VANGUARD S&P 500 ETF",
+            quantity: 12.5,
+            currency: "USD",
+            valueNativeMinor: 625_000,
+            valueMxnMinor: 12_500_000,
+          },
+          {
+            id: "ibkr:cash:USD",
+            symbol: "USD",
+            name: "Efectivo USD",
+            quantity: 25.025,
+            currency: "USD",
+            valueNativeMinor: 2_503,
+            valueMxnMinor: 500,
+          },
+        ],
+      },
     },
   ],
   history: {
     all: [
-      { day: "2026-07-01", totalMxnMinor: 9_000_000 },
-      { day: "2026-07-05", totalMxnMinor: 9_400_000 },
-      { day: "2026-07-10", totalMxnMinor: 9_750_000 },
+      { day: "2026-07-01", totalMxnMinor: 20_000_000 },
+      { day: "2026-07-05", totalMxnMinor: 21_200_000 },
+      { day: "2026-07-10", totalMxnMinor: 22_250_500 },
     ],
     byAccount: {
       nu_cajita_emergencia: [
@@ -96,7 +125,11 @@ export const demoWealthOverview: WealthOverview = {
         { day: "2026-07-05", totalMxnMinor: 1_150_000 },
         { day: "2026-07-10", totalMxnMinor: 1_250_000 },
       ],
-      ibkr: [],
+      ibkr: [
+        { day: "2026-07-01", totalMxnMinor: 11_000_000 },
+        { day: "2026-07-05", totalMxnMinor: 11_800_000 },
+        { day: "2026-07-10", totalMxnMinor: 12_500_500 },
+      ],
     },
   },
 };

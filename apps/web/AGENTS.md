@@ -85,6 +85,7 @@ Assume at least 95% of usage is mobile.
 - Preserve access to transaction provenance and original evidence.
 - Cajita manual captures are immutable; same-day replacement keeps prior versions for audit only. Mark Cajita stale after 7 days without a capture.
 - Bitso syncs via API (scheduled and “Actualizar”); on failure keep the last good snapshot and surface the error honestly.
+- IBKR syncs via Flex Query + Banxico FIX; on failure keep the last good snapshot and surface the error honestly.
 
 ## Review checklist
 

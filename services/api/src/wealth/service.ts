@@ -138,6 +138,7 @@ export const persistWealthSnapshot = async (input: {
   readonly evidenceKind: 'manual' | 'api';
   readonly evidenceBody: string;
   readonly fxSource?: string;
+  readonly fxRate?: number;
 }): Promise<WealthSnapshot> => {
   const capturedAt = new Date().toISOString();
   const day = dayKeyInZone(new Date(capturedAt), FINANCE_TIME_ZONE);
@@ -181,6 +182,8 @@ export const persistWealthSnapshot = async (input: {
         totalMxnMinor: existing.Item.totalMxnMinor,
         holdings: existing.Item.holdings,
         ...(existing.Item.evidence ? { evidence: existing.Item.evidence } : {}),
+        ...(typeof existing.Item.fxRate === 'number' ? { fxRate: existing.Item.fxRate } : {}),
+        ...(typeof existing.Item.fxSource === 'string' ? { fxSource: existing.Item.fxSource } : {}),
         versionId: randomUUID(),
       },
     }));
@@ -196,6 +199,7 @@ export const persistWealthSnapshot = async (input: {
     holdings: input.holdings,
     evidence,
     ...(input.fxSource ? { fxSource: input.fxSource } : {}),
+    ...(typeof input.fxRate === 'number' ? { fxRate: input.fxRate } : {}),
   };
   await database.send(new PutCommand({
     TableName: tableName,

@@ -297,6 +297,13 @@ export const ledgerApi = {
       { method: "POST" },
     );
   },
+  async syncIbkr(idToken: string): Promise<{ snapshot: WealthSnapshot; skipped: readonly string[]; fxRate: number }> {
+    return request<{ snapshot: WealthSnapshot; skipped: readonly string[]; fxRate: number }>(
+      "/wealth/sync/ibkr",
+      idToken,
+      { method: "POST" },
+    );
+  },
   async previewSantanderCsv(file: File, idToken: string): Promise<SantanderImportPreview> {
     return request<SantanderImportPreview>("/imports/santander/preview", idToken, {
       method: "POST",

@@ -41,6 +41,7 @@ import {
   getWealthOverview,
 } from '../wealth/service.js';
 import { syncBitsoForOwner } from '../wealth/bitso-sync.js';
+import { syncIbkrForOwner } from '../wealth/ibkr-sync.js';
 import {
   deletePushSubscription,
   InvalidPushSubscriptionError,
@@ -252,6 +253,10 @@ app.post('/wealth/accounts/:accountId/snapshots', async ({ event, params }) => {
 
 app.post('/wealth/sync/bitso', async ({ event }) =>
   json(HttpStatusCodes.OK, await syncBitsoForOwner(ownerOf(asHttpEvent(event)))),
+);
+
+app.post('/wealth/sync/ibkr', async ({ event }) =>
+  json(HttpStatusCodes.OK, await syncIbkrForOwner(ownerOf(asHttpEvent(event)))),
 );
 
 app.post('/imports/santander/preview', async ({ event }) => {

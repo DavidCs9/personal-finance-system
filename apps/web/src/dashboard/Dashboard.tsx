@@ -30,7 +30,7 @@ import { SummaryView } from "../views/SummaryView";
 import { WealthView } from "../views/WealthView";
 import { demoWealthOverview } from "../wealth-demo";
 import type { WealthOverview, WealthAccountView, WealthHistoryPoint } from "../wealth";
-import { CAJITA_ACCOUNT_ID, BITSO_ACCOUNT_ID, WEALTH_ACCOUNTS, dayKeyInZone, type WealthAccountId, type WealthSnapshot } from "@finance/domain";
+import { CAJITA_ACCOUNT_ID, BITSO_ACCOUNT_ID, IBKR_ACCOUNT_ID, WEALTH_ACCOUNTS, dayKeyInZone, type WealthAccountId, type WealthSnapshot } from "@finance/domain";
 
 export function Dashboard({
   idToken,
@@ -151,6 +151,75 @@ export function Dashboard({
               byAccount: {
                 ...base.history.byAccount,
                 bitso: bitsoHistory,
+              },
+            },
+          };
+        });
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: wealthQueryKey });
+    },
+  });
+
+  const ibkrSyncMutation = useMutation({
+    mutationFn: async () => {
+      if (demoMode) {
+        const day = dayKeyInZone(now);
+        const snapshot: WealthSnapshot = {
+          accountId: IBKR_ACCOUNT_ID,
+          day,
+          capturedAt: now.toISOString(),
+          source: "flex",
+          currency: "MXN",
+          totalMxnMinor: 12_500_500,
+          fxRate: 20,
+          fxSource: "banxico_sf43718",
+          holdings: demoWealthOverview.accounts.find((account) => account.id === IBKR_ACCOUNT_ID)
+            ?.latestSnapshot?.holdings ?? [],
+        };
+        return { snapshot, skipped: [] as string[], fxRate: 20 };
+      }
+      return ledgerApi.syncIbkr(idToken);
+    },
+    onSuccess: async (result) => {
+      if (demoMode) {
+        const snapshot = result.snapshot;
+        queryClient.setQueryData<WealthOverview>(wealthQueryKey, (current) => {
+          const base: WealthOverview = current ?? demoWealthOverview;
+          const accounts: WealthAccountView[] = base.accounts.map((account: WealthAccountView) =>
+            account.id === IBKR_ACCOUNT_ID
+              ? { ...account, connected: true, latestSnapshot: snapshot }
+              : account,
+          );
+          const previous: readonly WealthHistoryPoint[] = base.history.byAccount.ibkr ?? [];
+          const ibkrHistory: WealthHistoryPoint[] = [
+            ...previous.filter((point) => point.day !== snapshot.day),
+            { day: snapshot.day, totalMxnMinor: snapshot.totalMxnMinor },
+          ].sort((left, right) => left.day.localeCompare(right.day));
+          const allByDay = new Map<string, number>();
+          for (const account of accounts) {
+            for (const point of (
+              account.id === IBKR_ACCOUNT_ID
+                ? ibkrHistory
+                : (base.history.byAccount[account.id] ?? [])
+            )) {
+              allByDay.set(point.day, (allByDay.get(point.day) ?? 0) + point.totalMxnMinor);
+            }
+          }
+          return {
+            currency: "MXN",
+            totalMxnMinor: accounts.reduce(
+              (sum, account) => sum + (account.latestSnapshot?.totalMxnMinor ?? 0),
+              0,
+            ),
+            accounts,
+            history: {
+              all: [...allByDay.entries()]
+                .sort(([left], [right]) => left.localeCompare(right))
+                .map(([day, totalMxnMinor]) => ({ day, totalMxnMinor })),
+              byAccount: {
+                ...base.history.byAccount,
+                ibkr: ibkrHistory,
               },
             },
           };
@@ -405,6 +474,18 @@ export function Dashboard({
                 ? bitsoSyncMutation.error.message
                 : bitsoSyncMutation.error
                   ? "No se pudo sincronizar Bitso."
+                  : undefined
+            }
+            onSyncIbkr={() => {
+              ibkrSyncMutation.reset();
+              ibkrSyncMutation.mutate();
+            }}
+            syncingIbkr={ibkrSyncMutation.isPending}
+            ibkrSyncError={
+              ibkrSyncMutation.error instanceof Error
+                ? ibkrSyncMutation.error.message
+                : ibkrSyncMutation.error
+                  ? "No se pudo sincronizar IBKR."
                   : undefined
             }
             now={now}

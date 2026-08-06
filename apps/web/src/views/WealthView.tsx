@@ -42,6 +42,9 @@ export function WealthView(props: {
   readonly onSyncBitso: () => void;
   readonly syncingBitso: boolean;
   readonly bitsoSyncError?: string;
+  readonly onSyncIbkr: () => void;
+  readonly syncingIbkr: boolean;
+  readonly ibkrSyncError?: string;
   readonly now: Date;
 }) {
   const selectedAccount =
@@ -69,7 +72,10 @@ export function WealthView(props: {
     selectedAccount?.id === BITSO_ACCOUNT_ID && Boolean(selectedAccount.latestSnapshot);
   const showBitsoEmpty =
     selectedAccount?.id === BITSO_ACCOUNT_ID && !selectedAccount.latestSnapshot;
-  const showIbkrPending = selectedAccount?.id === "ibkr";
+  const showIbkrHoldings =
+    selectedAccount?.id === "ibkr" && Boolean(selectedAccount.latestSnapshot);
+  const showIbkrEmpty =
+    selectedAccount?.id === "ibkr" && !selectedAccount.latestSnapshot;
 
   return (
     <section className="wealth-view">
@@ -139,6 +145,11 @@ export function WealthView(props: {
               {props.bitsoSyncError && (
                 <p className="uncertain-note wealth-stale-note">
                   <span>!</span> {props.bitsoSyncError}
+                </p>
+              )}
+              {props.ibkrSyncError && (
+                <p className="uncertain-note wealth-stale-note">
+                  <span>!</span> {props.ibkrSyncError}
                 </p>
               )}
             </section>
@@ -300,22 +311,67 @@ export function WealthView(props: {
               </section>
             )}
 
-            {showIbkrPending && (
+            {showIbkrHoldings && selectedAccount?.latestSnapshot && (
+              <section className="wealth-detail">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">IBKR</p>
+                    <h2>Holdings</h2>
+                  </div>
+                  <button
+                    className="add-button"
+                    onClick={props.onSyncIbkr}
+                    disabled={props.syncingIbkr}
+                    aria-label="Actualizar IBKR"
+                  >
+                    {props.syncingIbkr ? "…" : "↻"}
+                  </button>
+                </div>
+                <div className="payment-list">
+                  {selectedAccount.latestSnapshot.holdings.map((holding) => (
+                    <div key={holding.id} className="payment-row wealth-holding-row">
+                      <span className="payment-dot wealth-role-brokerage" aria-hidden="true" />
+                      <span className="payment-name">
+                        <strong>{holding.name}</strong>
+                        <small>
+                          {holding.quantity} {holding.symbol}
+                        </small>
+                      </span>
+                      <strong className="payment-amount">
+                        <Amt>{money(holding.valueMxnMinor)}</Amt>
+                      </strong>
+                      <span aria-hidden="true" />
+                    </div>
+                  ))}
+                  <div className="payment-total">
+                    <span>Último sync</span>
+                    <strong>{formatDay(selectedAccount.latestSnapshot.day)}</strong>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {showIbkrEmpty && (
               <section className="wealth-detail">
                 <div className="section-heading">
                   <div>
                     <p className="eyebrow">IBKR</p>
                     <h2>Broker</h2>
-                    <p className="section-lede">Flex Query en un siguiente paso.</p>
+                    <p className="section-lede">Sincroniza posiciones con Flex Query.</p>
                   </div>
                 </div>
-                <div className="empty-action wealth-pending-card" aria-disabled="true">
-                  <span>—</span>
+                <button
+                  className="empty-action"
+                  type="button"
+                  onClick={props.onSyncIbkr}
+                  disabled={props.syncingIbkr}
+                >
+                  <span>↻</span>
                   <div>
-                    <strong>Sin conectar</strong>
-                    <small>Aún no hay snapshots.</small>
+                    <strong>{props.syncingIbkr ? "Sincronizando…" : "Actualizar ahora"}</strong>
+                    <small>Flex + Banxico FIX. Se conserva el último sync bueno si falla.</small>
                   </div>
-                </div>
+                </button>
               </section>
             )}
 
