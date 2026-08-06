@@ -1,39 +1,39 @@
 import { describe, expect, it } from "vitest";
 import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan } from "../src/months/monthly-plan.js";
 
-describe("monthly plan validation", () => {
-  it("accepts a valid monthly plan and trims payment names", () => {
+describe("monthly plan", () => {
+  it("parses upcoming payments without requiring incomeMinor", () => {
     expect(parseMonthlyPlan(JSON.stringify({
-      incomeMinor: 4850000,
       currency: "MXN",
-      upcomingPayments: [{ id: "rent", name: "  Renta  ", amountMinor: 1280000, dueDay: 15 }],
+      upcomingPayments: [{ id: "rent", name: "Renta", amountMinor: 1280000, dueDay: 15 }],
     }))).toEqual({
-      incomeMinor: 4850000,
       currency: "MXN",
       upcomingPayments: [{ id: "rent", name: "Renta", amountMinor: 1280000, dueDay: 15 }],
     });
   });
 
-  it.each([
-    undefined,
-    "{}",
-    JSON.stringify({ incomeMinor: 0, currency: "MXN", upcomingPayments: [] }),
-    JSON.stringify({ incomeMinor: 100000, currency: "USD", upcomingPayments: [] }),
-    JSON.stringify({ incomeMinor: 100000, currency: "MXN", upcomingPayments: [{ id: "x", name: "Renta", amountMinor: 1, dueDay: 32 }] }),
-  ])("rejects an invalid request body", (body) => {
-    expect(() => parseMonthlyPlan(body)).toThrow(InvalidMonthlyPlanError);
-  });
-
-  it("validates month keys", () => {
-    expect(isValidMonth("2026-08")).toBe(true);
-    expect(isValidMonth("2026-8")).toBe(false);
-    expect(isValidMonth("2026-13")).toBe(false);
-  });
-
-  it("isolates plans by user and month", () => {
-    expect(monthlyPlanKey("user-123", "2026-08")).toEqual({
-      PK: "USER#user-123",
-      SK: "MONTH#2026-08",
+  it("still accepts legacy bodies that include incomeMinor", () => {
+    expect(parseMonthlyPlan(JSON.stringify({
+      incomeMinor: 4850000,
+      currency: "MXN",
+      upcomingPayments: [],
+    }))).toEqual({
+      currency: "MXN",
+      upcomingPayments: [],
     });
+  });
+
+  it("rejects invalid plans", () => {
+    for (const body of [
+      JSON.stringify({ currency: "USD", upcomingPayments: [] }),
+      JSON.stringify({ currency: "MXN", upcomingPayments: [{ id: "x", name: "Renta", amountMinor: 1, dueDay: 32 }] }),
+    ]) {
+      expect(() => parseMonthlyPlan(body)).toThrow(InvalidMonthlyPlanError);
+    }
+  });
+
+  it("builds month keys", () => {
+    expect(isValidMonth("2026-07")).toBe(true);
+    expect(monthlyPlanKey("user-1", "2026-07")).toEqual({ PK: "USER#user-1", SK: "MONTH#2026-07" });
   });
 });

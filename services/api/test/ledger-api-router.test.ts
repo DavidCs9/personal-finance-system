@@ -71,4 +71,16 @@ describe('ledger API Powertools router', () => {
       message: 'Month must use YYYY-MM format.',
     });
   });
+
+  it('returns 400 when posting a snapshot to a non-Cajita account', async () => {
+    const result = await handler(
+      {
+        ...httpEvent('POST', '/wealth/accounts/bitso/snapshots'),
+        body: JSON.stringify({ amountMinor: 100 }),
+      },
+      context,
+    );
+    expect(result.statusCode).toBe(400);
+    expect(JSON.parse(String(result.body)).message).toMatch(/nu_cajita_emergencia/);
+  });
 });

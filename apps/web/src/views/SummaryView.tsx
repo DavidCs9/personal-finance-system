@@ -1,6 +1,6 @@
 import type { MonthMsiRow } from "@finance/domain";
 import { money, monthDate } from "../lib/format";
-import type { MonthlyPlan, PlannedPayment } from "../monthly-plan";
+import type { MonthlyPlan, Payslip, PlannedPayment } from "../monthly-plan";
 import type { CardCycle } from "../card-cycle";
 import { Amt } from "../components/Amt";
 import { CardCycleSection } from "../components/CardCycleSection";
@@ -24,7 +24,8 @@ export interface SummaryViewProps {
   readonly monthMsiRows: readonly MonthMsiRow[];
   readonly msiSpentMinor: number;
   readonly msiCommittedMinor: number;
-  readonly onEditIncome: () => void;
+  readonly onUploadNomina: () => void;
+  readonly onOpenPayslip: (payslip: Payslip) => void;
   readonly onAddPayment: () => void;
   readonly onEditPayment: (payment: PlannedPayment) => void;
   readonly onOpenMsiEvent: (eventId: string) => void;
@@ -42,6 +43,7 @@ export interface SummaryViewProps {
 
 export function SummaryView(props: SummaryViewProps) {
   const hasIncome = props.plan.configured && props.plan.incomeMinor > 0;
+  const payslips = props.plan.payslips ?? [];
   const paymentMonth = new Intl.DateTimeFormat("es-MX", { month: "short", timeZone: "UTC" })
     .format(monthDate(props.month))
     .replace(".", "")
@@ -70,13 +72,12 @@ export function SummaryView(props: SummaryViewProps) {
           <section className="setup-card missing-income">
             <span className="setup-alert">!</span>
             <p className="eyebrow">EMPIEZA POR TU LÍMITE</p>
-            <h1>Falta configurar tu ingreso.</h1>
+            <h1>Falta tu nómina de este mes.</h1>
             <p>
-              Este mes todavía no tiene un ingreso. Registra el total de tus dos depósitos de nómina
-              para calcular cuánto puedes gastar.
+              Sube el XML del CFDI de nómina para ver liquidez real, retenciones y cuánto te queda.
             </p>
-            <button className="primary-button" onClick={props.onEditIncome}>
-              Definir ingreso mensual
+            <button className="primary-button" onClick={props.onUploadNomina}>
+              Subir nómina XML
             </button>
           </section>
         ) : (
@@ -87,7 +88,13 @@ export function SummaryView(props: SummaryViewProps) {
                   <p className="eyebrow">GASTO ACUMULADO</p>
                   <h1>Has gastado</h1>
                 </div>
-                <button className="income-button" onClick={props.onEditIncome}>
+                <button
+                  className="income-button"
+                  onClick={() => {
+                    if (payslips[0]) props.onOpenPayslip(payslips[0]);
+                    else props.onUploadNomina();
+                  }}
+                >
                   <span>Ingreso</span>
                   <strong>
                     <Amt>{money(props.plan.incomeMinor)}</Amt>
@@ -103,11 +110,32 @@ export function SummaryView(props: SummaryViewProps) {
                 </strong>
                 <span>de tu ingreso mensual</span>
               </div>
-              {props.uncertainMinor > 0 && (
-                <p className="uncertain-note">
-                  <span>!</span> Incluye <Amt>{money(props.uncertainMinor)}</Amt> por confirmar
-                </p>
-              )}
+              {(props.plan.estimateActive && (props.plan.estimatedMinor ?? 0) > 0) ||
+              props.uncertainMinor > 0 ? (
+                <div className="spend-notes">
+                  {props.plan.estimateActive && (props.plan.estimatedMinor ?? 0) > 0 && (
+                    <p className="uncertain-note">
+                      <span className="note-icon" aria-hidden="true">
+                        ≈
+                      </span>
+                      <span className="note-copy">
+                        Incluye <Amt>{money(props.plan.estimatedMinor ?? 0)}</Amt> estimado de la 2ª
+                        quincena
+                      </span>
+                    </p>
+                  )}
+                  {props.uncertainMinor > 0 && (
+                    <p className="uncertain-note">
+                      <span className="note-icon" aria-hidden="true">
+                        !
+                      </span>
+                      <span className="note-copy">
+                        Incluye <Amt>{money(props.uncertainMinor)}</Amt> por confirmar
+                      </span>
+                    </p>
+                  )}
+                </div>
+              ) : null}
             </section>
 
             <div className="number-grid">
@@ -142,6 +170,55 @@ export function SummaryView(props: SummaryViewProps) {
                 )}
               </section>
             </div>
+
+            {payslips.length > 0 && (
+              <section className="payslip-month-section">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">NÓMINAS DEL MES</p>
+                    <h2>Liquidez y retenciones</h2>
+                    <p className="section-lede">Toca una nómina para ver el desglose completo.</p>
+                  </div>
+                  <button className="add-button" aria-label="Subir nómina" onClick={props.onUploadNomina}>
+                    +
+                  </button>
+                </div>
+                <div className="payment-list payslip-list">
+                  {payslips.map((payslip) => {
+                    const day = payslip.fechaPago.slice(8, 10);
+                    const monthLabel = new Intl.DateTimeFormat("es-MX", {
+                      month: "short",
+                      timeZone: "UTC",
+                    })
+                      .format(new Date(`${payslip.fechaPago}T12:00:00Z`))
+                      .replace(".", "")
+                      .toUpperCase();
+                    return (
+                      <button
+                        key={payslip.uuid}
+                        className="payment-row"
+                        onClick={() => props.onOpenPayslip(payslip)}
+                      >
+                        <span className="date-block">
+                          <small>{monthLabel}</small>
+                          <strong>{day}</strong>
+                        </span>
+                        <span className="payment-name">
+                          <strong>
+                            {payslip.tipoNomina === "O" ? "Nómina ordinaria" : "Nómina extraordinaria"}
+                          </strong>
+                          <small>{payslip.employerName ?? "CFDI nómina"}</small>
+                        </span>
+                        <strong className="payment-amount">
+                          <Amt>{money(payslip.totalMinor)}</Amt>
+                        </strong>
+                        <span className="chevron">›</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
           </>
         )}
 

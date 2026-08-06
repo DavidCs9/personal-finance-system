@@ -35,6 +35,13 @@ export function AppShell({
   error?: string;
   children: ReactNode;
 }) {
+  const contentClass =
+    tab === "summary"
+      ? "summary-active"
+      : tab === "movements"
+        ? "movements-active"
+        : "wealth-active";
+
   return (
     <main className="app-shell">
       <Topbar
@@ -48,9 +55,13 @@ export function AppShell({
         onSignOut={onSignOut}
       />
 
-      <div className={`app-content${tab === "summary" ? " summary-active" : " movements-active"}`}>
+      <div className={`app-content ${contentClass}`}>
         {error && <p className="banner-error">{error}</p>}
-        <MonthSelector value={month} onChange={onMonthChange} />
+        <MonthSelector
+          value={month}
+          onChange={onMonthChange}
+          disabled={tab === "wealth"}
+        />
         <TabNav tab={tab} onTabChange={onTabChange} variant="desktop" />
         {children}
         <TabNav tab={tab} onTabChange={onTabChange} variant="mobile" />

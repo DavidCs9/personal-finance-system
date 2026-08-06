@@ -405,6 +405,7 @@ export class PersonalFinanceV1Stack extends Stack {
       timeout: Duration.minutes(2),
       environment: {
         METADATA_TABLE_NAME: metadataTable.tableName,
+        RAW_EMAIL_BUCKET_NAME: rawEmailBucket.bucketName,
         VAPID_SECRET_ARN: vapidSecret.secretArn,
         WEB_APP_URL: webAppUrl,
       },
@@ -468,6 +469,127 @@ export class PersonalFinanceV1Stack extends Stack {
       }),
     });
 
+    const bitsoApiSecret = new secretsmanager.Secret(this, 'BitsoApiSecret', {
+      description: 'Bitso API credentials and Cognito owner sub for patrimonio sync. Replace pending placeholders.',
+      secretStringValue: cdk.SecretValue.unsafePlainText(JSON.stringify({
+        apiKey: 'pending',
+        apiSecret: 'pending',
+        owner: 'pending',
+      })),
+    });
+    const bitsoSyncDlq = new sqs.Queue(this, 'BitsoSyncDlq', {
+      queueName: 'personal-finance-v1-bitso-sync-dlq',
+      retentionPeriod: Duration.days(14),
+      encryption: sqs.QueueEncryption.KMS_MANAGED,
+    });
+    const bitsoSyncFunction = new NodejsFunction(this, 'BitsoSyncFunction', {
+      ...pushLambdaDefaults,
+      functionName: 'personal-finance-v1-bitso-sync',
+      logGroup: this.createLogGroup('BitsoSyncLogGroup', 'personal-finance-v1-bitso-sync'),
+      entry: path.join(__dirname, '..', 'lambda', 'bitso-sync.ts'),
+      handler: 'handler',
+      description: 'Syncs Bitso balances into patrimonio snapshots at 06:30 America/Chihuahua.',
+      timeout: Duration.minutes(2),
+      environment: {
+        ...dataStorageEnvironment,
+        BITSO_SECRET_ARN: bitsoApiSecret.secretArn,
+        ALERT_SENDER_EMAIL: senderEmail.valueAsString,
+        ALERT_RECIPIENT_EMAIL: alertRecipientEmail.valueAsString,
+        VAPID_SECRET_ARN: vapidSecret.secretArn,
+        WEB_APP_URL: webAppUrl,
+      },
+    });
+    rawEmailBucket.grantReadWrite(bitsoSyncFunction);
+    metadataTable.grantReadWriteData(bitsoSyncFunction);
+    bitsoApiSecret.grantRead(bitsoSyncFunction);
+    vapidSecret.grantRead(bitsoSyncFunction);
+    bitsoSyncFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ses:SendEmail'],
+      resources: ['*'],
+      conditions: { StringEquals: { 'ses:FromAddress': senderEmail.valueAsString } },
+    }));
+    new scheduler.Schedule(this, 'BitsoSyncSchedule', {
+      scheduleName: 'personal-finance-v1-bitso-sync',
+      description: 'Invokes Bitso patrimonio sync at 06:30 America/Chihuahua.',
+      schedule: scheduler.ScheduleExpression.cron({
+        minute: '30',
+        hour: '6',
+        day: '*',
+        month: '*',
+        year: '*',
+        timeZone: cdk.TimeZone.of('America/Chihuahua'),
+      }),
+      timeWindow: scheduler.TimeWindow.off(),
+      target: new LambdaInvoke(bitsoSyncFunction, {
+        deadLetterQueue: bitsoSyncDlq,
+        retryAttempts: 2,
+      }),
+    });
+
+    apiFunction.addEnvironment('BITSO_SECRET_ARN', bitsoApiSecret.secretArn);
+    bitsoApiSecret.grantRead(apiFunction);
+
+    const ibkrApiSecret = new secretsmanager.Secret(this, 'IbkrApiSecret', {
+      description: 'IBKR Flex token/queryId, Banxico token, and Cognito owner sub for patrimonio sync. Replace pending placeholders.',
+      secretStringValue: cdk.SecretValue.unsafePlainText(JSON.stringify({
+        flexToken: 'pending',
+        flexQueryId: 'pending',
+        banxicoToken: 'pending',
+        owner: 'pending',
+      })),
+    });
+    const ibkrSyncDlq = new sqs.Queue(this, 'IbkrSyncDlq', {
+      queueName: 'personal-finance-v1-ibkr-sync-dlq',
+      retentionPeriod: Duration.days(14),
+      encryption: sqs.QueueEncryption.KMS_MANAGED,
+    });
+    const ibkrSyncFunction = new NodejsFunction(this, 'IbkrSyncFunction', {
+      ...pushLambdaDefaults,
+      functionName: 'personal-finance-v1-ibkr-sync',
+      logGroup: this.createLogGroup('IbkrSyncLogGroup', 'personal-finance-v1-ibkr-sync'),
+      entry: path.join(__dirname, '..', 'lambda', 'ibkr-sync.ts'),
+      handler: 'handler',
+      description: 'Syncs IBKR Flex positions into patrimonio snapshots at 06:45 America/Chihuahua.',
+      timeout: Duration.minutes(3),
+      environment: {
+        ...dataStorageEnvironment,
+        IBKR_SECRET_ARN: ibkrApiSecret.secretArn,
+        ALERT_SENDER_EMAIL: senderEmail.valueAsString,
+        ALERT_RECIPIENT_EMAIL: alertRecipientEmail.valueAsString,
+        VAPID_SECRET_ARN: vapidSecret.secretArn,
+        WEB_APP_URL: webAppUrl,
+      },
+    });
+    rawEmailBucket.grantReadWrite(ibkrSyncFunction);
+    metadataTable.grantReadWriteData(ibkrSyncFunction);
+    ibkrApiSecret.grantRead(ibkrSyncFunction);
+    vapidSecret.grantRead(ibkrSyncFunction);
+    ibkrSyncFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ses:SendEmail'],
+      resources: ['*'],
+      conditions: { StringEquals: { 'ses:FromAddress': senderEmail.valueAsString } },
+    }));
+    new scheduler.Schedule(this, 'IbkrSyncSchedule', {
+      scheduleName: 'personal-finance-v1-ibkr-sync',
+      description: 'Invokes IBKR patrimonio Flex sync at 06:45 America/Chihuahua.',
+      schedule: scheduler.ScheduleExpression.cron({
+        minute: '45',
+        hour: '6',
+        day: '*',
+        month: '*',
+        year: '*',
+        timeZone: cdk.TimeZone.of('America/Chihuahua'),
+      }),
+      timeWindow: scheduler.TimeWindow.off(),
+      target: new LambdaInvoke(ibkrSyncFunction, {
+        deadLetterQueue: ibkrSyncDlq,
+        retryAttempts: 2,
+      }),
+    });
+
+    apiFunction.addEnvironment('IBKR_SECRET_ARN', ibkrApiSecret.secretArn);
+    ibkrApiSecret.grantRead(apiFunction);
+
     const httpApi = new apigatewayv2.HttpApi(this, 'HttpApi', {
       apiName: 'personal-finance-v1',
       description: 'Authenticated personal-finance API.',
@@ -505,6 +627,8 @@ export class PersonalFinanceV1Stack extends Stack {
       'PATCH /events/{eventId}',
       'GET /months/{month}',
       'PUT /months/{month}',
+      'GET /months/{month}/payslips/{uuid}',
+      'POST /imports/nomina',
       'POST /imports/santander/preview',
       'POST /imports/santander/{importId}/apply',
       'POST /imports/amex/preview',
@@ -519,6 +643,10 @@ export class PersonalFinanceV1Stack extends Stack {
       'GET /cards',
       'PUT /cards/{cardId}',
       'DELETE /cards/{cardId}',
+      'GET /wealth',
+      'POST /wealth/accounts/{accountId}/snapshots',
+      'POST /wealth/sync/bitso',
+      'POST /wealth/sync/ibkr',
     ]) {
       httpApi.addRoutes({
         path: route.split(' ')[1],
@@ -629,6 +757,26 @@ export class PersonalFinanceV1Stack extends Stack {
       threshold: 1,
       evaluationPeriods: 1,
     });
+    const bitsoSyncErrorAlarm = new cdk.aws_cloudwatch.Alarm(this, 'BitsoSyncErrorsAlarm', {
+      metric: bitsoSyncFunction.metricErrors({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
+    const bitsoSyncDlqAlarm = new cdk.aws_cloudwatch.Alarm(this, 'BitsoSyncDlqAlarm', {
+      metric: bitsoSyncDlq.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
+    const ibkrSyncErrorAlarm = new cdk.aws_cloudwatch.Alarm(this, 'IbkrSyncErrorsAlarm', {
+      metric: ibkrSyncFunction.metricErrors({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
+    const ibkrSyncDlqAlarm = new cdk.aws_cloudwatch.Alarm(this, 'IbkrSyncDlqAlarm', {
+      metric: ibkrSyncDlq.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
 
     new cdk.CfnOutput(this, 'RawEmailBucketName', { value: rawEmailBucket.bucketName });
     new cdk.CfnOutput(this, 'MetadataTableName', { value: metadataTable.tableName });
@@ -640,6 +788,8 @@ export class PersonalFinanceV1Stack extends Stack {
     new cdk.CfnOutput(this, 'HttpApiUrl', { value: httpApi.apiEndpoint });
     new cdk.CfnOutput(this, 'ApplePayCaptureUrl', { value: `${httpApi.apiEndpoint}/captures/apple-pay` });
     new cdk.CfnOutput(this, 'ApplePayCaptureSecretArn', { value: applePayCaptureSecret.secretArn });
+    new cdk.CfnOutput(this, 'BitsoApiSecretArn', { value: bitsoApiSecret.secretArn });
+    new cdk.CfnOutput(this, 'IbkrApiSecretArn', { value: ibkrApiSecret.secretArn });
     new cdk.CfnOutput(this, 'WebPushVapidSecretArn', { value: vapidSecret.secretArn });
     new cdk.CfnOutput(this, 'WebDistributionUrl', { value: `https://${distribution.distributionDomainName}` });
     new cdk.CfnOutput(this, 'WebCustomDomainUrl', { value: `https://${webDomainName}` });
@@ -652,6 +802,10 @@ export class PersonalFinanceV1Stack extends Stack {
     new cdk.CfnOutput(this, 'DailyBalancePushDlqAlarmName', { value: dailyBalancePushDlqAlarm.alarmName });
     new cdk.CfnOutput(this, 'CardCyclePushErrorsAlarmName', { value: cardCyclePushErrorAlarm.alarmName });
     new cdk.CfnOutput(this, 'CardCyclePushDlqAlarmName', { value: cardCyclePushDlqAlarm.alarmName });
+    new cdk.CfnOutput(this, 'BitsoSyncErrorsAlarmName', { value: bitsoSyncErrorAlarm.alarmName });
+    new cdk.CfnOutput(this, 'BitsoSyncDlqAlarmName', { value: bitsoSyncDlqAlarm.alarmName });
+    new cdk.CfnOutput(this, 'IbkrSyncErrorsAlarmName', { value: ibkrSyncErrorAlarm.alarmName });
+    new cdk.CfnOutput(this, 'IbkrSyncDlqAlarmName', { value: ibkrSyncDlqAlarm.alarmName });
   }
 
   private createLogGroup(id: string, functionName: string): logs.LogGroup {

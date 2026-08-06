@@ -32,8 +32,22 @@ import { InvalidSantanderCsvError } from '../imports/santander-csv.js';
 import { InvalidSantanderStatementError } from '../imports/santander-statement.js';
 import { InvalidAmexStatementError } from '../imports/amex-statement.js';
 import { TextractDocumentError } from '../imports/textract-document.js';
+import {
+  InvalidCfdiNominaError,
+  getPayslip,
+  ingestNominaBulk,
+  parseBulkNominaBody,
+} from '../imports/cfdi-nomina-flow.js';
 import { InvalidMonthlyPlanError, isValidMonth, parseMonthlyPlan } from '../months/monthly-plan.js';
 import { getMonthlyPlan, saveMonthlyPlan } from '../months/service.js';
+import { InvalidWealthSnapshotError } from '../wealth/input.js';
+import {
+  assertCajitaAccountParam,
+  createCajitaSnapshot,
+  getWealthOverview,
+} from '../wealth/service.js';
+import { syncBitsoForOwner } from '../wealth/bitso-sync.js';
+import { syncIbkrForOwner } from '../wealth/ibkr-sync.js';
 import {
   deletePushSubscription,
   InvalidPushSubscriptionError,
@@ -61,11 +75,13 @@ const clientErrors = [
   InvalidSantanderCsvError,
   InvalidSantanderStatementError,
   InvalidAmexStatementError,
+  InvalidCfdiNominaError,
   TextractDocumentError,
   InvalidPushSubscriptionError,
   InvalidManualEntryError,
   InvalidMsiError,
   InvalidCardError,
+  InvalidWealthSnapshotError,
 ] as const;
 
 app.errorHandler([...clientErrors], async (error) =>
@@ -228,6 +244,43 @@ app.put('/months/:month', async ({ event, params }) => {
   const input = parseMonthlyPlan(requestBody(gatewayEvent));
   return json(HttpStatusCodes.OK, await saveMonthlyPlan(ownerOf(gatewayEvent), params.month, input));
 });
+
+app.post('/imports/nomina', async ({ event }) => {
+  const gatewayEvent = asHttpEvent(event);
+  const documents = parseBulkNominaBody(requestBody(gatewayEvent));
+  return json(HttpStatusCodes.OK, await ingestNominaBulk(ownerOf(gatewayEvent), documents));
+});
+
+app.get('/months/:month/payslips/:uuid', async ({ event, params }) => {
+  if (!isValidMonth(params.month)) {
+    return json(HttpStatusCodes.BAD_REQUEST, { message: 'Month must use YYYY-MM format.' });
+  }
+  const payslip = await getPayslip(ownerOf(asHttpEvent(event)), params.month, params.uuid);
+  return payslip
+    ? json(HttpStatusCodes.OK, payslip)
+    : json(HttpStatusCodes.NOT_FOUND, { message: 'Payslip not found.' });
+});
+
+app.get('/wealth', async ({ event }) =>
+  json(HttpStatusCodes.OK, await getWealthOverview(ownerOf(asHttpEvent(event)))),
+);
+
+app.post('/wealth/accounts/:accountId/snapshots', async ({ event, params }) => {
+  const gatewayEvent = asHttpEvent(event);
+  assertCajitaAccountParam(params.accountId);
+  return json(
+    HttpStatusCodes.CREATED,
+    await createCajitaSnapshot(requestBody(gatewayEvent), ownerOf(gatewayEvent)),
+  );
+});
+
+app.post('/wealth/sync/bitso', async ({ event }) =>
+  json(HttpStatusCodes.OK, await syncBitsoForOwner(ownerOf(asHttpEvent(event)))),
+);
+
+app.post('/wealth/sync/ibkr', async ({ event }) =>
+  json(HttpStatusCodes.OK, await syncIbkrForOwner(ownerOf(asHttpEvent(event)))),
+);
 
 app.post('/imports/santander/preview', async ({ event }) => {
   const gatewayEvent = asHttpEvent(event);

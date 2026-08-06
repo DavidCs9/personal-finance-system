@@ -165,3 +165,35 @@ export {
   type MsiPlanStatus,
   type MsiScheduleInput,
 } from "./msi.js";
+
+export {
+  BITSO_ACCOUNT_ID,
+  CAJITA_ACCOUNT_ID,
+  CAJITA_STALE_DAYS,
+  IBKR_ACCOUNT_ID,
+  WEALTH_ACCOUNTS,
+  WEALTH_ACCOUNT_IDS,
+  cajitaEmergencyHolding,
+  isWealthAccountId,
+  isWealthSnapshotStale,
+  wealthSnapshotAgeDays,
+  type WealthAccountDefinition,
+  type WealthAccountId,
+  type WealthAccountRole,
+  type WealthHolding,
+  type WealthSnapshot,
+  type WealthSnapshotEvidence,
+  type WealthSnapshotSource,
+} from "./wealth.js";
+
+export {
+  deriveMonthIncome,
+  isOrdinaryNomina,
+  monthFromFechaPago,
+  payslipLineGroup,
+  type MonthIncomeDerivation,
+  type PayslipLine,
+  type PayslipLineGroup,
+  type PayslipLineKind,
+  type PayslipSummary,
+} from "./payroll.js";

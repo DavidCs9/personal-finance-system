@@ -12,6 +12,7 @@ import {
 import { loadVapidCredentials, sendPushToSubscriptions } from '@finance/notify';
 import { listActivePushSubscriptions, type PushSubscriptionRecord } from '@finance/notify';
 import { monthlyPlanKey } from '../months/monthly-plan.js';
+import { incomeFieldsForMonth } from '../imports/cfdi-nomina-flow.js';
 
 const database = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const secrets = new SecretsManagerClient({});
@@ -125,25 +126,28 @@ const loadMonthlyPlan = async (
   owner: string,
   month: string,
 ): Promise<{ readonly configured: boolean; readonly incomeMinor: number; readonly upcomingMinor: number }> => {
-  const result = await database.send(new GetCommand({
-    TableName: tableName,
-    Key: monthlyPlanKey(owner, month),
-    ConsistentRead: true,
-  }));
+  const [result, income] = await Promise.all([
+    database.send(new GetCommand({
+      TableName: tableName,
+      Key: monthlyPlanKey(owner, month),
+      ConsistentRead: true,
+    })),
+    incomeFieldsForMonth(owner, month),
+  ]);
   const payload = result.Item?.payload as {
-    readonly incomeMinor?: unknown;
     readonly upcomingPayments?: unknown;
   } | undefined;
-  if (!payload || typeof payload.incomeMinor !== 'number' || payload.incomeMinor <= 0) {
-    return { configured: false, incomeMinor: 0, upcomingMinor: 0 };
-  }
-  const upcomingPayments = Array.isArray(payload.upcomingPayments) ? payload.upcomingPayments : [];
+  const upcomingPayments = Array.isArray(payload?.upcomingPayments) ? payload.upcomingPayments : [];
   const upcomingMinor = upcomingPayments.reduce((sum: number, payment: unknown) => {
     if (!payment || typeof payment !== 'object') return sum;
     const amountMinor = (payment as { amountMinor?: unknown }).amountMinor;
     return typeof amountMinor === 'number' ? sum + amountMinor : sum;
   }, 0);
-  return { configured: true, incomeMinor: payload.incomeMinor, upcomingMinor };
+  return {
+    configured: income.configured,
+    incomeMinor: income.incomeMinor,
+    upcomingMinor,
+  };
 };
 
 const listAllObservedEvents = async (): Promise<readonly MonthSpendEvent[]> => {

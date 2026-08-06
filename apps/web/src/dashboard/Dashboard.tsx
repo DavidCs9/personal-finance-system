@@ -6,7 +6,7 @@ import { mockExceptionRawEmail, mockExceptions, mockFeedForMonth } from "../api/
 import { AppShell } from "../layout/AppShell";
 import { eventDate, monthKey } from "../lib/format";
 import { usePrivateMode } from "../lib/private-mode";
-import { eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, cardsQueryKey } from "../lib/query-keys";
+import { eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, cardsQueryKey, wealthQueryKey } from "../lib/query-keys";
 import type { Tab } from "../lib/tabs";
 import {
   demoPlans,
@@ -17,7 +17,10 @@ import {
 import { demoCards } from "../card-cycle-demo";
 import type { CardCycle } from "../card-cycle";
 import { EventSheet } from "../sheets/EventSheet";
-import { IncomeSheet } from "../sheets/IncomeSheet";
+import { NominaUploadSheet } from "../sheets/NominaUploadSheet";
+import { PayslipSheet } from "../sheets/PayslipSheet";
+import type { Payslip } from "../monthly-plan";
+import { CajitaSheet } from "../sheets/CajitaSheet";
 import { ManualEntrySheet } from "../sheets/ManualEntrySheet";
 import { PaymentSheet } from "../sheets/PaymentSheet";
 import { CardSheet } from "../sheets/CardSheet";
@@ -26,6 +29,10 @@ import { StatementImportSheet } from "../sheets/StatementImportSheet";
 import type { EventFeed, PurchaseEvent } from "../types";
 import { MovementsView } from "../views/MovementsView";
 import { SummaryView } from "../views/SummaryView";
+import { WealthView } from "../views/WealthView";
+import { demoWealthOverview } from "../wealth-demo";
+import type { WealthOverview, WealthAccountView, WealthHistoryPoint } from "../wealth";
+import { CAJITA_ACCOUNT_ID, BITSO_ACCOUNT_ID, IBKR_ACCOUNT_ID, WEALTH_ACCOUNTS, dayKeyInZone, type WealthAccountId, type WealthSnapshot } from "@finance/domain";
 
 export function Dashboard({
   idToken,
@@ -43,7 +50,8 @@ export function Dashboard({
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("summary");
   const [selectedMonth, setSelectedMonth] = useState(monthKey(now));
-  const [editingIncome, setEditingIncome] = useState(false);
+  const [activePayslip, setActivePayslip] = useState<Payslip>();
+  const [uploadingNomina, setUploadingNomina] = useState(false);
   const [editingPayment, setEditingPayment] = useState<PlannedPayment | null | undefined>();
   const [editingCard, setEditingCard] = useState<CardCycle | null | undefined>();
   const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
@@ -52,6 +60,8 @@ export function Dashboard({
   const [amexImportOpen, setAmexImportOpen] = useState(false);
   const [santanderStatementOpen, setSantanderStatementOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
+  const [cajitaOpen, setCajitaOpen] = useState(false);
+  const [selectedWealthAccount, setSelectedWealthAccount] = useState<WealthAccountId | "all">("all");
   const { privateMode, togglePrivateMode } = usePrivateMode();
 
   const eventsQuery = useQuery({
@@ -80,12 +90,155 @@ export function Dashboard({
         ? Promise.resolve({ cards: demoCards })
         : ledgerApi.listCards(idToken),
   });
+  const wealthQuery = useQuery({
+    queryKey: wealthQueryKey,
+    queryFn: () =>
+      demoMode ? Promise.resolve(demoWealthOverview) : ledgerApi.wealth(idToken),
+  });
+
+  const bitsoSyncMutation = useMutation({
+    mutationFn: async () => {
+      if (demoMode) {
+        const day = dayKeyInZone(now);
+        const snapshot: WealthSnapshot = {
+          accountId: BITSO_ACCOUNT_ID,
+          day,
+          capturedAt: now.toISOString(),
+          source: "api",
+          currency: "MXN",
+          totalMxnMinor: 1_250_000,
+          fxSource: "bitso_ticker",
+          holdings: demoWealthOverview.accounts.find((account) => account.id === BITSO_ACCOUNT_ID)
+            ?.latestSnapshot?.holdings ?? [],
+        };
+        return { snapshot, skipped: [] as string[] };
+      }
+      return ledgerApi.syncBitso(idToken);
+    },
+    onSuccess: async (result) => {
+      if (demoMode) {
+        const snapshot = result.snapshot;
+        queryClient.setQueryData<WealthOverview>(wealthQueryKey, (current) => {
+          const base: WealthOverview = current ?? demoWealthOverview;
+          const accounts: WealthAccountView[] = base.accounts.map((account: WealthAccountView) =>
+            account.id === BITSO_ACCOUNT_ID
+              ? { ...account, connected: true, latestSnapshot: snapshot }
+              : account,
+          );
+          const previous: readonly WealthHistoryPoint[] = base.history.byAccount.bitso ?? [];
+          const bitsoHistory: WealthHistoryPoint[] = [
+            ...previous.filter((point) => point.day !== snapshot.day),
+            { day: snapshot.day, totalMxnMinor: snapshot.totalMxnMinor },
+          ].sort((left, right) => left.day.localeCompare(right.day));
+          const allByDay = new Map<string, number>();
+          for (const account of accounts) {
+            for (const point of (
+              account.id === BITSO_ACCOUNT_ID
+                ? bitsoHistory
+                : (base.history.byAccount[account.id] ?? [])
+            )) {
+              allByDay.set(point.day, (allByDay.get(point.day) ?? 0) + point.totalMxnMinor);
+            }
+          }
+          return {
+            currency: "MXN",
+            totalMxnMinor: accounts.reduce(
+              (sum, account) => sum + (account.latestSnapshot?.totalMxnMinor ?? 0),
+              0,
+            ),
+            accounts,
+            history: {
+              all: [...allByDay.entries()]
+                .sort(([left], [right]) => left.localeCompare(right))
+                .map(([day, totalMxnMinor]) => ({ day, totalMxnMinor })),
+              byAccount: {
+                ...base.history.byAccount,
+                bitso: bitsoHistory,
+              },
+            },
+          };
+        });
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: wealthQueryKey });
+    },
+  });
+
+  const ibkrSyncMutation = useMutation({
+    mutationFn: async () => {
+      if (demoMode) {
+        const day = dayKeyInZone(now);
+        const snapshot: WealthSnapshot = {
+          accountId: IBKR_ACCOUNT_ID,
+          day,
+          capturedAt: now.toISOString(),
+          source: "flex",
+          currency: "MXN",
+          totalMxnMinor: 12_500_500,
+          fxRate: 20,
+          fxSource: "banxico_sf43718",
+          holdings: demoWealthOverview.accounts.find((account) => account.id === IBKR_ACCOUNT_ID)
+            ?.latestSnapshot?.holdings ?? [],
+        };
+        return { snapshot, skipped: [] as string[], fxRate: 20 };
+      }
+      return ledgerApi.syncIbkr(idToken);
+    },
+    onSuccess: async (result) => {
+      if (demoMode) {
+        const snapshot = result.snapshot;
+        queryClient.setQueryData<WealthOverview>(wealthQueryKey, (current) => {
+          const base: WealthOverview = current ?? demoWealthOverview;
+          const accounts: WealthAccountView[] = base.accounts.map((account: WealthAccountView) =>
+            account.id === IBKR_ACCOUNT_ID
+              ? { ...account, connected: true, latestSnapshot: snapshot }
+              : account,
+          );
+          const previous: readonly WealthHistoryPoint[] = base.history.byAccount.ibkr ?? [];
+          const ibkrHistory: WealthHistoryPoint[] = [
+            ...previous.filter((point) => point.day !== snapshot.day),
+            { day: snapshot.day, totalMxnMinor: snapshot.totalMxnMinor },
+          ].sort((left, right) => left.day.localeCompare(right.day));
+          const allByDay = new Map<string, number>();
+          for (const account of accounts) {
+            for (const point of (
+              account.id === IBKR_ACCOUNT_ID
+                ? ibkrHistory
+                : (base.history.byAccount[account.id] ?? [])
+            )) {
+              allByDay.set(point.day, (allByDay.get(point.day) ?? 0) + point.totalMxnMinor);
+            }
+          }
+          return {
+            currency: "MXN",
+            totalMxnMinor: accounts.reduce(
+              (sum, account) => sum + (account.latestSnapshot?.totalMxnMinor ?? 0),
+              0,
+            ),
+            accounts,
+            history: {
+              all: [...allByDay.entries()]
+                .sort(([left], [right]) => left.localeCompare(right))
+                .map(([day, totalMxnMinor]) => ({ day, totalMxnMinor })),
+              byAccount: {
+                ...base.history.byAccount,
+                ibkr: ibkrHistory,
+              },
+            },
+          };
+        });
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: wealthQueryKey });
+    },
+  });
 
   const events = eventsQuery.data?.events ?? [];
   const msiRelated = eventsQuery.data?.msiRelated ?? [];
   const exceptions = exceptionsQuery.data?.exceptions ?? [];
   const plan = monthlyPlanQuery.data ?? planFor({}, selectedMonth);
   const cards = cardsQuery.data?.cards ?? [];
+  const wealth = wealthQuery.data;
   const loading = eventsQuery.isPending || eventsQuery.isFetching;
   const error =
     eventsQuery.error instanceof Error
@@ -107,12 +260,20 @@ export function Dashboard({
       : cardsQuery.error
         ? "No se pudieron cargar tus tarjetas."
         : undefined;
+  const wealthLoading = wealthQuery.isPending || wealthQuery.isFetching;
+  const wealthLoadError =
+    wealthQuery.error instanceof Error
+      ? wealthQuery.error.message
+      : wealthQuery.error
+        ? "No se pudo cargar tu patrimonio."
+        : undefined;
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
     void queryClient.invalidateQueries({ queryKey: exceptionsQueryKey });
     void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
     void queryClient.invalidateQueries({ queryKey: cardsQueryKey });
+    void queryClient.invalidateQueries({ queryKey: wealthQueryKey });
   };
 
   const retryExceptionMutation = useMutation({
@@ -231,8 +392,8 @@ export function Dashboard({
         onTabChange={setTab}
         month={selectedMonth}
         onMonthChange={setSelectedMonth}
-        syncing={loading}
-        refreshing={loading || planLoading}
+        syncing={tab === "wealth" ? wealthLoading : loading}
+        refreshing={tab === "wealth" ? wealthLoading : loading || planLoading}
         onRefresh={refresh}
         privateMode={privateMode}
         onTogglePrivateMode={togglePrivateMode}
@@ -245,7 +406,7 @@ export function Dashboard({
               }
             : onSignOut
         }
-        error={error}
+        error={tab === "wealth" ? undefined : error}
       >
         {tab === "summary" ? (
           <SummaryView
@@ -267,7 +428,8 @@ export function Dashboard({
             monthMsiRows={monthMsiRows}
             msiSpentMinor={msiSpentMinor}
             msiCommittedMinor={msiCommittedMinor}
-            onEditIncome={() => setEditingIncome(true)}
+            onUploadNomina={() => setUploadingNomina(true)}
+            onOpenPayslip={setActivePayslip}
             onAddPayment={() => setEditingPayment(null)}
             onEditPayment={(payment) => setEditingPayment(payment)}
             onOpenMsiEvent={openMsiEvent}
@@ -283,6 +445,54 @@ export function Dashboard({
             now={now}
             idToken={idToken}
             demoMode={demoMode}
+          />
+        ) : tab === "wealth" ? (
+          <WealthView
+            overview={
+              wealth ?? {
+                currency: "MXN" as const,
+                totalMxnMinor: 0,
+                accounts: WEALTH_ACCOUNTS.map((account) => ({
+                  ...account,
+                  connected: false,
+                  latestSnapshot: null,
+                })),
+                history: { all: [], byAccount: {} },
+              }
+            }
+            loading={wealthLoading && !wealth}
+            loadError={wealthLoadError}
+            onRetry={() => {
+              void wealthQuery.refetch();
+            }}
+            selectedAccountId={selectedWealthAccount}
+            onSelectAccount={setSelectedWealthAccount}
+            onRegisterCajita={() => setCajitaOpen(true)}
+            onSyncBitso={() => {
+              bitsoSyncMutation.reset();
+              bitsoSyncMutation.mutate();
+            }}
+            syncingBitso={bitsoSyncMutation.isPending}
+            bitsoSyncError={
+              bitsoSyncMutation.error instanceof Error
+                ? bitsoSyncMutation.error.message
+                : bitsoSyncMutation.error
+                  ? "No se pudo sincronizar Bitso."
+                  : undefined
+            }
+            onSyncIbkr={() => {
+              ibkrSyncMutation.reset();
+              ibkrSyncMutation.mutate();
+            }}
+            syncingIbkr={ibkrSyncMutation.isPending}
+            ibkrSyncError={
+              ibkrSyncMutation.error instanceof Error
+                ? ibkrSyncMutation.error.message
+                : ibkrSyncMutation.error
+                  ? "No se pudo sincronizar IBKR."
+                  : undefined
+            }
+            now={now}
           />
         ) : (
           <MovementsView
@@ -305,16 +515,20 @@ export function Dashboard({
         )}
       </AppShell>
 
-      {editingIncome && (
-        <IncomeSheet
+      {uploadingNomina && (
+        <NominaUploadSheet
           month={selectedMonth}
-          incomeMinor={plan.incomeMinor}
-          onClose={() => setEditingIncome(false)}
-          onSave={async (incomeMinor) => {
-            await savePlan({ ...plan, month: selectedMonth, configured: true, incomeMinor });
-            setEditingIncome(false);
+          demoMode={demoMode}
+          onClose={() => setUploadingNomina(false)}
+          onUpload={async (files) => {
+            const response = await ledgerApi.uploadNominas(files, idToken);
+            await queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
+            return response;
           }}
         />
+      )}
+      {activePayslip && (
+        <PayslipSheet payslip={activePayslip} onClose={() => setActivePayslip(undefined)} />
       )}
       {editingPayment !== undefined && (
         <PaymentSheet
@@ -433,6 +647,75 @@ export function Dashboard({
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             setActiveEvent(created);
             setTab("movements");
+          }}
+        />
+      )}
+      {cajitaOpen && (
+        <CajitaSheet
+          currentMinor={
+            wealth?.accounts.find((account) => account.id === CAJITA_ACCOUNT_ID)?.latestSnapshot
+              ?.totalMxnMinor
+          }
+          onClose={() => setCajitaOpen(false)}
+          onSave={async (amountMinor) => {
+            if (demoMode) {
+              const day = dayKeyInZone(now);
+              const snapshot = {
+                accountId: CAJITA_ACCOUNT_ID,
+                day,
+                capturedAt: now.toISOString(),
+                source: "manual" as const,
+                currency: "MXN" as const,
+                totalMxnMinor: amountMinor,
+                holdings: [
+                  {
+                    id: "emergency_fund",
+                    symbol: "MXN",
+                    name: "Fondo de emergencia",
+                    quantity: amountMinor / 100,
+                    currency: "MXN",
+                    valueNativeMinor: amountMinor,
+                    valueMxnMinor: amountMinor,
+                  },
+                ],
+              };
+              queryClient.setQueryData<WealthOverview>(wealthQueryKey, (current) => {
+                const base: WealthOverview = current ?? demoWealthOverview;
+                const accounts: WealthAccountView[] = base.accounts.map((account: WealthAccountView) =>
+                  account.id === CAJITA_ACCOUNT_ID
+                    ? { ...account, connected: true, latestSnapshot: snapshot }
+                    : account,
+                );
+                const previous: readonly WealthHistoryPoint[] =
+                  base.history.byAccount.nu_cajita_emergencia ?? [];
+                const cajitaHistory: WealthHistoryPoint[] = [
+                  ...previous.filter((point: WealthHistoryPoint) => point.day !== day),
+                  { day, totalMxnMinor: amountMinor },
+                ].sort((left, right) => left.day.localeCompare(right.day));
+                return {
+                  currency: "MXN" as const,
+                  totalMxnMinor: accounts.reduce(
+                    (sum: number, account: WealthAccountView) =>
+                      sum + (account.latestSnapshot?.totalMxnMinor ?? 0),
+                    0,
+                  ),
+                  accounts,
+                  history: {
+                    all: cajitaHistory,
+                    byAccount: {
+                      ...base.history.byAccount,
+                      nu_cajita_emergencia: cajitaHistory,
+                    },
+                  },
+                };
+              });
+            } else {
+              await ledgerApi.createCajitaSnapshot(amountMinor, idToken);
+              await queryClient.invalidateQueries({ queryKey: wealthQueryKey });
+            }
+            setCajitaOpen(false);
+            setSelectedWealthAccount(CAJITA_ACCOUNT_ID);
+            setTab("wealth");
           }}
         />
       )}

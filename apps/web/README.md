@@ -15,14 +15,14 @@ Abre la URL que imprima Vite, normalmente `http://localhost:5173`.
 
 ## Modo mock (solo DEV)
 
-Para revisar Resumen y Movimientos sin autenticarte ni llamar a la API:
+Para revisar Resumen, Movimientos y Patrimonio sin autenticarte ni llamar a la API:
 
 1. En la pantalla de login, pulsa **Usar datos de ejemplo**, o
 2. Abre `http://localhost:5173/?demo=1`
 
-El tablero queda fijado en julio 2026 con movimientos, MSI, gastos fijos, tarjetas y un correo por revisar. El topbar muestra el badge **Mock**; **Salir del mock** vuelve al login real.
+El tablero queda fijado en julio 2026 con movimientos, MSI, gastos fijos, tarjetas, patrimonio (Cajita de ejemplo) y un correo por revisar. El topbar muestra el badge **Mock**; **Salir del mock** vuelve al login real.
 
-Los fixtures viven en [`src/api/mock-data.ts`](src/api/mock-data.ts), [`src/monthly-plan.ts`](src/monthly-plan.ts) y [`src/card-cycle-demo.ts`](src/card-cycle-demo.ts). El mock no está disponible en builds de producción.
+Los fixtures viven en [`src/api/mock-data.ts`](src/api/mock-data.ts), [`src/monthly-plan.ts`](src/monthly-plan.ts), [`src/card-cycle-demo.ts`](src/card-cycle-demo.ts) y [`src/wealth-demo.ts`](src/wealth-demo.ts). El mock no está disponible en builds de producción.
 
 Los imports CSV / estado de cuenta siguen yendo a la API si los abres en mock; no están simulados de punta a punta.
 

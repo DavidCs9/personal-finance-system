@@ -3,19 +3,27 @@ import { monthDate, monthFormatter } from "../lib/format";
 export function MonthSelector({
   value,
   onChange,
+  disabled = false,
 }: {
   value: string;
   onChange(value: string): void;
+  disabled?: boolean;
 }) {
   const shift = (delta: number) => {
+    if (disabled) return;
     const date = monthDate(value);
     date.setUTCMonth(date.getUTCMonth() + delta);
     onChange(date.toISOString().slice(0, 7));
   };
 
   return (
-    <div className="month-selector">
-      <button aria-label="Mes anterior" onClick={() => shift(-1)}>
+    <div className={`month-selector${disabled ? " is-disabled" : ""}`} aria-disabled={disabled}>
+      <button
+        type="button"
+        aria-label="Mes anterior"
+        disabled={disabled}
+        onClick={() => shift(-1)}
+      >
         ‹
       </button>
       <label>
@@ -24,11 +32,17 @@ export function MonthSelector({
         <input
           type="month"
           value={value}
+          disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
-          aria-label="Elegir mes"
+          aria-label={disabled ? "El periodo no aplica en Patrimonio" : "Elegir mes"}
         />
       </label>
-      <button aria-label="Mes siguiente" onClick={() => shift(1)}>
+      <button
+        type="button"
+        aria-label="Mes siguiente"
+        disabled={disabled}
+        onClick={() => shift(1)}
+      >
         ›
       </button>
     </div>

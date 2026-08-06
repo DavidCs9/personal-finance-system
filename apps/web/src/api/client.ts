@@ -13,6 +13,8 @@ import type {
 } from "../types";
 import type { MonthlyPlan } from "../monthly-plan";
 import type { CardCycle } from "../card-cycle";
+import type { WealthOverview } from "../wealth";
+import { CAJITA_ACCOUNT_ID, type WealthSnapshot } from "@finance/domain";
 
 interface LedgerRuntimeConfig {
   readonly apiBaseUrl: string;
@@ -35,6 +37,22 @@ export interface LedgerSession {
 }
 
 export type SignInResult = ({ readonly kind: "signed_in" } & LedgerSession) | CognitoChallenge;
+
+export interface NominaUploadResultItem {
+  readonly filename: string;
+  readonly status: "created" | "duplicate" | "failed";
+  readonly uuid?: string;
+  readonly month?: string;
+  readonly totalMinor?: number;
+  readonly error?: string;
+}
+
+export interface NominaUploadResponse {
+  readonly results: readonly NominaUploadResultItem[];
+  readonly created: number;
+  readonly duplicates: number;
+  readonly failed: number;
+}
 
 declare global {
   interface Window { __LEDGER_CONFIG__?: LedgerRuntimeConfig; }
@@ -250,10 +268,25 @@ export const ledgerApi = {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        incomeMinor: plan.incomeMinor,
         currency: plan.currency,
         upcomingPayments: plan.upcomingPayments,
       }),
+    });
+  },
+  async uploadNominas(
+    files: readonly File[],
+    idToken: string,
+  ): Promise<NominaUploadResponse> {
+    const documents = await Promise.all(
+      files.map(async (file) => ({
+        filename: file.name,
+        xml: await file.text(),
+      })),
+    );
+    return request<NominaUploadResponse>("/imports/nomina", idToken, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ documents }),
     });
   },
   async listCards(idToken: string): Promise<{ cards: readonly CardCycle[] }> {
@@ -273,6 +306,34 @@ export const ledgerApi = {
   },
   async deleteCard(cardId: string, idToken: string): Promise<void> {
     await request(`/cards/${encodeURIComponent(cardId)}`, idToken, { method: "DELETE" });
+  },
+  async wealth(idToken: string): Promise<WealthOverview> {
+    return request<WealthOverview>("/wealth", idToken);
+  },
+  async createCajitaSnapshot(amountMinor: number, idToken: string): Promise<WealthSnapshot> {
+    return request<WealthSnapshot>(
+      `/wealth/accounts/${encodeURIComponent(CAJITA_ACCOUNT_ID)}/snapshots`,
+      idToken,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amountMinor, currency: "MXN" }),
+      },
+    );
+  },
+  async syncBitso(idToken: string): Promise<{ snapshot: WealthSnapshot; skipped: readonly string[] }> {
+    return request<{ snapshot: WealthSnapshot; skipped: readonly string[] }>(
+      "/wealth/sync/bitso",
+      idToken,
+      { method: "POST" },
+    );
+  },
+  async syncIbkr(idToken: string): Promise<{ snapshot: WealthSnapshot; skipped: readonly string[]; fxRate: number }> {
+    return request<{ snapshot: WealthSnapshot; skipped: readonly string[]; fxRate: number }>(
+      "/wealth/sync/ibkr",
+      idToken,
+      { method: "POST" },
+    );
   },
   async previewSantanderCsv(file: File, idToken: string): Promise<SantanderImportPreview> {
     return request<SantanderImportPreview>("/imports/santander/preview", idToken, {
