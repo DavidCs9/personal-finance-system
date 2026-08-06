@@ -7,6 +7,7 @@ import {
   type WealthAccountId,
 } from "@finance/domain";
 import { Amt } from "../components/Amt";
+import { WealthSparkline } from "../components/WealthSparkline";
 import { money } from "../lib/format";
 import type { WealthAccountView, WealthHistoryPoint, WealthOverview } from "../wealth";
 
@@ -58,7 +59,6 @@ export function WealthView(props: {
       : (props.overview.history.byAccount[props.selectedAccountId] ?? []);
 
   const historyNewestFirst = [...history].reverse();
-  const maxHistory = Math.max(...history.map((point) => point.totalMxnMinor), 1);
   const cajita = props.overview.accounts.find((account) => account.id === CAJITA_ACCOUNT_ID);
   const cajitaStale =
     cajita?.latestSnapshot &&
@@ -388,14 +388,9 @@ export function WealthView(props: {
                 <p className="wealth-empty-history">Sin capturas todavía.</p>
               ) : (
                 <>
-                  <div className="wealth-spark" aria-hidden="true">
-                    {history.map((point) => (
-                      <span
-                        key={point.day}
-                        style={{ height: `${Math.max(10, Math.round((point.totalMxnMinor / maxHistory) * 100))}%` }}
-                      />
-                    ))}
-                  </div>
+                  {history.length > 1 ? (
+                    <WealthSparkline values={history.map((point) => point.totalMxnMinor)} />
+                  ) : null}
                   <div className="payment-list wealth-history-list">
                     {historyNewestFirst.map((point) => (
                       <div key={point.day} className="payment-row wealth-history-row">
