@@ -93,7 +93,7 @@ export function SignIn({ onSignedIn }: { onSignedIn(session: LedgerSession): voi
         </form>
         {import.meta.env.DEV && !challenge && (
           <div className="auth-mock">
-            <p>Sin API: revisa Resumen y Movimientos con datos locales.</p>
+            <p>Sin API: revisa Resumen, Movimientos y Patrimonio con datos locales.</p>
             <button
               className="secondary-button auth-mock-button"
               type="button"

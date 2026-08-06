@@ -204,11 +204,11 @@ No añadir chips, stats ni CTAs en el hero de Resumen.
 - La evidencia del alta es recuperable.
 - Un doble envío no crea dos gastos.
 - Si después llega el correo del mismo cobro, no se duplica el total cuando la coincidencia es única.
-- La voz y la navegación siguen `docs/ui-design-brief.md` y `apps/web/AGENTS.md`: dos destinos, móvil primero, sin lenguaje bancario corporativo.
+- La voz y la navegación siguen `docs/ui-design-brief.md` y `apps/web/AGENTS.md`: tres destinos, móvil primero, sin lenguaje bancario corporativo.
 
 ## Alternativas descartadas
 
 1. **Meterlo como pago próximo** — distorsiona “Te quedan” y nunca explica el gasto real.
 2. **Solo nota / campo libre en el mes** — pierde trazabilidad por movimiento y rompe Movimientos.
 3. **CSV Amex primero** — útil como respaldo, pero el dolor inmediato es un cargo suelto sin archivo; el formulario es el camino corto y reutiliza el modelo de evento.
-4. **Tercer tab “Captura”** — viola el modelo de dos destinos.
+4. **Cuarto tab “Captura”** — viola el modelo de tres destinos; la captura sigue agrupada bajo Añadir en Movimientos.

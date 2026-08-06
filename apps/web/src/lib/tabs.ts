@@ -1,1 +1,1 @@
-export type Tab = "summary" | "movements";
+export type Tab = "summary" | "movements" | "wealth";

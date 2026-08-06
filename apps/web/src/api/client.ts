@@ -13,6 +13,8 @@ import type {
 } from "../types";
 import type { MonthlyPlan } from "../monthly-plan";
 import type { CardCycle } from "../card-cycle";
+import type { WealthOverview } from "../wealth";
+import { CAJITA_ACCOUNT_ID, type WealthSnapshot } from "@finance/domain";
 
 interface LedgerRuntimeConfig {
   readonly apiBaseUrl: string;
@@ -273,6 +275,20 @@ export const ledgerApi = {
   },
   async deleteCard(cardId: string, idToken: string): Promise<void> {
     await request(`/cards/${encodeURIComponent(cardId)}`, idToken, { method: "DELETE" });
+  },
+  async wealth(idToken: string): Promise<WealthOverview> {
+    return request<WealthOverview>("/wealth", idToken);
+  },
+  async createCajitaSnapshot(amountMinor: number, idToken: string): Promise<WealthSnapshot> {
+    return request<WealthSnapshot>(
+      `/wealth/accounts/${encodeURIComponent(CAJITA_ACCOUNT_ID)}/snapshots`,
+      idToken,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amountMinor, currency: "MXN" }),
+      },
+    );
   },
   async previewSantanderCsv(file: File, idToken: string): Promise<SantanderImportPreview> {
     return request<SantanderImportPreview>("/imports/santander/preview", idToken, {

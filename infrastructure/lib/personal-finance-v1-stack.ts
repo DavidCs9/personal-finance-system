@@ -519,6 +519,8 @@ export class PersonalFinanceV1Stack extends Stack {
       'GET /cards',
       'PUT /cards/{cardId}',
       'DELETE /cards/{cardId}',
+      'GET /wealth',
+      'POST /wealth/accounts/{accountId}/snapshots',
     ]) {
       httpApi.addRoutes({
         path: route.split(' ')[1],

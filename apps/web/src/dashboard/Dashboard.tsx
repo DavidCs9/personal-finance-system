@@ -6,7 +6,7 @@ import { mockExceptionRawEmail, mockExceptions, mockFeedForMonth } from "../api/
 import { AppShell } from "../layout/AppShell";
 import { eventDate, monthKey } from "../lib/format";
 import { usePrivateMode } from "../lib/private-mode";
-import { eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, cardsQueryKey } from "../lib/query-keys";
+import { eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, cardsQueryKey, wealthQueryKey } from "../lib/query-keys";
 import type { Tab } from "../lib/tabs";
 import {
   demoPlans,
@@ -18,6 +18,7 @@ import { demoCards } from "../card-cycle-demo";
 import type { CardCycle } from "../card-cycle";
 import { EventSheet } from "../sheets/EventSheet";
 import { IncomeSheet } from "../sheets/IncomeSheet";
+import { CajitaSheet } from "../sheets/CajitaSheet";
 import { ManualEntrySheet } from "../sheets/ManualEntrySheet";
 import { PaymentSheet } from "../sheets/PaymentSheet";
 import { CardSheet } from "../sheets/CardSheet";
@@ -26,6 +27,10 @@ import { StatementImportSheet } from "../sheets/StatementImportSheet";
 import type { EventFeed, PurchaseEvent } from "../types";
 import { MovementsView } from "../views/MovementsView";
 import { SummaryView } from "../views/SummaryView";
+import { WealthView } from "../views/WealthView";
+import { demoWealthOverview } from "../wealth-demo";
+import type { WealthOverview, WealthAccountView, WealthHistoryPoint } from "../wealth";
+import { CAJITA_ACCOUNT_ID, WEALTH_ACCOUNTS, dayKeyInZone, type WealthAccountId } from "@finance/domain";
 
 export function Dashboard({
   idToken,
@@ -52,6 +57,8 @@ export function Dashboard({
   const [amexImportOpen, setAmexImportOpen] = useState(false);
   const [santanderStatementOpen, setSantanderStatementOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
+  const [cajitaOpen, setCajitaOpen] = useState(false);
+  const [selectedWealthAccount, setSelectedWealthAccount] = useState<WealthAccountId | "all">("all");
   const { privateMode, togglePrivateMode } = usePrivateMode();
 
   const eventsQuery = useQuery({
@@ -80,12 +87,18 @@ export function Dashboard({
         ? Promise.resolve({ cards: demoCards })
         : ledgerApi.listCards(idToken),
   });
+  const wealthQuery = useQuery({
+    queryKey: wealthQueryKey,
+    queryFn: () =>
+      demoMode ? Promise.resolve(demoWealthOverview) : ledgerApi.wealth(idToken),
+  });
 
   const events = eventsQuery.data?.events ?? [];
   const msiRelated = eventsQuery.data?.msiRelated ?? [];
   const exceptions = exceptionsQuery.data?.exceptions ?? [];
   const plan = monthlyPlanQuery.data ?? planFor({}, selectedMonth);
   const cards = cardsQuery.data?.cards ?? [];
+  const wealth = wealthQuery.data;
   const loading = eventsQuery.isPending || eventsQuery.isFetching;
   const error =
     eventsQuery.error instanceof Error
@@ -107,12 +120,20 @@ export function Dashboard({
       : cardsQuery.error
         ? "No se pudieron cargar tus tarjetas."
         : undefined;
+  const wealthLoading = wealthQuery.isPending || wealthQuery.isFetching;
+  const wealthLoadError =
+    wealthQuery.error instanceof Error
+      ? wealthQuery.error.message
+      : wealthQuery.error
+        ? "No se pudo cargar tu patrimonio."
+        : undefined;
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
     void queryClient.invalidateQueries({ queryKey: exceptionsQueryKey });
     void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
     void queryClient.invalidateQueries({ queryKey: cardsQueryKey });
+    void queryClient.invalidateQueries({ queryKey: wealthQueryKey });
   };
 
   const retryExceptionMutation = useMutation({
@@ -231,8 +252,8 @@ export function Dashboard({
         onTabChange={setTab}
         month={selectedMonth}
         onMonthChange={setSelectedMonth}
-        syncing={loading}
-        refreshing={loading || planLoading}
+        syncing={tab === "wealth" ? wealthLoading : loading}
+        refreshing={tab === "wealth" ? wealthLoading : loading || planLoading}
         onRefresh={refresh}
         privateMode={privateMode}
         onTogglePrivateMode={togglePrivateMode}
@@ -245,7 +266,7 @@ export function Dashboard({
               }
             : onSignOut
         }
-        error={error}
+        error={tab === "wealth" ? undefined : error}
       >
         {tab === "summary" ? (
           <SummaryView
@@ -283,6 +304,30 @@ export function Dashboard({
             now={now}
             idToken={idToken}
             demoMode={demoMode}
+          />
+        ) : tab === "wealth" ? (
+          <WealthView
+            overview={
+              wealth ?? {
+                currency: "MXN" as const,
+                totalMxnMinor: 0,
+                accounts: WEALTH_ACCOUNTS.map((account) => ({
+                  ...account,
+                  connected: false,
+                  latestSnapshot: null,
+                })),
+                history: { all: [], byAccount: {} },
+              }
+            }
+            loading={wealthLoading && !wealth}
+            loadError={wealthLoadError}
+            onRetry={() => {
+              void wealthQuery.refetch();
+            }}
+            selectedAccountId={selectedWealthAccount}
+            onSelectAccount={setSelectedWealthAccount}
+            onRegisterCajita={() => setCajitaOpen(true)}
+            now={now}
           />
         ) : (
           <MovementsView
@@ -433,6 +478,75 @@ export function Dashboard({
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             setActiveEvent(created);
             setTab("movements");
+          }}
+        />
+      )}
+      {cajitaOpen && (
+        <CajitaSheet
+          currentMinor={
+            wealth?.accounts.find((account) => account.id === CAJITA_ACCOUNT_ID)?.latestSnapshot
+              ?.totalMxnMinor
+          }
+          onClose={() => setCajitaOpen(false)}
+          onSave={async (amountMinor) => {
+            if (demoMode) {
+              const day = dayKeyInZone(now);
+              const snapshot = {
+                accountId: CAJITA_ACCOUNT_ID,
+                day,
+                capturedAt: now.toISOString(),
+                source: "manual" as const,
+                currency: "MXN" as const,
+                totalMxnMinor: amountMinor,
+                holdings: [
+                  {
+                    id: "emergency_fund",
+                    symbol: "MXN",
+                    name: "Fondo de emergencia",
+                    quantity: amountMinor / 100,
+                    currency: "MXN",
+                    valueNativeMinor: amountMinor,
+                    valueMxnMinor: amountMinor,
+                  },
+                ],
+              };
+              queryClient.setQueryData<WealthOverview>(wealthQueryKey, (current) => {
+                const base: WealthOverview = current ?? demoWealthOverview;
+                const accounts: WealthAccountView[] = base.accounts.map((account: WealthAccountView) =>
+                  account.id === CAJITA_ACCOUNT_ID
+                    ? { ...account, connected: true, latestSnapshot: snapshot }
+                    : account,
+                );
+                const previous: readonly WealthHistoryPoint[] =
+                  base.history.byAccount.nu_cajita_emergencia ?? [];
+                const cajitaHistory: WealthHistoryPoint[] = [
+                  ...previous.filter((point: WealthHistoryPoint) => point.day !== day),
+                  { day, totalMxnMinor: amountMinor },
+                ].sort((left, right) => left.day.localeCompare(right.day));
+                return {
+                  currency: "MXN" as const,
+                  totalMxnMinor: accounts.reduce(
+                    (sum: number, account: WealthAccountView) =>
+                      sum + (account.latestSnapshot?.totalMxnMinor ?? 0),
+                    0,
+                  ),
+                  accounts,
+                  history: {
+                    all: cajitaHistory,
+                    byAccount: {
+                      ...base.history.byAccount,
+                      nu_cajita_emergencia: cajitaHistory,
+                    },
+                  },
+                };
+              });
+            } else {
+              await ledgerApi.createCajitaSnapshot(amountMinor, idToken);
+              await queryClient.invalidateQueries({ queryKey: wealthQueryKey });
+            }
+            setCajitaOpen(false);
+            setSelectedWealthAccount(CAJITA_ACCOUNT_ID);
+            setTab("wealth");
           }}
         />
       )}

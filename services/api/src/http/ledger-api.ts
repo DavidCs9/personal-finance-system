@@ -34,6 +34,12 @@ import { InvalidAmexStatementError } from '../imports/amex-statement.js';
 import { TextractDocumentError } from '../imports/textract-document.js';
 import { InvalidMonthlyPlanError, isValidMonth, parseMonthlyPlan } from '../months/monthly-plan.js';
 import { getMonthlyPlan, saveMonthlyPlan } from '../months/service.js';
+import { InvalidWealthSnapshotError } from '../wealth/input.js';
+import {
+  assertCajitaAccountParam,
+  createCajitaSnapshot,
+  getWealthOverview,
+} from '../wealth/service.js';
 import {
   deletePushSubscription,
   InvalidPushSubscriptionError,
@@ -66,6 +72,7 @@ const clientErrors = [
   InvalidManualEntryError,
   InvalidMsiError,
   InvalidCardError,
+  InvalidWealthSnapshotError,
 ] as const;
 
 app.errorHandler([...clientErrors], async (error) =>
@@ -227,6 +234,19 @@ app.put('/months/:month', async ({ event, params }) => {
   const gatewayEvent = asHttpEvent(event);
   const input = parseMonthlyPlan(requestBody(gatewayEvent));
   return json(HttpStatusCodes.OK, await saveMonthlyPlan(ownerOf(gatewayEvent), params.month, input));
+});
+
+app.get('/wealth', async ({ event }) =>
+  json(HttpStatusCodes.OK, await getWealthOverview(ownerOf(asHttpEvent(event)))),
+);
+
+app.post('/wealth/accounts/:accountId/snapshots', async ({ event, params }) => {
+  const gatewayEvent = asHttpEvent(event);
+  assertCajitaAccountParam(params.accountId);
+  return json(
+    HttpStatusCodes.CREATED,
+    await createCajitaSnapshot(requestBody(gatewayEvent), ownerOf(gatewayEvent)),
+  );
 });
 
 app.post('/imports/santander/preview', async ({ event }) => {

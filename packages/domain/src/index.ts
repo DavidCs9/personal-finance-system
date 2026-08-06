@@ -165,3 +165,21 @@ export {
   type MsiPlanStatus,
   type MsiScheduleInput,
 } from "./msi.js";
+
+export {
+  CAJITA_ACCOUNT_ID,
+  CAJITA_STALE_DAYS,
+  WEALTH_ACCOUNTS,
+  WEALTH_ACCOUNT_IDS,
+  cajitaEmergencyHolding,
+  isWealthAccountId,
+  isWealthSnapshotStale,
+  wealthSnapshotAgeDays,
+  type WealthAccountDefinition,
+  type WealthAccountId,
+  type WealthAccountRole,
+  type WealthHolding,
+  type WealthSnapshot,
+  type WealthSnapshotEvidence,
+  type WealthSnapshotSource,
+} from "./wealth.js";
