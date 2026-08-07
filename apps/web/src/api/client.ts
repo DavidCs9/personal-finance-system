@@ -13,7 +13,7 @@ import type {
 } from "../types";
 import type { MonthlyPlan } from "../monthly-plan";
 import type { CardCycle } from "../card-cycle";
-import type { WealthOverview } from "../wealth";
+import type { CardLiabilitySnapshot, WealthOverview } from "../wealth";
 import { CAJITA_ACCOUNT_ID, type WealthSnapshot } from "@finance/domain";
 
 interface LedgerRuntimeConfig {
@@ -313,6 +313,21 @@ export const ledgerApi = {
   async createCajitaSnapshot(amountMinor: number, idToken: string): Promise<WealthSnapshot> {
     return request<WealthSnapshot>(
       `/wealth/accounts/${encodeURIComponent(CAJITA_ACCOUNT_ID)}/snapshots`,
+      idToken,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amountMinor, currency: "MXN" }),
+      },
+    );
+  },
+  async createCardLiabilitySnapshot(
+    cardId: string,
+    amountMinor: number,
+    idToken: string,
+  ): Promise<CardLiabilitySnapshot> {
+    return request<CardLiabilitySnapshot>(
+      `/wealth/liabilities/${encodeURIComponent(cardId)}/snapshots`,
       idToken,
       {
         method: "POST",

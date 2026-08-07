@@ -14,11 +14,22 @@ export type WealthAccountRole = "emergency_fund" | "payroll_savings" | "crypto" 
 export type WealthSnapshotSource = "manual" | "api" | "flex" | "derived";
 
 export const CAJITA_STALE_DAYS = 7;
+export const CARD_LIABILITY_STALE_DAYS = 7;
 
 export const CAJITA_ACCOUNT_ID: WealthAccountId = "nu_cajita_emergencia";
 export const FONDO_AHORRO_ACCOUNT_ID: WealthAccountId = "fondo_ahorro";
 export const BITSO_ACCOUNT_ID: WealthAccountId = "bitso";
 export const IBKR_ACCOUNT_ID: WealthAccountId = "ibkr";
+
+export interface CardLiabilitySnapshot {
+  readonly cardId: string;
+  readonly day: string;
+  readonly capturedAt: string;
+  readonly source: "manual";
+  readonly currency: "MXN";
+  readonly totalMxnMinor: number;
+  readonly evidence?: WealthSnapshotEvidence;
+}
 
 export interface WealthHolding {
   readonly id: string;
@@ -174,3 +185,25 @@ export const fondoAhorroHolding = (amountMinor: number): WealthHolding => ({
   valueNativeMinor: amountMinor,
   valueMxnMinor: amountMinor,
 });
+
+/** Carry-forward: last known balance per card as of each day (sorted ascending). */
+export const liabilitiesAsOfDay = (
+  snapshots: readonly CardLiabilitySnapshot[],
+  day: string,
+): number => {
+  const latestByCard = new Map<string, CardLiabilitySnapshot>();
+  for (const snapshot of [...snapshots].sort(
+    (left, right) => left.day.localeCompare(right.day) || left.capturedAt.localeCompare(right.capturedAt),
+  )) {
+    if (snapshot.day > day) continue;
+    latestByCard.set(snapshot.cardId, snapshot);
+  }
+  let total = 0;
+  for (const snapshot of latestByCard.values()) {
+    total += snapshot.totalMxnMinor;
+  }
+  return total;
+};
+
+export const netWorthMxnMinor = (assetsMxnMinor: number, liabilitiesMxnMinor: number): number =>
+  assetsMxnMinor - liabilitiesMxnMinor;

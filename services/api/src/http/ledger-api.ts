@@ -44,6 +44,7 @@ import { InvalidWealthSnapshotError } from '../wealth/input.js';
 import {
   assertCajitaAccountParam,
   createCajitaSnapshot,
+  createCardLiabilitySnapshot,
   getWealthOverview,
 } from '../wealth/service.js';
 import { syncBitsoForOwner } from '../wealth/bitso-sync.js';
@@ -271,6 +272,17 @@ app.post('/wealth/accounts/:accountId/snapshots', async ({ event, params }) => {
   return json(
     HttpStatusCodes.CREATED,
     await createCajitaSnapshot(requestBody(gatewayEvent), ownerOf(gatewayEvent)),
+  );
+});
+
+app.post('/wealth/liabilities/:cardId/snapshots', async ({ event, params }) => {
+  const gatewayEvent = asHttpEvent(event);
+  if (!isValidCardId(params.cardId)) {
+    return json(HttpStatusCodes.BAD_REQUEST, { message: 'cardId is invalid.' });
+  }
+  return json(
+    HttpStatusCodes.CREATED,
+    await createCardLiabilitySnapshot(params.cardId, requestBody(gatewayEvent), ownerOf(gatewayEvent)),
   );
 });
 

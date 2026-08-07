@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   CAJITA_STALE_DAYS,
+  CARD_LIABILITY_STALE_DAYS,
   cajitaEmergencyHolding,
   fondoAhorroHolding,
   isWealthAccountId,
   isWealthSnapshotStale,
+  liabilitiesAsOfDay,
+  netWorthMxnMinor,
   wealthSnapshotAgeDays,
   wealthTotalMonthlyHistory,
+  type CardLiabilitySnapshot,
 } from "../src/wealth.js";
 
 describe("wealth domain", () => {
@@ -62,5 +66,49 @@ describe("wealth domain", () => {
         ],
       }),
     ).toEqual([{ day: "2026-08-01", totalMxnMinor: 269_273_00 }]);
+  });
+
+  it("marks card liabilities stale after seven days", () => {
+    const now = new Date("2026-08-06T18:00:00-06:00");
+    expect(isWealthSnapshotStale("2026-07-30", now, CARD_LIABILITY_STALE_DAYS)).toBe(true);
+    expect(isWealthSnapshotStale("2026-08-01", now, CARD_LIABILITY_STALE_DAYS)).toBe(false);
+  });
+
+  it("carries forward liability balances as of a day", () => {
+    const snaps: readonly CardLiabilitySnapshot[] = [
+      {
+        cardId: "a",
+        day: "2026-07-01",
+        capturedAt: "2026-07-01T12:00:00.000Z",
+        source: "manual",
+        currency: "MXN",
+        totalMxnMinor: 100_000,
+      },
+      {
+        cardId: "b",
+        day: "2026-07-05",
+        capturedAt: "2026-07-05T12:00:00.000Z",
+        source: "manual",
+        currency: "MXN",
+        totalMxnMinor: 50_000,
+      },
+      {
+        cardId: "a",
+        day: "2026-07-10",
+        capturedAt: "2026-07-10T12:00:00.000Z",
+        source: "manual",
+        currency: "MXN",
+        totalMxnMinor: 80_000,
+      },
+    ];
+    expect(liabilitiesAsOfDay(snaps, "2026-06-30")).toBe(0);
+    expect(liabilitiesAsOfDay(snaps, "2026-07-01")).toBe(100_000);
+    expect(liabilitiesAsOfDay(snaps, "2026-07-05")).toBe(150_000);
+    expect(liabilitiesAsOfDay(snaps, "2026-07-10")).toBe(130_000);
+  });
+
+  it("computes net worth", () => {
+    expect(netWorthMxnMinor(1_000_000, 250_000)).toBe(750_000);
+    expect(netWorthMxnMinor(100_000, 250_000)).toBe(-150_000);
   });
 });
