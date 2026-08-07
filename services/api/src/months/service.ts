@@ -23,6 +23,8 @@ export const getMonthlyPlan = async (owner: string, month: string): Promise<Json
     depositedMinor: income.depositedMinor,
     estimatedMinor: income.estimatedMinor,
     estimateActive: income.estimateActive,
+    provisionalActive: income.provisionalActive,
+    provisionalMinor: income.provisionalMinor,
     currency: 'MXN',
     upcomingPayments,
     payslips: income.payslips.map((payslip) => ({

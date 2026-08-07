@@ -191,6 +191,8 @@ export {
   isOrdinaryNomina,
   monthFromFechaPago,
   payslipLineGroup,
+  previousCalendarMonth,
+  provisionalIncomeFromPriorOrdinaries,
   type MonthIncomeDerivation,
   type PayslipLine,
   type PayslipLineGroup,
