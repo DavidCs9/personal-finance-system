@@ -12,6 +12,7 @@ import {
   runningFondoAhorroByDay,
   sumFondoAhorroDeduccionesMinor,
   WEALTH_ACCOUNTS,
+  wealthTotalMonthlyHistory,
   type WealthAccountId,
   type WealthHolding,
   type WealthSnapshot,
@@ -182,13 +183,19 @@ export const getWealthOverview = async (
     (sum, account) => sum + (account.latestSnapshot?.totalMxnMinor ?? 0),
     0,
   );
-  const liquidAll = historyPoints(snapshots, 'all');
+  const today = dayKeyInZone(now, FINANCE_TIME_ZONE);
+  const currentMonth = today.slice(0, 7);
+  const historyAll = wealthTotalMonthlyHistory({
+    points: mergeHistoryWithFondo(historyPoints(snapshots, 'all'), fondoRunning),
+    currentMonth,
+    currentTotalMinor: totalMxnMinor,
+  });
   return {
     currency: 'MXN',
     totalMxnMinor,
     accounts,
     history: {
-      all: mergeHistoryWithFondo(liquidAll, fondoRunning),
+      all: historyAll,
       byAccount: Object.fromEntries(
         WEALTH_ACCOUNTS.map((account) => [
           account.id,
