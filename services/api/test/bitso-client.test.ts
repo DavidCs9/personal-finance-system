@@ -2,6 +2,7 @@ import { createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
   bitsoAuthHeader,
+  bitsoNonceV2,
   buildBitsoHoldings,
   fetchBitsoBalances,
   isBitsoCredentialsConfigured,
@@ -10,13 +11,21 @@ import {
 
 describe('bitsoAuthHeader', () => {
   it('signs method + path with HMAC-SHA256', () => {
-    const nonce = 1_700_000_000_000;
+    const nonce = '1700000000000123456';
     const credentials = { apiKey: 'key', apiSecret: 'secret' };
     const header = bitsoAuthHeader(credentials, 'GET', '/api/v3/balance/', '', nonce);
     const expected = createHmac('sha256', 'secret')
       .update(`${nonce}GET/api/v3/balance/`)
       .digest('hex');
     expect(header).toBe(`Bitso key:${nonce}:${expected}`);
+  });
+});
+
+describe('bitsoNonceV2', () => {
+  it('concatenates a 13-digit timestamp with a 6-digit salt', () => {
+    const nonce = bitsoNonceV2(1_731_349_200_123);
+    expect(nonce).toMatch(/^1731349200123\d{6}$/);
+    expect(nonce).toHaveLength(19);
   });
 });
 

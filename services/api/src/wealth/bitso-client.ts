@@ -38,16 +38,23 @@ export const isBitsoCredentialsConfigured = (value: unknown): value is BitsoCred
     && record.apiSecret !== 'pending';
 };
 
+/** Bitso Nonce v2: 13-digit ms epoch + 6-digit salt (required since Nov 2025). */
+export const bitsoNonceV2 = (nowMs: number = Date.now()): string => {
+  const salt = String(Math.floor(100_000 + Math.random() * 900_000));
+  return `${nowMs}${salt}`;
+};
+
 export const bitsoAuthHeader = (
   credentials: BitsoCredentials,
   method: string,
   requestPath: string,
   jsonPayload = '',
-  nonce: number = Date.now(),
+  nonce: string | number = bitsoNonceV2(),
 ): string => {
-  const message = `${nonce}${method.toUpperCase()}${requestPath}${jsonPayload}`;
+  const nonceValue = String(nonce);
+  const message = `${nonceValue}${method.toUpperCase()}${requestPath}${jsonPayload}`;
   const signature = createHmac('sha256', credentials.apiSecret).update(message).digest('hex');
-  return `Bitso ${credentials.apiKey}:${nonce}:${signature}`;
+  return `Bitso ${credentials.apiKey}:${nonceValue}:${signature}`;
 };
 
 const parseJson = async (response: Response): Promise<Record<string, unknown>> => {
