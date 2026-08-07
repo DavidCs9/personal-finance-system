@@ -19,8 +19,8 @@ Plan operativo de la tab **Patrimonio** (activos − deudas de tarjeta = neto).
 - Tarjetas (pasivo): captura manual `{ amountMinor }` (≥ 0; 0 = pagada); fecha del sistema; inmutable mismo día; stale a **7 días**. Persistencia `LIAB_SNAP#` / `LIAB_VER#` ligada a `cardId`.
 - Bitso: sync read-only vía API (balances + tickers `*_mxn`); schedule **06:30** Chihuahua; refresh manual `POST /wealth/sync/bitso`.
 - IBKR: Flex Web Service (posiciones + cash USD) + Banxico FIX `SF43718`; schedule **06:45** Chihuahua; refresh manual `POST /wealth/sync/ibkr`.
-- Fallos de sync Bitso/IBKR: se conserva el último snapshot bueno; **push + email**.
-- FX: Bitso con tickers propios; IBKR con Banxico. Holdings no-USD de IBKR se omiten (skipped).
+- Fallos de sync Bitso/IBKR: se conserva el último snapshot bueno; **push + email** (misma suscripción VAPID que Avisos de Olbia; títulos del estilo “Bitso no sincronizó” / equivalente IBKR).
+- FX: Bitso con tickers propios; IBKR (Interactive Brokers) con Banxico. Holdings no-USD de IBKR se omiten (skipped).
 - Historial en vista total: **neto** mensual (cierre por mes desde `2026-08`; carry-forward de saldos de tarjeta). Al filtrar una cuenta de activo, el historial sigue siendo solo esa cuenta (día a día).
 
 ## API
@@ -41,7 +41,7 @@ Plan operativo de la tab **Patrimonio** (activos − deudas de tarjeta = neto).
 
 - Hero vista total: **Neto** + meta Activos · Debes; en vista total, un **Actualizar** dispara Bitso e IBKR a la vez.
 - Al filtrar cuenta de activo, el hero muestra solo ese activo.
-- Desglose **Dónde está** (activos); sección **Debes** (tarjetas + captura); holdings al seleccionar Bitso o IBKR; fondo muestra YTD illíquido.
+- Desglose **Dónde está** (activos); sección **Debes** (tarjetas + captura); holdings al seleccionar Bitso o IBKR; fondo muestra YTD illíquido (“Illíquido · se entrega en diciembre”).
 - Historial numérico + sparkline mínima. La vista total usa **tendencia mensual** del neto (cierre por mes) desde `2026-08`; el prehistorial incompleto se omite. Al abrir una cuenta, el historial sigue siendo por día de captura/nómina.
 - Selector de mes usable en Patrimonio (cambia el periodo global; el total de patrimonio no es un corte mensual).
 

@@ -1,6 +1,6 @@
 # Web UI
 
-SPA de Olbia: tablero personal de gasto mensual. En desarrollo puede usar la API real (Cognito) o un **modo mock** con datos locales.
+SPA de Olbia: Resumen (gasto del mes), Movimientos y Patrimonio (neto). En desarrollo puede usar la API real (Cognito) o un **modo mock** con datos locales.
 
 ## Ejecutar
 
@@ -20,7 +20,7 @@ Para revisar Resumen, Movimientos y Patrimonio sin autenticarte ni llamar a la A
 1. En la pantalla de login, pulsa **Usar datos de ejemplo**, o
 2. Abre `http://localhost:5173/?demo=1`
 
-El tablero queda fijado en julio 2026 con movimientos, MSI, gastos fijos, tarjetas, patrimonio (Cajita de ejemplo) y un correo por revisar. El topbar muestra el badge **Mock**; **Salir del mock** vuelve al login real.
+El tablero queda fijado en julio 2026 con movimientos, MSI, gastos fijos, tarjetas, patrimonio de ejemplo (Cajita, Fondo, Bitso, IBKR, pasivos) y un correo por revisar. El topbar muestra el badge **Mock**; **Salir del mock** vuelve al login real.
 
 Los fixtures viven en [`src/api/mock-data.ts`](src/api/mock-data.ts), [`src/monthly-plan.ts`](src/monthly-plan.ts), [`src/card-cycle-demo.ts`](src/card-cycle-demo.ts) y [`src/wealth-demo.ts`](src/wealth-demo.ts). El mock no está disponible en builds de producción.
 

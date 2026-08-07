@@ -2,8 +2,12 @@
 
 ## Objetivo y alcance
 
-- Capturar automáticamente compras con tarjeta notificadas por email de American Express México y Santander México, y pagos Santander observados por una automatización de Apple Pay.
-- Iniciar desde el lanzamiento; no hay backfill histórico en V1.
+- Capturar automáticamente compras con tarjeta notificadas por email de American Express México, Santander México y transferencias Nu, más cargos de facturación AWS, y pagos Santander observados por una automatización de Apple Pay.
+- Registrar cobros sin automatismo como eventos observados manuales; conciliar CSV Santander y estados de cuenta PDF (Amex / Santander vía Textract).
+- Derivar el ingreso del mes desde CFDIs de nómina (XML); con un solo recibo ordinario en el mes en curso, estimar la segunda quincena.
+- Mostrar patrimonio neto (activos − saldos pendientes de tarjeta): Cajita Nu manual, Fondo de ahorro derivado de SAT `004`, Bitso e IBKR por sync programado.
+- Recordar días de corte y pago de hasta tres tarjetas (perfil en Resumen; saldo pendiente en Patrimonio).
+- Iniciar desde el lanzamiento; no hay backfill histórico de producto en V1 (scripts operativos bajo `infrastructure/scripts/` no son el camino de usuario).
 - Un correo válido crea un evento observado y aceptado. La verificación manual no bloquea su aparición en el ledger.
 - Los casos ambiguos se guardan para revisión y nunca se convierten en una compra por inferencia.
 
@@ -22,12 +26,15 @@
 - Los pagos y abonos negativos del CSV no se incorporan al gasto mensual.
 - Los cobros que no llegan por automatismo (p. ej. Amex sin alerta) se registran como eventos observados con fuente `manual`, no como pagos próximos. Detalle en [Cobros manuales](manual-observed-charges.md).
 - MSI (meses sin intereses) vive en el evento observado como `msi` (schedule multi-mes). No se guarda en `MonthlyPlan`. Guía completa: [Meses sin intereses (MSI)](msi.md).
-- Amex con importe **> $2,500.00** asume 3 MSI al crear el evento (`amex_auto`); el usuario puede overridear meses/cuota en la UI.
+- Amex con importe **> $2,500.00** asume 3 MSI al crear el evento (`amex_auto`); el usuario puede overridear meses/cuota en la UI. Aplica a correo y a alta manual.
+- Compras Amex Gold cubiertas por `MONTO A DIFERIR MESES EN AUTOMÁTICO` quedan en status `deferred_msi`: visibles en Movimientos, fuera de “Has gastado”; solo cuenta la cuota del plan auto.
 - El ciclo de cada cuota es `committed` → `spent` (nunca ambos). Hasta reconciliar, la cuota resta de “Te quedan”; al confirmar evidencia pasa a “Has gastado”. En Resumen, “Planes con fin” lista las cuotas del mes; Movimientos muestra la lista raw con badge `MSI i/N`.
 - Evidencia MSI y conciliación: CSV Santander (respaldo / movimientos), y estados Amex/Santander vía Textract **AnalyzeDocument** (`QUERIES` + `TABLES`). El estado es el path preferido para abrir planes (trae `i/N` y total). Santander PDF enriquece cuotas desde la tabla de planes (`12M`, `03 DE 12`, etc.).
 - Una cuota del estado sin plan previo **no inventa** un schedule sola: queda `needs_decision`. Apply: `create_plan`, confirmar en plan existente, u omitir. Si la fila ya trae `n/N` completo, omitir **crea el plan** con esa metadata (incluye etiquetas Amex “MESES EN AUTOMÁTICO”).
 - Liquidación anticipada de MSI es manual (cancelar cuotas restantes + registrar el cargo de cierre si aplica).
-- PDF de estado (Amex y Santander): `POST /imports/{amex|santander-statement}/preview` → poll `GET` → `POST …/apply` con decisiones. Se persiste `.textract.json` y el apply reconstruye desde ese JSON.
+- PDF de estado (Amex y Santander): `POST /imports/amex/preview` o `POST /imports/santander-statement/preview` → poll `GET` → `POST …/apply` con decisiones. Se persiste `.textract.json` y el apply reconstruye desde ese JSON.
+- Ingreso del mes: `POST /imports/nomina` (XML CFDI) + `GET /months/:month` (payslips + estimado/provisional). `PUT /months/:month` solo guarda `upcomingPayments`.
+- Patrimonio: ver [Patrimonio](patrimonio.md). Tarjetas de ciclo: `GET|PUT|DELETE /cards/{cardId}` (máximo 3).
 
 ## Modelo de datos
 
@@ -39,6 +46,7 @@
 - En V1, el comercio se conserva únicamente como `merchant_raw`.
 - Las correcciones son revisiones auditables: la fuente y el parseo original no se reescriben.
 - `ObservedPurchase.msi` es opcional y contiene origen, principal, cuota, meses e installments con status por mes.
+- Snapshots de patrimonio (`WEALTH_SNAP#`, `LIAB_SNAP#`) y payslips de nómina viven en la misma MetadataTable.
 
 ## Infraestructura
 
@@ -46,14 +54,15 @@
 - Se usa la cuenta personal de AWS y tags consistentes para atribuir costes.
 - DynamoDB bajo demanda es la base de datos operativa.
 - La UI es una SPA de React en S3 + CloudFront. La API es API Gateway HTTP API + Lambdas con autorización JWT de Cognito.
-- Cognito tiene un único usuario administrado, sin registro público y sin MFA por ahora.
+- Cognito tiene un único usuario administrado, sin registro público y sin MFA por ahora. El login web está personalizado para ese propietario.
 - Una regla de recepción de SES guarda primero el MIME y luego publica su puntero en SQS; una Lambda de ingestión persiste metadatos, deduplica y parsea. La cola tiene una DLQ.
-- Amazon SES sólo alerta excepciones de ingestión (parser fallido, origen no soportado, datos incompletos). Los movimientos aceptados no generan correo.
-- Si el usuario activó Web Push, el alta de un evento nuevo (correo o Apple Pay) envía un aviso al dispositivo, y cada mañana a las 07:00 America/Chihuahua se envía el resumen diario. Detalle en [Avisos push de movimientos observados](push-on-new-observable.md) y [Push diario del balance](daily-balance-push.md).
-- El monitoreo V1 se limita a fallos de recepción, mensajes en DLQ, errores persistentes de ingestión y fallos del push diario.
+- Amazon SES sólo alerta excepciones de ingestión (parser fallido, origen no soportado, datos incompletos) y fallos de sync Bitso/IBKR. Los movimientos aceptados no generan correo.
+- Si el usuario activó Web Push, el alta de un evento nuevo (correo o Apple Pay) envía un aviso al dispositivo; cada mañana a las 07:00 America/Chihuahua el resumen diario; a las 07:05 los recordatorios de corte/pago. Detalle en [Avisos push de movimientos observados](push-on-new-observable.md), [Push diario del balance](daily-balance-push.md) y [Push de corte y pago](card-cycle-push.md).
+- Sync de patrimonio: Bitso 06:30 y IBKR 06:45 America/Chihuahua, con DLQ y alarmas.
+- El monitoreo V1 cubre fallos de recepción, mensajes en DLQ, errores persistentes de ingestión, fallos del push diario/card-cycle, y fallos/DLQ de sync Bitso e IBKR.
 - Ninguna Lambda usa concurrencia reservada. Los endpoints públicos limitan tráfico en API Gateway para conservar la concurrencia compartida de la cuenta.
 
 ## Calidad y salida de V1
 
 - Los parsers se prueban con fixtures `.eml` anonimizadas y fieles a los formatos reales; los correos reales no se versionan.
-- V1 está lista cuando los flujos de ambos bancos capturan una compra una sola vez, conservan su fuente, avisan por push si está activo, la muestran en UI y hacen recuperables los fallos de parser.
+- V1 está lista cuando los flujos de captura conservan su fuente, avisan por push si está activo, muestran gasto y patrimonio en UI, y hacen recuperables los fallos de parser y de sync.

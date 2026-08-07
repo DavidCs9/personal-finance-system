@@ -1,88 +1,80 @@
 # Cobros manuales (eventos observados)
 
+Referencia del flujo **enviado**: registrar un cobro observado cuando no llegó por correo, Apple Pay, CSV ni estado de cuenta.
+
 ## Problema
 
-Hoy el gasto entra solo por automatismos: correo (Amex, Santander, AWS), Apple Pay Shortcut y CSV Santander. Si un cobro no llega por esas vías —por ejemplo una compra Amex sin alerta, un cargo en una tarjeta sin parser, o un gasto que el usuario necesita contar ya— el total del mes queda incompleto.
-
-Eso rompe la promesa del producto: **cuánto he gastado este mes**.
+El gasto entra por automatismos (correo Amex/Santander/Nu/AWS, Apple Pay, CSV Santander, PDF Amex/Santander). Si un cobro no llega por esas vías, el total del mes queda incompleto.
 
 ## Qué no es
 
 | Concepto existente | Rol | Por qué no sirve aquí |
 | --- | --- | --- |
 | **Pago próximo** (`PlannedPayment`) | Compromiso futuro que reduce “Te quedan” | No es gasto observado; no suma a “Has gastado” |
-| **Conciliar CSV Santander** | Respaldo masivo con evidencia de extracto | Solo Santander; exige archivo; no cubre un cargo Amex suelto |
+| **Conciliar CSV / estado PDF** | Respaldo masivo con evidencia de extracto | Exige archivo; no cubre un cargo suelto sin documento |
 | **Correo por revisar** | Recuperar fallos de parser | El problema es ausencia de fuente automática, no un MIME fallido |
 
 Un cobro manual es un **movimiento observado** creado por el usuario. Entra al ledger, afecta el total del mes y conserva evidencia de que fue capturado a mano.
 
-## Decisión de producto
+## Decisiones de producto
 
-1. **Misma unidad primaria:** `ObservedPurchase`. No inventamos “ajuste”, “asiento” ni “cobro” como entidad aparte.
-2. **Nueva fuente de captura:** `captureSource: "manual"`.
+1. **Misma unidad primaria:** `ObservedPurchase`. No hay entidad “ajuste” aparte.
+2. **Fuente:** `captureSource: "manual"`.
 3. **Aparece en Movimientos** y suma a “Has gastado” (salvo `rejected`).
-4. **No abre un tercer destino de navegación.** La acción vive en Movimientos, junto a “Conciliar CSV”.
-5. **El usuario es la autoridad:** un alta manual nace como `accepted`. No bloqueamos el total con “por confirmar” solo por ser manual.
-6. **Evidencia obligatoria del acto:** se persiste un payload inmutable de lo que el usuario envió (JSON en S3, cifrado con KMS), más una observación `manual` en DynamoDB. La fuente no se reescribe; las correcciones son revisiones auditables.
-7. **Reconciliación con automatismos posteriores:** si más tarde llega el mismo cobro por correo (u otra fuente), se enlaza como observación del evento existente cuando la coincidencia sea única y de alta confianza; si es ambigua, se deja separado o se pide decisión explícita. Nunca se borra la observación manual.
-8. **Sin backfill histórico masivo en esta entrega.** El flujo es cargo por cargo (o pocos cargos recientes del mes en curso), alineado con “iniciar desde el lanzamiento”.
+4. **Sin tercer tab.** La acción vive en Movimientos bajo **Añadir**.
+5. **Autoridad del usuario:** nace como `accepted`.
+6. **Evidencia:** JSON inmutable en S3 (KMS) + observación `manual` en DynamoDB.
+7. **Reconciliación posterior:** si llega el mismo cobro por correo (u otra fuente) con coincidencia única, se enlaza; si es ambigua, queda separado. Nunca se borra la observación manual.
+8. **Sin push** al crear el alta manual (el aviso de “movimiento nuevo” es solo correo / Apple Pay).
+9. **Amex auto-MSI:** importe **> $2,500.00** abre plan `amex_auto` de 3 meses al crear el evento, igual que el correo.
 
 ## Experiencia (móvil primero)
 
-### Entrada
+### Menú Añadir
 
-En **Movimientos**, un solo control **Añadir** abre un sheet de captura. Ahí viven “Registrar cobro”, “Conciliar CSV” y futuras vías de entrada:
+En **Movimientos**, **Añadir** abre el sheet **Sumar un movimiento** (`CAPTURAR`) con:
 
-- No apila botones en el encabezado a medida que crecen las acciones.
-- “Ordenar” permanece fuera del menú: es control de vista, no de captura.
-- No compite con el total del mes en Resumen.
+| Acción | Uso |
+| --- | --- |
+| **Registrar cobro** | Cargo suelto sin automatismo |
+| **Conciliar CSV Santander** | Respaldo y cuotas A MESES |
+| **Estado de cuenta Santander** | PDF del periodo (Textract) |
+| **Estado de cuenta Amex** | PDF del periodo (Textract) |
 
-### Sheet: “Registrar cobro”
+“Ordenar” permanece fuera del menú (control de vista).
+
+### Sheet: Registrar cobro
 
 Eyebrow: `FUERA DE AUTOMATISMO`  
-Título: `Registrar cobro`
+Título: `Registrar cobro`  
+CTA: **Sumar al mes**
 
-Campos (mínimos, en este orden):
+Campos: institución → comercio → cantidad → fecha → tarjeta (opcional) → nota (opcional).
 
-1. **Institución** — selector con las instituciones ya conocidas (`american_express_mx`, `santander_mx`, `nu_mx`, `amazon_web_services`). Default sugerido: Amex si es el hueco más frecuente; el usuario puede cambiarlo.
-2. **Comercio** — texto libre → `merchantRaw`.
-3. **Cantidad** — misma convención de dinero que pagos e ingreso (mostrar pesos; persistir minor units + `MXN`).
-4. **Fecha del cobro** — día del mes en curso (o fecha completa); se guarda como `occurredAt` en UTC con zona `America/Chihuahua`.
-5. **Tarjeta (opcional)** — últimos cuatro / alias → `account.lastFour` / `displayName`.
-6. **Nota (opcional)** — por qué se captura a mano; queda en el payload de evidencia, no como comercio.
+Copy: “Úsalo cuando el cobro no llegó por correo ni por CSV.”
 
-CTA único: **Sumar al mes**.
+### Detalle
 
-Copy firme y útil, sin tono bancario:
-
-- Ayuda corta: “Úsalo cuando el cobro no llegó por correo ni por CSV.”
-- Tras guardar: el movimiento aparece en la lista; Resumen recalcula “Has gastado”, ritmo y “Te quedan” como con cualquier otro evento aceptado.
-
-### Detalle del movimiento
-
-En `EventSheet`, la fuente se etiqueta con claridad:
-
-- Eyebrow / línea de origen: **Registro manual**
-- Se puede ver la evidencia (JSON del alta: campos enviados, `createdAt`, usuario).
-- No hay MIME de correo; no fingimos que hubo alerta.
+En `EventSheet`: origen **Registro manual**; evidencia JSON recuperable; sin MIME.
 
 ### Edición y descarte
 
-- Corregir importe, comercio o fecha → **revisión auditable** (mismo principio que V1: la observación original no se reescribe).
-- “No cuenta” → pasar a `rejected` (ya excluido del total en UI). Preferible a borrar: conserva trazabilidad.
-- Fuera de alcance inmediato si complica la primera entrega: edición completa en UI. Mínimo viable: alta + rechazo. La edición puede seguir en una iteración.
+- “No cuenta en el mes” → `PATCH` con `action: reject` (preferible a borrar).
+- Edición rica de campos en UI: fuera de alcance; alta + rechazo es el mínimo enviado.
 
 ## Modelo y API
 
 ### Dominio
 
-Extender:
-
 ```ts
-type CaptureSource = "email" | "apple_pay_shortcut" | "santander_csv" | "manual";
+type CaptureSource =
+  | "email"
+  | "apple_pay_shortcut"
+  | "santander_csv"
+  | "manual"
+  | "amex_statement"
+  | "santander_statement";
 ```
-
-Nuevo puntero de fuente (paralelo a Apple Pay / CSV):
 
 ```ts
 interface ManualEntrySourcePointer {
@@ -94,26 +86,19 @@ interface ManualEntrySourcePointer {
 }
 ```
 
-El evento:
-
-- `eventType`: `card_purchase` (default) o el que corresponda (`card_charge` solo si el usuario elige un cargo tipo AWS; en el MVP basta `card_purchase`).
+- `eventType`: `card_purchase` (o `card_charge` cuando aplique)
 - `status`: `accepted`
-- `parserVersion`: p. ej. `manual-entry-v1`
-- `parseWarnings`: vacío
-- `receivedAt` / `ingestedAt`: momento del alta
-- `occurredAt`: fecha que indicó el usuario
+- `parserVersion`: `manual-entry-v1`
 - `captureSource` / `captureSources`: incluye `"manual"`
 
 ### Persistencia
 
-Patrón ya usado por CSV / correo:
-
 | Pieza | Clave / lugar |
 | --- | --- |
 | Evento | `EVENT#{id}` / `EVENT` |
-| Observación | `EVENT#{id}` / `OBSERVATION#{ts}#{obsId}` con `captureSource: manual` |
+| Observación | `EVENT#{id}` / `OBSERVATION#{ts}#{obsId}` |
 | Evidencia | S3 `manual-entries/{owner}/{sha}.json` (KMS) |
-| Idempotencia | `DEDUPE#MANUAL#{fingerprint}` — ver abajo |
+| Idempotencia | `DEDUPE#MANUAL#{fingerprint}` (permanente; sin TTL) |
 
 ### Endpoint
 
@@ -122,7 +107,7 @@ POST /events/manual
 Authorization: Cognito JWT
 ```
 
-Cuerpo (borrador):
+`occurredOn` (`YYYY-MM-DD`) es **requerido** si no hay `occurredAt` válido; con ambos, `occurredOn` define el día de calendario local.
 
 ```json
 {
@@ -130,85 +115,51 @@ Cuerpo (borrador):
   "merchantRaw": "Amazon MX",
   "amountMinor": 129900,
   "currency": "MXN",
-  "occurredAt": "2026-08-01T18:00:00.000Z",
+  "occurredOn": "2026-08-01",
   "accountLastFour": "1234",
   "note": "No llegó el correo de Amex"
 }
 ```
 
-Respuesta: el `ObservedPurchase` creado (misma forma que `GET /events`).
-
-Opcional en la misma entrega o justo después:
+Respuesta: el `ObservedPurchase` creado.
 
 ```http
 PATCH /events/{id}
 ```
 
-ampliado para `reject` (hoy solo marca verificado), con revisión auditable.
+con `action: reject` para “No cuenta en el mes”.
 
 ### Fingerprint e idempotencia
 
-No deduplicar solo por “importe + comercio + fecha” a ciegas en el alta (la política V1 del correo evita eso entre mensajes). Para **reenvíos del mismo formulario** (doble tap, retry de red):
+`fingerprint = sha256(owner + institution + occurredOn + amountMinor + normalize(merchantRaw) + accountLastFour?)`
 
-`fingerprint = sha256(owner + institution + occurredAt(day) + amountMinor + normalize(merchantRaw) + accountLastFour?)`
+- Mismo fingerprint → devolver el evento existente (idempotente frente a doble tap / retry).
+- No fusiona con correo: eso es **reconciliación**.
 
-- Mismo fingerprint en ventana corta → devolver el evento existente (idempotente).
-- No usar ese fingerprint para fusionar con correo automáticamente; la fusión es **reconciliación**, no dedupe de alta.
+### Reconciliación con correo posterior
 
-### Reconciliación con correo posterior (Amex u otro)
-
-Cuando llega una observación automática:
-
-1. Buscar candidatos del mismo usuario/institución con misma fecha (día local), mismo `amountMinor` y comercio normalizado comparable.
-2. **Una coincidencia** que ya tenga observación `manual` y ninguna automática equivalente → enlazar la nueva observación al evento; actualizar `captureSources`.
-3. **Varias coincidencias** → no fusionar; dejar eventos separados o excepción `ambiguous_duplicate` / decisión explícita (mismo espíritu que CSV Santander).
-4. El total del mes no debe contar dos veces el mismo gasto.
-
-La UI puede mostrar en el detalle: “Registro manual · también correo” cuando haya más de una fuente.
+1. Candidatos mismo owner/institución, mismo día local, mismo `amountMinor`, comercio comparable.
+2. Una coincidencia con observación `manual` y sin automática equivalente → enlazar.
+3. Varias → no fusionar (mismo espíritu que CSV).
+4. El total del mes no cuenta dos veces el mismo gasto.
 
 ## Impacto en Resumen
 
-Sin cambios de jerarquía:
+Sin cambios de jerarquía: Has gastado ↑, ritmo y Te quedan se recalculan; no suma a “por confirmar”; aparece en Movimientos. Sin CTAs extra en el hero de Resumen.
 
-1. Has gastado ↑  
-2. A este ritmo se recalcula  
-3. Te quedan ↓  
-4. No suma a “por confirmar” (status `accepted`)  
-5. Aparece en la lista de movimientos debajo  
+## Fuera de alcance (backlog)
 
-No añadir chips, stats ni CTAs en el hero de Resumen.
-
-## Alcance de la primera entrega
-
-**Incluye (implementado)**
-
-- `CaptureSource` + puntero `manual_entry`
-- `POST /events/manual` + evidencia S3 + observación
-- Sheet “Registrar cobro” en Movimientos
-- Listado y detalle con origen manual
-- `PATCH` con `action: reject` (“No cuenta en el mes”)
-- Reconciliación mismo día con correo posterior
-- Tests de alta, fingerprint e idempotencia / reconciliación
-
-**Fuera (siguiente)**
-
-- Importación masiva / CSV Amex
 - Edición rica de campos en UI (más allá de rechazo)
-- Foto o PDF adjunto como evidencia
-- Alta de instituciones arbitrarias fuera del catálogo actual
-- Tratar pagos/abonos negativos como en el CSV Santander
+- Foto o PDF adjunto como evidencia del alta manual
+- Instituciones fuera del catálogo actual
+- Tratamiento de abonos negativos como en el CSV Santander
+
+(Los PDF Amex/Santander ya están en el menú Añadir; no son backlog de este flujo.)
 
 ## Criterios de listo
 
-- Un cobro Amex (u otra institución) capturado a mano aparece el mismo día en Movimientos y mueve “Has gastado”.
+- Un cobro capturado a mano aparece el mismo día en Movimientos y mueve “Has gastado”.
 - La evidencia del alta es recuperable.
 - Un doble envío no crea dos gastos.
 - Si después llega el correo del mismo cobro, no se duplica el total cuando la coincidencia es única.
-- La voz y la navegación siguen `docs/ui-design-brief.md` y `apps/web/AGENTS.md`: tres destinos, móvil primero, sin lenguaje bancario corporativo.
-
-## Alternativas descartadas
-
-1. **Meterlo como pago próximo** — distorsiona “Te quedan” y nunca explica el gasto real.
-2. **Solo nota / campo libre en el mes** — pierde trazabilidad por movimiento y rompe Movimientos.
-3. **CSV Amex primero** — útil como respaldo, pero el dolor inmediato es un cargo suelto sin archivo; el formulario es el camino corto y reutiliza el modelo de evento.
-4. **Cuarto tab “Captura”** — viola el modelo de tres destinos; la captura sigue agrupada bajo Añadir en Movimientos.
+- Voz y navegación siguen `docs/ui-design-brief.md` y `apps/web/AGENTS.md`.

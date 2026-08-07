@@ -7,7 +7,7 @@ Before planning, implementing, or reviewing any user-facing UI change, read thes
 1. [`docs/ui-design-brief.md`](docs/ui-design-brief.md) — product direction and approved design decisions.
 2. [`apps/web/AGENTS.md`](apps/web/AGENTS.md) — operational personality, voice, visual, mobile-first, and financial-state rules.
 
-Treat both documents as binding product constraints for every UI feature, including changes made outside `apps/web` that affect what the user sees or reads.
+Treat both documents as binding product constraints for every UI feature, including changes made outside `apps/web` that affect what the user sees or reads. Patrimonio product rules also live in [`docs/patrimonio.md`](docs/patrimonio.md); keep the three-tab model (Resumen / Movimientos / Patrimonio) intact unless an explicit product decision updates those guides.
 
 Do not introduce a conflicting visual direction, interaction pattern, or tone by inference. If a new explicit product decision changes the personality, update both guides in the same change so future work receives the new direction.
 

@@ -2,9 +2,20 @@
 
 ## Estado
 
-Primera versión operativa: Olbia envía una notificación Web Push cuando se registra un **nuevo evento observado** (correo o Apple Pay), usando Declarative Web Push en la app instalada en la pantalla de inicio. Ese aviso reemplaza el correo SES de movimiento observado; SES queda reservado a excepciones de ingestión.
+Operativo: Olbia envía una notificación Web Push cuando se registra un **nuevo evento observado** por **correo** o **Apple Pay**, usando Declarative Web Push en la app instalada en la pantalla de inicio. Ese aviso reemplaza el correo SES de movimiento observado; SES queda reservado a excepciones de ingestión (y a fallos de sync de patrimonio).
+
+No envían este push: altas manuales, CSV Santander, ni apply de estado de cuenta Amex/Santander.
 
 El mismo opt-in también habilita el [push diario de balance](daily-balance-push.md) a las 07:00 America/Chihuahua y los [recordatorios de corte/pago de tarjetas](card-cycle-push.md) a las 07:05.
+
+## Contenido
+
+```text
+Olbia · movimiento nuevo
+Hay un movimiento nuevo.
+```
+
+Con `contentMode: private`: el cuerpo oculta el detalle comercial. La UI web siempre suscribe en modo `amounts` hoy.
 
 ## Flujo
 
@@ -36,4 +47,12 @@ GSI1PK = PUSH_SUBSCRIPTIONS
 
 ## Preferencia
 
-En Resumen, debajo de la jerarquía financiera, la opción **Avisos de Olbia** pide permiso sólo tras un toque explícito. Activa el aviso de compras nuevas, el balance diario y los recordatorios de corte/pago. Si iOS lo deniega, Olbia indica que debe cambiarse en Ajustes.
+En Resumen, debajo de Fechas de corte, la opción **Avisos de Olbia** pide permiso sólo tras un toque explícito. Activa compras nuevas, balance diario y recordatorios de corte/pago. Si iOS lo deniega, Olbia indica que debe cambiarse en Ajustes.
+
+Fallos de sync Bitso/IBKR también pueden empujar un aviso (y email); detalle en [Patrimonio](patrimonio.md).
+
+## Relacionado
+
+- [Push diario del balance](daily-balance-push.md)
+- [Push de corte y pago](card-cycle-push.md)
+- [Olbia como app web en iOS](ios-home-screen-web-app.md)
