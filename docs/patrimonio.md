@@ -33,7 +33,7 @@ Plan operativo de la tab **Patrimonio** (activos).
 
 ## UI
 
-- Hero: **Tienes** + total MXN; en vista total, **Bitso / Actualizar**.
+- Hero: **Tienes** + total MXN; en vista total, un **Actualizar** dispara Bitso e IBKR a la vez.
 - Desglose por cuenta; holdings al seleccionar Bitso o IBKR; fondo muestra YTD illíquido.
 - Historial numérico + sparkline mínima.
 - Selector de mes visible pero deshabilitado en Patrimonio.

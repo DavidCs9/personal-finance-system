@@ -43,6 +43,8 @@ export function WealthView(props: {
   readonly selectedAccountId: WealthAccountId | "all";
   readonly onSelectAccount: (accountId: WealthAccountId | "all") => void;
   readonly onRegisterCajita: () => void;
+  readonly onSyncRemote: () => void;
+  readonly syncingRemote: boolean;
   readonly onSyncBitso: () => void;
   readonly syncingBitso: boolean;
   readonly bitsoSyncError?: string;
@@ -115,11 +117,12 @@ export function WealthView(props: {
                 ) : (
                   <button
                     className="income-button"
-                    onClick={props.onSyncBitso}
-                    disabled={props.syncingBitso}
+                    onClick={props.onSyncRemote}
+                    disabled={props.syncingRemote}
+                    aria-label="Actualizar Bitso e IBKR"
                   >
-                    <span>Bitso</span>
-                    <strong>{props.syncingBitso ? "Sync…" : "Actualizar"}</strong>
+                    <span>Bitso · IBKR</span>
+                    <strong>{props.syncingRemote ? "Sync…" : "Actualizar"}</strong>
                   </button>
                 )}
               </div>
