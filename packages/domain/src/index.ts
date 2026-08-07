@@ -197,14 +197,17 @@ export {
 } from "./wealth.js";
 
 export {
+  deriveMonthCompensation,
   deriveMonthIncome,
   isOrdinaryNomina,
   monthFromFechaPago,
+  payslipFondoDeduccionesMinor,
   payslipLineGroup,
   previousCalendarMonth,
   provisionalIncomeFromPriorOrdinaries,
   runningFondoAhorroByDay,
   sumFondoAhorroDeduccionesMinor,
+  type MonthCompensationDerivation,
   type MonthIncomeDerivation,
   type PayslipLine,
   type PayslipLineGroup,

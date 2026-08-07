@@ -44,6 +44,17 @@ export interface MonthIncomeDerivation {
   readonly provisionalMinor: number;
 }
 
+export interface MonthCompensationDerivation {
+  /** False when provisional or no payslips — do not invent fondo. */
+  readonly compensationAvailable: boolean;
+  /** Fondo from deposited payslips only (SAT deducción 004). */
+  readonly fondoMinor: number;
+  readonly estimatedFondoMinor: number;
+  readonly fondoEstimateActive: boolean;
+  /** Liquidez (`incomeMinor`) + fondo (+ estimated fondo when twin quincena is active). */
+  readonly compensationMinor: number;
+}
+
 export const payslipLineGroup = (kind: PayslipLineKind, tipo: string): PayslipLineGroup => {
   if (kind === "deduccion" && tipo === "004") return "fondo";
   if (kind === "percepcion" && tipo === "005") return "fondo";
@@ -66,6 +77,50 @@ export const sumFondoAhorroDeduccionesMinor = (
         .reduce((lineSum, line) => lineSum + line.amountMinor, 0),
     0,
   );
+
+/** Fondo retained on a single payslip (employee + employer portions into the fund). */
+export const payslipFondoDeduccionesMinor = (
+  payslip: Pick<PayslipSummary, "lines">,
+): number => sumFondoAhorroDeduccionesMinor([payslip]);
+
+/**
+ * Month compensation = liquidez + fondo (SAT 004).
+ * With an active 2nd-quincena liquidez estimate, twin the ordinary's fondo too.
+ * Provisional / empty months: compensation unavailable.
+ */
+export const deriveMonthCompensation = (input: {
+  readonly payslips: readonly Pick<PayslipSummary, "tipoNomina" | "lines">[];
+  readonly incomeMinor: number;
+  readonly estimateActive: boolean;
+  readonly provisionalActive: boolean;
+}): MonthCompensationDerivation => {
+  if (input.provisionalActive || input.payslips.length === 0) {
+    return {
+      compensationAvailable: false,
+      fondoMinor: 0,
+      estimatedFondoMinor: 0,
+      fondoEstimateActive: false,
+      compensationMinor: 0,
+    };
+  }
+
+  const fondoMinor = sumFondoAhorroDeduccionesMinor(input.payslips);
+  const ordinary = input.payslips.filter((slip) => isOrdinaryNomina(slip.tipoNomina));
+  let estimatedFondoMinor = 0;
+  let fondoEstimateActive = false;
+  if (input.estimateActive && ordinary.length === 1) {
+    estimatedFondoMinor = payslipFondoDeduccionesMinor(ordinary[0]!);
+    fondoEstimateActive = estimatedFondoMinor > 0;
+  }
+
+  return {
+    compensationAvailable: true,
+    fondoMinor,
+    estimatedFondoMinor,
+    fondoEstimateActive,
+    compensationMinor: input.incomeMinor + fondoMinor + estimatedFondoMinor,
+  };
+};
 
 /**
  * Running YTD fondo balance by FechaPago day (America/Chihuahua calendar dates on the slip).

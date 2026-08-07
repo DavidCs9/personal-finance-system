@@ -58,7 +58,7 @@ export function SummaryView(props: SummaryViewProps) {
           <section className="setup-card plan-loading">
             <p className="eyebrow">CONFIGURACIÓN MENSUAL</p>
             <h1>Cargando este mes…</h1>
-            <p>Estamos consultando tu ingreso y pagos próximos.</p>
+            <p>Estamos consultando tu liquidez y pagos próximos.</p>
           </section>
         ) : props.loadError ? (
           <section className="setup-card plan-error">
@@ -97,7 +97,7 @@ export function SummaryView(props: SummaryViewProps) {
                     else props.onUploadNomina();
                   }}
                 >
-                  <span>{provisionalActive ? "Ingreso provisional" : "Ingreso"}</span>
+                  <span>{provisionalActive ? "Liquidez provisional" : "Liquidez"}</span>
                   <strong>
                     <Amt>{money(props.plan.incomeMinor)}</Amt>
                   </strong>
@@ -110,7 +110,7 @@ export function SummaryView(props: SummaryViewProps) {
                 <strong>
                   <Amt>{props.spendPercent}%</Amt>
                 </strong>
-                <span>de tu ingreso mensual</span>
+                <span>de tu liquidez mensual</span>
               </div>
               {(provisionalActive && (props.plan.provisionalMinor ?? 0) > 0) ||
               (props.plan.estimateActive && (props.plan.estimatedMinor ?? 0) > 0) ||
@@ -122,7 +122,7 @@ export function SummaryView(props: SummaryViewProps) {
                         ≈
                       </span>
                       <span className="note-copy">
-                        Ingreso provisional · pendiente nómina de este mes (
+                        Liquidez provisional · pendiente nómina de este mes (
                         <Amt>{money(props.plan.provisionalMinor ?? 0)}</Amt>)
                       </span>
                     </p>

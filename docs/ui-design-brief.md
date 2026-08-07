@@ -16,7 +16,7 @@ Las reglas operativas que deben seguir futuras implementaciones del frontend est
 6. **Gastos fijos** — servicios y suscripciones indefinidos (renta, iCloud, etc.), sin fecha de fin. Las cuotas MSI no se mezclan aquí.
 7. **Fechas de corte** — en **Resumen**, calendario del mes con día de corte y día de pago de hasta tres tarjetas. Son recordatorios de ciclo; no restan de “Te quedan” ni se mezclan con gastos fijos.
 
-El ingreso mensual se deriva de los XML de CFDI nómina subidos (`FechaPago` → mes). Tocar **Ingreso** abre la cuenta del mes (quincenas + estimado/provisional). Cada nómina abre un desglose centrado en liquidez, fondo, ISR e IMSS; las líneas SAT quedan colapsadas. Con una sola nómina ordinaria en el mes actual, Resumen estima la 2ª quincena. Sin XML del mes actual, el ingreso puede ser provisional a partir de ordinarias previas.
+El ingreso mensual (liquidez) se deriva de los XML de CFDI nómina subidos (`FechaPago` → mes). El chip **Liquidez** muestra esa cifra; tocar abre **Nómina del mes** (liquidez + compensación = liquidez + aportaciones al fondo SAT `004`, con estimado de 2ª quincena cuando aplica). Cada nómina abre un desglose centrado en liquidez, fondo, ISR e IMSS; las líneas SAT quedan colapsadas. Con una sola nómina ordinaria en el mes actual, Resumen estima la 2ª quincena. Sin XML del mes actual, la liquidez puede ser provisional a partir de ordinarias previas. Resumen (% gastado, Te quedan) usa solo liquidez, nunca compensación.
 
 ### Patrimonio (neto)
 
@@ -56,8 +56,8 @@ En escritorio se conserva la misma arquitectura con un ancho de lectura contenid
 
 ## Persistencia mensual
 
-Las compras continúan viniendo de la API existente. El ingreso del mes se deriva de `GET /months/{month}` a partir de las nóminas CFDI (`payslips`, `incomeMinor`, `estimateActive`, `provisionalActive`). Los pagos próximos se guardan con `PUT /months/{month}` (solo `upcomingPayments`). Cada registro queda aislado por el identificador autenticado del usuario y el mes calendario.
+Las compras continúan viniendo de la API existente. La liquidez del mes se deriva de `GET /months/{month}` a partir de las nóminas CFDI (`payslips`, `incomeMinor`, `estimateActive`, `provisionalActive`). Los pagos próximos se guardan con `PUT /months/{month}` (solo `upcomingPayments`). Cada registro queda aislado por el identificador autenticado del usuario y el mes calendario.
 
-En el mes calendario actual, si aún no hay nóminas, el ingreso puede ser **provisional** a partir del patrón de las últimas 1–2 nóminas ordinarias (doble de la última, o suma de las dos más recientes). La UI muestra Resumen usable con esa cifra y pide el XML; al subir la primera nómina del mes, se aplica la lógica normal (depósitos + estimado de 2ª quincena si aplica). Un mes pasado sin nóminas sigue sin configurar.
+En el mes calendario actual, si aún no hay nóminas, la liquidez puede ser **provisional** a partir del patrón de las últimas 1–2 nóminas ordinarias (doble de la última, o suma de las dos más recientes). La UI muestra Resumen usable con esa cifra y pide el XML; al subir la primera nómina del mes, se aplica la lógica normal (depósitos + estimado de 2ª quincena si aplica). Un mes pasado sin nóminas sigue sin configurar.
 
 Los snapshots de patrimonio viven en la misma tabla (`GET /wealth`, `POST /wealth/accounts/.../snapshots`, `POST /wealth/liabilities/{cardId}/snapshots`, `POST /wealth/sync/bitso`, `POST /wealth/sync/ibkr`) con día calendario `America/Chihuahua`.
