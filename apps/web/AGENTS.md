@@ -62,6 +62,7 @@ Assume at least 95% of usage is mobile.
 - The primary state must be understandable in a few seconds without horizontal scrolling.
 - Keep primary actions reachable and touch targets comfortable.
 - Preserve the three-destination model: **Resumen** (month state), **Movimientos** (sortable raw list), **Patrimonio** (net worth).
+- The **assistant** is a global sheet opened from the topbar (not a fourth tab). Session memory lasts only while the sheet is open; changing the month selector clears the thread. Ground answers in tool results; show citation chips. Private mode blurs amounts in the sheet too. See [`../../docs/ai-assistant.md`](../../docs/ai-assistant.md).
 - Patrimonio keeps the month selector enabled so you can change period without leaving the tab (Patrimonio totals themselves stay current, not month-scoped).
 - Desktop should be a contained adaptation of the same experience, not a separate dashboard with extra density.
 
@@ -75,7 +76,8 @@ Assume at least 95% of usage is mobile.
 - If liquidez is missing or failed to load (no payslips and no prior ordinary pattern), say so prominently and do not present availability or projections as valid. Prompt to upload the nómina XML instead of typing a manual total.
 - Upcoming payments and committed MSI installments affect remaining money and the month-end projection.
 - For MSI purchases, “Has gastado” counts only installments marked `spent` for that month. The full principal must not inflate the month total.
-- In **Movimientos**, keep a simple sortable raw list. MSI purchases appear as normal rows with badge `MSI i/N` and sort/show by the selected month’s cuota (not the principal). Do not duplicate the Planes con fin block here.
+- In **Movimientos**, keep a simple sortable raw list. MSI purchases appear as normal rows with badge `MSI i/N` and sort/show by the selected month’s cuota (not the principal). Show a category badge; edit category in the event sheet (updates the event and, when confirmed, the merchant→category rule). Do not duplicate the Planes con fin block here.
+- Spend-by-category answers use the same “Has gastado” semantics as Resumen (MSI cuota of the month, not full ticket). `categoryId` null/absent means Sin categoría; disclose uncategorized amounts when answering.
 - Show **Meses sin intereses / Planes con fin** only on **Resumen**, listing this month’s spent and committed cuotas with principal total and start–end range.
 - Keep **Gastos fijos / Servicios y suscripciones** for indefinite recurring charges only. Do not mix MSI plans into that list.
 - Show **Fechas de corte** on **Resumen** after gastos fijos and before push preferences. Card cut-off/payment days are durable profile data, not monthly plan amounts, and must not change “Te quedan”.

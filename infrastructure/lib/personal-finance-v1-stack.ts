@@ -4,6 +4,7 @@ import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpJwtAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as budgets from 'aws-cdk-lib/aws-budgets';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
@@ -343,6 +344,93 @@ export class PersonalFinanceV1Stack extends Stack {
       actions: ['textract:StartDocumentAnalysis', 'textract:GetDocumentAnalysis'],
       resources: ['*'],
     }));
+
+    const agentProxyFunction = new NodejsFunction(this, 'AgentProxyFunction', {
+      ...lambdaDefaults,
+      functionName: 'personal-finance-v1-agent-proxy',
+      logGroup: this.createLogGroup('AgentProxyLogGroup', 'personal-finance-v1-agent-proxy'),
+      entry: path.join(__dirname, '..', 'lambda', 'agent-proxy.ts'),
+      handler: 'handler',
+      description: 'JWT proxy to Olbia assistant (Bedrock Converse / AgentCore Harness) with SSE.',
+      timeout: Duration.seconds(29),
+      memorySize: 512,
+      environment: {
+        ...dataStorageEnvironment,
+        BEDROCK_MODEL_ID: 'anthropic.claude-sonnet-4-6',
+        // Set after AgentCore Harness is provisioned (see docs/ai-assistant.md).
+        HARNESS_ARN: '',
+      },
+    });
+    metadataTable.grantReadWriteData(agentProxyFunction);
+    agentProxyFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: [
+        'bedrock:InvokeModel',
+        'bedrock:InvokeModelWithResponseStream',
+        'bedrock:Converse',
+        'bedrock:ConverseStream',
+      ],
+      resources: ['*'],
+    }));
+    agentProxyFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: [
+        'bedrock-agentcore:InvokeHarness',
+        'bedrock-agentcore:InvokeAgentRuntime',
+      ],
+      resources: ['*'],
+    }));
+
+    const harnessExecutionRole = new iam.Role(this, 'AgentCoreHarnessExecutionRole', {
+      roleName: 'personal-finance-v1-agentcore-harness',
+      assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com'),
+      description: 'Execution role for Olbia AgentCore Harness (SigV4 inbound from agent-proxy).',
+    });
+    harnessExecutionRole.assumeRolePolicy?.addStatements(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      principals: [new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com')],
+      actions: ['sts:AssumeRole'],
+      conditions: {
+        StringEquals: { 'aws:SourceAccount': this.account },
+        ArnLike: {
+          'aws:SourceArn': `arn:aws:bedrock-agentcore:${this.region}:${this.account}:harness/*`,
+        },
+      },
+    }));
+    harnessExecutionRole.addToPolicy(new iam.PolicyStatement({
+      actions: [
+        'bedrock:InvokeModel',
+        'bedrock:InvokeModelWithResponseStream',
+        'bedrock:Converse',
+        'bedrock:ConverseStream',
+      ],
+      resources: ['*'],
+    }));
+    new cdk.CfnOutput(this, 'AgentCoreHarnessExecutionRoleArn', {
+      value: harnessExecutionRole.roleArn,
+      description: 'Pass to create-harness --execution-role-arn (see docs/ai-assistant.md).',
+    });
+
+    // Low-threshold estimated charges alarm (single-user agent cost guardrail).
+    new budgets.CfnBudget(this, 'AgentBedrockBudget', {
+      budget: {
+        budgetType: 'COST',
+        timeUnit: 'MONTHLY',
+        budgetLimit: { amount: 15, unit: 'USD' },
+        budgetName: 'personal-finance-v1-bedrock-agent',
+        costFilters: { Service: ['Amazon Bedrock'] },
+      },
+      notificationsWithSubscribers: [{
+        notification: {
+          comparisonOperator: 'GREATER_THAN',
+          threshold: 80,
+          thresholdType: 'PERCENTAGE',
+          notificationType: 'ACTUAL',
+        },
+        subscribers: [{
+          subscriptionType: 'EMAIL',
+          address: alertRecipientEmail.valueAsString,
+        }],
+      }],
+    });
     // Textract reads statement PDFs from the KMS-encrypted raw bucket.
     rawEmailBucket.addToResourcePolicy(new iam.PolicyStatement({
       sid: 'AllowTextractReadStatementPdfs',
@@ -614,6 +702,7 @@ export class PersonalFinanceV1Stack extends Stack {
       { jwtAudience: [userPoolClient.userPoolClientId] },
     );
     const apiIntegration = new HttpLambdaIntegration('ApiLambdaIntegration', apiFunction);
+    const agentProxyIntegration = new HttpLambdaIntegration('AgentProxyIntegration', agentProxyFunction);
     const applePayCaptureIntegration = new HttpLambdaIntegration('ApplePayCaptureIntegration', applePayCaptureFunction);
     for (const route of [
       'GET /events',
@@ -648,6 +737,18 @@ export class PersonalFinanceV1Stack extends Stack {
       'POST /wealth/liabilities/{cardId}/snapshots',
       'POST /wealth/sync/bitso',
       'POST /wealth/sync/ibkr',
+      'GET /categories',
+      'PUT /categories',
+      'POST /categories/ensure-defaults',
+      'GET /categories/rules',
+      'POST /categories/rules',
+      'GET /agent/month-snapshot',
+      'GET /agent/spend-by-category',
+      'GET /agent/spend-by-merchant',
+      'GET /agent/compare-months',
+      'GET /agent/movements',
+      'GET /agent/wealth-snapshot',
+      'POST /agent/propose-recategorize',
     ]) {
       httpApi.addRoutes({
         path: route.split(' ')[1],
@@ -656,6 +757,12 @@ export class PersonalFinanceV1Stack extends Stack {
         authorizer,
       });
     }
+    httpApi.addRoutes({
+      path: '/agent/chat',
+      methods: [apigatewayv2.HttpMethod.POST],
+      integration: agentProxyIntegration,
+      authorizer,
+    });
     httpApi.addRoutes({
       path: '/captures/apple-pay',
       methods: [apigatewayv2.HttpMethod.POST],

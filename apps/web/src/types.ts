@@ -19,6 +19,7 @@ export interface PurchaseEvent {
   readonly accountName: string;
   readonly amount: Money;
   readonly merchantRaw: string;
+  readonly categoryId?: string | null;
   readonly occurredAt?: string;
   readonly receivedAt: string;
   readonly ingestedAt: string;

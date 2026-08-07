@@ -781,6 +781,24 @@ html.private-mode .hero-amount .amt {
 .checkbox-row input { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 1px; }
 .checkbox-row span { min-width: 0; }
 .msi-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid #d7cfc4; border-radius: 999px; font-size: 10px; letter-spacing: .04em; color: var(--ink-soft); }
+.category-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid #e7e1d8; border-radius: 4px; font-size: 10px; letter-spacing: .03em; color: var(--ink-soft); font-weight: 500; }
+
+.assistant-sheet { display: grid; gap: 14px; }
+.assistant-month-chip { margin: 0; font-size: 13px; color: var(--ink-soft); }
+.assistant-examples { display: grid; gap: 8px; }
+.assistant-examples > p { margin: 0; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); }
+.assistant-example { text-align: left; border: 1px solid #e7e1d8; background: #f8f4ed; color: var(--ink); padding: 12px 14px; border-radius: 10px; }
+.assistant-thread { display: grid; gap: 10px; max-height: min(48vh, 420px); overflow: auto; padding-right: 2px; }
+.assistant-bubble { border-radius: 12px; padding: 12px 14px; }
+.assistant-bubble.user { background: #1f1a17; color: #f7f1e8; }
+.assistant-bubble.assistant { background: #f8f4ed; border: 1px solid #e7e1d8; color: var(--ink); }
+.assistant-bubble p { margin: 0; white-space: pre-wrap; line-height: 1.45; }
+.assistant-citations { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.assistant-citation { border: 1px solid #d7cfc4; border-radius: 4px; padding: 2px 8px; font-size: 11px; color: var(--ink-soft); }
+.assistant-proposal { margin-top: 10px; display: grid; gap: 8px; }
+.assistant-composer { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.assistant-composer input { width: 100%; border: 1px solid #d7cfc4; border-radius: 10px; padding: 12px 14px; background: #fff; color: var(--ink); }
+.assistant-composer button { border: 0; border-radius: 10px; padding: 12px 16px; background: #1f1a17; color: #f7f1e8; }
 .field { display: grid; gap: 7px; }
 .field > span { color: var(--ink-soft); font-size: 9px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
 .field > input,

@@ -10,7 +10,8 @@
     "./bitso-sync": "./src/wealth/bitso-sync.ts",
     "./ibkr-sync": "./src/wealth/ibkr-sync.ts",
     "./daily-balance-push": "./src/push/daily-balance-push.ts",
-    "./card-cycle-push": "./src/push/card-cycle-push.ts"
+    "./card-cycle-push": "./src/push/card-cycle-push.ts",
+    "./agent-proxy": "./src/agent/proxy.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",
@@ -19,6 +20,7 @@
   },
   "dependencies": {
     "@aws-lambda-powertools/event-handler": "^2.34.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.883.0",
     "@aws-sdk/client-dynamodb": "^3.883.0",
     "@aws-sdk/client-s3": "^3.883.0",
     "@aws-sdk/client-secrets-manager": "^3.1101.0",

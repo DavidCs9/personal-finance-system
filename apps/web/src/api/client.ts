@@ -466,7 +466,81 @@ export const ledgerApi = {
       method: "DELETE",
     });
   },
+  async listCategories(idToken: string): Promise<{ categories: readonly { id: string; name: string; sortOrder: number }[] }> {
+    return request("/categories", idToken);
+  },
+  async setEventCategory(
+    eventId: string,
+    body: { readonly categoryId: string | null; readonly updateRule?: boolean },
+    idToken: string,
+  ): Promise<PurchaseEvent> {
+    return request<PurchaseEvent>(`/events/${encodeURIComponent(eventId)}`, idToken, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set_category", ...body }),
+    });
+  },
+  async streamAgentChat(
+    input: { readonly message: string; readonly month: string; readonly sessionId?: string },
+    idToken: string,
+    onEvent: (event: AgentChatEvent) => void,
+  ): Promise<string | undefined> {
+    const storedToken = localStorage.getItem(idTokenKey);
+    let requestToken = isTokenFresh(storedToken)
+      ? storedToken
+      : isTokenFresh(idToken)
+        ? idToken
+        : await refreshSession();
+    if (!requestToken) throw endedSessionError();
+
+    const execute = (token: string) => fetch(`${config().apiBaseUrl}/agent/chat`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify(input),
+    });
+
+    let response = await execute(requestToken);
+    if (response.status === 401) {
+      requestToken = await refreshSession();
+      if (!requestToken) throw endedSessionError();
+      response = await execute(requestToken);
+    }
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({ message: "No pude consultar tus datos." })) as {
+        message?: string;
+        requestId?: string;
+      };
+      throw new Error(body.message ?? "No pude consultar tus datos.");
+    }
+    const raw = await response.text();
+    let sessionId: string | undefined = input.sessionId;
+    for (const block of raw.split("\n\n")) {
+      const line = block.trim();
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (!payload) continue;
+      try {
+        const event = JSON.parse(payload) as AgentChatEvent;
+        onEvent(event);
+        if (event.type === "done") sessionId = event.sessionId;
+      } catch {
+        // ignore malformed chunks
+      }
+    }
+    return sessionId;
+  },
 };
+
+export type AgentChatEvent =
+  | { readonly type: "token"; readonly text: string }
+  | { readonly type: "citation"; readonly kind: string; readonly id?: string; readonly label: string }
+  | { readonly type: "proposal"; readonly eventId: string; readonly categoryId: string; readonly message: string }
+  | { readonly type: "done"; readonly requestId: string; readonly sessionId: string }
+  | { readonly type: "error"; readonly message: string; readonly requestId: string };
 
 const request = async <T>(path: string, idToken: string, init?: RequestInit): Promise<T> => {
   const storedToken = localStorage.getItem(idTokenKey);

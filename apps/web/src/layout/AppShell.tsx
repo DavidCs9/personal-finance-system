@@ -14,6 +14,7 @@ export function AppShell({
   onRefresh,
   privateMode,
   onTogglePrivateMode,
+  onOpenAssistant,
   demoMode,
   showSignOut,
   onSignOut,
@@ -29,6 +30,7 @@ export function AppShell({
   onRefresh(): void;
   privateMode: boolean;
   onTogglePrivateMode(): void;
+  onOpenAssistant(): void;
   demoMode: boolean;
   showSignOut: boolean;
   onSignOut(): void;
@@ -50,6 +52,7 @@ export function AppShell({
         onRefresh={onRefresh}
         privateMode={privateMode}
         onTogglePrivateMode={onTogglePrivateMode}
+        onOpenAssistant={onOpenAssistant}
         demoMode={demoMode}
         showSignOut={showSignOut}
         onSignOut={onSignOut}

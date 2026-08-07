@@ -58,6 +58,8 @@ export interface ObservedPurchase {
   readonly account?: AccountReference;
   readonly amount: Money;
   readonly merchantRaw: string;
+  /** Spend category id from the catalog; null/absent = Sin categoría. */
+  readonly categoryId?: string | null;
   readonly msi?: MsiPlan;
   /** For transfers, the recipient shown in the bank confirmation. */
   readonly counterparty?: string;
@@ -214,3 +216,24 @@ export {
   type PayslipLineKind,
   type PayslipSummary,
 } from "./payroll.js";
+
+export {
+  DEFAULT_SPEND_CATEGORIES,
+  categoryLabel,
+  isValidCategoryId,
+  normalizeMerchantKey,
+  resolveCategoryId,
+  suggestCategoryIdFromMerchant,
+  type MerchantCategoryRule,
+  type SpendCategory,
+} from "./categories.js";
+
+export {
+  aggregateSpendByCategory,
+  aggregateSpendByMerchant,
+  spendAmountForMonth,
+  uncertainAmountForMonth,
+  type CategorizedSpendEvent,
+  type SpendAggregateResult,
+  type SpendBucket,
+} from "./spend-aggregates.js";
