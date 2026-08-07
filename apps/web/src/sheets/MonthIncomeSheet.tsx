@@ -1,3 +1,4 @@
+import { deriveMonthCompensation } from "@finance/domain";
 import { money } from "../lib/format";
 import type { MonthlyPlan, Payslip } from "../monthly-plan";
 import { Amt } from "../components/Amt";
@@ -36,16 +37,23 @@ export function MonthIncomeSheet({
   const provisionalActive = Boolean(plan.provisionalActive);
   const estimateActive = Boolean(plan.estimateActive) && (plan.estimatedMinor ?? 0) > 0;
   const depositedMinor = plan.depositedMinor ?? payslips.reduce((sum, slip) => sum + slip.totalMinor, 0);
+  const compensation = deriveMonthCompensation({
+    payslips,
+    incomeMinor: plan.incomeMinor,
+    estimateActive,
+    provisionalActive,
+  });
+  const fondoTotalMinor = compensation.fondoMinor + compensation.estimatedFondoMinor;
 
   return (
     <Sheet
       eyebrow={monthLabel(plan.month)}
-      title="Ingreso del mes"
+      title="Nómina del mes"
       onClose={onClose}
       className="month-income-sheet"
     >
       <div className="month-income-hero">
-        <p>{provisionalActive ? "Ingreso provisional" : "Liquidez del mes"}</p>
+        <p>{provisionalActive ? "Liquidez provisional" : "Liquidez del mes"}</p>
         <strong>
           <Amt>{money(plan.incomeMinor)}</Amt>
         </strong>
@@ -56,6 +64,21 @@ export function MonthIncomeSheet({
           {estimateActive ? " Incluye estimado de la 2ª quincena." : ""}
         </span>
       </div>
+
+      {compensation.compensationAvailable && (
+        <div className="month-compensation">
+          <p>Compensación del mes</p>
+          <strong>
+            <Amt>{money(compensation.compensationMinor)}</Amt>
+          </strong>
+          <span>
+            Liquidez <Amt>{money(plan.incomeMinor)}</Amt>
+            {" · "}
+            Fondo <Amt>{money(fondoTotalMinor)}</Amt>
+            {compensation.fondoEstimateActive ? " (incluye estimado de 2ª quincena)" : ""}
+          </span>
+        </div>
+      )}
 
       <ul className="month-income-lines">
         {payslips.map((payslip) => {
@@ -108,7 +131,7 @@ export function MonthIncomeSheet({
                 <strong>—</strong>
               </span>
               <span className="payment-name">
-                <strong>Ingreso provisional</strong>
+                <strong>Liquidez provisional</strong>
                 <small>Pendiente nómina de este mes</small>
               </span>
               <strong className="payment-amount">

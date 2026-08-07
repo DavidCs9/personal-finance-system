@@ -265,7 +265,7 @@ export const dailyBalancePushMessage = (
   if (!summary.incomeConfigured || summary.incomeMinor <= 0) {
     return {
       title: "Olbia · balance de hoy",
-      body: `Has gastado ${spent} este mes. Configura el ingreso del mes para ver qué te queda.`,
+      body: `Has gastado ${spent} este mes. Sube la nómina del mes para ver qué te queda.`,
       tag,
       navigate: navigateUrl,
     };

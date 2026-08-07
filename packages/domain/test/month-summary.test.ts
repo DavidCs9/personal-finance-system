@@ -160,7 +160,7 @@ describe('dailyBalancePushMessage', () => {
       now: new Date('2026-08-02T14:00:00-06:00'),
     });
     expect(dailyBalancePushMessage(summary, 'amounts', 'https://finance.castrodavid.dev/', '2026-08-02').body)
-      .toBe(`Has gastado ${formatMxnWhole(100_00)} este mes. Configura el ingreso del mes para ver qué te queda.`);
+      .toBe(`Has gastado ${formatMxnWhole(100_00)} este mes. Sube la nómina del mes para ver qué te queda.`);
   });
 
   it('hides amounts in private mode', () => {

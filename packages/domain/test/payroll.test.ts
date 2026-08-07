@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  deriveMonthCompensation,
   deriveMonthIncome,
   payslipLineGroup,
   previousCalendarMonth,
@@ -109,6 +110,61 @@ describe("sumFondoAhorroDeduccionesMinor", () => {
       },
     ]);
     expect(total).toBe(550_000);
+  });
+});
+
+describe("deriveMonthCompensation", () => {
+  const fondoLines = [
+    { kind: "deduccion" as const, tipo: "004", clave: "067", concepto: "Fondo", amountMinor: 285_450, group: "fondo" as const },
+    { kind: "deduccion" as const, tipo: "004", clave: "181", concepto: "Fondo emp", amountMinor: 285_450, group: "fondo" as const },
+  ];
+
+  it("is unavailable when provisional or empty", () => {
+    expect(
+      deriveMonthCompensation({
+        payslips: [],
+        incomeMinor: 4_000_000,
+        estimateActive: false,
+        provisionalActive: true,
+      }).compensationAvailable,
+    ).toBe(false);
+    expect(
+      deriveMonthCompensation({
+        payslips: [],
+        incomeMinor: 0,
+        estimateActive: false,
+        provisionalActive: false,
+      }).compensationAvailable,
+    ).toBe(false);
+  });
+
+  it("adds deposited fondo to liquidez", () => {
+    const derived = deriveMonthCompensation({
+      payslips: [
+        { tipoNomina: "O", lines: fondoLines },
+        { tipoNomina: "O", lines: fondoLines },
+      ],
+      incomeMinor: 4_526_140,
+      estimateActive: false,
+      provisionalActive: false,
+    });
+    expect(derived.compensationAvailable).toBe(true);
+    expect(derived.fondoMinor).toBe(1_141_800);
+    expect(derived.estimatedFondoMinor).toBe(0);
+    expect(derived.compensationMinor).toBe(4_526_140 + 1_141_800);
+  });
+
+  it("twins fondo when the 2nd quincena liquidez estimate is active", () => {
+    const derived = deriveMonthCompensation({
+      payslips: [{ tipoNomina: "O", lines: fondoLines }],
+      incomeMinor: 4_526_140,
+      estimateActive: true,
+      provisionalActive: false,
+    });
+    expect(derived.fondoMinor).toBe(570_900);
+    expect(derived.fondoEstimateActive).toBe(true);
+    expect(derived.estimatedFondoMinor).toBe(570_900);
+    expect(derived.compensationMinor).toBe(4_526_140 + 570_900 + 570_900);
   });
 });
 
