@@ -1,16 +1,22 @@
 import { dayKeyInZone, FINANCE_TIME_ZONE } from "./month-summary.js";
 
-export const WEALTH_ACCOUNT_IDS = ["nu_cajita_emergencia", "bitso", "ibkr"] as const;
+export const WEALTH_ACCOUNT_IDS = [
+  "nu_cajita_emergencia",
+  "fondo_ahorro",
+  "bitso",
+  "ibkr",
+] as const;
 
 export type WealthAccountId = (typeof WEALTH_ACCOUNT_IDS)[number];
 
-export type WealthAccountRole = "emergency_fund" | "crypto" | "brokerage";
+export type WealthAccountRole = "emergency_fund" | "payroll_savings" | "crypto" | "brokerage";
 
-export type WealthSnapshotSource = "manual" | "api" | "flex";
+export type WealthSnapshotSource = "manual" | "api" | "flex" | "derived";
 
 export const CAJITA_STALE_DAYS = 7;
 
 export const CAJITA_ACCOUNT_ID: WealthAccountId = "nu_cajita_emergencia";
+export const FONDO_AHORRO_ACCOUNT_ID: WealthAccountId = "fondo_ahorro";
 export const BITSO_ACCOUNT_ID: WealthAccountId = "bitso";
 export const IBKR_ACCOUNT_ID: WealthAccountId = "ibkr";
 
@@ -49,7 +55,7 @@ export interface WealthAccountDefinition {
   readonly name: string;
   readonly institution: string;
   readonly role: WealthAccountRole;
-  readonly sync: "manual" | "api" | "flex";
+  readonly sync: "manual" | "api" | "flex" | "derived";
 }
 
 export const WEALTH_ACCOUNTS: readonly WealthAccountDefinition[] = [
@@ -59,6 +65,13 @@ export const WEALTH_ACCOUNTS: readonly WealthAccountDefinition[] = [
     institution: "Nu",
     role: "emergency_fund",
     sync: "manual",
+  },
+  {
+    id: "fondo_ahorro",
+    name: "Fondo de ahorro",
+    institution: "Nómina",
+    role: "payroll_savings",
+    sync: "derived",
   },
   {
     id: "bitso",
@@ -101,6 +114,16 @@ export const cajitaEmergencyHolding = (amountMinor: number): WealthHolding => ({
   id: "emergency_fund",
   symbol: "MXN",
   name: "Fondo de emergencia",
+  quantity: amountMinor / 100,
+  currency: "MXN",
+  valueNativeMinor: amountMinor,
+  valueMxnMinor: amountMinor,
+});
+
+export const fondoAhorroHolding = (amountMinor: number): WealthHolding => ({
+  id: "payroll_savings",
+  symbol: "MXN",
+  name: "Fondo de ahorro",
   quantity: amountMinor / 100,
   currency: "MXN",
   valueNativeMinor: amountMinor,

@@ -84,6 +84,37 @@ export const listPayslipsForMonth = async (
   return items.sort((a, b) => a.fechaPago.localeCompare(b.fechaPago) || a.uuid.localeCompare(b.uuid));
 };
 
+export const listPayslipsForYear = async (
+  owner: string,
+  year: string,
+): Promise<readonly PayslipSummary[]> => {
+  if (!/^\d{4}$/.test(year)) return [];
+  const items: PayslipSummary[] = [];
+  let exclusiveStartKey: Record<string, unknown> | undefined;
+  do {
+    const result = await database.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+        ExpressionAttributeValues: {
+          ":pk": `USER#${owner}`,
+          ":sk": `PAYROLL#${year}-`,
+        },
+        ExclusiveStartKey: exclusiveStartKey,
+        ConsistentRead: true,
+      }),
+    );
+    for (const item of result.Items ?? []) {
+      const payload = item.payload as PayslipSummary | undefined;
+      if (payload?.uuid && typeof payload.totalMinor === "number") {
+        items.push(payload);
+      }
+    }
+    exclusiveStartKey = result.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+  return items.sort((a, b) => a.fechaPago.localeCompare(b.fechaPago) || a.uuid.localeCompare(b.uuid));
+};
+
 export const getPayslip = async (
   owner: string,
   month: string,

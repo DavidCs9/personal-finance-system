@@ -25,7 +25,7 @@ Do not collapse patrimonio into Resumen. Do not let patrimonio analytics compete
 ### Patrimonio hierarchy
 
 1. **Tienes** — total assets in MXN.
-2. Account breakdown (Cajita Nu, Bitso, Interactive Brokers).
+2. Account breakdown (Cajita Nu, Fondo de ahorro, Bitso, Interactive Brokers).
 3. Daily history (canonical point per day; filter by selected account).
 4. Holdings for the selected account’s latest snapshot.
 
@@ -61,7 +61,7 @@ Assume at least 95% of usage is mobile.
 - The primary state must be understandable in a few seconds without horizontal scrolling.
 - Keep primary actions reachable and touch targets comfortable.
 - Preserve the three-destination model: **Resumen** (month state), **Movimientos** (sortable raw list), **Patrimonio** (assets).
-- Patrimonio keeps the month selector visible but disabled (no layout jump between tabs).
+- Patrimonio keeps the month selector enabled so you can change period without leaving the tab (Patrimonio totals themselves stay current-asset, not month-scoped).
 - Desktop should be a contained adaptation of the same experience, not a separate dashboard with extra density.
 
 ## Financial-state rules
@@ -88,6 +88,7 @@ Assume at least 95% of usage is mobile.
 - Cajita manual captures are immutable; same-day replacement keeps prior versions for audit only. Mark Cajita stale after 7 days without a capture.
 - Bitso syncs via API (scheduled and “Actualizar”); on failure keep the last good snapshot and surface the error honestly.
 - IBKR syncs via Flex Query + Banxico FIX; on failure keep the last good snapshot and surface the error honestly.
+- Fondo de ahorro is a derived Patrimonio account: calendar-year sum of CFDI nómina deducciones SAT `004` (employee + employer portions into the fund). It counts fully in **Tienes** with an illiquid-until-December label. Do not invent a liquidation reset until a clear December XML fixture exists.
 
 ## Review checklist
 

@@ -1,13 +1,14 @@
 # Patrimonio
 
-Plan operativo de la tab **Patrimonio** (activos). El LLM y los ingresos por XML quedan fuera de esta fase.
+Plan operativo de la tab **Patrimonio** (activos).
 
 ## Decisiones
 
-- Solo **activos** (Cajita Nu, Bitso, IBKR). Sin restar deudas de tarjetas.
+- Solo **activos** (Cajita Nu, Fondo de ahorro, Bitso, IBKR). Sin restar deudas de tarjetas.
 - Tab propia, hermana de Resumen y Movimientos.
 - Reporte en **MXN**; moneda nativa queda en holdings.
-- Snapshots **diarios** canónicos por cuenta (`America/Chihuahua`); holdings **embebidos**.
+- Snapshots **diarios** canónicos por cuenta líquida (`America/Chihuahua`); holdings **embebidos**.
+- **Fondo de ahorro** es derivado de CFDIs de nómina (suma de deducciones SAT `004` del año calendario). Cuenta en **Tienes** al 100% con etiqueta illíquida hasta diciembre. No se persiste como `WEALTH_SNAP`; el reset por liquidación de diciembre llega en un slice posterior.
 - Misma `MetadataTable`. Historial **sin TTL**.
 - Misma día: replace del canónico; versión previa solo auditoría.
 - Evidencia cruda en S3 (`wealth-manual/…`, `wealth-api/…`).
@@ -19,7 +20,7 @@ Plan operativo de la tab **Patrimonio** (activos). El LLM y los ingresos por XML
 
 ## API
 
-- `GET /wealth` — cuentas sembradas, últimos snapshots, historial.
+- `GET /wealth` — cuentas sembradas (incl. fondo derivado), últimos snapshots, historial.
 - `POST /wealth/accounts/nu_cajita_emergencia/snapshots` — `{ amountMinor }` MXN.
 - `POST /wealth/sync/bitso` — sync manual (JWT owner); secret `{ apiKey, apiSecret, owner }`.
 - `POST /wealth/sync/ibkr` — sync manual; secret `{ flexToken, flexQueryId, banxicoToken, owner }`.
@@ -32,10 +33,10 @@ Plan operativo de la tab **Patrimonio** (activos). El LLM y los ingresos por XML
 
 ## UI
 
-- Hero: **Tienes** + total MXN; en vista total, **Bitso / Actualizar**.
-- Desglose por cuenta; holdings al seleccionar Bitso o IBKR.
+- Hero: **Tienes** + total MXN; en vista total, un **Actualizar** dispara Bitso e IBKR a la vez.
+- Desglose por cuenta; holdings al seleccionar Bitso o IBKR; fondo muestra YTD illíquido.
 - Historial numérico + sparkline mínima.
-- Selector de mes visible pero deshabilitado en Patrimonio.
+- Selector de mes usable en Patrimonio (cambia el periodo global; el total de activos no es un corte mensual).
 
 ## Relacionado
 

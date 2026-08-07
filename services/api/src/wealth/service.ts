@@ -6,7 +6,11 @@ import {
   cajitaEmergencyHolding,
   dayKeyInZone,
   FINANCE_TIME_ZONE,
+  FONDO_AHORRO_ACCOUNT_ID,
+  fondoAhorroHolding,
   isWealthAccountId,
+  runningFondoAhorroByDay,
+  sumFondoAhorroDeduccionesMinor,
   WEALTH_ACCOUNTS,
   type WealthAccountId,
   type WealthHolding,
@@ -15,6 +19,7 @@ import {
 } from '@finance/domain';
 import { database, rawSourceBucketName, s3, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
+import { listPayslipsForYear } from '../imports/cfdi-nomina-flow.js';
 import { InvalidWealthSnapshotError, parseCajitaSnapshot } from './input.js';
 import {
   seededWealthAccounts,
@@ -29,6 +34,7 @@ const evidenceObjectKey = (kind: 'manual' | 'api', owner: string, sha256: string
 const toPublicSnapshot = (item: Record<string, unknown>): WealthSnapshot | undefined => {
   const accountId = item.accountId;
   if (typeof accountId !== 'string' || !isWealthAccountId(accountId)) return undefined;
+  if (accountId === FONDO_AHORRO_ACCOUNT_ID) return undefined;
   if (typeof item.day !== 'string' || typeof item.capturedAt !== 'string') return undefined;
   if (typeof item.totalMxnMinor !== 'number' || !Array.isArray(item.holdings)) return undefined;
   const source = item.source;
@@ -102,29 +108,94 @@ const historyPoints = (
     .map(([day, totalMxnMinor]) => ({ day, totalMxnMinor }));
 };
 
-export const getWealthOverview = async (owner: string): Promise<JsonObject> => {
-  const snapshots = await listCanonicalSnapshots(owner);
-  const latest = latestByAccount(snapshots);
+const fondoAsOfDay = (
+  running: readonly { readonly day: string; readonly totalMxnMinor: number }[],
+  day: string,
+): number => {
+  let total = 0;
+  for (const point of running) {
+    if (point.day > day) break;
+    total = point.totalMxnMinor;
+  }
+  return total;
+};
+
+const mergeHistoryWithFondo = (
+  liquidAll: readonly { readonly day: string; readonly totalMxnMinor: number }[],
+  fondoRunning: readonly { readonly day: string; readonly totalMxnMinor: number }[],
+): readonly { readonly day: string; readonly totalMxnMinor: number }[] => {
+  const days = new Set<string>([
+    ...liquidAll.map((point) => point.day),
+    ...fondoRunning.map((point) => point.day),
+  ]);
+  const liquidByDay = new Map(liquidAll.map((point) => [point.day, point.totalMxnMinor]));
+  return [...days]
+    .sort((left, right) => left.localeCompare(right))
+    .map((day) => ({
+      day,
+      totalMxnMinor: (liquidByDay.get(day) ?? 0) + fondoAsOfDay(fondoRunning, day),
+    }));
+};
+
+const derivedFondoSnapshot = (
+  totalMxnMinor: number,
+  now: Date,
+): WealthSnapshot | undefined => {
+  if (totalMxnMinor <= 0) return undefined;
+  const capturedAt = now.toISOString();
+  const day = dayKeyInZone(now, FINANCE_TIME_ZONE);
+  return {
+    accountId: FONDO_AHORRO_ACCOUNT_ID,
+    day,
+    capturedAt,
+    source: 'derived',
+    currency: 'MXN',
+    totalMxnMinor,
+    holdings: [fondoAhorroHolding(totalMxnMinor)],
+  };
+};
+
+export const getWealthOverview = async (
+  owner: string,
+  now: Date = new Date(),
+): Promise<JsonObject> => {
+  const year = dayKeyInZone(now, FINANCE_TIME_ZONE).slice(0, 4);
+  const [snapshots, yearPayslips] = await Promise.all([
+    listCanonicalSnapshots(owner),
+    listPayslipsForYear(owner, year),
+  ]);
+  const fondoTotal = sumFondoAhorroDeduccionesMinor(yearPayslips);
+  const fondoRunning = runningFondoAhorroByDay(yearPayslips);
+  const fondoSnapshot = derivedFondoSnapshot(fondoTotal, now);
+  const latest = new Map(latestByAccount(snapshots));
+  if (fondoSnapshot) latest.set(FONDO_AHORRO_ACCOUNT_ID, fondoSnapshot);
+
   const accounts = seededWealthAccounts().map((account) => {
-    const snapshot = latest.get(account.id);
+    const snapshot = latest.get(account.id) ?? null;
     return {
       ...account,
       connected: Boolean(snapshot),
-      latestSnapshot: snapshot ?? null,
+      latestSnapshot: snapshot,
     };
   });
   const totalMxnMinor = accounts.reduce(
     (sum, account) => sum + (account.latestSnapshot?.totalMxnMinor ?? 0),
     0,
   );
+  const liquidAll = historyPoints(snapshots, 'all');
   return {
     currency: 'MXN',
     totalMxnMinor,
     accounts,
     history: {
-      all: historyPoints(snapshots, 'all'),
+      all: mergeHistoryWithFondo(liquidAll, fondoRunning),
       byAccount: Object.fromEntries(
-        WEALTH_ACCOUNTS.map((account) => [account.id, historyPoints(snapshots, account.id)]),
+        WEALTH_ACCOUNTS.map((account) => [
+          account.id,
+          account.id === FONDO_AHORRO_ACCOUNT_ID
+            ? fondoRunning
+            : historyPoints(snapshots, account.id),
+        ]),
       ),
     },
   };
@@ -140,6 +211,9 @@ export const persistWealthSnapshot = async (input: {
   readonly fxSource?: string;
   readonly fxRate?: number;
 }): Promise<WealthSnapshot> => {
+  if (input.accountId === FONDO_AHORRO_ACCOUNT_ID || input.source === 'derived') {
+    throw new InvalidWealthSnapshotError('Fondo de ahorro is derived from CFDI nómina; it cannot be snapshotted.');
+  }
   const capturedAt = new Date().toISOString();
   const day = dayKeyInZone(new Date(capturedAt), FINANCE_TIME_ZONE);
   const totalMxnMinor = input.holdings.reduce((sum, holding) => sum + holding.valueMxnMinor, 0);

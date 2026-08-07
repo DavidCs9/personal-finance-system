@@ -54,6 +54,40 @@ export const payslipLineGroup = (kind: PayslipLineKind, tipo: string): PayslipLi
 
 export const isOrdinaryNomina = (tipoNomina: string): boolean => tipoNomina === "O";
 
+/** Employee + employer portions withheld into the fund (SAT deducción 004). Excludes percepción 005. */
+export const sumFondoAhorroDeduccionesMinor = (
+  payslips: readonly Pick<PayslipSummary, "lines">[],
+): number =>
+  payslips.reduce(
+    (sum, slip) =>
+      sum +
+      slip.lines
+        .filter((line) => line.kind === "deduccion" && line.group === "fondo")
+        .reduce((lineSum, line) => lineSum + line.amountMinor, 0),
+    0,
+  );
+
+/**
+ * Running YTD fondo balance by FechaPago day (America/Chihuahua calendar dates on the slip).
+ * Multiple payslips on the same day accumulate into one point.
+ */
+export const runningFondoAhorroByDay = (
+  payslips: readonly Pick<PayslipSummary, "fechaPago" | "lines">[],
+): readonly { readonly day: string; readonly totalMxnMinor: number }[] => {
+  const sorted = [...payslips].sort((a, b) => a.fechaPago.localeCompare(b.fechaPago));
+  const byDay = new Map<string, number>();
+  let running = 0;
+  for (const slip of sorted) {
+    const contributed = sumFondoAhorroDeduccionesMinor([slip]);
+    if (contributed <= 0) continue;
+    running += contributed;
+    byDay.set(slip.fechaPago, running);
+  }
+  return [...byDay.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([day, totalMxnMinor]) => ({ day, totalMxnMinor }));
+};
+
 export const previousCalendarMonth = (month: string): string | undefined => {
   if (!isValidMonth(month)) return undefined;
   const year = Number(month.slice(0, 4));

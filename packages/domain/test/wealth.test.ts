@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CAJITA_STALE_DAYS,
   cajitaEmergencyHolding,
+  fondoAhorroHolding,
   isWealthAccountId,
   isWealthSnapshotStale,
   wealthSnapshotAgeDays,
@@ -10,6 +11,7 @@ import {
 describe("wealth domain", () => {
   it("recognises seeded account ids", () => {
     expect(isWealthAccountId("nu_cajita_emergencia")).toBe(true);
+    expect(isWealthAccountId("fondo_ahorro")).toBe(true);
     expect(isWealthAccountId("bitso")).toBe(true);
     expect(isWealthAccountId("ibkr")).toBe(true);
     expect(isWealthAccountId("other")).toBe(false);
@@ -24,6 +26,18 @@ describe("wealth domain", () => {
       currency: "MXN",
       valueNativeMinor: 1_255_000,
       valueMxnMinor: 1_255_000,
+    });
+  });
+
+  it("builds a fondo de ahorro holding in MXN minor units", () => {
+    expect(fondoAhorroHolding(7_858_730)).toEqual({
+      id: "payroll_savings",
+      symbol: "MXN",
+      name: "Fondo de ahorro",
+      quantity: 78_587.3,
+      currency: "MXN",
+      valueNativeMinor: 7_858_730,
+      valueMxnMinor: 7_858_730,
     });
   });
 

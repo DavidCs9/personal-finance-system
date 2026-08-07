@@ -1,9 +1,9 @@
 import type { WealthOverview } from "./wealth";
 
-/** Demo seed for local walkthrough — Cajita + Bitso + IBKR connected. */
+/** Demo seed for local walkthrough — Cajita + Fondo + Bitso + IBKR connected. */
 export const demoWealthOverview: WealthOverview = {
   currency: "MXN",
-  totalMxnMinor: 22_250_500,
+  totalMxnMinor: 30_109_230,
   accounts: [
     {
       id: "nu_cajita_emergencia",
@@ -28,6 +28,33 @@ export const demoWealthOverview: WealthOverview = {
             currency: "MXN",
             valueNativeMinor: 8_500_000,
             valueMxnMinor: 8_500_000,
+          },
+        ],
+      },
+    },
+    {
+      id: "fondo_ahorro",
+      name: "Fondo de ahorro",
+      institution: "Nómina",
+      role: "payroll_savings",
+      sync: "derived",
+      connected: true,
+      latestSnapshot: {
+        accountId: "fondo_ahorro",
+        day: "2026-07-12",
+        capturedAt: "2026-07-12T18:00:00.000Z",
+        source: "derived",
+        currency: "MXN",
+        totalMxnMinor: 7_858_730,
+        holdings: [
+          {
+            id: "payroll_savings",
+            symbol: "MXN",
+            name: "Fondo de ahorro",
+            quantity: 78_587.3,
+            currency: "MXN",
+            valueNativeMinor: 7_858_730,
+            valueMxnMinor: 7_858_730,
           },
         ],
       },
@@ -110,15 +137,20 @@ export const demoWealthOverview: WealthOverview = {
   ],
   history: {
     all: [
-      { day: "2026-07-01", totalMxnMinor: 20_000_000 },
-      { day: "2026-07-05", totalMxnMinor: 21_200_000 },
-      { day: "2026-07-10", totalMxnMinor: 22_250_500 },
+      { day: "2026-07-01", totalMxnMinor: 25_000_000 },
+      { day: "2026-07-05", totalMxnMinor: 27_200_000 },
+      { day: "2026-07-10", totalMxnMinor: 30_109_230 },
     ],
     byAccount: {
       nu_cajita_emergencia: [
         { day: "2026-07-01", totalMxnMinor: 8_000_000 },
         { day: "2026-07-05", totalMxnMinor: 8_250_000 },
         { day: "2026-07-10", totalMxnMinor: 8_500_000 },
+      ],
+      fondo_ahorro: [
+        { day: "2026-01-30", totalMxnMinor: 1_100_000 },
+        { day: "2026-04-30", totalMxnMinor: 4_400_000 },
+        { day: "2026-07-31", totalMxnMinor: 7_858_730 },
       ],
       bitso: [
         { day: "2026-07-01", totalMxnMinor: 1_000_000 },

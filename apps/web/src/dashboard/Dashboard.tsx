@@ -471,6 +471,13 @@ export function Dashboard({
             selectedAccountId={selectedWealthAccount}
             onSelectAccount={setSelectedWealthAccount}
             onRegisterCajita={() => setCajitaOpen(true)}
+            onSyncRemote={() => {
+              bitsoSyncMutation.reset();
+              ibkrSyncMutation.reset();
+              bitsoSyncMutation.mutate();
+              ibkrSyncMutation.mutate();
+            }}
+            syncingRemote={bitsoSyncMutation.isPending || ibkrSyncMutation.isPending}
             onSyncBitso={() => {
               bitsoSyncMutation.reset();
               bitsoSyncMutation.mutate();
