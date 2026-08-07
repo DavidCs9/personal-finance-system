@@ -576,7 +576,7 @@ html.private-mode .hero-amount .amt {
   /* Keep last rows above the fixed 3-tab bar. */
   padding-bottom: calc(96px + env(safe-area-inset-bottom));
 }
-.wealth-hero { border-bottom: 1px solid var(--line); padding-top: 22px; padding-bottom: 22px; }
+.wealth-hero { border-bottom: 1px solid var(--line); padding-top: 22px; padding-bottom: 16px; }
 .wealth-hero .hero-amount {
   /* Long MXN totals must fit a ~320–390px phone without clipping. */
   margin-top: 18px;
@@ -592,14 +592,24 @@ html.private-mode .hero-amount .amt {
   white-space: normal;
   line-height: 1.35;
 }
-.wealth-accounts { margin: 22px 0 6px; }
+.wealth-accounts { margin: 14px 0 6px; }
 .wealth-detail,
-.wealth-history { margin: 22px 0 6px; }
+.wealth-history { margin: 18px 0 6px; }
 .wealth-start { margin-top: 14px; }
+.wealth-accounts .section-heading { margin-bottom: 10px; }
+.wealth-accounts .eyebrow { margin-bottom: 4px; }
+.payment-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+}
 .wealth-account-row {
-  min-height: 56px;
-  padding-top: 14px;
-  padding-bottom: 14px;
+  grid-template-columns: 14px minmax(0, 1fr) auto 9px;
+  min-height: 52px;
+  padding-top: 12px;
+  padding-bottom: 12px;
   -webkit-tap-highlight-color: transparent;
 }
 .wealth-account-row .payment-name strong { font-size: 14px; }
@@ -615,6 +625,7 @@ html.private-mode .hero-amount .amt {
 .wealth-pending { color: var(--muted); font-weight: 600; }
 .wealth-holding-row,
 .wealth-history-row {
+  grid-template-columns: 14px minmax(0, 1fr) auto 9px;
   min-height: 48px;
   cursor: default;
 }
