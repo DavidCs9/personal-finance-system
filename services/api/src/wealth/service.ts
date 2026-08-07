@@ -182,13 +182,27 @@ export const getWealthOverview = async (
     (sum, account) => sum + (account.latestSnapshot?.totalMxnMinor ?? 0),
     0,
   );
-  const liquidAll = historyPoints(snapshots, 'all');
+  const today = dayKeyInZone(now, FINANCE_TIME_ZONE);
+  // Total diario starts at "today" — older merged points mix incomplete liquid
+  // snapshots with fondo YTD and flatten the sparkline.
+  const historyAll = (() => {
+    if (totalMxnMinor <= 0) return [] as const;
+    const fromToday = mergeHistoryWithFondo(historyPoints(snapshots, 'all'), fondoRunning).filter(
+      (point) => point.day >= today,
+    );
+    if (fromToday.some((point) => point.day === today)) {
+      return fromToday.map((point) =>
+        point.day === today ? { day: today, totalMxnMinor } : point,
+      );
+    }
+    return [...fromToday, { day: today, totalMxnMinor }];
+  })();
   return {
     currency: 'MXN',
     totalMxnMinor,
     accounts,
     history: {
-      all: mergeHistoryWithFondo(liquidAll, fondoRunning),
+      all: historyAll,
       byAccount: Object.fromEntries(
         WEALTH_ACCOUNTS.map((account) => [
           account.id,
