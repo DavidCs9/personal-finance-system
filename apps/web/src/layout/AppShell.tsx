@@ -60,7 +60,6 @@ export function AppShell({
         <MonthSelector
           value={month}
           onChange={onMonthChange}
-          disabled={tab === "wealth"}
         />
         <TabNav tab={tab} onTabChange={onTabChange} variant="desktop" />
         {children}
