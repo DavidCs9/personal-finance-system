@@ -110,6 +110,51 @@ export const isWealthSnapshotStale = (
   return wealthSnapshotAgeDays(day, now) >= staleAfterDays;
 };
 
+/**
+ * Patrimonio total history omits months before this (incomplete liquid+fondo mix).
+ * Fixed start — not a sliding window — so prior month closes accumulate.
+ */
+export const WEALTH_TOTAL_HISTORY_START_MONTH = "2026-08";
+
+export type WealthHistoryPoint = {
+  readonly day: string;
+  readonly totalMxnMinor: number;
+};
+
+/** Keep the latest point in each calendar month; `day` becomes YYYY-MM-01. */
+export const toMonthlyHistoryCloses = (
+  points: readonly WealthHistoryPoint[],
+): readonly WealthHistoryPoint[] => {
+  const byMonth = new Map<string, WealthHistoryPoint>();
+  for (const point of points) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(point.day)) continue;
+    const month = point.day.slice(0, 7);
+    const current = byMonth.get(month);
+    if (!current || point.day >= current.day) {
+      byMonth.set(month, { day: `${month}-01`, totalMxnMinor: point.totalMxnMinor });
+    }
+  }
+  return [...byMonth.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, point]) => point);
+};
+
+/** Monthly closes from `startMonth` (YYYY-MM) onward; current month forced to `currentTotalMinor`. */
+export const wealthTotalMonthlyHistory = (input: {
+  readonly points: readonly WealthHistoryPoint[];
+  readonly currentMonth: string;
+  readonly currentTotalMinor: number;
+  readonly startMonth?: string;
+}): readonly WealthHistoryPoint[] => {
+  const startMonth = input.startMonth ?? WEALTH_TOTAL_HISTORY_START_MONTH;
+  if (input.currentTotalMinor <= 0) return [];
+  const monthly = toMonthlyHistoryCloses(input.points).filter(
+    (point) => point.day.slice(0, 7) >= startMonth,
+  );
+  const withoutCurrent = monthly.filter((point) => point.day.slice(0, 7) !== input.currentMonth);
+  return [...withoutCurrent, { day: `${input.currentMonth}-01`, totalMxnMinor: input.currentTotalMinor }];
+};
+
 export const cajitaEmergencyHolding = (amountMinor: number): WealthHolding => ({
   id: "emergency_fund",
   symbol: "MXN",

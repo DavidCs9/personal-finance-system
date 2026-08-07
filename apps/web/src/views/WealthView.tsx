@@ -35,6 +35,16 @@ const formatDay = (day: string): string => {
   }).format(new Date(Date.UTC(year, month - 1, date, 12)));
 };
 
+const formatMonth = (day: string): string => {
+  const [year, month] = day.split("-").map(Number);
+  const label = new Intl.DateTimeFormat("es-MX", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year, month - 1, 1, 12)));
+  return label.replace(".", "");
+};
+
 export function WealthView(props: {
   readonly overview: WealthOverview;
   readonly loading: boolean;
@@ -448,7 +458,7 @@ export function WealthView(props: {
                 <div>
                   <p className="eyebrow">HISTORIAL</p>
                   <h2>
-                    {selectedAccount ? selectedAccount.name : "Total diario"}
+                    {selectedAccount ? selectedAccount.name : "Tendencia mensual"}
                   </h2>
                 </div>
               </div>
@@ -469,7 +479,9 @@ export function WealthView(props: {
                       <div key={point.day} className="payment-row wealth-history-row">
                         <span className="payment-dot" aria-hidden="true" />
                         <span className="payment-name">
-                          <strong>{formatDay(point.day)}</strong>
+                          <strong>
+                            {selectedAccount ? formatDay(point.day) : formatMonth(point.day)}
+                          </strong>
                         </span>
                         <strong className="payment-amount">
                           <Amt>{money(point.totalMxnMinor)}</Amt>

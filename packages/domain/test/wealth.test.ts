@@ -6,6 +6,7 @@ import {
   isWealthAccountId,
   isWealthSnapshotStale,
   wealthSnapshotAgeDays,
+  wealthTotalMonthlyHistory,
 } from "../src/wealth.js";
 
 describe("wealth domain", () => {
@@ -47,5 +48,19 @@ describe("wealth domain", () => {
     expect(isWealthSnapshotStale("2026-07-30", now)).toBe(true);
     expect(wealthSnapshotAgeDays("2026-07-30", now)).toBe(CAJITA_STALE_DAYS);
     expect(isWealthSnapshotStale(undefined, now)).toBe(true);
+  });
+
+  it("builds monthly history closes from the configured start month", () => {
+    expect(
+      wealthTotalMonthlyHistory({
+        currentMonth: "2026-08",
+        currentTotalMinor: 269_273_00,
+        points: [
+          { day: "2026-07-31", totalMxnMinor: 78_587_00 },
+          { day: "2026-08-01", totalMxnMinor: 200_000_00 },
+          { day: "2026-08-06", totalMxnMinor: 250_000_00 },
+        ],
+      }),
+    ).toEqual([{ day: "2026-08-01", totalMxnMinor: 269_273_00 }]);
   });
 });

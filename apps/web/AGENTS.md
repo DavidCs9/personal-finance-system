@@ -89,6 +89,7 @@ Assume at least 95% of usage is mobile.
 - Bitso syncs via API (scheduled and “Actualizar”); on failure keep the last good snapshot and surface the error honestly.
 - IBKR syncs via Flex Query + Banxico FIX; on failure keep the last good snapshot and surface the error honestly.
 - Fondo de ahorro is a derived Patrimonio account: calendar-year sum of CFDI nómina deducciones SAT `004` (employee + employer portions into the fund). It counts fully in **Tienes** with an illiquid-until-December label. Do not invent a liquidation reset until a clear December XML fixture exists.
+- Patrimonio total history is a **monthly** trend from `2026-08` onward (not daily). Per-account history can stay day-grained.
 
 ## Review checklist
 

@@ -12,6 +12,7 @@ import {
   runningFondoAhorroByDay,
   sumFondoAhorroDeduccionesMinor,
   WEALTH_ACCOUNTS,
+  wealthTotalMonthlyHistory,
   type WealthAccountId,
   type WealthHolding,
   type WealthSnapshot,
@@ -183,20 +184,12 @@ export const getWealthOverview = async (
     0,
   );
   const today = dayKeyInZone(now, FINANCE_TIME_ZONE);
-  // Total diario starts at "today" — older merged points mix incomplete liquid
-  // snapshots with fondo YTD and flatten the sparkline.
-  const historyAll = (() => {
-    if (totalMxnMinor <= 0) return [] as const;
-    const fromToday = mergeHistoryWithFondo(historyPoints(snapshots, 'all'), fondoRunning).filter(
-      (point) => point.day >= today,
-    );
-    if (fromToday.some((point) => point.day === today)) {
-      return fromToday.map((point) =>
-        point.day === today ? { day: today, totalMxnMinor } : point,
-      );
-    }
-    return [...fromToday, { day: today, totalMxnMinor }];
-  })();
+  const currentMonth = today.slice(0, 7);
+  const historyAll = wealthTotalMonthlyHistory({
+    points: mergeHistoryWithFondo(historyPoints(snapshots, 'all'), fondoRunning),
+    currentMonth,
+    currentTotalMinor: totalMxnMinor,
+  });
   return {
     currency: 'MXN',
     totalMxnMinor,
