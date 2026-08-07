@@ -61,7 +61,7 @@ Assume at least 95% of usage is mobile.
 - The primary state must be understandable in a few seconds without horizontal scrolling.
 - Keep primary actions reachable and touch targets comfortable.
 - Preserve the three-destination model: **Resumen** (month state), **Movimientos** (sortable raw list), **Patrimonio** (assets).
-- Patrimonio keeps the month selector visible but disabled (no layout jump between tabs).
+- Patrimonio keeps the month selector enabled so you can change period without leaving the tab (Patrimonio totals themselves stay current-asset, not month-scoped).
 - Desktop should be a contained adaptation of the same experience, not a separate dashboard with extra density.
 
 ## Financial-state rules

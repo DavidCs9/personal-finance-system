@@ -49,7 +49,7 @@ La experiencia se diseña primero para móvil (95% del uso esperado):
 
 - **Resumen** — estado mensual, proyección, Planes con fin (MSI), gastos fijos y fechas de corte/pago de tarjetas.
 - **Movimientos** — lista ordenable de evidencia/compras (sin duplicar el bloque de planes MSI).
-- **Patrimonio** — activos (snapshots), historial y holdings; el selector de mes se mantiene visible pero deshabilitado para no saltar el layout.
+- **Patrimonio** — activos (snapshots), historial y holdings; el selector de mes permanece usable para cambiar periodo sin salir de la tab (el total de activos sigue siendo el estado actual, no un corte mensual).
 
 En escritorio se conserva la misma arquitectura con un ancho de lectura contenido; no se convierte en un dashboard distinto.
 
