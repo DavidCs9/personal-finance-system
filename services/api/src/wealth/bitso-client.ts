@@ -123,14 +123,23 @@ export const fetchBitsoTicker = async (
   return { book, last };
 };
 
-/** MXN per 1 unit of currency. MXN itself is 1. */
+/** MXN per 1 unit of currency. Prefers `*_mxn`; falls back to `*_usd` × `usd_mxn`. */
 export const mxnRateForCurrency = async (
   currency: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<number> => {
   if (currency === 'mxn') return 1;
-  const ticker = await fetchBitsoTicker(`${currency}_mxn`, fetchImpl);
-  return ticker.last;
+  try {
+    const ticker = await fetchBitsoTicker(`${currency}_mxn`, fetchImpl);
+    return ticker.last;
+  } catch (directError) {
+    if (currency === 'usd') throw directError;
+    const [usdTicker, usdMxn] = await Promise.all([
+      fetchBitsoTicker(`${currency}_usd`, fetchImpl),
+      fetchBitsoTicker('usd_mxn', fetchImpl),
+    ]);
+    return usdTicker.last * usdMxn.last;
+  }
 };
 
 const nativeMinorScale = (currency: string): number => {

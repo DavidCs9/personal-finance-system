@@ -75,6 +75,32 @@ describe('mxnRateForCurrency', () => {
     }), { status: 200 }));
     await expect(mxnRateForCurrency('btc', fetchImpl)).resolves.toBe(1_000_000);
   });
+
+  it('falls back to usd book times usd_mxn when no mxn book exists', async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('render_mxn')) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: { message: 'Unknown OrderBook render_mxn' },
+        }), { status: 400 });
+      }
+      if (url.includes('render_usd')) {
+        return new Response(JSON.stringify({
+          success: true,
+          payload: { book: 'render_usd', last: '1.34' },
+        }), { status: 200 });
+      }
+      if (url.includes('usd_mxn')) {
+        return new Response(JSON.stringify({
+          success: true,
+          payload: { book: 'usd_mxn', last: '17.22' },
+        }), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+    await expect(mxnRateForCurrency('render', fetchImpl)).resolves.toBeCloseTo(1.34 * 17.22);
+  });
 });
 
 describe('buildBitsoHoldings', () => {
