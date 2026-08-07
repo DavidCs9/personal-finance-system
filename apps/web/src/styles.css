@@ -740,9 +740,10 @@ html.private-mode .hero-amount .amt {
 .auth-shell { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: max(22px, env(safe-area-inset-top)) max(22px, env(safe-area-inset-right)) max(22px, env(safe-area-inset-bottom)) max(22px, env(safe-area-inset-left)); background: radial-gradient(circle at 80% 10%, #ded4c6 0, transparent 38%), #eee9e0; }
 .auth-card { width: min(430px, 100%); padding: 29px 25px; border: 1px solid var(--line); border-radius: 20px; background: var(--paper); box-shadow: 0 24px 65px #332d2625; }
 .auth-card > .eyebrow { margin-top: 42px; }
-.auth-card h1 { margin: 0; font: 600 38px/.98 "Fraunces", serif; letter-spacing: -.045em; }
-.auth-card > p:not(.eyebrow):not(.loading-copy) { color: var(--muted); margin: 13px 0 24px; font-size: 13px; line-height: 1.5; }
+.auth-card h1 { margin: 36px 0 0; font: 600 38px/.98 "Fraunces", serif; letter-spacing: -.045em; }
+.auth-card > p:not(.eyebrow):not(.loading-copy):not(.auth-owner) { color: var(--muted); margin: 13px 0 24px; font-size: 13px; line-height: 1.5; }
 .auth-card form, .sheet-form { display: grid; gap: 15px; }
+.auth-owner { margin: 0; color: var(--ink-soft); font-size: 13px; line-height: 1.4; word-break: break-all; }
 .auth-mock { display: grid; gap: 10px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
 .auth-mock p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .auth-mock-button { width: 100%; padding: 12px 14px; font-size: 12px; }

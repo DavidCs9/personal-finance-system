@@ -3,8 +3,10 @@ import { ledgerApi, type LedgerSession, type SignInResult } from "../api/client"
 import { Brand } from "../components/Brand";
 import { Field } from "../components/Field";
 
+/** Single-owner account — Olbia is personal, not multi-tenant. */
+const OWNER_EMAIL = "davidcastro.siq@gmail.com";
+
 export function SignIn({ onSignedIn }: { onSignedIn(session: LedgerSession): void }) {
-  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [challenge, setChallenge] = useState<Extract<SignInResult, { kind: "new_password" }>>();
   const [newPassword, setNewPassword] = useState("");
@@ -16,7 +18,7 @@ export function SignIn({ onSignedIn }: { onSignedIn(session: LedgerSession): voi
     setBusy(true);
     setError(undefined);
     try {
-      const result = await ledgerApi.signIn(email, password);
+      const result = await ledgerApi.signIn(OWNER_EMAIL, password);
       if (result.kind === "signed_in") onSignedIn(result);
       else setChallenge(result);
     } catch (reason) {
@@ -44,25 +46,27 @@ export function SignIn({ onSignedIn }: { onSignedIn(session: LedgerSession): voi
     <main className="auth-shell">
       <section className="auth-card">
         <Brand />
-        <p className="eyebrow">TU DINERO, EN EQUILIBRIO</p>
-        <h1>{challenge ? "Elige tu contraseña" : "Mira el mes con claridad."}</h1>
+        <h1>{challenge ? "Elige tu contraseña" : "Tu tablero."}</h1>
         <p>
           {challenge
             ? "Es tu primer acceso. Elige la contraseña que usarás para entrar."
-            : "Accede a tu tablero personal de gasto."}
+            : "Solo para ti. Introduce tu contraseña."}
         </p>
         <form onSubmit={challenge ? complete : submit}>
           {!challenge && (
             <>
-              <Field label="Correo">
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  required
-                  autoComplete="email"
-                />
-              </Field>
+              {/* Helps password managers associate the saved login with the fixed owner email. */}
+              <input
+                type="email"
+                name="username"
+                value={OWNER_EMAIL}
+                autoComplete="username"
+                readOnly
+                hidden
+                tabIndex={-1}
+                aria-hidden="true"
+              />
+              <p className="auth-owner">{OWNER_EMAIL}</p>
               <Field label="Contraseña">
                 <input
                   type="password"
@@ -70,6 +74,7 @@ export function SignIn({ onSignedIn }: { onSignedIn(session: LedgerSession): voi
                   onChange={(event) => setPassword(event.target.value)}
                   required
                   autoComplete="current-password"
+                  autoFocus
                 />
               </Field>
             </>
@@ -83,6 +88,7 @@ export function SignIn({ onSignedIn }: { onSignedIn(session: LedgerSession): voi
                 minLength={14}
                 required
                 autoComplete="new-password"
+                autoFocus
               />
             </Field>
           )}
