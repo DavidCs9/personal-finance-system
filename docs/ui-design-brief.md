@@ -1,6 +1,6 @@
 # Olbia — dirección de producto y UI
 
-Olbia es un tablero personal de finanzas. Su promesa principal en **Resumen** es responder, de inmediato: cuánto he gastado, qué porcentaje representa, cuánto me queda después de compromisos próximos y cómo cerraré el mes si mantengo el mismo ritmo. **Patrimonio** responde otra pregunta: cuánto tienes en activos hoy y cómo ha cambiado.
+Olbia es un tablero personal de finanzas. Su promesa principal en **Resumen** es responder, de inmediato: cuánto he gastado, qué porcentaje representa, cuánto me queda después de compromisos próximos y cómo cerraré el mes si mantengo el mismo ritmo. **Patrimonio** responde otra pregunta: cuánto tienes en neto hoy (activos − deudas de tarjeta) y cómo ha cambiado.
 
 Las reglas operativas que deben seguir futuras implementaciones del frontend están en [`apps/web/AGENTS.md`](../apps/web/AGENTS.md).
 
@@ -18,20 +18,21 @@ Las reglas operativas que deben seguir futuras implementaciones del frontend est
 
 El ingreso mensual se deriva de los XML de CFDI nómina subidos (`FechaPago` → mes). Tocar **Ingreso** abre la cuenta del mes (quincenas + estimado/provisional). Cada nómina abre un desglose centrado en liquidez, fondo, ISR e IMSS; las líneas SAT quedan colapsadas. Con una sola nómina ordinaria en el mes actual, Resumen estima la 2ª quincena. Sin XML del mes actual, el ingreso puede ser provisional a partir de ordinarias previas.
 
-### Patrimonio (activos)
+### Patrimonio (neto)
 
-1. **Tienes** — total de activos en MXN.
-2. **Dónde está** — desglose por cuenta (Cajita Nu, Fondo de ahorro, Bitso, Interactive Brokers).
-3. **Historial** — un punto canónico por día; filtro al seleccionar cuenta.
-4. **Holdings** — posiciones embebidas en el snapshot del día.
+1. **Neto** — activos − saldos pendientes de tarjeta en MXN (hero en vista total).
+2. **Dónde está** — desglose de activos (Cajita Nu, Fondo de ahorro, Bitso, Interactive Brokers).
+3. **Debes** — saldos pendientes de hasta tres tarjetas (captura manual; incluye MSI).
+4. **Historial** — un punto canónico por día (neto en vista total); filtro al seleccionar cuenta de activo.
+5. **Holdings** — posiciones embebidas en el snapshot del día.
 
-Patrimonio no mezcla deudas de tarjetas ni el gasto del mes. Detalle en [`patrimonio.md`](patrimonio.md).
+Patrimonio no mezcla el gasto del mes ni “Te quedan”. Detalle en [`patrimonio.md`](patrimonio.md).
 
 ## Personalidad
 
 - Precisa, firme y útil.
 - Premium por la jerarquía numérica, la materialidad y la tipografía.
-- Cercana en su lenguaje: “Has gastado”, “Te quedan”, “Te faltarán”, “Tienes”.
+- Cercana en su lenguaje: “Has gastado”, “Te quedan”, “Te faltarán”, “Neto”, “Debes”.
 - Sin gamificación, estética bancaria corporativa ni mensajes de bienestar.
 - El color se tensa gradualmente; el rojo pleno se reserva para una proyección negativa.
 
@@ -49,7 +50,7 @@ La experiencia se diseña primero para móvil (95% del uso esperado):
 
 - **Resumen** — estado mensual, proyección, Planes con fin (MSI), gastos fijos y fechas de corte/pago de tarjetas.
 - **Movimientos** — lista ordenable de evidencia/compras (sin duplicar el bloque de planes MSI).
-- **Patrimonio** — activos (snapshots), historial y holdings; el selector de mes permanece usable para cambiar periodo sin salir de la tab (el total de activos sigue siendo el estado actual, no un corte mensual).
+- **Patrimonio** — neto, activos, deudas de tarjeta, historial y holdings; el selector de mes permanece usable para cambiar periodo sin salir de la tab (el patrimonio sigue siendo el estado actual, no un corte mensual).
 
 En escritorio se conserva la misma arquitectura con un ancho de lectura contenido; no se convierte en un dashboard distinto.
 
@@ -59,4 +60,4 @@ Las compras continúan viniendo de la API existente. El ingreso del mes se deriv
 
 En el mes calendario actual, si aún no hay nóminas, el ingreso puede ser **provisional** a partir del patrón de las últimas 1–2 nóminas ordinarias (doble de la última, o suma de las dos más recientes). La UI muestra Resumen usable con esa cifra y pide el XML; al subir la primera nómina del mes, se aplica la lógica normal (depósitos + estimado de 2ª quincena si aplica). Un mes pasado sin nóminas sigue sin configurar.
 
-Los snapshots de patrimonio viven en la misma tabla (`GET /wealth`, `POST /wealth/accounts/.../snapshots`, `POST /wealth/sync/bitso`, `POST /wealth/sync/ibkr`) con día calendario `America/Chihuahua`.
+Los snapshots de patrimonio viven en la misma tabla (`GET /wealth`, `POST /wealth/accounts/.../snapshots`, `POST /wealth/liabilities/{cardId}/snapshots`, `POST /wealth/sync/bitso`, `POST /wealth/sync/ibkr`) con día calendario `America/Chihuahua`.

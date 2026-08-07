@@ -1,9 +1,8 @@
 import type { WealthOverview } from "./wealth";
+import { withWealthTotals } from "./wealth";
 
-/** Demo seed for local walkthrough — Cajita + Fondo + Bitso + IBKR connected. */
-export const demoWealthOverview: WealthOverview = {
-  currency: "MXN",
-  totalMxnMinor: 30_109_230,
+/** Demo seed for local walkthrough — Cajita + Fondo + Bitso + IBKR + card debts. */
+export const demoWealthOverview: WealthOverview = withWealthTotals({
   accounts: [
     {
       id: "nu_cajita_emergencia",
@@ -135,11 +134,52 @@ export const demoWealthOverview: WealthOverview = {
       },
     },
   ],
+  liabilities: [
+    {
+      cardId: "card-amex-gold",
+      name: "Amex Gold Elite",
+      institution: "american_express_mx",
+      latestSnapshot: {
+        cardId: "card-amex-gold",
+        day: "2026-07-10",
+        capturedAt: "2026-07-10T20:00:00.000Z",
+        source: "manual",
+        currency: "MXN",
+        totalMxnMinor: 1_245_000,
+      },
+    },
+    {
+      cardId: "card-amex-aeromexico",
+      name: "Amex Aeroméxico",
+      institution: "american_express_mx",
+      latestSnapshot: {
+        cardId: "card-amex-aeromexico",
+        day: "2026-07-10",
+        capturedAt: "2026-07-10T20:00:00.000Z",
+        source: "manual",
+        currency: "MXN",
+        totalMxnMinor: 832_000,
+      },
+    },
+    {
+      cardId: "card-santander",
+      name: "Santander Unique",
+      institution: "santander_mx",
+      latestSnapshot: {
+        cardId: "card-santander",
+        day: "2026-07-08",
+        capturedAt: "2026-07-08T18:00:00.000Z",
+        source: "manual",
+        currency: "MXN",
+        totalMxnMinor: 418_000,
+      },
+    },
+  ],
   history: {
     all: [
-      { day: "2026-07-01", totalMxnMinor: 25_000_000 },
-      { day: "2026-07-05", totalMxnMinor: 27_200_000 },
-      { day: "2026-07-10", totalMxnMinor: 30_109_230 },
+      { day: "2026-07-01", totalMxnMinor: 22_500_000 },
+      { day: "2026-07-05", totalMxnMinor: 24_700_000 },
+      { day: "2026-07-10", totalMxnMinor: 27_614_230 },
     ],
     byAccount: {
       nu_cajita_emergencia: [
@@ -164,4 +204,4 @@ export const demoWealthOverview: WealthOverview = {
       ],
     },
   },
-};
+});

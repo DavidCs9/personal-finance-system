@@ -22,6 +22,7 @@ import { NominaUploadSheet } from "../sheets/NominaUploadSheet";
 import { PayslipSheet } from "../sheets/PayslipSheet";
 import type { Payslip } from "../monthly-plan";
 import { CajitaSheet } from "../sheets/CajitaSheet";
+import { CardLiabilitySheet } from "../sheets/CardLiabilitySheet";
 import { ManualEntrySheet } from "../sheets/ManualEntrySheet";
 import { PaymentSheet } from "../sheets/PaymentSheet";
 import { CardSheet } from "../sheets/CardSheet";
@@ -32,7 +33,8 @@ import { MovementsView } from "../views/MovementsView";
 import { SummaryView } from "../views/SummaryView";
 import { WealthView } from "../views/WealthView";
 import { demoWealthOverview } from "../wealth-demo";
-import type { WealthOverview, WealthAccountView, WealthHistoryPoint } from "../wealth";
+import type { WealthOverview, WealthAccountView, WealthHistoryPoint, WealthLiabilityView } from "../wealth";
+import { withWealthTotals } from "../wealth";
 import { CAJITA_ACCOUNT_ID, BITSO_ACCOUNT_ID, IBKR_ACCOUNT_ID, WEALTH_ACCOUNTS, dayKeyInZone, type WealthAccountId, type WealthSnapshot } from "@finance/domain";
 
 export function Dashboard({
@@ -63,6 +65,7 @@ export function Dashboard({
   const [santanderStatementOpen, setSantanderStatementOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [cajitaOpen, setCajitaOpen] = useState(false);
+  const [liabilityCard, setLiabilityCard] = useState<WealthLiabilityView>();
   const [selectedWealthAccount, setSelectedWealthAccount] = useState<WealthAccountId | "all">("all");
   const { privateMode, togglePrivateMode } = usePrivateMode();
 
@@ -142,13 +145,9 @@ export function Dashboard({
               allByDay.set(point.day, (allByDay.get(point.day) ?? 0) + point.totalMxnMinor);
             }
           }
-          return {
-            currency: "MXN",
-            totalMxnMinor: accounts.reduce(
-              (sum, account) => sum + (account.latestSnapshot?.totalMxnMinor ?? 0),
-              0,
-            ),
+          return withWealthTotals({
             accounts,
+            liabilities: base.liabilities,
             history: {
               all: [...allByDay.entries()]
                 .sort(([left], [right]) => left.localeCompare(right))
@@ -158,7 +157,7 @@ export function Dashboard({
                 bitso: bitsoHistory,
               },
             },
-          };
+          });
         });
         return;
       }
@@ -211,13 +210,9 @@ export function Dashboard({
               allByDay.set(point.day, (allByDay.get(point.day) ?? 0) + point.totalMxnMinor);
             }
           }
-          return {
-            currency: "MXN",
-            totalMxnMinor: accounts.reduce(
-              (sum, account) => sum + (account.latestSnapshot?.totalMxnMinor ?? 0),
-              0,
-            ),
+          return withWealthTotals({
             accounts,
+            liabilities: base.liabilities,
             history: {
               all: [...allByDay.entries()]
                 .sort(([left], [right]) => left.localeCompare(right))
@@ -227,7 +222,7 @@ export function Dashboard({
                 ibkr: ibkrHistory,
               },
             },
-          };
+          });
         });
         return;
       }
@@ -452,16 +447,15 @@ export function Dashboard({
         ) : tab === "wealth" ? (
           <WealthView
             overview={
-              wealth ?? {
-                currency: "MXN" as const,
-                totalMxnMinor: 0,
+              wealth ?? withWealthTotals({
                 accounts: WEALTH_ACCOUNTS.map((account) => ({
                   ...account,
                   connected: false,
                   latestSnapshot: null,
                 })),
+                liabilities: [],
                 history: { all: [], byAccount: {} },
-              }
+              })
             }
             loading={wealthLoading && !wealth}
             loadError={wealthLoadError}
@@ -471,6 +465,7 @@ export function Dashboard({
             selectedAccountId={selectedWealthAccount}
             onSelectAccount={setSelectedWealthAccount}
             onRegisterCajita={() => setCajitaOpen(true)}
+            onRegisterLiability={(liability) => setLiabilityCard(liability)}
             onSyncRemote={() => {
               bitsoSyncMutation.reset();
               ibkrSyncMutation.reset();
@@ -671,6 +666,45 @@ export function Dashboard({
           }}
         />
       )}
+
+      {liabilityCard && (
+        <CardLiabilitySheet
+          cardName={liabilityCard.name}
+          currentMinor={liabilityCard.latestSnapshot?.totalMxnMinor}
+          onClose={() => setLiabilityCard(undefined)}
+          onSave={async (amountMinor) => {
+            if (demoMode) {
+              const day = dayKeyInZone(now);
+              const snapshot = {
+                cardId: liabilityCard.cardId,
+                day,
+                capturedAt: now.toISOString(),
+                source: "manual" as const,
+                currency: "MXN" as const,
+                totalMxnMinor: amountMinor,
+              };
+              queryClient.setQueryData<WealthOverview>(wealthQueryKey, (current) => {
+                const base: WealthOverview = current ?? demoWealthOverview;
+                const liabilities = base.liabilities.map((liability) =>
+                  liability.cardId === liabilityCard.cardId
+                    ? { ...liability, latestSnapshot: snapshot }
+                    : liability,
+                );
+                return withWealthTotals({
+                  accounts: base.accounts,
+                  liabilities,
+                  history: base.history,
+                });
+              });
+            } else {
+              await ledgerApi.createCardLiabilitySnapshot(liabilityCard.cardId, amountMinor, idToken);
+              await queryClient.invalidateQueries({ queryKey: wealthQueryKey });
+            }
+            setLiabilityCard(undefined);
+            setTab("wealth");
+          }}
+        />
+      )}
       {cajitaOpen && (
         <CajitaSheet
           currentMinor={
@@ -713,14 +747,9 @@ export function Dashboard({
                   ...previous.filter((point: WealthHistoryPoint) => point.day !== day),
                   { day, totalMxnMinor: amountMinor },
                 ].sort((left, right) => left.day.localeCompare(right.day));
-                return {
-                  currency: "MXN" as const,
-                  totalMxnMinor: accounts.reduce(
-                    (sum: number, account: WealthAccountView) =>
-                      sum + (account.latestSnapshot?.totalMxnMinor ?? 0),
-                    0,
-                  ),
+                return withWealthTotals({
                   accounts,
+                  liabilities: base.liabilities,
                   history: {
                     all: cajitaHistory,
                     byAccount: {
@@ -728,7 +757,7 @@ export function Dashboard({
                       nu_cajita_emergencia: cajitaHistory,
                     },
                   },
-                };
+                });
               });
             } else {
               await ledgerApi.createCajitaSnapshot(amountMinor, idToken);

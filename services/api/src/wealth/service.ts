@@ -9,20 +9,27 @@ import {
   FONDO_AHORRO_ACCOUNT_ID,
   fondoAhorroHolding,
   isWealthAccountId,
+  liabilitiesAsOfDay,
+  netWorthMxnMinor,
   runningFondoAhorroByDay,
   sumFondoAhorroDeduccionesMinor,
   WEALTH_ACCOUNTS,
   wealthTotalMonthlyHistory,
+  type CardLiabilitySnapshot,
   type WealthAccountId,
   type WealthHolding,
   type WealthSnapshot,
   type WealthSnapshotSource,
 } from '@finance/domain';
+import { isValidCardId, listCards } from '../cards/cards.js';
 import { database, rawSourceBucketName, s3, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
 import { listPayslipsForYear } from '../imports/cfdi-nomina-flow.js';
-import { InvalidWealthSnapshotError, parseCajitaSnapshot } from './input.js';
+import { InvalidWealthSnapshotError, parseCajitaSnapshot, parseCardLiabilitySnapshot } from './input.js';
 import {
+  liabilitySnapshotKey,
+  liabilitySnapshotSkPrefix,
+  liabilitySnapshotVersionKey,
   seededWealthAccounts,
   wealthSnapshotKey,
   wealthSnapshotSkPrefix,
@@ -138,6 +145,90 @@ const mergeHistoryWithFondo = (
     }));
 };
 
+const mergeHistoryWithLiabilities = (
+  assetsHistory: readonly { readonly day: string; readonly totalMxnMinor: number }[],
+  liabilitySnapshots: readonly CardLiabilitySnapshot[],
+): readonly { readonly day: string; readonly totalMxnMinor: number }[] => {
+  const days = new Set<string>([
+    ...assetsHistory.map((point) => point.day),
+    ...liabilitySnapshots.map((snapshot) => snapshot.day),
+  ]);
+  const assetsByDay = new Map(assetsHistory.map((point) => [point.day, point.totalMxnMinor]));
+  let lastAssets = 0;
+  return [...days]
+    .sort((left, right) => left.localeCompare(right))
+    .map((day) => {
+      if (assetsByDay.has(day)) lastAssets = assetsByDay.get(day)!;
+      return {
+        day,
+        totalMxnMinor: netWorthMxnMinor(lastAssets, liabilitiesAsOfDay(liabilitySnapshots, day)),
+      };
+    });
+};
+
+const toPublicLiabilitySnapshot = (item: Record<string, unknown>): CardLiabilitySnapshot | undefined => {
+  if (typeof item.cardId !== 'string' || !isValidCardId(item.cardId)) return undefined;
+  if (typeof item.day !== 'string' || typeof item.capturedAt !== 'string') return undefined;
+  if (typeof item.totalMxnMinor !== 'number' || !Number.isInteger(item.totalMxnMinor) || item.totalMxnMinor < 0) {
+    return undefined;
+  }
+  if (item.source !== 'manual') return undefined;
+  return {
+    cardId: item.cardId,
+    day: item.day,
+    capturedAt: item.capturedAt,
+    source: 'manual',
+    currency: 'MXN',
+    totalMxnMinor: item.totalMxnMinor,
+    ...(item.evidence && typeof item.evidence === 'object'
+      ? { evidence: item.evidence as CardLiabilitySnapshot['evidence'] }
+      : {}),
+  };
+};
+
+const listCanonicalLiabilitySnapshots = async (owner: string): Promise<readonly CardLiabilitySnapshot[]> => {
+  const items: Record<string, unknown>[] = [];
+  let exclusiveStartKey: Record<string, unknown> | undefined;
+  do {
+    const page = await database.send(new QueryCommand({
+      TableName: tableName,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+      ExpressionAttributeValues: {
+        ':pk': `USER#${owner}`,
+        ':sk': liabilitySnapshotSkPrefix,
+      },
+      ExclusiveStartKey: exclusiveStartKey,
+      ConsistentRead: true,
+    }));
+    for (const item of page.Items ?? []) {
+      items.push(item as Record<string, unknown>);
+    }
+    exclusiveStartKey = page.LastEvaluatedKey as Record<string, unknown> | undefined;
+  } while (exclusiveStartKey);
+
+  return items
+    .map((item) => toPublicLiabilitySnapshot(item))
+    .filter((snapshot): snapshot is CardLiabilitySnapshot => Boolean(snapshot))
+    .sort((left, right) => left.day.localeCompare(right.day) || left.cardId.localeCompare(right.cardId));
+};
+
+const latestLiabilityByCard = (
+  snapshots: readonly CardLiabilitySnapshot[],
+): ReadonlyMap<string, CardLiabilitySnapshot> => {
+  const latest = new Map<string, CardLiabilitySnapshot>();
+  for (const snapshot of snapshots) {
+    const current = latest.get(snapshot.cardId);
+    if (
+      !current
+      || snapshot.day > current.day
+      || (snapshot.day === current.day && snapshot.capturedAt > current.capturedAt)
+    ) {
+      latest.set(snapshot.cardId, snapshot);
+    }
+  }
+  return latest;
+};
+
 const derivedFondoSnapshot = (
   totalMxnMinor: number,
   now: Date,
@@ -161,9 +252,11 @@ export const getWealthOverview = async (
   now: Date = new Date(),
 ): Promise<JsonObject> => {
   const year = dayKeyInZone(now, FINANCE_TIME_ZONE).slice(0, 4);
-  const [snapshots, yearPayslips] = await Promise.all([
+  const [snapshots, yearPayslips, cards, liabilitySnapshots] = await Promise.all([
     listCanonicalSnapshots(owner),
     listPayslipsForYear(owner, year),
+    listCards({ database, tableName, owner }),
+    listCanonicalLiabilitySnapshots(owner),
   ]);
   const fondoTotal = sumFondoAhorroDeduccionesMinor(yearPayslips);
   const fondoRunning = runningFondoAhorroByDay(yearPayslips);
@@ -179,21 +272,42 @@ export const getWealthOverview = async (
       latestSnapshot: snapshot,
     };
   });
-  const totalMxnMinor = accounts.reduce(
+  const assetsMxnMinor = accounts.reduce(
     (sum, account) => sum + (account.latestSnapshot?.totalMxnMinor ?? 0),
     0,
   );
+  const latestLiabilities = latestLiabilityByCard(liabilitySnapshots);
+  const liabilities = cards.map((card) => {
+    const snapshot = latestLiabilities.get(card.id) ?? null;
+    return {
+      cardId: card.id,
+      name: card.name,
+      ...(card.institution ? { institution: card.institution } : {}),
+      latestSnapshot: snapshot,
+    };
+  });
+  const liabilitiesMxnMinor = liabilities.reduce(
+    (sum, liability) => sum + (liability.latestSnapshot?.totalMxnMinor ?? 0),
+    0,
+  );
+  const netMxnMinor = netWorthMxnMinor(assetsMxnMinor, liabilitiesMxnMinor);
+  const liquidAll = historyPoints(snapshots, 'all');
+  const assetsHistory = mergeHistoryWithFondo(liquidAll, fondoRunning);
   const today = dayKeyInZone(now, FINANCE_TIME_ZONE);
   const currentMonth = today.slice(0, 7);
   const historyAll = wealthTotalMonthlyHistory({
-    points: mergeHistoryWithFondo(historyPoints(snapshots, 'all'), fondoRunning),
+    points: mergeHistoryWithLiabilities(assetsHistory, liabilitySnapshots),
     currentMonth,
-    currentTotalMinor: totalMxnMinor,
+    currentTotalMinor: netMxnMinor,
   });
   return {
     currency: 'MXN',
-    totalMxnMinor,
+    totalMxnMinor: assetsMxnMinor,
+    assetsMxnMinor,
+    liabilitiesMxnMinor,
+    netMxnMinor,
     accounts,
+    liabilities,
     history: {
       all: historyAll,
       byAccount: Object.fromEntries(
@@ -317,6 +431,94 @@ export const createCajitaSnapshot = async (body: string | undefined, owner: stri
     evidenceKind: 'manual',
     evidenceBody,
   });
+  return snapshot as unknown as JsonObject;
+};
+
+export const createCardLiabilitySnapshot = async (
+  cardId: string,
+  body: string | undefined,
+  owner: string,
+): Promise<JsonObject> => {
+  if (!isValidCardId(cardId)) {
+    throw new InvalidWealthSnapshotError('cardId is invalid.');
+  }
+  const cards = await listCards({ database, tableName, owner });
+  if (!cards.some((card) => card.id === cardId)) {
+    throw new InvalidWealthSnapshotError('Card not found. Add the card under Fechas de corte first.');
+  }
+  const input = parseCardLiabilitySnapshot(body);
+  const capturedAt = new Date().toISOString();
+  const day = dayKeyInZone(new Date(capturedAt), FINANCE_TIME_ZONE);
+  const evidenceBody = JSON.stringify({
+    kind: 'wealth_liability_manual_snapshot',
+    createdAt: capturedAt,
+    owner,
+    cardId,
+    day,
+    amountMinor: input.amountMinor,
+    currency: 'MXN',
+  });
+  const sourceHash = createHash('sha256').update(evidenceBody, 'utf8').digest('hex');
+  const evidence = {
+    bucket: rawSourceBucketName,
+    key: evidenceObjectKey('manual', owner, sourceHash),
+    sha256: sourceHash,
+    contentType: 'application/json' as const,
+  };
+  await s3.send(new PutObjectCommand({
+    Bucket: rawSourceBucketName,
+    Key: evidence.key,
+    Body: evidenceBody,
+    ContentType: 'application/json; charset=utf-8',
+  }));
+
+  const key = liabilitySnapshotKey(owner, cardId, day);
+  const existing = await database.send(new GetCommand({
+    TableName: tableName,
+    Key: key,
+    ConsistentRead: true,
+  }));
+  if (existing.Item) {
+    const previousCapturedAt = typeof existing.Item.capturedAt === 'string'
+      ? existing.Item.capturedAt
+      : capturedAt;
+    await database.send(new PutCommand({
+      TableName: tableName,
+      Item: {
+        ...liabilitySnapshotVersionKey(owner, cardId, day, previousCapturedAt),
+        entityType: 'wealth_liability_snapshot_version',
+        owner,
+        cardId,
+        day,
+        capturedAt: previousCapturedAt,
+        supersededAt: capturedAt,
+        source: existing.Item.source,
+        currency: 'MXN',
+        totalMxnMinor: existing.Item.totalMxnMinor,
+        ...(existing.Item.evidence ? { evidence: existing.Item.evidence } : {}),
+        versionId: randomUUID(),
+      },
+    }));
+  }
+
+  const snapshot: CardLiabilitySnapshot = {
+    cardId,
+    day,
+    capturedAt,
+    source: 'manual',
+    currency: 'MXN',
+    totalMxnMinor: input.amountMinor,
+    evidence,
+  };
+  await database.send(new PutCommand({
+    TableName: tableName,
+    Item: {
+      ...key,
+      entityType: 'wealth_liability_snapshot',
+      owner,
+      ...snapshot,
+    },
+  }));
   return snapshot as unknown as JsonObject;
 };
 
