@@ -645,6 +645,7 @@ export class PersonalFinanceV1Stack extends Stack {
       'DELETE /cards/{cardId}',
       'GET /wealth',
       'POST /wealth/accounts/{accountId}/snapshots',
+      'POST /wealth/liabilities/{cardId}/snapshots',
       'POST /wealth/sync/bitso',
       'POST /wealth/sync/ibkr',
     ]) {

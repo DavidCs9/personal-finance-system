@@ -7,7 +7,7 @@ These instructions apply to every change under `apps/web`. Treat them as product
 Olbia has two primary financial answers, on separate tabs:
 
 - **Resumen:** how much have I spent this month, and what does that mean for the rest of the month?
-- **Patrimonio:** how much do I hold in assets, and how has that changed?
+- **Patrimonio:** what is my net worth today (assets − card balances), and how has that changed?
 
 Do not collapse patrimonio into Resumen. Do not let patrimonio analytics compete with the monthly spending hierarchy on Resumen.
 
@@ -24,21 +24,22 @@ Do not collapse patrimonio into Resumen. Do not let patrimonio analytics compete
 
 ### Patrimonio hierarchy
 
-1. **Tienes** — total assets in MXN.
+1. **Neto** — assets minus card outstanding balances in MXN (hero on the total view).
 2. Account breakdown (Cajita Nu, Fondo de ahorro, Bitso, Interactive Brokers).
-3. Daily history (canonical point per day; filter by selected account).
-4. Holdings for the selected account’s latest snapshot.
+3. **Debes** — outstanding balances for up to three cards (manual capture; includes MSI).
+4. Daily history (canonical point per day; net on the total view; filter by selected asset account).
+5. Holdings for the selected account’s latest snapshot.
 
-Patrimonio is assets-only. Credit-card balances stay in the spend/cycle domain.
+Card cycle profiles (cut-off / payment days) stay on Resumen. Outstanding balances are captured on Patrimonio and subtract from Neto.
 
 ## Personality and voice
 
 Olbia is precise, firm, useful, personal, and premium. It should create constructive pressure without shaming the user.
 
-- Address the user directly: “Has gastado”, “Te quedan”, “Te faltarán”, “Tienes”.
+- Address the user directly: “Has gastado”, “Te quedan”, “Te faltarán”, “Neto”, “Debes”.
 - Explain consequences: “A este ritmo te faltarán $N”.
 - Prefer short, factual sentences and concrete amounts.
-- Surface uncertainty honestly: “Incluye $N por confirmar”, “Cajita sin actualizar hace N días”.
+- Surface uncertainty honestly: “Incluye $N por confirmar”, “Cajita sin actualizar hace N días”, “Tarjeta sin actualizar hace N días”.
 - Pair warnings with an investigative next step when one exists.
 - Never celebrate spending, use streaks or badges, scold the user, or soften a negative projection with wellness language.
 - Avoid institutional banking language such as “saldo contable” when plain language is clearer.
@@ -60,8 +61,8 @@ Assume at least 95% of usage is mobile.
 - Design and verify at a narrow mobile viewport before adapting to desktop.
 - The primary state must be understandable in a few seconds without horizontal scrolling.
 - Keep primary actions reachable and touch targets comfortable.
-- Preserve the three-destination model: **Resumen** (month state), **Movimientos** (sortable raw list), **Patrimonio** (assets).
-- Patrimonio keeps the month selector enabled so you can change period without leaving the tab (Patrimonio totals themselves stay current-asset, not month-scoped).
+- Preserve the three-destination model: **Resumen** (month state), **Movimientos** (sortable raw list), **Patrimonio** (net worth).
+- Patrimonio keeps the month selector enabled so you can change period without leaving the tab (Patrimonio totals themselves stay current, not month-scoped).
 - Desktop should be a contained adaptation of the same experience, not a separate dashboard with extra density.
 
 ## Financial-state rules
@@ -86,19 +87,20 @@ Assume at least 95% of usage is mobile.
 - Amex Gold purchases deferred via `MONTO A DIFERIR MESES EN AUTOMÁTICO` use status `deferred_msi`: visible in Movimientos as “Diferido a MSI”, excluded from Has gastado; only the MESES EN AUTOMÁTICO cuota counts.
 - Preserve access to transaction provenance and original evidence.
 - Cajita manual captures are immutable; same-day replacement keeps prior versions for audit only. Mark Cajita stale after 7 days without a capture.
+- Card liability captures are immutable the same way; `amountMinor` may be 0 (paid off). Mark each card stale after 7 days without a capture. Capture the total outstanding balance (includes MSI).
 - Bitso syncs via API (scheduled and “Actualizar”); on failure keep the last good snapshot and surface the error honestly.
 - IBKR syncs via Flex Query + Banxico FIX; on failure keep the last good snapshot and surface the error honestly.
-- Fondo de ahorro is a derived Patrimonio account: calendar-year sum of CFDI nómina deducciones SAT `004` (employee + employer portions into the fund). It counts fully in **Tienes** with an illiquid-until-December label. Do not invent a liquidation reset until a clear December XML fixture exists.
-- Patrimonio total history is a **monthly** trend from `2026-08` onward (not daily). Per-account history can stay day-grained.
+- Fondo de ahorro is a derived Patrimonio account: calendar-year sum of CFDI nómina deducciones SAT `004` (employee + employer portions into the fund). It counts fully in assets with an illiquid-until-December label. Do not invent a liquidation reset until a clear December XML fixture exists.
+- Patrimonio total history is a **monthly** net trend from `2026-08` onward (not daily). Per-account history can stay day-grained.
 
 ## Review checklist
 
 Before completing a UI change, verify:
 
 - Does the monthly spending state still dominate on Resumen?
-- Does Patrimonio keep a clear assets hierarchy without looking like a second dashboard of widgets?
+- Does Patrimonio keep a clear Neto → assets → Debes hierarchy without looking like a second dashboard of widgets?
 - Is the consequence of the current spending pace clear?
-- Are loading, missing-income, uncertain, empty, failure, stale-Cajita, and negative-projection states honest?
+- Are loading, missing-income, uncertain, empty, failure, stale-Cajita, stale-card-debt, and negative-projection states honest?
 - Does the copy sound firm and useful without shame or cheerleading?
 - Does the feature work at a mobile viewport first?
 - Are monetary values aligned, correctly formatted, and based on persisted data?

@@ -677,6 +677,12 @@ html.private-mode .hero-amount .amt {
 .wealth-role-payroll_savings { background: #6e675f; }
 .wealth-role-crypto { background: #5f5a55; }
 .wealth-role-brokerage { background: #8a837a; }
+.wealth-role-liability { background: #8a5a54; }
+.wealth-liability-empty {
+  margin: 0;
+  padding: 0 0 0.25rem;
+  color: var(--muted);
+}
 
 .mobile-tabs {
   position: fixed;
