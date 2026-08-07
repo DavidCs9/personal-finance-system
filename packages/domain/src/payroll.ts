@@ -39,6 +39,9 @@ export interface MonthIncomeDerivation {
   readonly incomeMinor: number;
   readonly estimateActive: boolean;
   readonly ordinaryCount: number;
+  /** Current month with no payslips yet — income borrowed from prior ordinaries. */
+  readonly provisionalActive: boolean;
+  readonly provisionalMinor: number;
 }
 
 export const payslipLineGroup = (kind: PayslipLineKind, tipo: string): PayslipLineGroup => {
@@ -51,50 +54,95 @@ export const payslipLineGroup = (kind: PayslipLineKind, tipo: string): PayslipLi
 
 export const isOrdinaryNomina = (tipoNomina: string): boolean => tipoNomina === "O";
 
+export const previousCalendarMonth = (month: string): string | undefined => {
+  if (!isValidMonth(month)) return undefined;
+  const year = Number(month.slice(0, 4));
+  const monthNumber = Number(month.slice(5, 7));
+  if (monthNumber === 1) return `${year - 1}-12`;
+  return `${year}-${String(monthNumber - 1).padStart(2, "0")}`;
+};
+
+/**
+ * Provisional month income from the two most recent ordinary payslips before this month.
+ * One ordinary → double it (quincena pair). Two or more → sum of the two newest.
+ */
+export const provisionalIncomeFromPriorOrdinaries = (
+  priorOrdinary: readonly Pick<PayslipSummary, "totalMinor" | "fechaPago">[],
+): number => {
+  const newest = [...priorOrdinary].sort((a, b) => b.fechaPago.localeCompare(a.fechaPago));
+  if (newest.length >= 2) return newest[0]!.totalMinor + newest[1]!.totalMinor;
+  if (newest.length === 1) return newest[0]!.totalMinor * 2;
+  return 0;
+};
+
+const emptyDerivation = (): MonthIncomeDerivation => ({
+  configured: false,
+  depositedMinor: 0,
+  estimatedMinor: 0,
+  incomeMinor: 0,
+  estimateActive: false,
+  ordinaryCount: 0,
+  provisionalActive: false,
+  provisionalMinor: 0,
+});
+
 /**
  * Month income from CFDI nóminas.
  * Liquidez = sum of deposited Totals for the month (FechaPago).
  * With exactly one ordinary payslip in the *current* calendar month, estimate a twin.
- * Past months never keep an estimate. Extraordinarias never pair.
+ * With zero payslips in the *current* month, use provisional income from prior ordinaries.
+ * Past months never keep an estimate or provisional. Extraordinarias never pair.
  */
 export const deriveMonthIncome = (input: {
   readonly payslips: readonly Pick<PayslipSummary, "tipoNomina" | "totalMinor">[];
   readonly month: string;
   readonly now: Date;
   readonly timeZone?: string;
+  readonly priorOrdinaryPayslips?: readonly Pick<PayslipSummary, "totalMinor" | "fechaPago" | "tipoNomina">[];
 }): MonthIncomeDerivation => {
-  if (!isValidMonth(input.month)) {
-    return {
-      configured: false,
-      depositedMinor: 0,
-      estimatedMinor: 0,
-      incomeMinor: 0,
-      estimateActive: false,
-      ordinaryCount: 0,
-    };
-  }
+  if (!isValidMonth(input.month)) return emptyDerivation();
 
   const depositedMinor = input.payslips.reduce((sum, slip) => sum + slip.totalMinor, 0);
   const ordinary = input.payslips.filter((slip) => isOrdinaryNomina(slip.tipoNomina));
   const ordinaryCount = ordinary.length;
-  const configured = input.payslips.length > 0;
   const currentMonth = monthKeyInZone(input.now, input.timeZone ?? FINANCE_TIME_ZONE);
   const monthIsCurrent = input.month === currentMonth;
 
+  if (input.payslips.length === 0) {
+    if (!monthIsCurrent) return emptyDerivation();
+    const priorOrdinary = (input.priorOrdinaryPayslips ?? []).filter((slip) =>
+      isOrdinaryNomina(slip.tipoNomina),
+    );
+    const provisionalMinor = provisionalIncomeFromPriorOrdinaries(priorOrdinary);
+    if (provisionalMinor <= 0) return emptyDerivation();
+    return {
+      configured: true,
+      depositedMinor: 0,
+      estimatedMinor: 0,
+      incomeMinor: provisionalMinor,
+      estimateActive: false,
+      ordinaryCount: 0,
+      provisionalActive: true,
+      provisionalMinor,
+    };
+  }
+
   let estimatedMinor = 0;
   let estimateActive = false;
-  if (configured && monthIsCurrent && ordinaryCount === 1) {
+  if (monthIsCurrent && ordinaryCount === 1) {
     estimatedMinor = ordinary[0]!.totalMinor;
     estimateActive = true;
   }
 
   return {
-    configured,
+    configured: true,
     depositedMinor,
     estimatedMinor,
     incomeMinor: depositedMinor + estimatedMinor,
     estimateActive,
     ordinaryCount,
+    provisionalActive: false,
+    provisionalMinor: 0,
   };
 };
 

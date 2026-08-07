@@ -37,6 +37,8 @@ export interface MonthlyPlan {
   readonly depositedMinor?: number;
   readonly estimatedMinor?: number;
   readonly estimateActive?: boolean;
+  readonly provisionalActive?: boolean;
+  readonly provisionalMinor?: number;
   readonly currency: "MXN";
   readonly upcomingPayments: readonly PlannedPayment[];
   readonly payslips?: readonly Payslip[];
@@ -101,6 +103,8 @@ export const emptyPlanFor = (month: string): MonthlyPlan => ({
   depositedMinor: 0,
   estimatedMinor: 0,
   estimateActive: false,
+  provisionalActive: false,
+  provisionalMinor: 0,
   currency: "MXN",
   upcomingPayments: [],
   payslips: [],

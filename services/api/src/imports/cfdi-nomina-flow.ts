@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { GetCommand, QueryCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
-import { deriveMonthIncome, type PayslipSummary } from "@finance/domain";
+import { deriveMonthIncome, isOrdinaryNomina, previousCalendarMonth, type PayslipSummary } from "@finance/domain";
 import { database, rawSourceBucketName, s3, tableName } from "../http/clients.js";
 import type { JsonObject } from "../http/response.js";
 import { InvalidCfdiNominaError, parseCfdiNominaXml } from "./cfdi-nomina.js";
@@ -104,6 +104,27 @@ export const getPayslip = async (
   );
 };
 
+export const listPriorOrdinaryPayslips = async (
+  owner: string,
+  beforeMonth: string,
+  limit = 2,
+): Promise<readonly PayslipSummary[]> => {
+  const collected: PayslipSummary[] = [];
+  let cursor: string | undefined = previousCalendarMonth(beforeMonth);
+  let guard = 0;
+  while (cursor && collected.length < limit && guard < 24) {
+    const monthSlips = await listPayslipsForMonth(owner, cursor);
+    for (const slip of [...monthSlips].reverse()) {
+      if (!isOrdinaryNomina(slip.tipoNomina)) continue;
+      collected.push(slip);
+      if (collected.length >= limit) break;
+    }
+    cursor = previousCalendarMonth(cursor);
+    guard += 1;
+  }
+  return collected;
+};
+
 export const incomeFieldsForMonth = async (
   owner: string,
   month: string,
@@ -114,16 +135,22 @@ export const incomeFieldsForMonth = async (
   readonly depositedMinor: number;
   readonly estimatedMinor: number;
   readonly estimateActive: boolean;
+  readonly provisionalActive: boolean;
+  readonly provisionalMinor: number;
   readonly payslips: readonly PayslipSummary[];
 }> => {
   const payslips = await listPayslipsForMonth(owner, month);
-  const derived = deriveMonthIncome({ payslips, month, now });
+  const priorOrdinaryPayslips =
+    payslips.length === 0 ? await listPriorOrdinaryPayslips(owner, month) : [];
+  const derived = deriveMonthIncome({ payslips, month, now, priorOrdinaryPayslips });
   return {
     configured: derived.configured,
     incomeMinor: derived.incomeMinor,
     depositedMinor: derived.depositedMinor,
     estimatedMinor: derived.estimatedMinor,
     estimateActive: derived.estimateActive,
+    provisionalActive: derived.provisionalActive,
+    provisionalMinor: derived.provisionalMinor,
     payslips,
   };
 };
