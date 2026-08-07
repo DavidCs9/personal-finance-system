@@ -20,6 +20,9 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-agent": "^3.1106.0",
+    "@aws-sdk/client-bedrock-agentcore": "^3.1106.0",
+    "@aws-sdk/client-bedrock-agentcore-control": "^3.1106.0",
     "@aws-sdk/client-dynamodb": "^3.883.0",
     "@aws-sdk/client-s3": "^3.883.0",
     "@aws-sdk/client-secrets-manager": "^3.1101.0",
@@ -27,13 +30,13 @@
     "@aws-sdk/client-sqs": "^3.883.0",
     "@aws-sdk/client-textract": "^3.1101.0",
     "@aws-sdk/lib-dynamodb": "^3.883.0",
+    "@finance/api": "*",
     "@finance/domain": "*",
+    "@finance/ingestion": "*",
+    "@finance/ledger": "*",
+    "@finance/notify": "*",
     "aws-cdk-lib": "^2.181.0",
     "constructs": "^10.4.2",
-    "web-push": "^3.6.7",
-    "@finance/api": "*",
-    "@finance/ingestion": "*",
-    "@finance/notify": "*",
-    "@finance/ledger": "*"
+    "web-push": "^3.6.7"
   }
 }

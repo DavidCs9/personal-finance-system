@@ -1,4 +1,4 @@
-# Asistente Olbia (AgentCore)
+# Asistente Olbia (AgentCore Harness)
 
 Documento técnico del asistente de consultas financieras. Decisiones de producto viven en [`ui-design-brief.md`](ui-design-brief.md) y [`apps/web/AGENTS.md`](../apps/web/AGENTS.md).
 
@@ -12,36 +12,54 @@ Un solo asistente: consultas ahora; asesor de decisión (“¿qué tan responsab
 SPA (JWT Cognito)
   → API Gateway HTTP API
     → Lambda agent-proxy (SSE)
-      → AgentCore Harness (InvokeHarness, SigV4)
-        → AgentCore Gateway (MCP)
+      → SSM pointer → Bedrock Prompt Management (versión pineada)
+      → AgentCore Harness (InvokeHarness + systemPrompt/model override)
+        → AgentCore Gateway (MCP, AWS_IAM)
           → Lambda agent-tools
-            → funciones de agregación (@finance/api agent/aggregates)
+            → agregaciones (@finance/api agent/aggregates)
               → DynamoDB + computeMonthSummary
 ```
 
 - El browser **nunca** habla con AgentCore.
-- Las tools no inventan montos: solo devuelven JSON de agregación.
-- Code interpreter: **apagado** en el primer ship.
-- Memoria de producto: solo mientras el sheet está abierto (`runtimeSessionId`); al cerrar o cambiar el mes del selector se limpia el hilo.
-- Fallback de desarrollo/producción inicial: si `HARNESS_ARN` está vacío, el proxy usa **Bedrock ConverseStream** con el mismo dispatch de tools en-proceso. Tras crear el Harness + Gateway, setea `HARNESS_ARN` en la Lambda `agent-proxy`.
+- El loop del agente lo corre **Harness** (no un Converse manual en la Lambda).
+- Las tools viven detrás de **Gateway** (Lambda target).
+- Code interpreter: **apagado**.
+- Memoria de producto: solo mientras el sheet está abierto (`runtimeSessionId`); al cerrar o cambiar el mes se limpia el hilo. Harness memory = `disabled`.
+- CDK provisiona Gateway + Target + Harness vía custom resource (`OlbiaAgentCore`) y inyecta `HARNESS_ARN` en `agent-proxy`.
 
-### Provisionar Harness (post-deploy)
+## Prompt Management (runtime, sin deploy)
+
+Prompt Management **no** se hornea en el Harness al desplegar. Eso lo volvería obsoleto.
+
+1. Source of truth editable: Bedrock Prompt Management (`OlbiaFinanceSystem`).
+2. Repo seed (solo bootstrap / sync de DRAFT): `services/api/src/agent/prompts/olbia-system.ts` → `AWS::Bedrock::Prompt` + versión `bootstrap`.
+3. Puntero activo (mutable sin CDK): SSM `/personal-finance-v1/agent/system-prompt-version-arn` → ARN versionado (`…:prompt/ID:N`).
+4. En cada `InvokeHarness`, `agent-proxy` lee el puntero (caché ~30s), hace `GetPrompt`, y pasa `systemPrompt` + `model` como **override** de invocación.
+
+### Promote / rollback (sin redeploy)
 
 ```bash
-# Usa el ARN de salida AgentCoreHarnessExecutionRoleArn
-aws bedrock-agentcore-control create-harness \
-  --region us-east-2 \
-  --harness-name OlbiaFinance \
-  --execution-role-arn "<HarnessExecutionRoleArn>" \
-  --model '{"bedrockModelConfig":{"modelId":"anthropic.claude-sonnet-4-6","maxTokens":2048,"temperature":0.2,"apiFormat":"converse_stream"}}' \
-  --system-prompt '[{"text":"...voz Olbia..."}]' \
-  --memory '{"disabled":{}}' \
-  --max-iterations 25 \
-  --max-tokens 4096 \
-  --timeout-seconds 300
+# 1) Edita DRAFT en consola Bedrock Prompt Management (o UpdatePrompt)
+# 2) Crea versión inmutable
+aws bedrock-agent create-prompt-version \
+  --prompt-arn arn:aws:bedrock:REGION:ACCOUNT:prompt/PROMPT_ID \
+  --description "prod-$(date +%Y%m%d)"
+
+# 3) Apunta producción a esa versión (promote)
+aws ssm put-parameter \
+  --name /personal-finance-v1/agent/system-prompt-version-arn \
+  --type String \
+  --value 'arn:aws:bedrock:REGION:ACCOUNT:prompt/PROMPT_ID:N' \
+  --overwrite
+
+# Rollback: vuelve el puntero a :N-1 (o cualquier versión anterior)
 ```
 
-Luego Gateway con target Lambda de tools (mismo schema que `TOOL_DEFINITIONS`) y adjunta `agentcore_gateway` al Harness. Actualiza `HARNESS_ARN` en `personal-finance-v1-agent-proxy`.
+El seed de SSM solo corre en **Create** del custom resource; los redeploys **no** pisan un promote/rollback manual.
+
+## Parámetro requerido
+
+Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las tools del Gateway no ven el JWT del browser; usan ese owner.
 
 ## Tools (primer ship)
 
@@ -61,18 +79,16 @@ Luego Gateway con target Lambda de tools (mismo schema que `TOOL_DEFINITIONS`) y
 - `categoryId` en el payload del evento; `null`/ausente = Sin categoría.
 - Seed: `infrastructure/scripts/propose-category-seed.ts` (aprobar con `--apply`).
 - Backfill: `infrastructure/scripts/backfill-event-categories.ts`.
-- Ingestión futura: reglas primero; residuales con modelo; corrección en Movimientos.
 
 ## Auth y streaming
 
 - Rutas del agente detrás del mismo JWT Cognito.
-- Respuesta: `text/event-stream` (SSE) desde `agent-proxy`.
-- Errores: 1–2 reintentos silenciosos; luego mensaje corto + `requestId` copiable.
+- `agent-proxy` solo hace `InvokeHarness` (con override de Prompt Management) y reexpone el stream como SSE.
+- Errores: 1–2 reintentos silenciosos; luego mensaje corto + `requestId`.
 
 ## Observabilidad y costo
 
-- Model invocation logging de Bedrock con prompt/output (cuenta single-user; retención larga a conciencia).
-- Alarma de costo / uso con umbral bajo al inicio.
+- Budget Bedrock ~$15/mes con aviso al 80%.
 - Sin Bedrock Guardrails en el MVP.
 
 ## Fuera de este ship

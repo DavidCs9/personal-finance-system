@@ -1,32 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import {
-  BedrockRuntimeClient,
-  ConverseStreamCommand,
-  type ContentBlock,
-  type Message,
-  type ToolConfiguration,
-} from '@aws-sdk/client-bedrock-runtime';
+  BedrockAgentCoreClient,
+  InvokeHarnessCommand,
+} from '@aws-sdk/client-bedrock-agentcore';
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2, Context } from 'aws-lambda';
-import { citationsFromToolResult, runAgentTool, TOOL_DEFINITIONS } from './tools.js';
 import { principal } from '../http/response.js';
+import { resolveRuntimePrompt } from './prompt-runtime.js';
 
-const modelId = process.env.BEDROCK_MODEL_ID ?? 'anthropic.claude-sonnet-4-6';
-const harnessArn = process.env.HARNESS_ARN;
-const bedrock = new BedrockRuntimeClient({});
-
-const SYSTEM_PROMPT = `Eres el asistente de Olbia, el tablero personal de finanzas del usuario.
-
-Voz: precisa, firme, útil, en segunda persona. Usa “Has gastado”, “Te quedan”, “Te faltarán”, “Neto”, “Debes”.
-Frases cortas y montos concretos. Sin gamificación, sin celebrar gasto, sin lenguaje de bienestar, sin tono bancario corporativo.
-
-Reglas:
-- Todo número debe salir de una tool. No inventes ni estimes montos.
-- Gasto por categoría usa la misma semántica que Resumen (cuota MSI del mes, no el ticket).
-- Si hay monto sin categoría, dilo (“Hay $X / N movimientos sin categoría…”).
-- Si falta dato, dilo con claridad.
-- El mes por defecto es el que indique el usuario en el mensaje de sistema de contexto.
-- System y tools están en español; puedes seguir el idioma de la pregunta del usuario.
-- Si propones recategorizar, usa propose_recategorize; no digas que ya quedó aplicado.`;
+const harnessArn = process.env.HARNESS_ARN?.trim();
+const agentcore = new BedrockAgentCoreClient({});
 
 type SseEvent =
   | { readonly type: 'token'; readonly text: string }
@@ -36,16 +18,6 @@ type SseEvent =
   | { readonly type: 'error'; readonly message: string; readonly requestId: string };
 
 const sse = (event: SseEvent): string => `data: ${JSON.stringify(event)}\n\n`;
-
-const toolConfig = (): ToolConfiguration => ({
-  tools: TOOL_DEFINITIONS.map((tool) => ({
-    toolSpec: {
-      name: tool.name,
-      description: tool.description,
-      inputSchema: { json: tool.inputSchema as Record<string, unknown> },
-    },
-  })) as ToolConfiguration['tools'],
-});
 
 const parseBody = (raw: string | undefined): {
   message: string;
@@ -78,111 +50,133 @@ const isTransient = (error: unknown): boolean => {
   return /throttl|timeout|temporar|429|503|ECONNRESET/i.test(`${name} ${message}`);
 };
 
-async function* converseLoop(
+const citationsFromPayload = (data: Record<string, unknown>): SseEvent[] => {
+  const out: SseEvent[] = [];
+  if (Array.isArray(data.movements)) {
+    for (const row of (data.movements as { id?: string; merchantRaw?: string }[]).slice(0, 8)) {
+      if (row.merchantRaw) {
+        out.push({ type: 'citation', kind: 'movement', id: row.id, label: row.merchantRaw });
+      }
+    }
+  }
+  if (data.month && data.summary) {
+    out.push({ type: 'citation', kind: 'summary', label: `Resumen ${String(data.month)}` });
+  }
+  if (data.netMxnMinor !== undefined) {
+    out.push({ type: 'citation', kind: 'wealth', label: 'Patrimonio' });
+  }
+  return out;
+};
+
+const tryParseJsonObject = (raw: string): Record<string, unknown> | undefined => {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // ignore partial JSON while streaming
+  }
+  return undefined;
+};
+
+async function* invokeHarnessStream(
   owner: string,
   month: string,
   userMessage: string,
+  sessionId: string,
 ): AsyncGenerator<SseEvent> {
-  const messages: Message[] = [
-    {
-      role: 'user',
-      content: [
-        {
-          text: `Contexto: mes activo del selector = ${month}. Si la pregunta nombra otro mes, ese gana.\n\nPregunta: ${userMessage}`,
-        },
-      ],
+  if (!harnessArn) {
+    throw new Error('HARNESS_ARN no configurado: el proxy solo habla con AgentCore Harness.');
+  }
+
+  // Prompt Management is the runtime source of truth (SSM pointer → versioned prompt).
+  // Override on every invoke so promote/rollback does not require UpdateHarness or redeploy.
+  const prompt = await resolveRuntimePrompt();
+
+  const response = await agentcore.send(new InvokeHarnessCommand({
+    harnessArn,
+    runtimeSessionId: sessionId,
+    runtimeUserId: owner,
+    systemPrompt: [{ text: prompt.text }],
+    model: {
+      bedrockModelConfig: {
+        modelId: prompt.modelId,
+        maxTokens: prompt.maxTokens,
+        temperature: prompt.temperature,
+        topP: prompt.topP,
+        apiFormat: 'converse_stream',
+      },
     },
-  ];
+    messages: [{
+      role: 'user',
+      content: [{
+        text: `Contexto: mes activo del selector = ${month}. Si la pregunta nombra otro mes, ese gana.\n\nPregunta: ${userMessage}`,
+      }],
+    }],
+  }));
 
-  for (let round = 0; round < 8; round += 1) {
-    const response = await bedrock.send(new ConverseStreamCommand({
-      modelId,
-      system: [{ text: SYSTEM_PROMPT }],
-      messages,
-      toolConfig: toolConfig(),
-      inferenceConfig: { maxTokens: 2048, temperature: 0.2 },
-    }));
+  const toolUseByIndex = new Map<number, { name: string; inputJson: string }>();
 
-    let assistantText = '';
-    const toolUses: { toolUseId: string; name: string; input: Record<string, unknown> }[] = [];
-    let currentTool: { toolUseId: string; name: string; inputJson: string } | undefined;
-    let stopReason: string | undefined;
+  for await (const event of response.stream ?? []) {
+    if (event.contentBlockDelta?.delta?.text) {
+      yield { type: 'token', text: event.contentBlockDelta.delta.text };
+    }
 
-    for await (const event of response.stream ?? []) {
-      if (event.contentBlockDelta?.delta?.text) {
-        const text = event.contentBlockDelta.delta.text;
-        assistantText += text;
-        yield { type: 'token', text };
+    const startToolUse = event.contentBlockStart?.start?.toolUse;
+    if (startToolUse && event.contentBlockStart?.contentBlockIndex !== undefined) {
+      toolUseByIndex.set(event.contentBlockStart.contentBlockIndex, {
+        name: startToolUse.name ?? '',
+        inputJson: '',
+      });
+    }
+
+    const toolUseDelta = event.contentBlockDelta?.delta?.toolUse;
+    if (toolUseDelta?.input && event.contentBlockDelta?.contentBlockIndex !== undefined) {
+      const current = toolUseByIndex.get(event.contentBlockDelta.contentBlockIndex);
+      if (current) {
+        current.inputJson += toolUseDelta.input;
       }
-      if (event.contentBlockStart?.start?.toolUse) {
-        const start = event.contentBlockStart.start.toolUse;
-        currentTool = {
-          toolUseId: start.toolUseId ?? randomUUID(),
-          name: start.name ?? '',
-          inputJson: '',
-        };
-      }
-      if (event.contentBlockDelta?.delta?.toolUse?.input) {
-        if (currentTool) currentTool.inputJson += event.contentBlockDelta.delta.toolUse.input;
-      }
-      if (event.contentBlockStop && currentTool) {
-        let input: Record<string, unknown> = {};
-        try {
-          input = currentTool.inputJson ? JSON.parse(currentTool.inputJson) as Record<string, unknown> : {};
-        } catch {
-          input = {};
+    }
+
+    if (event.contentBlockStop?.contentBlockIndex !== undefined) {
+      const finished = toolUseByIndex.get(event.contentBlockStop.contentBlockIndex);
+      if (finished?.name === 'propose_recategorize') {
+        const input = tryParseJsonObject(finished.inputJson);
+        const eventId = typeof input?.eventId === 'string' ? input.eventId : '';
+        const categoryId = typeof input?.categoryId === 'string' ? input.categoryId : '';
+        if (eventId && categoryId) {
+          yield {
+            type: 'proposal',
+            eventId,
+            categoryId,
+            message: `Confirma recategorizar ${eventId} a ${categoryId}.`,
+          };
         }
-        toolUses.push({
-          toolUseId: currentTool.toolUseId,
-          name: currentTool.name,
-          input,
-        });
-        currentTool = undefined;
       }
-      if (event.messageStop?.stopReason) stopReason = event.messageStop.stopReason;
+      toolUseByIndex.delete(event.contentBlockStop.contentBlockIndex);
     }
 
-    const assistantContent: ContentBlock[] = [];
-    if (assistantText) assistantContent.push({ text: assistantText });
-    for (const tool of toolUses) {
-      assistantContent.push({
-        toolUse: {
-          toolUseId: tool.toolUseId,
-          name: tool.name,
-          input: tool.input as never,
-        },
-      });
-    }
-    messages.push({ role: 'assistant', content: assistantContent });
-
-    if (stopReason !== 'tool_use' || toolUses.length === 0) return;
-
-    const toolResults: ContentBlock[] = [];
-    for (const tool of toolUses) {
-      const result = await runAgentTool(owner, tool.name, {
-        month,
-        ...tool.input,
-      });
-      for (const citation of citationsFromToolResult(tool.name, result)) {
-        yield { type: 'citation', ...citation };
+    const toolResultDeltas = event.contentBlockDelta?.delta?.toolResult;
+    if (Array.isArray(toolResultDeltas)) {
+      for (const block of toolResultDeltas) {
+        if (block.json && typeof block.json === 'object' && !Array.isArray(block.json)) {
+          yield* citationsFromPayload(block.json as Record<string, unknown>);
+        } else if (typeof block.text === 'string') {
+          const parsed = tryParseJsonObject(block.text);
+          if (parsed) yield* citationsFromPayload(parsed);
+        }
       }
-      if (tool.name === 'propose_recategorize' && result && typeof result === 'object') {
-        const proposal = result as { eventId: string; categoryId: string; message: string };
-        yield {
-          type: 'proposal',
-          eventId: proposal.eventId,
-          categoryId: proposal.categoryId,
-          message: proposal.message,
-        };
-      }
-      toolResults.push({
-        toolResult: {
-          toolUseId: tool.toolUseId,
-          content: [{ json: result as never }],
-        },
-      });
     }
-    messages.push({ role: 'user', content: toolResults });
+
+    if (event.validationException || event.internalServerException || event.runtimeClientError) {
+      const detail = event.validationException?.message
+        ?? event.internalServerException?.message
+        ?? event.runtimeClientError?.message
+        ?? 'Error de Harness';
+      yield { type: 'error', message: 'No pude consultar tus datos. Reintenta.', requestId: detail };
+      return;
+    }
   }
 }
 
@@ -190,18 +184,13 @@ const runWithRetries = async function* (
   owner: string,
   month: string,
   message: string,
+  sessionId: string,
   requestId: string,
 ): AsyncGenerator<SseEvent> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      if (harnessArn) {
-        // Harness path: same tool surface via Gateway in production.
-        // Until HARNESS_ARN is wired to a READY harness, Converse fallback below still applies if invoke fails.
-        yield* converseLoop(owner, month, message);
-      } else {
-        yield* converseLoop(owner, month, message);
-      }
+      yield* invokeHarnessStream(owner, month, message, sessionId);
       return;
     } catch (error) {
       lastError = error;
@@ -212,7 +201,7 @@ const runWithRetries = async function* (
   yield {
     type: 'error',
     message: 'No pude consultar tus datos. Reintenta.',
-    requestId: `${requestId}:${detail.slice(0, 40)}`,
+    requestId: `${requestId}:${detail.slice(0, 80)}`,
   };
 };
 
@@ -228,12 +217,8 @@ export const handler = async (
     try {
       const owner = principal(event);
       const body = parseBody(event.body);
-      // Response streaming for Lambda Function URL / HTTP API payload format 2.0
-      // Consumers read `body` as SSE text when awslambda.streamifyResponse is unavailable
-      // in this bundling path; we still return a single SSE document assembled from the generator.
       let payload = '';
-      let sessionId = body.sessionId;
-      for await (const item of runWithRetries(owner, body.month, body.message, requestId)) {
+      for await (const item of runWithRetries(owner, body.month, body.message, body.sessionId, requestId)) {
         payload += sse(item);
         if (item.type === 'error') {
           return {
@@ -247,7 +232,7 @@ export const handler = async (
           };
         }
       }
-      payload += sse({ type: 'done', requestId, sessionId });
+      payload += sse({ type: 'done', requestId, sessionId: body.sessionId });
       return {
         statusCode: 200,
         headers: {
