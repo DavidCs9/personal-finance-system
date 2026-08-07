@@ -22,7 +22,7 @@ El sistema puede suspender la app en segundo plano. Al volver al frente, Olbia n
 
 iOS no requiere service worker para instalar una app web. Olbia tampoco tiene todavía un requisito de operación offline. Añadirlo introduciría una segunda capa de caché y una política de actualización para el shell, la configuración de runtime y datos sensibles. Mientras no exista una experiencia offline explícita y verificable, se conserva la caché HTTP/CDN existente y todas las consultas financieras siguen siendo de red.
 
-Declarative Web Push permite suscribirse y mostrar avisos sin service worker en apps web de pantalla de inicio. Olbia envía push al registrar un movimiento observado y un resumen diario a las 07:00; detalle en [Avisos push de movimientos observados](push-on-new-observable.md) y [Push diario del balance](daily-balance-push.md).
+Declarative Web Push permite suscribirse y mostrar avisos sin service worker en apps web de pantalla de inicio. Olbia envía push al registrar un movimiento observado (correo / Apple Pay), un resumen diario a las 07:00 y recordatorios de corte/pago a las 07:05; detalle en [Avisos push de movimientos observados](push-on-new-observable.md), [Push diario del balance](daily-balance-push.md) y [Push de corte y pago](card-cycle-push.md).
 
 WebKit documenta que el almacenamiento de una app web puede recibir tratamiento persistente, pero sigue sujeto a las políticas de almacenamiento del sistema: [Updates to Storage Policy](https://webkit.org/blog/14403/updates-to-storage-policy/).
 
@@ -33,6 +33,6 @@ WebKit documenta que el almacenamiento de una app web puede recibir tratamiento 
 3. Usa **Compartir → Agregar a pantalla de inicio** y deja activo **Abrir como app web**.
 4. Inicia sesión dentro de Olbia, aunque Safari ya tenga una sesión.
 5. Envía la app al fondo durante más de una hora y vuelve a abrirla.
-6. Confirma que el tablero actualiza sin mostrar `Unauthorized` y que Resumen y Movimientos respetan la isla dinámica y el indicador de inicio.
+6. Confirma que el tablero actualiza sin mostrar `Unauthorized` y que Resumen, Movimientos y Patrimonio respetan la isla dinámica y el indicador de inicio.
 
 Para depuración remota, Apple permite inspeccionar las Home Screen Web Apps desde Safari en una Mac con el Web Inspector habilitado en el iPhone: [Inspecting iOS and iPadOS](https://developer.apple.com/documentation/safari-developer-tools/inspecting-ios).

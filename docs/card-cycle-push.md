@@ -6,7 +6,9 @@ Operativo con la misma suscripción VAPID que el balance diario y los movimiento
 
 ## Preferencia
 
-Un solo control en Resumen — **Avisos de Olbia** — activa también estos recordatorios. No hay toggles por tipo en v1.
+Un solo control en Resumen — **Avisos de Olbia** — activa también estos recordatorios. No hay toggles por tipo en v1. La UI siempre guarda `contentMode: "amounts"`; el modo `private` existe en API pero no tiene control en la app.
+
+Las tarjetas se configuran en Resumen → **Fechas de corte** (máximo 3). Solo definen ciclo; el saldo pendiente se captura en Patrimonio.
 
 ## Contenido
 
@@ -50,4 +52,5 @@ Un `tag` estable `card-{cutoff|payment}-{cardId}-{YYYY-MM-DD}` evita duplicados 
 
 - [Push diario del balance](daily-balance-push.md)
 - [Avisos push de movimientos observados](push-on-new-observable.md)
+- [Patrimonio](patrimonio.md)
 - [Dirección de producto y UI](ui-design-brief.md)

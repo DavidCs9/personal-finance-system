@@ -15,7 +15,7 @@ Start with the [system context diagram in the root README](../README.md#architec
 
 **Scope:** Olbia. **Audience:** engineers and operators.
 
-Shows how responsibilities split across the SPA, HTTP edge, email ingestion pipeline, scheduled push, and data stores. Application logic lives in `services/*` and `packages/domain`. Shared observed-event persistence and month indexing live in `services/ledger`. `infrastructure/lambda/` holds thin adapters that re-export service handlers (plus a few infra-only functions: SES receipt, retry dispatcher, VAPID custom resource).
+Shows how responsibilities split across the SPA, HTTP edge, email ingestion pipeline, scheduled push and wealth sync, and data stores. Application logic lives in `services/*` and `packages/domain`. Shared observed-event persistence and month indexing live in `services/ledger`. `infrastructure/lambda/` holds thin adapters that re-export service handlers (plus a few infra-only functions: SES receipt, retry dispatcher, VAPID custom resource).
 
 ```mermaid
 flowchart TB
@@ -30,6 +30,12 @@ flowchart TB
 «Software System»`"]
   shortcuts["`**Apple Shortcuts**
 «Software System»`"]
+  bitso["`**Bitso**
+«Software System»`"]
+  ibkr["`**IBKR Flex + Banxico**
+«Software System»`"]
+  textract["`**Amazon Textract**
+«Software System»`"]
   webpush["`**Web Push network**
 «Software System»`"]
 
@@ -39,7 +45,7 @@ flowchart TB
     subgraph presentation["`**Presentation**`"]
       spa["`**Web SPA**
 «Container: React · Vite · CloudFront»
-_Resumen, Movimientos, imports, push prefs_`"]
+_Resumen, Movimientos, Patrimonio, imports, push_`"]
       cognito["`**Identity**
 «Container: Cognito»
 _Single-user sign-in, JWT issuer_`"]
@@ -48,7 +54,7 @@ _Single-user sign-in, JWT issuer_`"]
     subgraph edge["`**HTTP edge**`"]
       api["`**Ledger API**
 «Container: HTTP API + Lambda»
-_Events, plans, imports, push subscriptions_`"]
+_Events, months, cards, wealth, statements, nómina, push_`"]
       apple["`**Apple Pay Capture**
 «Container: HTTP API + Lambda»
 _Bearer Shortcut intake_`"]
@@ -74,10 +80,10 @@ _Re-queues recoverable exceptions_`"]
     subgraph data["`**Data**`"]
       ddb[("`**Metadata Store**
 «Container: DynamoDB»
-_Events, observations, plans, dedupe, push_`")]
+_Events, plans, cards, wealth, push_`")]
       raw[("`**Raw Source Store**
 «Container: S3 + KMS»
-_Encrypted MIME, CSV, evidence_`")]
+_Encrypted MIME, CSV, PDF, evidence_`")]
     end
 
     daily["`**Daily Balance Push**
@@ -86,6 +92,12 @@ _07:00 America/Chihuahua summary_`"]
     cardsPush["`**Card Cycle Push**
 «Container: Lambda + Scheduler»
 _07:05 cut-off and payment reminders_`"]
+    bitsoSync["`**Bitso Sync**
+«Container: Lambda + Scheduler»
+_06:30 America/Chihuahua_`"]
+    ibkrSync["`**IBKR Sync**
+«Container: Lambda + Scheduler»
+_06:45 America/Chihuahua_`"]
   end
 
   owner -->|"Uses · HTTPS"| spa
@@ -108,7 +120,8 @@ _07:05 cut-off and payment reminders_`"]
   apple -->|"Pushes new observations"| webpush
 
   api -->|"Reads/writes"| ddb
-  api -->|"CSV + raw evidence"| raw
+  api -->|"CSV, PDF, nómina, wealth evidence"| raw
+  api -->|"AnalyzeDocument"| textract
   api -->|"Writes retry jobs"| ddb
   retry -->|"Watches retries · stream"| ddb
   retry -->|"Re-queues jobs"| queue
@@ -117,11 +130,15 @@ _07:05 cut-off and payment reminders_`"]
   daily -->|"Pushes daily summary"| webpush
   cardsPush -->|"Reads cards + subscriptions"| ddb
   cardsPush -->|"Pushes cut-off/payment"| webpush
+  bitsoSync -->|"Balances + tickers"| bitso
+  bitsoSync -->|"Writes wealth snapshots"| ddb
+  ibkrSync -->|"Flex + FIX"| ibkr
+  ibkrSync -->|"Writes wealth snapshots"| ddb
   webpush -->|"Notifies devices"| owner
 
   class owner person
-  class gmail,shortcuts,webpush external
-  class spa,cognito,api,apple,ses,receipt,ingest,retry,daily,cardsPush container
+  class gmail,shortcuts,bitso,ibkr,textract,webpush external
+  class spa,cognito,api,apple,ses,receipt,ingest,retry,daily,cardsPush,bitsoSync,ibkrSync container
   class queue,ddb,raw store
 ```
 
@@ -194,6 +211,8 @@ _Notifies on accepted events_`"]
 
 Exception retries write a DynamoDB retry job; the Retry Dispatcher (C2) watches the stream and re-queues SQS — the API does not send to SQS directly.
 
+Month income on `GET /months/:month` is derived from CFDI nómina payslips. `PUT /months/:month` persists only `upcomingPayments`.
+
 ```mermaid
 flowchart TB
   classDef component fill:#85BBF0,stroke:#5D8AB3,color:#000,stroke-width:1px
@@ -205,6 +224,8 @@ flowchart TB
 «Container: DynamoDB»`")]
   raw[("`**Raw Source Store**
 «Container: S3 + KMS»`")]
+  textract["`**Amazon Textract**
+«Software System»`"]
 
   subgraph api["`**Ledger API**`"]
     direction TB
@@ -222,10 +243,22 @@ _Observed charges without automation_`"]
 _List, retry, discard recovery items_`"]
     months["`**Monthly Plan API**
 «Component: TypeScript»
-_Income and upcoming payments_`"]
+_Upcoming payments; income via nómina GET_`"]
+    cards["`**Cards API**
+«Component: TypeScript»
+_Cut-off and payment day profiles_`"]
+    wealth["`**Wealth API**
+«Component: TypeScript»
+_Overview, Cajita, liabilities, sync_`"]
+    statements["`**Statement Imports**
+«Component: TypeScript»
+_Amex + Santander PDF via Textract_`"]
     csv["`**Santander CSV Import**
 «Component: TypeScript»
 _Preview and apply reconciliation_`"]
+    nomina["`**CFDI Nómina**
+«Component: TypeScript»
+_XML upload and payslip queries_`"]
     pushsubs["`**Push Subscriptions**
 «Component: TypeScript»
 _Register and remove endpoints_`"]
@@ -236,7 +269,11 @@ _Register and remove endpoints_`"]
   router -->|"POST /events/manual"| manual
   router -->|"Exception routes"| exceptions
   router -->|"Month routes"| months
-  router -->|"Import routes"| csv
+  router -->|"Card routes"| cards
+  router -->|"Wealth routes"| wealth
+  router -->|"Statement preview/poll/apply"| statements
+  router -->|"CSV import routes"| csv
+  router -->|"POST /imports/nomina"| nomina
   router -->|"Push routes"| pushsubs
 
   events -->|"Reads/writes"| ddb
@@ -244,12 +281,20 @@ _Register and remove endpoints_`"]
   manual -->|"Creates events"| ddb
   exceptions -->|"Updates + writes retry jobs"| ddb
   months -->|"Reads/writes"| ddb
+  cards -->|"Reads/writes"| ddb
+  wealth -->|"Reads/writes"| ddb
+  wealth -->|"Stores sync evidence"| raw
+  statements -->|"Stores PDF + textract JSON"| raw
+  statements -->|"AnalyzeDocument"| textract
+  statements -->|"Links or creates events"| ddb
   csv -->|"Stores CSV"| raw
   csv -->|"Links or creates events"| ddb
+  nomina -->|"Stores XML + payslips"| ddb
+  nomina -->|"Stores XML evidence"| raw
   pushsubs -->|"Reads/writes"| ddb
 
-  class router,events,manual,exceptions,months,csv,pushsubs component
-  class spa,ddb,raw external
+  class router,events,manual,exceptions,months,cards,wealth,statements,csv,nomina,pushsubs component
+  class spa,ddb,raw,textract external
 ```
 
 ## Component diagram — Web SPA (C3)
@@ -272,19 +317,25 @@ flowchart TB
     direction TB
     auth["`**Auth Session**
 «Component: React»
-_Cognito sign-in and JWT refresh_`"]
+_Personalized Cognito sign-in and JWT refresh_`"]
     summary["`**Summary View**
 «Component: React»
-_Spend, remaining, pace_`"]
+_Spend, remaining, pace, MSI, cards_`"]
     movements["`**Movements View**
 «Component: React»
 _Events, recovery, capture actions_`"]
+    wealthView["`**Patrimonio View**
+«Component: React»
+_Neto, assets, Debes, history_`"]
     sheets["`**Action Sheets**
 «Component: React»
-_Income, payments, detail, CSV, recovery_`"]
+_Income, payments, statements, recovery_`"]
+    privateMode["`**Private Mode**
+«Component: React»
+_Blurs amounts in the UI_`"]
     pushpref["`**Push Preference**
 «Component: React»
-_Device subscribe and content mode_`"]
+_Device subscribe (amounts mode)_`"]
     client["`**Ledger API Client**
 «Component: TypeScript»
 _TanStack Query + fetch boundary_`"]
@@ -294,18 +345,22 @@ _TanStack Query + fetch boundary_`"]
   auth -->|"Supplies JWT"| client
   summary -->|"Loads month + events"| client
   movements -->|"Loads events + exceptions"| client
+  wealthView -->|"Loads wealth overview"| client
   sheets -->|"Mutates ledger state"| client
   pushpref -->|"Manages subscriptions"| client
   pushpref -->|"Subscribes browser"| webpush
   client -->|"JSON/HTTPS + JWT"| api
 
-  class auth,summary,movements,sheets,pushpref,client component
+  class auth,summary,movements,wealthView,sheets,privateMode,pushpref,client component
   class cognito,api,webpush external
 ```
 
 ## Related docs
 
 - [V1 decisions](v1-decisions.md) — binding scope, data model, and AWS choices
+- [Patrimonio](patrimonio.md)
+- [Meses sin intereses (MSI)](msi.md)
+- [UI design brief](ui-design-brief.md)
 - [Gmail → SES forwarding](gmail-forwarding.md)
 - [Apple Pay Shortcut](apple-pay-shortcut.md)
 - [Push on new observable](push-on-new-observable.md)

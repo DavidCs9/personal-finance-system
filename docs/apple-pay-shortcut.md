@@ -57,6 +57,8 @@ En el iPhone:
 
 La conversión previa a texto es intencional. `Amount` es un objeto especial de tipo `Currency Amount`, y algunas versiones de iOS lo serializan como cero cuando se introduce directamente en un diccionario JSON.
 
+Una captura aceptada (no duplicada) dispara el mismo Web Push de movimiento nuevo que el correo, si **Avisos de Olbia** está activo.
+
 ## Respuesta
 
 Una observación nueva devuelve `201`. Repetir el mismo `Idempotency-Key` devuelve `200` y el mismo evento sin crear otro:
