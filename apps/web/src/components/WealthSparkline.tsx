@@ -1,5 +1,15 @@
 const formatSparkDay = (day: string): string => {
   const [year, month, date] = day.split("-").map(Number);
+  // Monthly series uses YYYY-MM-01 — label the month, not "1 ago".
+  if (date === 1) {
+    return new Intl.DateTimeFormat("es-MX", {
+      month: "short",
+      year: "2-digit",
+      timeZone: "UTC",
+    })
+      .format(new Date(Date.UTC(year, month - 1, 1, 12)))
+      .replace(".", "");
+  }
   return new Intl.DateTimeFormat("es-MX", {
     day: "numeric",
     month: "short",
