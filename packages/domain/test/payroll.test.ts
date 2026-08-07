@@ -4,6 +4,8 @@ import {
   payslipLineGroup,
   previousCalendarMonth,
   provisionalIncomeFromPriorOrdinaries,
+  runningFondoAhorroByDay,
+  sumFondoAhorroDeduccionesMinor,
 } from "@finance/domain";
 
 describe("payslipLineGroup", () => {
@@ -91,5 +93,47 @@ describe("deriveMonthIncome", () => {
     expect(derived.provisionalActive).toBe(false);
     expect(derived.estimateActive).toBe(true);
     expect(derived.incomeMinor).toBe(4_526_140);
+  });
+});
+
+describe("sumFondoAhorroDeduccionesMinor", () => {
+  it("sums only fondo deducciones and ignores percepción 005", () => {
+    const total = sumFondoAhorroDeduccionesMinor([
+      {
+        lines: [
+          { kind: "percepcion", tipo: "005", clave: "131", concepto: "Fondo empresa", amountMinor: 275_000, group: "fondo", notCashInBank: true },
+          { kind: "deduccion", tipo: "004", clave: "067", concepto: "Fondo de ahorro", amountMinor: 275_000, group: "fondo" },
+          { kind: "deduccion", tipo: "004", clave: "181", concepto: "Fondo Ahorro Empleado", amountMinor: 275_000, group: "fondo" },
+          { kind: "deduccion", tipo: "002", clave: "045", concepto: "ISR", amountMinor: 500_000, group: "isr" },
+        ],
+      },
+    ]);
+    expect(total).toBe(550_000);
+  });
+});
+
+describe("runningFondoAhorroByDay", () => {
+  it("accumulates YTD by FechaPago", () => {
+    expect(
+      runningFondoAhorroByDay([
+        {
+          fechaPago: "2026-01-15",
+          lines: [
+            { kind: "deduccion", tipo: "004", clave: "067", concepto: "Fondo", amountMinor: 200_000, group: "fondo" },
+            { kind: "deduccion", tipo: "004", clave: "181", concepto: "Fondo emp", amountMinor: 200_000, group: "fondo" },
+          ],
+        },
+        {
+          fechaPago: "2026-01-30",
+          lines: [
+            { kind: "deduccion", tipo: "004", clave: "067", concepto: "Fondo", amountMinor: 200_000, group: "fondo" },
+            { kind: "deduccion", tipo: "004", clave: "181", concepto: "Fondo emp", amountMinor: 200_000, group: "fondo" },
+          ],
+        },
+      ]),
+    ).toEqual([
+      { day: "2026-01-15", totalMxnMinor: 400_000 },
+      { day: "2026-01-30", totalMxnMinor: 800_000 },
+    ]);
   });
 });

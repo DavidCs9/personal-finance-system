@@ -663,6 +663,7 @@ html.private-mode .hero-amount .amt {
 .wealth-spark-tick-center { text-align: center; }
 .wealth-spark-tick-end { text-align: right; }
 .wealth-role-emergency_fund { background: var(--ink); }
+.wealth-role-payroll_savings { background: #6e675f; }
 .wealth-role-crypto { background: #5f5a55; }
 .wealth-role-brokerage { background: #8a837a; }
 

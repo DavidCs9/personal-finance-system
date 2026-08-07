@@ -21,7 +21,7 @@ El ingreso mensual se deriva de los XML de CFDI nómina subidos (`FechaPago` →
 ### Patrimonio (activos)
 
 1. **Tienes** — total de activos en MXN.
-2. **Dónde está** — desglose por cuenta (Cajita Nu, Bitso, Interactive Brokers).
+2. **Dónde está** — desglose por cuenta (Cajita Nu, Fondo de ahorro, Bitso, Interactive Brokers).
 3. **Historial** — un punto canónico por día; filtro al seleccionar cuenta.
 4. **Holdings** — posiciones embebidas en el snapshot del día.
 
