@@ -17,6 +17,7 @@ import {
 import { demoCards } from "../card-cycle-demo";
 import type { CardCycle } from "../card-cycle";
 import { EventSheet } from "../sheets/EventSheet";
+import { MonthIncomeSheet } from "../sheets/MonthIncomeSheet";
 import { NominaUploadSheet } from "../sheets/NominaUploadSheet";
 import { PayslipSheet } from "../sheets/PayslipSheet";
 import type { Payslip } from "../monthly-plan";
@@ -50,6 +51,7 @@ export function Dashboard({
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("summary");
   const [selectedMonth, setSelectedMonth] = useState(monthKey(now));
+  const [incomeSheetOpen, setIncomeSheetOpen] = useState(false);
   const [activePayslip, setActivePayslip] = useState<Payslip>();
   const [uploadingNomina, setUploadingNomina] = useState(false);
   const [editingPayment, setEditingPayment] = useState<PlannedPayment | null | undefined>();
@@ -429,6 +431,7 @@ export function Dashboard({
             msiSpentMinor={msiSpentMinor}
             msiCommittedMinor={msiCommittedMinor}
             onUploadNomina={() => setUploadingNomina(true)}
+            onOpenIncome={() => setIncomeSheetOpen(true)}
             onOpenPayslip={setActivePayslip}
             onAddPayment={() => setEditingPayment(null)}
             onEditPayment={(payment) => setEditingPayment(payment)}
@@ -524,6 +527,17 @@ export function Dashboard({
             const response = await ledgerApi.uploadNominas(files, idToken);
             await queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
             return response;
+          }}
+        />
+      )}
+      {incomeSheetOpen && (
+        <MonthIncomeSheet
+          plan={plan}
+          onClose={() => setIncomeSheetOpen(false)}
+          onOpenPayslip={(payslip) => setActivePayslip(payslip)}
+          onUploadNomina={() => {
+            setIncomeSheetOpen(false);
+            setUploadingNomina(true);
           }}
         />
       )}

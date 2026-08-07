@@ -25,6 +25,7 @@ export interface SummaryViewProps {
   readonly msiSpentMinor: number;
   readonly msiCommittedMinor: number;
   readonly onUploadNomina: () => void;
+  readonly onOpenIncome: () => void;
   readonly onOpenPayslip: (payslip: Payslip) => void;
   readonly onAddPayment: () => void;
   readonly onEditPayment: (payment: PlannedPayment) => void;
@@ -44,6 +45,7 @@ export interface SummaryViewProps {
 export function SummaryView(props: SummaryViewProps) {
   const hasIncome = props.plan.configured && props.plan.incomeMinor > 0;
   const payslips = props.plan.payslips ?? [];
+  const provisionalActive = Boolean(props.plan.provisionalActive);
   const paymentMonth = new Intl.DateTimeFormat("es-MX", { month: "short", timeZone: "UTC" })
     .format(monthDate(props.month))
     .replace(".", "")
@@ -91,11 +93,11 @@ export function SummaryView(props: SummaryViewProps) {
                 <button
                   className="income-button"
                   onClick={() => {
-                    if (payslips[0]) props.onOpenPayslip(payslips[0]);
+                    if (provisionalActive || payslips.length > 0) props.onOpenIncome();
                     else props.onUploadNomina();
                   }}
                 >
-                  <span>Ingreso</span>
+                  <span>{provisionalActive ? "Ingreso provisional" : "Ingreso"}</span>
                   <strong>
                     <Amt>{money(props.plan.incomeMinor)}</Amt>
                   </strong>
@@ -110,9 +112,21 @@ export function SummaryView(props: SummaryViewProps) {
                 </strong>
                 <span>de tu ingreso mensual</span>
               </div>
-              {(props.plan.estimateActive && (props.plan.estimatedMinor ?? 0) > 0) ||
+              {(provisionalActive && (props.plan.provisionalMinor ?? 0) > 0) ||
+              (props.plan.estimateActive && (props.plan.estimatedMinor ?? 0) > 0) ||
               props.uncertainMinor > 0 ? (
                 <div className="spend-notes">
+                  {provisionalActive && (props.plan.provisionalMinor ?? 0) > 0 && (
+                    <p className="uncertain-note">
+                      <span className="note-icon" aria-hidden="true">
+                        ≈
+                      </span>
+                      <span className="note-copy">
+                        Ingreso provisional · pendiente nómina de este mes (
+                        <Amt>{money(props.plan.provisionalMinor ?? 0)}</Amt>)
+                      </span>
+                    </p>
+                  )}
                   {props.plan.estimateActive && (props.plan.estimatedMinor ?? 0) > 0 && (
                     <p className="uncertain-note">
                       <span className="note-icon" aria-hidden="true">
@@ -171,7 +185,7 @@ export function SummaryView(props: SummaryViewProps) {
               </section>
             </div>
 
-            {payslips.length > 0 && (
+            {payslips.length > 0 ? (
               <section className="payslip-month-section">
                 <div className="section-heading">
                   <div>
@@ -218,7 +232,29 @@ export function SummaryView(props: SummaryViewProps) {
                   })}
                 </div>
               </section>
-            )}
+            ) : provisionalActive ? (
+              <section className="payslip-month-section">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">NÓMINAS DEL MES</p>
+                    <h2>Pendiente de XML</h2>
+                    <p className="section-lede">
+                      Usamos el patrón de nóminas ordinarias anteriores hasta que subas la de este mes.
+                    </p>
+                  </div>
+                  <button className="add-button" aria-label="Subir nómina" onClick={props.onUploadNomina}>
+                    +
+                  </button>
+                </div>
+                <button className="empty-action" onClick={props.onUploadNomina}>
+                  <span>+</span>
+                  <div>
+                    <strong>Subir nómina XML</strong>
+                    <small>Confirma liquidez real y retenciones de este mes.</small>
+                  </div>
+                </button>
+              </section>
+            ) : null}
           </>
         )}
 

@@ -83,4 +83,16 @@ describe("deriveMonthIncome", () => {
     expect(derived.estimateActive).toBe(false);
     expect(derived.incomeMinor).toBe(4_100_000);
   });
+
+  it("provisions current-month income from prior ordinaries when empty", () => {
+    const derived = deriveMonthIncome({
+      month: "2026-08",
+      now: new Date("2026-08-06T18:00:00Z"),
+      payslips: [],
+      priorOrdinaryPayslips: [{ tipoNomina: "O", totalMinor: 2_263_070, fechaPago: "2026-07-31" }],
+    });
+    expect(derived.configured).toBe(true);
+    expect(derived.provisionalActive).toBe(true);
+    expect(derived.incomeMinor).toBe(4_526_140);
+  });
 });
