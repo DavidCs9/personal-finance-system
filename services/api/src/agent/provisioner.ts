@@ -204,7 +204,7 @@ const ensureGatewayTarget = async (input: {
 const harnessTools = (gatewayArn: string) => ([
   {
     type: 'agentcore_gateway' as const,
-    name: 'olbia_finance',
+    name: 'olbia-finance',
     config: {
       agentCoreGateway: {
         gatewayArn,
@@ -303,7 +303,7 @@ export const handler = async (event: ProviderEvent): Promise<{
   const props = event.ResourceProperties;
   const harnessName = props.HarnessName ?? 'OlbiaFinance';
   const gatewayName = props.GatewayName ?? 'OlbiaFinanceGateway';
-  const targetName = props.TargetName ?? 'olbia_tools';
+  const targetName = props.TargetName ?? 'olbia-tools';
   const harnessRole = props.HarnessExecutionRoleArn ?? '';
   const gatewayRole = props.GatewayRoleArn ?? '';
   const toolsLambdaArn = props.ToolsLambdaArn ?? '';
