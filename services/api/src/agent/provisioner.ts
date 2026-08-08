@@ -100,13 +100,32 @@ const ensureGateway = async (input: {
 }): Promise<{ gatewayId: string; gatewayArn: string }> => {
   const existingId = await findGatewayIdByName(input.name);
   if (existingId) {
-    const existing = await waitUntil(
-      'gateway',
-      async () => control.send(new GetGatewayCommand({ gatewayIdentifier: existingId })),
-      ['READY'],
-      ['FAILED', 'UPDATE_UNSUCCESSFUL'],
-    );
-    return { gatewayId: existingId, gatewayArn: existing.gatewayArn! };
+    const existing = await control.send(new GetGatewayCommand({ gatewayIdentifier: existingId }));
+    if (existing.status === 'READY') {
+      return { gatewayId: existingId, gatewayArn: existing.gatewayArn! };
+    }
+    if (existing.status !== 'DELETING') {
+      await control.send(new DeleteGatewayCommand({ gatewayIdentifier: existingId }));
+    }
+    const started = Date.now();
+    for (;;) {
+      try {
+        const current = await control.send(new GetGatewayCommand({ gatewayIdentifier: existingId }));
+        if (current.status !== 'DELETING' && current.status !== 'FAILED') {
+          // Unexpected leftover — keep waiting until gone or throw later.
+        }
+      } catch (error) {
+        const name = error && typeof error === 'object' && 'name' in error
+          ? String((error as { name: string }).name)
+          : '';
+        if (/ResourceNotFound|NotFound/i.test(name)) break;
+        throw error;
+      }
+      if (Date.now() - started > 5 * 60_000) {
+        throw new Error(`Timed out deleting failed gateway ${existingId}`);
+      }
+      await sleep(5_000);
+    }
   }
   const created = await control.send(new CreateGatewayCommand({
     name: input.name,

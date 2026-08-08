@@ -444,6 +444,12 @@ export class PersonalFinanceV1Stack extends Stack {
         'bedrock-agentcore:ListHarnesses',
         'bedrock-agentcore:UpdateHarness',
         'bedrock-agentcore:DeleteHarness',
+        // CreateGateway (AWS_IAM) provisions a workload identity under the hood.
+        'bedrock-agentcore:CreateWorkloadIdentity',
+        'bedrock-agentcore:GetWorkloadIdentity',
+        'bedrock-agentcore:ListWorkloadIdentities',
+        'bedrock-agentcore:UpdateWorkloadIdentity',
+        'bedrock-agentcore:DeleteWorkloadIdentity',
         'iam:PassRole',
       ],
       resources: ['*'],
