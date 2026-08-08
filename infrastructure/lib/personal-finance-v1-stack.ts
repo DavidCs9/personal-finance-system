@@ -1050,6 +1050,8 @@ export class PersonalFinanceV1Stack extends Stack {
       'GET /agent/compare-months',
       'GET /agent/movements',
       'GET /agent/wealth-snapshot',
+      'GET /agent/memories',
+      'DELETE /agent/memories/{memoryId}',
       'POST /agent/propose-recategorize',
       'POST /agent/chat',
     ]) {
