@@ -327,7 +327,7 @@ export function EventSheet({
               ))}
             </select>
           </Field>
-          <button type="submit" disabled={categoryMutation.isPending}>
+          <button className="primary-button" type="submit" disabled={categoryMutation.isPending}>
             {categoryMutation.isPending ? "Guardando…" : "Guardar categoría"}
           </button>
         </form>
