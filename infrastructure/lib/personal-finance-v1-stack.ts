@@ -439,17 +439,36 @@ export class PersonalFinanceV1Stack extends Stack {
       ],
       resources: ['*'],
     }));
-    agentcoreProvisionerFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['iam:CreateServiceLinkedRole'],
-      resources: [
-        `arn:aws:iam::${this.account}:role/aws-service-role/bedrock-agentcore.amazonaws.com/*`,
-      ],
-      conditions: {
-        StringLike: {
-          'iam:AWSServiceName': 'bedrock-agentcore.amazonaws.com',
-        },
+    for (const serviceLinkedRole of [
+      {
+        serviceName: 'runtime-identity.bedrock-agentcore.amazonaws.com',
+        roleName: 'AWSServiceRoleForBedrockAgentCoreRuntimeIdentity',
       },
-    }));
+      {
+        serviceName: 'network.bedrock-agentcore.amazonaws.com',
+        roleName: 'AWSServiceRoleForBedrockAgentCoreNetwork',
+      },
+      {
+        serviceName: 'bedrock-agentcore.amazonaws.com',
+        roleName: 'AWSServiceRoleForBedrockAgentCoreGatewayNetwork',
+      },
+      {
+        serviceName: 'identity-network.bedrock-agentcore.amazonaws.com',
+        roleName: 'AWSServiceRoleForBedrockAgentCoreIdentity',
+      },
+    ] as const) {
+      agentcoreProvisionerFunction.addToRolePolicy(new iam.PolicyStatement({
+        actions: ['iam:CreateServiceLinkedRole'],
+        resources: [
+          `arn:aws:iam::*:role/aws-service-role/${serviceLinkedRole.serviceName}/${serviceLinkedRole.roleName}`,
+        ],
+        conditions: {
+          StringEquals: {
+            'iam:AWSServiceName': serviceLinkedRole.serviceName,
+          },
+        },
+      }));
+    }
 
     // Prompt Management: repo seeds DRAFT + bootstrap version.
     // Runtime promote/rollback = create a new Prompt version, then move the SSM pointer
