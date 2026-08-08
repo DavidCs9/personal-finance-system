@@ -7,22 +7,22 @@ const escapeHtml = (value: string): string =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 
-const MONEY_RE = /\$\s?-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?/g;
-
 const wrapMoney = (raw: string, keyPrefix: string): ReactNode[] => {
   const parts = raw.split(/(\$\s?-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)/g);
-  return parts.filter(Boolean).map((part, index) => {
-    if (MONEY_RE.test(part)) {
-      MONEY_RE.lastIndex = 0;
-      return (
+  const nodes: ReactNode[] = [];
+  for (const [index, part] of parts.entries()) {
+    if (!part) continue;
+    if (/^\$\s?-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?$/.test(part)) {
+      nodes.push(
         <span key={`${keyPrefix}-m${index}`} className="amt">
           {part}
-        </span>
+        </span>,
       );
+    } else {
+      nodes.push(<span key={`${keyPrefix}-t${index}`}>{part}</span>);
     }
-    MONEY_RE.lastIndex = 0;
-    return <span key={`${keyPrefix}-t${index}`}>{part}</span>;
-  });
+  }
+  return nodes;
 };
 
 /** Split text into React nodes: money → .amt, **bold**, *italic*, `code`. */
@@ -30,18 +30,24 @@ export const renderInlineMarkdown = (raw: string): ReactNode[] => {
   const source = escapeHtml(raw);
   const pattern = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g;
   const parts = source.split(pattern);
-  return parts.filter(Boolean).flatMap((part, index) => {
+  const nodes: ReactNode[] = [];
+  for (const [index, part] of parts.entries()) {
+    if (!part) continue;
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
-      return [<strong key={`b${index}`}>{wrapMoney(part.slice(2, -2), `b${index}`)}</strong>];
+      nodes.push(<strong key={`b${index}`}>{wrapMoney(part.slice(2, -2), `b${index}`)}</strong>);
+      continue;
     }
     if (part.startsWith("*") && part.endsWith("*") && part.length > 2 && !part.startsWith("**")) {
-      return [<em key={`i${index}`}>{wrapMoney(part.slice(1, -1), `i${index}`)}</em>];
+      nodes.push(<em key={`i${index}`}>{wrapMoney(part.slice(1, -1), `i${index}`)}</em>);
+      continue;
     }
     if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
-      return [<code key={`c${index}`}>{part.slice(1, -1)}</code>];
+      nodes.push(<code key={`c${index}`}>{part.slice(1, -1)}</code>);
+      continue;
     }
-    return wrapMoney(part, `t${index}`);
-  });
+    nodes.push(...wrapMoney(part, `t${index}`));
+  }
+  return nodes;
 };
 
 type Block =
