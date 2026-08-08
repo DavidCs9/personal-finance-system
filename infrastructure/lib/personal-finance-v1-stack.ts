@@ -21,7 +21,6 @@ import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as ses from 'aws-cdk-lib/aws-ses';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
-import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53targets from 'aws-cdk-lib/aws-route53-targets';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
@@ -513,12 +512,6 @@ export class PersonalFinanceV1Stack extends Stack {
       installLatestAwsSdk: false,
     });
     seedPromptPointer.node.addDependency(olbiaSystemPromptVersion);
-    // Import for grants / env wiring (value owned by runtime after seed).
-    const systemPromptVersionParam = ssm.StringParameter.fromStringParameterName(
-      this,
-      'SystemPromptVersionParam',
-      systemPromptVersionParamName,
-    );
 
     const agentcoreProvider = new cr.Provider(this, 'AgentCoreProvider', {
       onEventHandler: agentcoreProvisionerFunction,
@@ -569,7 +562,14 @@ export class PersonalFinanceV1Stack extends Stack {
         `arn:aws:bedrock:${this.region}:${this.account}:prompt/*`,
       ],
     }));
-    systemPromptVersionParam.grantRead(agentProxyFunction);
+    // Do not import the SSM param via fromStringParameterName — CFN would resolve it
+    // before the seed custom resource creates it on first deploy.
+    agentProxyFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ssm:GetParameter'],
+      resources: [
+        `arn:aws:ssm:${this.region}:${this.account}:parameter${systemPromptVersionParamName}`,
+      ],
+    }));
 
     new cdk.CfnOutput(this, 'AgentCoreHarnessArn', { value: harnessArn });
     new cdk.CfnOutput(this, 'AgentCoreGatewayArn', {
