@@ -217,6 +217,9 @@ async function* invokeHarnessStream(
     harnessArn,
     runtimeSessionId: sessionId,
     runtimeUserId: owner,
+    // The Cognito subject is the hard boundary for durable AgentCore memory.
+    // It is never accepted from the browser request body.
+    actorId: owner,
     systemPrompt: [{ text: prompt.text }],
     model: {
       bedrockModelConfig: {

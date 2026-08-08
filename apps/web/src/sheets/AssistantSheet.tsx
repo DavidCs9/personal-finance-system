@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { ledgerApi, type AgentChatEvent } from "../api/client";
+import { ledgerApi, type AgentChatEvent, type AssistantMemory } from "../api/client";
 import { Sheet } from "../components/Sheet";
 import { AssistantMarkdown } from "../lib/assistant-markdown";
 
@@ -55,6 +55,8 @@ export function AssistantSheet({
   const [error, setError] = useState<string>();
   const [requestId, setRequestId] = useState<string>();
   const [sessionId, setSessionId] = useState<string>();
+  const [memories, setMemories] = useState<readonly AssistantMemory[]>([]);
+  const [memoriesOpen, setMemoriesOpen] = useState(false);
 
   useEffect(() => {
     setMessages([]);
@@ -63,6 +65,22 @@ export function AssistantSheet({
     setRequestId(undefined);
     setSessionId(undefined);
   }, [onMonthChanged, month]);
+
+  useEffect(() => {
+    if (demoMode) return;
+    void ledgerApi.listAssistantMemories(idToken)
+      .then((result) => setMemories(result.memories))
+      .catch(() => setMemories([]));
+  }, [demoMode, idToken]);
+
+  const deleteMemory = async (memoryId: string) => {
+    try {
+      await ledgerApi.deleteAssistantMemory(memoryId, idToken);
+      setMemories((current) => current.filter((memory) => memory.id !== memoryId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo borrar la memoria.");
+    }
+  };
 
   const send = async (text: string) => {
     const message = text.trim();
@@ -276,6 +294,22 @@ export function AssistantSheet({
     <Sheet eyebrow="ASISTENTE" title={`Pregunta · ${month}`} onClose={onClose}>
       <div className="assistant-sheet">
         <p className="assistant-month-chip">Mes activo: {month}</p>
+        {!demoMode && (
+          <details className="assistant-memories" open={memoriesOpen} onToggle={(event) => setMemoriesOpen(event.currentTarget.open)}>
+            <summary>Memorias {memories.length > 0 ? `· ${memories.length}` : ""}</summary>
+            <p>Olbia las usa solo para conversar; no cambian tus cifras ni movimientos.</p>
+            {memories.length === 0 ? <p>Aún no hay memorias guardadas.</p> : (
+              <ul>
+                {memories.map((memory) => (
+                  <li key={memory.id}>
+                    <span>{memory.text}</span>
+                    <button type="button" className="text-button" onClick={() => void deleteMemory(memory.id)}>Borrar</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </details>
+        )}
         {messages.length === 0 && (
           <div className="assistant-examples">
             <p>Ejemplos</p>

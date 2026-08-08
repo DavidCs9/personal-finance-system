@@ -415,9 +415,13 @@ export class PersonalFinanceV1Stack extends Stack {
       actions: [
         'bedrock-agentcore:InvokeGateway',
         'bedrock-agentcore:GetGateway',
+        'bedrock-agentcore:CreateEvent',
+        'bedrock-agentcore:GetMemory',
+        'bedrock-agentcore:RetrieveMemoryRecords',
       ],
       resources: [
         `arn:aws:bedrock-agentcore:${this.region}:${this.account}:gateway/*`,
+        `arn:aws:bedrock-agentcore:${this.region}:${this.account}:memory/*`,
       ],
     }));
 
@@ -542,6 +546,7 @@ export class PersonalFinanceV1Stack extends Stack {
       serviceToken: agentcoreProvider.serviceToken,
       properties: {
         HarnessName: 'OlbiaFinance',
+        MemoryName: 'OlbiaFinanceMemory',
         GatewayName: 'OlbiaFinanceGateway',
         TargetName: 'olbia-tools',
         HarnessExecutionRoleArn: harnessExecutionRole.roleArn,
@@ -553,6 +558,14 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     const harnessArn = agentcoreResources.getAttString('HarnessArn');
+    const agentMemoryId = agentcoreResources.getAttString('MemoryId');
+
+    // Conversational memory is isolated from the ledger and its financial source of truth.
+    apiFunction.addEnvironment('AGENT_MEMORY_ID', agentMemoryId);
+    apiFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock-agentcore:ListMemoryRecords', 'bedrock-agentcore:DeleteMemoryRecord'],
+      resources: [`arn:aws:bedrock-agentcore:${this.region}:${this.account}:memory/*`],
+    }));
 
     const agentProxyFunction = new NodejsFunction(this, 'AgentProxyFunction', {
       ...lambdaDefaults,

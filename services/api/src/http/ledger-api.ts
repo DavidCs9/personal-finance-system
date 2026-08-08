@@ -67,6 +67,7 @@ import {
   spendByMerchant,
   wealthSnapshotForAgent,
 } from '../agent/aggregates.js';
+import { deleteAssistantMemory, listAssistantMemories } from '../agent/memory.js';
 import {
   deletePushSubscription,
   InvalidPushSubscriptionError,
@@ -171,6 +172,15 @@ app.get('/push/subscriptions', async ({ event }) => {
       updatedAt: subscription.updatedAt,
     })),
   });
+});
+
+app.get('/agent/memories', async ({ event }) =>
+  json(HttpStatusCodes.OK, { memories: await listAssistantMemories(ownerOf(asHttpEvent(event))) }),
+);
+
+app.delete('/agent/memories/:memoryId', async ({ event, params }) => {
+  await deleteAssistantMemory(ownerOf(asHttpEvent(event)), params.memoryId);
+  return json(HttpStatusCodes.OK, { deleted: true });
 });
 
 app.put('/push/subscriptions/:subscriptionId', async ({ event, params }) => {
