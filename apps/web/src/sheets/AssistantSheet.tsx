@@ -67,11 +67,11 @@ export function AssistantSheet({
   }, [onMonthChanged, month]);
 
   useEffect(() => {
-    if (demoMode) return;
+    if (demoMode || !memoriesOpen) return;
     void ledgerApi.listAssistantMemories(idToken)
       .then((result) => setMemories(result.memories))
       .catch(() => setMemories([]));
-  }, [demoMode, idToken]);
+  }, [demoMode, idToken, memoriesOpen]);
 
   const deleteMemory = async (memoryId: string) => {
     try {
@@ -295,20 +295,9 @@ export function AssistantSheet({
       <div className="assistant-sheet">
         <p className="assistant-month-chip">Mes activo: {month}</p>
         {!demoMode && (
-          <details className="assistant-memories" open={memoriesOpen} onToggle={(event) => setMemoriesOpen(event.currentTarget.open)}>
-            <summary>Memorias {memories.length > 0 ? `· ${memories.length}` : ""}</summary>
-            <p>Olbia las usa solo para conversar; no cambian tus cifras ni movimientos.</p>
-            {memories.length === 0 ? <p>Aún no hay memorias guardadas.</p> : (
-              <ul>
-                {memories.map((memory) => (
-                  <li key={memory.id}>
-                    <span>{memory.text}</span>
-                    <button type="button" className="text-button" onClick={() => void deleteMemory(memory.id)}>Borrar</button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </details>
+          <button type="button" className="assistant-memory-link" onClick={() => setMemoriesOpen(true)}>
+            Gestionar memoria
+          </button>
         )}
         {messages.length === 0 && (
           <div className="assistant-examples">
@@ -390,6 +379,41 @@ export function AssistantSheet({
             Enviar
           </button>
         </form>
+      </div>
+      {memoriesOpen && (
+        <AssistantMemoriesSheet
+          memories={memories}
+          onClose={() => setMemoriesOpen(false)}
+          onDelete={deleteMemory}
+        />
+      )}
+    </Sheet>
+  );
+}
+
+function AssistantMemoriesSheet({
+  memories,
+  onClose,
+  onDelete,
+}: {
+  readonly memories: readonly AssistantMemory[];
+  onClose(): void;
+  onDelete(memoryId: string): Promise<void>;
+}) {
+  return (
+    <Sheet eyebrow="ASISTENTE" title="Memoria" onClose={onClose} className="assistant-memories-sheet">
+      <div className="assistant-memories">
+        <p>Olbia usa estas notas para conversar contigo. No cambian tus cifras ni movimientos.</p>
+        {memories.length === 0 ? <p>Aún no hay memorias guardadas.</p> : (
+          <ul>
+            {memories.map((memory) => (
+              <li key={memory.id}>
+                <span>{memory.text}</span>
+                <button type="button" className="text-button" onClick={() => void onDelete(memory.id)}>Borrar</button>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </Sheet>
   );
