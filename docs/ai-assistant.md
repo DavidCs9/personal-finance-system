@@ -10,17 +10,22 @@ Un solo asistente: consultas ahora; asesor de decisión (“¿qué tan responsab
 
 ```
 SPA (JWT Cognito)
-  → API Gateway HTTP API
-    → Lambda agent-proxy (SSE)
+  → Lambda Function URL (RESPONSE_STREAM)  ← solo POST chat SSE
+    → Lambda agent-proxy (streamifyResponse + verifica JWT)
       → SSM pointer → Bedrock Prompt Management (versión pineada)
       → AgentCore Harness (InvokeHarness + systemPrompt/model override)
         → AgentCore Gateway (MCP, AWS_IAM)
-          → Lambda agent-tools
+          → Lambda agent-tools (AGENT_OWNER)
             → agregaciones (@finance/api agent/aggregates)
               → DynamoDB + computeMonthSummary
+
+SPA (JWT Cognito)
+  → API Gateway HTTP API  ← resto del ledger (sin streaming)
+    → Lambda api / tools auxiliares
 ```
 
 - El browser **nunca** habla con AgentCore.
+- El chat **no** pasa por API Gateway: HTTP API bufferiza y rompe SSE. Por eso `agentChatUrl` es una Function URL con `InvokeMode=RESPONSE_STREAM`.
 - El loop del agente lo corre **Harness** (no un Converse manual en la Lambda).
 - Las tools viven detrás de **Gateway** (Lambda target).
 - Code interpreter: **apagado**.
@@ -82,8 +87,10 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 
 ## Auth y streaming
 
-- Rutas del agente detrás del mismo JWT Cognito.
-- `agent-proxy` solo hace `InvokeHarness` (con override de Prompt Management) y reexpone el stream como SSE.
+- Ledger API: JWT Cognito vía authorizer de API Gateway HTTP API.
+- Chat SSE: Function URL pública (`AuthType=NONE`) + validación JWT Cognito **dentro** de `agent-proxy` (`aws-jwt-verify`). El SPA manda `Authorization: Bearer <idToken>` a `agentChatUrl` (runtime-config).
+- `agent-proxy` hace `InvokeHarness` (override de Prompt Management) y escribe cada evento SSE al response stream (`awslambda.streamifyResponse`).
+- El cliente lee `response.body` con `ReadableStream` y pinta tokens al llegar.
 - Errores: 1–2 reintentos silenciosos; luego mensaje corto + `requestId`.
 
 ## Observabilidad y costo

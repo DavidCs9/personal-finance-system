@@ -3,12 +3,42 @@ import {
   BedrockAgentCoreClient,
   InvokeHarnessCommand,
 } from '@aws-sdk/client-bedrock-agentcore';
-import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2, Context } from 'aws-lambda';
-import { principal } from '../http/response.js';
+import { CognitoJwtVerifier } from 'aws-jwt-verify';
+import type { APIGatewayProxyEventV2, Context } from 'aws-lambda';
+import { Writable } from 'node:stream';
 import { resolveRuntimePrompt } from './prompt-runtime.js';
 
 const harnessArn = process.env.HARNESS_ARN?.trim();
+const cognitoUserPoolId = process.env.COGNITO_USER_POOL_ID?.trim();
+const cognitoClientId = process.env.COGNITO_CLIENT_ID?.trim();
 const agentcore = new BedrockAgentCoreClient({});
+
+const jwtVerifier = cognitoUserPoolId && cognitoClientId
+  ? CognitoJwtVerifier.create({
+    userPoolId: cognitoUserPoolId,
+    tokenUse: 'id',
+    clientId: cognitoClientId,
+  })
+  : undefined;
+
+/** Lambda runtime global for response streaming (not an npm module). */
+type LambdaRuntime = {
+  readonly streamifyResponse: (
+    handler: (
+      event: APIGatewayProxyEventV2,
+      responseStream: Writable,
+      context: Context,
+    ) => Promise<void>,
+  ) => (event: APIGatewayProxyEventV2, responseStream: Writable, context: Context) => Promise<void>;
+  readonly HttpResponseStream: {
+    readonly from: (
+      stream: Writable,
+      metadata: { readonly statusCode: number; readonly headers?: Record<string, string> },
+    ) => Writable;
+  };
+};
+
+const lambdaRuntime = (globalThis as typeof globalThis & { awslambda?: LambdaRuntime }).awslambda;
 
 type SseEvent =
   | { readonly type: 'token'; readonly text: string }
@@ -18,6 +48,25 @@ type SseEvent =
   | { readonly type: 'error'; readonly message: string; readonly requestId: string };
 
 const sse = (event: SseEvent): string => `data: ${JSON.stringify(event)}\n\n`;
+
+const headerValue = (
+  headers: APIGatewayProxyEventV2['headers'] | undefined,
+  name: string,
+): string | undefined => {
+  if (!headers) return undefined;
+  const wanted = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === wanted && typeof value === 'string') return value;
+  }
+  return undefined;
+};
+
+const readBody = (event: APIGatewayProxyEventV2): string | undefined => {
+  if (!event.body) return undefined;
+  return event.isBase64Encoded
+    ? Buffer.from(event.body, 'base64').toString('utf8')
+    : event.body;
+};
 
 const parseBody = (raw: string | undefined): {
   message: string;
@@ -40,6 +89,20 @@ const parseBody = (raw: string | undefined): {
     ? parsed.sessionId
     : randomUUID();
   return { message, month, sessionId };
+};
+
+const verifyOwner = async (event: APIGatewayProxyEventV2): Promise<string> => {
+  if (!jwtVerifier) {
+    throw new Error('Cognito JWT verifier is not configured.');
+  }
+  const authorization = headerValue(event.headers, 'authorization');
+  if (!authorization?.toLowerCase().startsWith('bearer ')) {
+    throw new Error('Missing authenticated principal.');
+  }
+  const token = authorization.slice(7).trim();
+  const claims = await jwtVerifier.verify(token);
+  if (!claims.sub) throw new Error('Missing authenticated principal.');
+  return claims.sub;
 };
 
 const isTransient = (error: unknown): boolean => {
@@ -90,8 +153,6 @@ async function* invokeHarnessStream(
     throw new Error('HARNESS_ARN no configurado: el proxy solo habla con AgentCore Harness.');
   }
 
-  // Prompt Management is the runtime source of truth (SSM pointer → versioned prompt).
-  // Override on every invoke so promote/rollback does not require UpdateHarness or redeploy.
   const prompt = await resolveRuntimePrompt();
 
   const response = await agentcore.send(new InvokeHarnessCommand({
@@ -104,7 +165,6 @@ async function* invokeHarnessStream(
         modelId: prompt.modelId,
         maxTokens: prompt.maxTokens,
         temperature: prompt.temperature,
-        // Do not set topP: Claude ConverseStream rejects temperature + top_p together.
         apiFormat: 'converse_stream',
       },
     },
@@ -205,56 +265,79 @@ const runWithRetries = async function* (
   };
 };
 
-export const handler = async (
-  event: APIGatewayProxyEventV2,
-  _context: Context,
-): Promise<APIGatewayProxyResultV2> => {
-  const requestId = event.requestContext.requestId || randomUUID();
-  const method = event.requestContext.http.method;
-  const path = event.rawPath;
+const writeJsonError = (
+  responseStream: Writable,
+  statusCode: number,
+  message: string,
+  requestId: string,
+): void => {
+  if (!lambdaRuntime) throw new Error('awslambda runtime global is required for agent-proxy streaming.');
+  const httpStream = lambdaRuntime.HttpResponseStream.from(responseStream, {
+    statusCode,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'x-request-id': requestId,
+    },
+  });
+  httpStream.write(JSON.stringify({ message, requestId }));
+  httpStream.end();
+};
 
-  if (method === 'POST' && path.endsWith('/agent/chat')) {
-    try {
-      const owner = principal(event);
-      const body = parseBody(event.body);
-      let payload = '';
-      for await (const item of runWithRetries(owner, body.month, body.message, body.sessionId, requestId)) {
-        payload += sse(item);
-        if (item.type === 'error') {
-          return {
-            statusCode: 200,
-            headers: {
-              'content-type': 'text/event-stream; charset=utf-8',
-              'cache-control': 'no-cache',
-              'x-request-id': requestId,
-            },
-            body: payload,
-          };
-        }
-      }
-      payload += sse({ type: 'done', requestId, sessionId: body.sessionId });
-      return {
-        statusCode: 200,
-        headers: {
-          'content-type': 'text/event-stream; charset=utf-8',
-          'cache-control': 'no-cache',
-          'x-request-id': requestId,
-        },
-        body: payload,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'No pude consultar tus datos.';
-      return {
-        statusCode: 400,
-        headers: { 'content-type': 'application/json; charset=utf-8', 'x-request-id': requestId },
-        body: JSON.stringify({ message, requestId }),
-      };
-    }
+const streamHandler = async (
+  event: APIGatewayProxyEventV2,
+  responseStream: Writable,
+  _context: Context,
+): Promise<void> => {
+  if (!lambdaRuntime) {
+    throw new Error('awslambda runtime global is required for agent-proxy streaming.');
+  }
+  const requestId = event.requestContext.requestId || randomUUID();
+  const method = event.requestContext.http.method.toUpperCase();
+
+  if (method === 'OPTIONS') {
+    const httpStream = lambdaRuntime.HttpResponseStream.from(responseStream, {
+      statusCode: 204,
+      headers: { 'cache-control': 'no-cache' },
+    });
+    httpStream.end();
+    return;
   }
 
-  return {
-    statusCode: 404,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
-    body: JSON.stringify({ message: 'Route not found.' }),
-  };
+  if (method !== 'POST') {
+    writeJsonError(responseStream, 404, 'Route not found.', requestId);
+    return;
+  }
+
+  try {
+    const owner = await verifyOwner(event);
+    const body = parseBody(readBody(event));
+    const httpStream = lambdaRuntime.HttpResponseStream.from(responseStream, {
+      statusCode: 200,
+      headers: {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache',
+        'x-request-id': requestId,
+      },
+    });
+
+    for await (const item of runWithRetries(owner, body.month, body.message, body.sessionId, requestId)) {
+      httpStream.write(sse(item));
+      if (item.type === 'error') {
+        httpStream.end();
+        return;
+      }
+    }
+    httpStream.write(sse({ type: 'done', requestId, sessionId: body.sessionId }));
+    httpStream.end();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'No pude consultar tus datos.';
+    const statusCode = /principal|Bearer|JWT|Unauthorized|token/i.test(message) ? 401 : 400;
+    writeJsonError(responseStream, statusCode, message, requestId);
+  }
 };
+
+export const handler = lambdaRuntime
+  ? lambdaRuntime.streamifyResponse(streamHandler)
+  : async () => {
+    throw new Error('awslambda runtime global is required for agent-proxy streaming.');
+  };

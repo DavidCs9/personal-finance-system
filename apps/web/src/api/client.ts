@@ -18,6 +18,8 @@ import { CAJITA_ACCOUNT_ID, type WealthSnapshot } from "@finance/domain";
 
 interface LedgerRuntimeConfig {
   readonly apiBaseUrl: string;
+  /** Streaming SSE endpoint (Lambda Function URL). Falls back to apiBaseUrl/agent/chat. */
+  readonly agentChatUrl?: string;
   readonly cognitoUserPoolId: string;
   readonly cognitoUserPoolClientId: string;
   readonly region: string;
@@ -493,7 +495,10 @@ export const ledgerApi = {
         : await refreshSession();
     if (!requestToken) throw endedSessionError();
 
-    const execute = (token: string) => fetch(`${config().apiBaseUrl}/agent/chat`, {
+    const chatUrl = config().agentChatUrl?.trim()
+      || `${config().apiBaseUrl.replace(/\/$/, "")}/agent/chat`;
+
+    const execute = (token: string) => fetch(chatUrl, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -516,13 +521,20 @@ export const ledgerApi = {
       };
       throw new Error(body.message ?? "No pude consultar tus datos.");
     }
-    const raw = await response.text();
+    if (!response.body) {
+      throw new Error("No pude consultar tus datos.");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
     let sessionId: string | undefined = input.sessionId;
-    for (const block of raw.split("\n\n")) {
+
+    const consumeBlock = (block: string) => {
       const line = block.trim();
-      if (!line.startsWith("data:")) continue;
+      if (!line.startsWith("data:")) return;
       const payload = line.slice(5).trim();
-      if (!payload) continue;
+      if (!payload) return;
       try {
         const event = JSON.parse(payload) as AgentChatEvent;
         onEvent(event);
@@ -530,7 +542,18 @@ export const ledgerApi = {
       } catch {
         // ignore malformed chunks
       }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
+      for (const part of parts) consumeBlock(part);
     }
+    buffer += decoder.decode();
+    if (buffer.trim()) consumeBlock(buffer);
     return sessionId;
   },
 };
