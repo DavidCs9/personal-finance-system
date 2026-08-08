@@ -7,8 +7,14 @@ import "./styles.css";
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5_000,
-      refetchOnWindowFocus: true,
+      // Financial data changes through explicit mutations and the refresh action.
+      // Preserve the last known state while moving between tabs or briefly
+      // backgrounding the app instead of repeatedly replacing it with loaders.
+      staleTime: 5 * 60_000,
+      gcTime: 30 * 60_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      refetchOnMount: false,
       retry: 1,
     },
   },
