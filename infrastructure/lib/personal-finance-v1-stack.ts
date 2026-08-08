@@ -569,8 +569,6 @@ export class PersonalFinanceV1Stack extends Stack {
         SYSTEM_PROMPT_CACHE_TTL_MS: '30000',
         COGNITO_USER_POOL_ID: userPool.userPoolId,
         COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
-        // Streamed Function URL responses must set CORS themselves (see agent-proxy).
-        WEB_APP_URL: webAppUrl,
       },
     });
     agentProxyFunction.addToRolePolicy(new iam.PolicyStatement({
@@ -596,12 +594,17 @@ export class PersonalFinanceV1Stack extends Stack {
     }));
 
     // API Gateway HTTP API buffers Lambda responses; real SSE needs Function URL RESPONSE_STREAM.
-    // Do NOT set Function URL `cors:` — the platform would also inject Access-Control-* on
-    // RESPONSE_STREAM replies and browsers reject duplicate ACAO (full CORS failure).
-    // agent-proxy sets CORS on OPTIONS + every HttpResponseStream metadata.
+    // CORS must live ONLY on the Function URL config. Do not also set Access-Control-* in
+    // agent-proxy — RESPONSE_STREAM replies get platform CORS and duplicate ACAO breaks browsers.
     const agentProxyFunctionUrl = agentProxyFunction.addFunctionUrl({
       authType: lambda.FunctionUrlAuthType.NONE,
       invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
+      cors: {
+        allowedOrigins: [webAppUrl],
+        allowedMethods: [lambda.HttpMethod.POST],
+        allowedHeaders: ['authorization', 'content-type', 'accept'],
+        maxAge: Duration.hours(24),
+      },
     });
 
     new cdk.CfnOutput(this, 'AgentCoreHarnessArn', { value: harnessArn });
