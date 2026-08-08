@@ -96,8 +96,30 @@ const findHarnessIdByName = async (name: string): Promise<string | undefined> =>
   return undefined;
 };
 
-const memoryIdFromPhysicalId = (physicalId: string | undefined): string | undefined =>
-  physicalId?.split('::')[1] || undefined;
+type AgentCoreResourceIds = {
+  readonly harnessId?: string;
+  readonly gatewayId?: string;
+  readonly targetId?: string;
+  readonly memoryId?: string;
+};
+
+/**
+ * V2 physical IDs own exact AgentCore resources. Legacy IDs only held a memory
+ * ID, so deleting one must never fall back to a name lookup: a replacement may
+ * have already created resources with the same names.
+ */
+const resourceIdsFromPhysicalId = (physicalId: string | undefined): AgentCoreResourceIds => {
+  const parts = physicalId?.split('::') ?? [];
+  if (parts[0] === 'olbia-agentcore-v2') {
+    return {
+      harnessId: parts[1],
+      gatewayId: parts[2],
+      targetId: parts[3],
+      memoryId: parts[4],
+    };
+  }
+  return { memoryId: parts[1] };
+};
 
 const ensureMemory = async (name: string, existingId?: string): Promise<{ memoryId: string; memoryArn: string }> => {
   if (existingId) {
@@ -386,9 +408,10 @@ export const handler = async (event: ProviderEvent): Promise<{
   }
 
   const physicalId = event.PhysicalResourceId ?? `olbia-agentcore-${harnessName}`;
+  const priorResources = resourceIdsFromPhysicalId(event.PhysicalResourceId);
 
   if (event.RequestType === 'Delete') {
-    const harnessId = await findHarnessIdByName(harnessName);
+    const harnessId = priorResources.harnessId;
     if (harnessId) {
       await control.send(new DeleteHarnessCommand({ harnessId }));
       const started = Date.now();
@@ -408,29 +431,36 @@ export const handler = async (event: ProviderEvent): Promise<{
         await sleep(5_000);
       }
     }
-    const gatewayId = await findGatewayIdByName(gatewayName);
-    const memoryId = memoryIdFromPhysicalId(event.PhysicalResourceId);
-    if (memoryId) await control.send(new DeleteMemoryCommand({ memoryId }));
+    const gatewayId = priorResources.gatewayId;
     if (gatewayId) {
-      let nextToken: string | undefined;
-      do {
-        const page = await control.send(new ListGatewayTargetsCommand({
+      if (priorResources.targetId) {
+        await control.send(new DeleteGatewayTargetCommand({
           gatewayIdentifier: gatewayId,
-          maxResults: 50,
-          nextToken,
+          targetId: priorResources.targetId,
         }));
-        for (const item of page.items ?? []) {
-          if (item.targetId) {
-            await control.send(new DeleteGatewayTargetCommand({
+        const started = Date.now();
+        for (;;) {
+          try {
+            await control.send(new GetGatewayTargetCommand({
               gatewayIdentifier: gatewayId,
-              targetId: item.targetId,
+              targetId: priorResources.targetId,
             }));
+          } catch (error) {
+            const name = error && typeof error === 'object' && 'name' in error
+              ? String((error as { name: string }).name)
+              : '';
+            if (/ResourceNotFound|NotFound/i.test(name)) break;
+            throw error;
           }
+          if (Date.now() - started > 5 * 60_000) {
+            throw new Error(`Timed out deleting gateway target ${priorResources.targetId}`);
+          }
+          await sleep(5_000);
         }
-        nextToken = page.nextToken;
-      } while (nextToken);
+      }
       await control.send(new DeleteGatewayCommand({ gatewayIdentifier: gatewayId }));
     }
+    if (priorResources.memoryId) await control.send(new DeleteMemoryCommand({ memoryId: priorResources.memoryId }));
     return {
       PhysicalResourceId: physicalId,
       Data: {
@@ -445,7 +475,7 @@ export const handler = async (event: ProviderEvent): Promise<{
   }
 
   const gateway = await ensureGateway({ name: gatewayName, roleArn: gatewayRole });
-  const memory = await ensureMemory(memoryName, memoryIdFromPhysicalId(event.PhysicalResourceId));
+  const memory = await ensureMemory(memoryName, priorResources.memoryId);
   const targetId = await ensureGatewayTarget({
     gatewayId: gateway.gatewayId,
     name: targetName,
@@ -460,7 +490,7 @@ export const handler = async (event: ProviderEvent): Promise<{
   });
 
   return {
-    PhysicalResourceId: `${physicalId.split('::')[0]}::${memory.memoryId}`,
+    PhysicalResourceId: `olbia-agentcore-v2::${harness.harnessId}::${gateway.gatewayId}::${targetId}::${memory.memoryId}`,
     Data: {
       HarnessArn: harness.harnessArn,
       HarnessId: harness.harnessId,
