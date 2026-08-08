@@ -574,6 +574,9 @@ export const ledgerApi = {
 
 export type AgentChatEvent =
   | { readonly type: "token"; readonly text: string }
+  | { readonly type: "tool_start"; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number }
+  | { readonly type: "tool_complete"; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly summary?: string; readonly material: boolean }
+  | { readonly type: "tool_failed"; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly message: string }
   | { readonly type: "citation"; readonly kind: string; readonly id?: string; readonly label: string }
   | { readonly type: "proposal"; readonly eventId: string; readonly categoryId: string; readonly message: string }
   | { readonly type: "done"; readonly requestId: string; readonly sessionId: string }

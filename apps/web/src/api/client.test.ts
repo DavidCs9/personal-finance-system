@@ -145,6 +145,8 @@ describe("streamAgentChat REST SSE", () => {
     const onEvent = vi.fn();
     vi.mocked(fetch).mockResolvedValueOnce(sseResponse([
       { type: "token", text: "Hola" },
+      { type: "tool_start", toolUseId: "t1", name: "month_snapshot", label: "Revisando el resumen del mes", attempt: 1 },
+      { type: "tool_complete", toolUseId: "t1", name: "month_snapshot", label: "Revisando el resumen del mes", attempt: 1, durationMs: 180, summary: "Resumen de 2026-08 consultado.", material: true },
       { type: "done", requestId: "r1", sessionId: "11111111-1111-1111-1111-111111111111" },
     ]));
 
@@ -163,8 +165,15 @@ describe("streamAgentChat REST SSE", () => {
         Accept: "text/event-stream",
       }),
     });
-    expect(onEvent).toHaveBeenCalledTimes(2);
+    expect(onEvent).toHaveBeenCalledTimes(4);
     expect(onEvent).toHaveBeenNthCalledWith(1, { type: "token", text: "Hola" });
+    expect(onEvent).toHaveBeenNthCalledWith(2, {
+      type: "tool_start",
+      toolUseId: "t1",
+      name: "month_snapshot",
+      label: "Revisando el resumen del mes",
+      attempt: 1,
+    });
   });
 
   it("renews once after 401 on agent chat", async () => {

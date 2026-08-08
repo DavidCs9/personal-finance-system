@@ -4,6 +4,7 @@ import {
   requestIdOf,
   requestMethod,
   resolveOwner,
+  summarizeToolResult,
   type AgentChatGatewayEvent,
 } from './chat-core.js';
 
@@ -28,5 +29,15 @@ describe('REST API Gateway chat event helpers', () => {
     expect(requestMethod(event)).toBe('POST');
     expect(requestIdOf(event)).toBe('rest-request-1');
     expect(readBody(event)).toBe('{"message":"hola"}');
+  });
+
+  it('creates audit summaries without exposing raw tool rows', () => {
+    expect(summarizeToolResult('list_movements', {
+      movements: [{ merchantRaw: 'Mercado' }, { merchantRaw: 'Farmacia' }],
+    })).toEqual({ summary: 'Revisé 2 movimientos.', material: true });
+    expect(summarizeToolResult('propose_recategorize', {
+      eventId: 'private-event-id',
+      categoryId: 'food',
+    })).toEqual({ summary: 'Propuesta de categoría preparada.', material: false });
   });
 });
