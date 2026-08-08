@@ -4,7 +4,6 @@ import {
   InvokeHarnessCommand,
 } from '@aws-sdk/client-bedrock-agentcore';
 import { CognitoJwtVerifier } from 'aws-jwt-verify';
-import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 import { resolveRuntimePrompt } from './prompt-runtime.js';
 
 const harnessArn = process.env.HARNESS_ARN?.trim();
@@ -27,10 +26,26 @@ export type AgentSseEvent =
   | { readonly type: 'done'; readonly requestId: string; readonly sessionId: string }
   | { readonly type: 'error'; readonly message: string; readonly requestId: string };
 
+/** Fields shared by API Gateway HTTP API v2 and REST API v1 proxy events. */
+export type AgentChatGatewayEvent = {
+  readonly body?: string | null;
+  readonly isBase64Encoded?: boolean;
+  readonly headers?: Record<string, string | undefined>;
+  readonly httpMethod?: string;
+  readonly requestContext: {
+    readonly requestId?: string;
+    readonly http?: { readonly method?: string };
+    readonly authorizer?: {
+      readonly jwt?: { readonly claims?: { readonly sub?: string } };
+      readonly claims?: { readonly sub?: string };
+    };
+  };
+};
+
 export const formatSse = (event: AgentSseEvent): string => `data: ${JSON.stringify(event)}\n\n`;
 
 export const headerValue = (
-  headers: APIGatewayProxyEventV2['headers'] | undefined,
+  headers: AgentChatGatewayEvent['headers'],
   name: string,
 ): string | undefined => {
   if (!headers) return undefined;
@@ -41,7 +56,7 @@ export const headerValue = (
   return undefined;
 };
 
-export const readBody = (event: APIGatewayProxyEventV2): string | undefined => {
+export const readBody = (event: AgentChatGatewayEvent): string | undefined => {
   if (!event.body) return undefined;
   return event.isBase64Encoded
     ? Buffer.from(event.body, 'base64').toString('utf8')
@@ -71,13 +86,10 @@ export const parseChatBody = (raw: string | undefined): {
   return { message, month, sessionId };
 };
 
-/** Prefer API Gateway JWT authorizer; fall back to Bearer verification (Function URL). */
-export const resolveOwner = async (event: APIGatewayProxyEventV2): Promise<string> => {
-  const authorizerSub = (
-    event.requestContext as typeof event.requestContext & {
-      authorizer?: { jwt?: { claims?: { sub?: string } } };
-    }
-  ).authorizer?.jwt?.claims?.sub;
+/** Prefer the API Gateway authorizer; Function URL callers retain Bearer verification for rollback only. */
+export const resolveOwner = async (event: AgentChatGatewayEvent): Promise<string> => {
+  const authorizerSub = event.requestContext.authorizer?.jwt?.claims?.sub
+    ?? event.requestContext.authorizer?.claims?.sub;
   if (authorizerSub) return authorizerSub;
 
   if (!jwtVerifier) {
@@ -92,6 +104,12 @@ export const resolveOwner = async (event: APIGatewayProxyEventV2): Promise<strin
   if (!claims.sub) throw new Error('Missing authenticated principal.');
   return claims.sub;
 };
+
+export const requestMethod = (event: AgentChatGatewayEvent): string =>
+  (event.requestContext.http?.method ?? event.httpMethod ?? '').toUpperCase();
+
+export const requestIdOf = (event: AgentChatGatewayEvent): string =>
+  event.requestContext.requestId || randomUUID();
 
 const isTransient = (error: unknown): boolean => {
   const name = error && typeof error === 'object' && 'name' in error

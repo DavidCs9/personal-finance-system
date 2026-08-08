@@ -73,7 +73,7 @@ export function AssistantSheet({
     let proposal: ChatMessage["proposal"];
 
     try {
-      const nextSession = await ledgerApi.postAgentChat(
+      const nextSession = await ledgerApi.streamAgentChat(
         { message, month, sessionId },
         idToken,
         (event: AgentChatEvent) => {
