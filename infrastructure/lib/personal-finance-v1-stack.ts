@@ -528,7 +528,7 @@ export class PersonalFinanceV1Stack extends Stack {
       properties: {
         HarnessName: 'OlbiaFinance',
         GatewayName: 'OlbiaFinanceGateway',
-        TargetName: 'olbia_tools',
+        TargetName: 'olbia-tools',
         HarnessExecutionRoleArn: harnessExecutionRole.roleArn,
         GatewayRoleArn: gatewayRole.roleArn,
         ToolsLambdaArn: agentToolsFunction.functionArn,
