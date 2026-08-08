@@ -439,6 +439,17 @@ export class PersonalFinanceV1Stack extends Stack {
       ],
       resources: ['*'],
     }));
+    agentcoreProvisionerFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['iam:CreateServiceLinkedRole'],
+      resources: [
+        `arn:aws:iam::${this.account}:role/aws-service-role/bedrock-agentcore.amazonaws.com/*`,
+      ],
+      conditions: {
+        StringLike: {
+          'iam:AWSServiceName': 'bedrock-agentcore.amazonaws.com',
+        },
+      },
+    }));
 
     // Prompt Management: repo seeds DRAFT + bootstrap version.
     // Runtime promote/rollback = create a new Prompt version, then move the SSM pointer
