@@ -104,7 +104,7 @@ async function* invokeHarnessStream(
         modelId: prompt.modelId,
         maxTokens: prompt.maxTokens,
         temperature: prompt.temperature,
-        topP: prompt.topP,
+        // Do not set topP: Claude ConverseStream rejects temperature + top_p together.
         apiFormat: 'converse_stream',
       },
     },

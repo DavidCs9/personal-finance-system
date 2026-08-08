@@ -487,7 +487,6 @@ export class PersonalFinanceV1Stack extends Stack {
           InferenceConfiguration: {
             Text: {
               Temperature: OLBIA_SYSTEM_PROMPT_INFERENCE.temperature,
-              TopP: OLBIA_SYSTEM_PROMPT_INFERENCE.topP,
               MaxTokens: OLBIA_SYSTEM_PROMPT_INFERENCE.maxTokens,
             },
           },
