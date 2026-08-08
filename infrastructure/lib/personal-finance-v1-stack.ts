@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import { Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
+import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpJwtAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
@@ -559,8 +560,8 @@ export class PersonalFinanceV1Stack extends Stack {
       logGroup: this.createLogGroup('AgentProxyLogGroup', 'personal-finance-v1-agent-proxy'),
       entry: path.join(__dirname, '..', 'lambda', 'agent-proxy.ts'),
       handler: 'handler',
-      description: 'JWT proxy → Prompt Management + AgentCore InvokeHarness (SSE Function URL stream).',
-      timeout: Duration.seconds(29),
+      description: 'Cognito-authorized REST API → Prompt Management + AgentCore InvokeHarness (SSE stream).',
+      timeout: Duration.seconds(120),
       memorySize: 512,
       environment: {
         ...dataStorageEnvironment,
@@ -569,6 +570,7 @@ export class PersonalFinanceV1Stack extends Stack {
         SYSTEM_PROMPT_CACHE_TTL_MS: '30000',
         COGNITO_USER_POOL_ID: userPool.userPoolId,
         COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+        WEB_APP_URL: webAppUrl,
       },
     });
     agentProxyFunction.addToRolePolicy(new iam.PolicyStatement({
@@ -593,20 +595,50 @@ export class PersonalFinanceV1Stack extends Stack {
       ],
     }));
 
-    // API Gateway HTTP API buffers Lambda responses; real SSE needs Function URL RESPONSE_STREAM.
-    // CORS must live ONLY on the Function URL config. Do not also set Access-Control-* in
-    // agent-proxy — RESPONSE_STREAM replies get platform CORS and duplicate ACAO breaks browsers.
-    // Product path is buffered POST /agent/chat; Function URL kept deprecated for rollback only.
-    const agentProxyFunctionUrl = agentProxyFunction.addFunctionUrl({
-      authType: lambda.FunctionUrlAuthType.NONE,
-      invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
-      cors: {
-        allowedOrigins: [webAppUrl],
-        allowedMethods: [lambda.HttpMethod.POST],
-        allowedHeaders: ['authorization', 'content-type', 'accept'],
-        maxAge: Duration.hours(24),
+    // HTTP APIs buffer Lambda responses. The dedicated REST API uses Lambda's
+    // response-streaming integration, so browser auth and CORS stay at API Gateway.
+    const agentChatApi = new apigateway.RestApi(this, 'AgentChatRestApi', {
+      restApiName: 'personal-finance-v1-agent-chat',
+      description: 'Authenticated streamed assistant chat API.',
+      endpointTypes: [apigateway.EndpointType.REGIONAL],
+      deployOptions: {
+        stageName: 'prod',
+        throttlingBurstLimit: 5,
+        throttlingRateLimit: 2,
+      },
+      defaultCorsPreflightOptions: {
+        allowOrigins: [webAppUrl],
+        allowMethods: ['POST'],
+        allowHeaders: ['Authorization', 'Content-Type', 'Accept'],
+        maxAge: Duration.hours(1),
       },
     });
+    const agentChatAuthorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'AgentChatCognitoAuthorizer', {
+      cognitoUserPools: [userPool],
+    });
+    const agentChatResource = agentChatApi.root.addResource('agent').addResource('chat');
+    agentChatResource.addMethod('POST', new apigateway.LambdaIntegration(agentProxyFunction, {
+      proxy: true,
+      timeout: Duration.seconds(120),
+      responseTransferMode: apigateway.ResponseTransferMode.STREAM,
+      allowTestInvoke: false,
+    }), {
+      authorizationType: apigateway.AuthorizationType.COGNITO,
+      authorizer: agentChatAuthorizer,
+    });
+    for (const [id, type] of [
+      ['AgentChatGateway4xxCors', apigateway.ResponseType.DEFAULT_4XX],
+      ['AgentChatGateway5xxCors', apigateway.ResponseType.DEFAULT_5XX],
+    ] as const) {
+      new apigateway.GatewayResponse(this, id, {
+        restApi: agentChatApi,
+        type,
+        responseHeaders: {
+          'Access-Control-Allow-Origin': `'${webAppUrl}'`,
+          Vary: "'Origin'",
+        },
+      });
+    }
 
     const agentChatBufferedFunction = new NodejsFunction(this, 'AgentChatBufferedFunction', {
       ...lambdaDefaults,
@@ -651,8 +683,8 @@ export class PersonalFinanceV1Stack extends Stack {
       value: agentcoreResources.getAttString('GatewayArn'),
     });
     new cdk.CfnOutput(this, 'AgentChatUrl', {
-      value: agentProxyFunctionUrl.url,
-      description: 'DEPRECATED streaming SSE Function URL; product chat uses POST /agent/chat on the HTTP API.',
+      value: `${agentChatApi.url}agent/chat`,
+      description: 'Native API Gateway REST SSE endpoint for POST agent chat.',
     });
     new cdk.CfnOutput(this, 'OlbiaSystemPromptVersionParam', {
       value: systemPromptVersionParamName,
@@ -1058,6 +1090,7 @@ export class PersonalFinanceV1Stack extends Stack {
         s3deploy.Source.asset(path.join(__dirname, '..', '..', 'apps', 'web', 'dist')),
         s3deploy.Source.data('runtime-config.js', `window.__LEDGER_CONFIG__ = ${JSON.stringify({
           apiBaseUrl: httpApi.apiEndpoint.replace(/\/$/, ''),
+          agentChatUrl: `${agentChatApi.url}agent/chat`,
           cognitoUserPoolId: userPool.userPoolId,
           cognitoUserPoolClientId: userPoolClient.userPoolClientId,
           region: this.region,

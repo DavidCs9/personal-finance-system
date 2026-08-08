@@ -18,7 +18,7 @@ import { CAJITA_ACCOUNT_ID, type WealthSnapshot } from "@finance/domain";
 
 interface LedgerRuntimeConfig {
   readonly apiBaseUrl: string;
-  /** @deprecated SSE Function URL; ignored — chat uses apiBaseUrl/agent/chat. */
+  /** Native API Gateway REST SSE endpoint for assistant chat. */
   readonly agentChatUrl?: string;
   readonly cognitoUserPoolId: string;
   readonly cognitoUserPoolClientId: string;
@@ -482,7 +482,7 @@ export const ledgerApi = {
       body: JSON.stringify({ action: "set_category", ...body }),
     });
   },
-  async postAgentChat(
+  async streamAgentChat(
     input: { readonly message: string; readonly month: string; readonly sessionId?: string },
     idToken: string,
     onEvent: (event: AgentChatEvent) => void,
@@ -495,13 +495,15 @@ export const ledgerApi = {
         : await refreshSession();
     if (!requestToken) throw endedSessionError();
 
-    const chatUrl = `${config().apiBaseUrl.replace(/\/$/, "")}/agent/chat`;
+    const chatUrl = config().agentChatUrl?.trim();
+    if (!chatUrl) throw new Error("El streaming del asistente no está configurado.");
 
     const execute = (token: string) => fetch(chatUrl, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
+        Accept: "text/event-stream",
       },
       body: JSON.stringify(input),
     });
@@ -529,25 +531,44 @@ export const ledgerApi = {
       throw new Error(body.message ?? "No pude consultar tus datos.");
     }
 
-    const payload = await response.json() as {
-      sessionId?: string;
-      events?: AgentChatEvent[];
+    if (!response.body) {
+      throw new Error("Tu navegador no pudo abrir el streaming del asistente. Reintenta.");
+    }
+
+    let sessionId: string | undefined = input.sessionId;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const consumeBlock = (block: string) => {
+      const data = block
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .join("\n");
+      if (!data) return;
+      try {
+        const event = JSON.parse(data) as AgentChatEvent;
+        onEvent(event);
+        if (event.type === "done") sessionId = event.sessionId;
+      } catch {
+        // Ignore a malformed event without discarding a healthy stream.
+      }
     };
-    let sessionId: string | undefined = payload.sessionId ?? input.sessionId;
-    for (const event of payload.events ?? []) {
-      onEvent(event);
-      if (event.type === "done") sessionId = event.sessionId;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() ?? "";
+        blocks.forEach(consumeBlock);
+      }
+      buffer += decoder.decode();
+      if (buffer.trim()) consumeBlock(buffer);
+    } finally {
+      reader.releaseLock();
     }
     return sessionId;
-  },
-
-  /** @deprecated Use postAgentChat — SSE path removed from product. */
-  async streamAgentChat(
-    input: { readonly message: string; readonly month: string; readonly sessionId?: string },
-    idToken: string,
-    onEvent: (event: AgentChatEvent) => void,
-  ): Promise<string | undefined> {
-    return this.postAgentChat(input, idToken, onEvent);
   },
 };
 

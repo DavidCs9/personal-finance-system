@@ -10,8 +10,8 @@ Un solo asistente: consultas ahora; asesor de decisión (“¿qué tan responsab
 
 ```
 SPA (JWT Cognito)
-  → API Gateway HTTP API  POST /agent/chat  ← chat producto (JSON buffered)
-    → Lambda agent-chat (collectAgentChat)
+  → API Gateway REST API  POST /agent/chat  ← chat producto (SSE nativo)
+    → Lambda agent-proxy (RESPONSE_STREAM)
       → SSM pointer → Bedrock Prompt Management (versión pineada)
       → AgentCore Harness (InvokeHarness + systemPrompt/model override)
         → AgentCore Gateway (MCP, AWS_IAM)
@@ -25,8 +25,10 @@ SPA (JWT Cognito)
 ```
 
 - El browser **nunca** habla con AgentCore.
-- El chat de producto usa **JSON buffered** por API Gateway (`POST /agent/chat`), el mismo CORS/JWT que el resto de la app. Esto evita fallos de Safari/iOS con SSE cross-origin a Function URL.
-- Function URL `RESPONSE_STREAM` + `agent-proxy` quedan **deprecated** (rollback only); el SPA ya no publica ni usa `agentChatUrl`.
+- El chat de producto usa un API Gateway **REST** dedicado: `POST /agent/chat`, Lambda proxy y `ResponseTransferMode=STREAM`. El API HTTP se conserva para el ledger porque bufferiza respuestas Lambda.
+- El SPA lee SSE con `fetch` + `ReadableStream`; no usa `EventSource` porque el endpoint requiere `Authorization: Bearer <Cognito ID token>`.
+- El authorizer Cognito vive en API Gateway. La Lambda recibe `requestContext.authorizer.claims.sub`; no hay Function URL pública en la ruta de producto.
+- CORS pertenece a este REST API y a las respuestas de la Lambda proxy. El origen permitido es el dominio web de Olbia; las respuestas de autorización 4xx/5xx también incluyen CORS.
 - El loop del agente lo corre **Harness** (no un Converse manual en la Lambda).
 - Las tools viven detrás de **Gateway** (Lambda target).
 - Code interpreter: **apagado**.
@@ -88,9 +90,9 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 
 ## Auth y chat
 
-- Ledger API + chat: JWT Cognito vía authorizer de API Gateway HTTP API.
-- `POST /agent/chat` body: `{ message, month, sessionId? }` → `{ requestId, sessionId, events: [...] }` (mismos shapes que antes: `token`, `citation`, `proposal`, `done`, `error`).
-- El cliente (`postAgentChat`) aplica los `events` en orden; la UI pinta la respuesta completa al llegar (sin stream token-a-token).
+- Ledger API: JWT Cognito vía authorizer de API Gateway HTTP API. Chat: authorizer Cognito de API Gateway REST.
+- `POST /agent/chat` body: `{ message, month, sessionId? }` → `text/event-stream`; cada evento `data:` usa los shapes `token`, `citation`, `proposal`, `done`, `error`.
+- El cliente (`streamAgentChat`) aplica cada evento en orden y pinta tokens conforme llegan.
 - Errores: 1–2 reintentos silenciosos en harness; luego mensaje corto + `requestId`.
 
 ## Observabilidad y costo
@@ -105,4 +107,4 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 - Code interpreter.
 - Historial de chat durable en UI.
 - Subcategorías.
-- Reintroducir SSE (solo si hay path same-origin estable en iOS).
+- Visibilidad de invocaciones de tools (fase 2): estados humanos de inicio/fin, sin exponer argumentos ni salidas crudas.
