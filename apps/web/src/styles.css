@@ -792,7 +792,35 @@ html.private-mode .hero-amount .amt {
 .assistant-bubble { border-radius: 12px; padding: 12px 14px; }
 .assistant-bubble.user { background: #1f1a17; color: #f7f1e8; }
 .assistant-bubble.assistant { background: #f8f4ed; border: 1px solid #e7e1d8; color: var(--ink); }
-.assistant-bubble p { margin: 0; white-space: pre-wrap; line-height: 1.45; }
+.assistant-bubble > p { margin: 0; white-space: pre-wrap; line-height: 1.45; }
+.assistant-md { display: grid; gap: 10px; }
+.assistant-md-heading {
+  margin: 0;
+  font: 600 15px/1.3 "Fraunces", serif;
+  letter-spacing: -.02em;
+  color: var(--ink);
+}
+.assistant-md-p { margin: 0; line-height: 1.5; font-size: 14px; }
+.assistant-md-list {
+  margin: 0;
+  padding: 0 0 0 1.15rem;
+  display: grid;
+  gap: 6px;
+  line-height: 1.45;
+  font-size: 14px;
+}
+.assistant-md-list.ordered { padding-left: 1.25rem; }
+.assistant-md li { padding-left: 2px; }
+.assistant-md strong { font-weight: 700; color: var(--ink); }
+.assistant-md em { font-style: italic; }
+.assistant-md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: #efe9e0;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.assistant-md .amt { font-variant-numeric: tabular-nums; font-weight: 650; }
 .assistant-citations { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .assistant-citation { border: 1px solid #d7cfc4; border-radius: 4px; padding: 2px 8px; font-size: 11px; color: var(--ink-soft); }
 .assistant-proposal { margin-top: 10px; display: grid; gap: 8px; }

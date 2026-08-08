@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { ledgerApi, type AgentChatEvent } from "../api/client";
 import { Sheet } from "../components/Sheet";
+import { AssistantMarkdown } from "../lib/assistant-markdown";
 
 const EXAMPLES = [
   "¿Cuánto gasté en restaurantes el mes pasado?",
@@ -172,13 +173,15 @@ export function AssistantSheet({
         <div className="assistant-thread">
           {messages.map((message, index) => (
             <div key={`${message.role}-${index}`} className={`assistant-bubble ${message.role}`}>
-              <p>
-                {message.role === "assistant" ? (
-                  <span className="amt">{message.text || (busy && index === messages.length - 1 ? "…" : "")}</span>
+              {message.role === "assistant" ? (
+                message.text ? (
+                  <AssistantMarkdown text={message.text} />
                 ) : (
-                  message.text
-                )}
-              </p>
+                  <p className="assistant-md-p">{busy && index === messages.length - 1 ? "…" : ""}</p>
+                )
+              ) : (
+                <p>{message.text}</p>
+              )}
               {message.citations && message.citations.length > 0 && (
                 <div className="assistant-citations">
                   {message.citations.map((citation) => (
