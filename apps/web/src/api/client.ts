@@ -56,6 +56,12 @@ export interface NominaUploadResponse {
   readonly failed: number;
 }
 
+export interface AssistantMemory {
+  readonly id: string;
+  readonly text: string;
+  readonly createdAt: string;
+}
+
 declare global {
   interface Window { __LEDGER_CONFIG__?: LedgerRuntimeConfig; }
 }
@@ -205,6 +211,12 @@ export const ledgerApi = {
   },
   async listEvents(idToken: string, month: string): Promise<EventFeed> {
     return request<EventFeed>(`/events?month=${encodeURIComponent(month)}`, idToken);
+  },
+  async listAssistantMemories(idToken: string): Promise<{ memories: readonly AssistantMemory[] }> {
+    return request<{ memories: readonly AssistantMemory[] }>("/agent/memories", idToken);
+  },
+  async deleteAssistantMemory(memoryId: string, idToken: string): Promise<void> {
+    await request(`/agent/memories/${encodeURIComponent(memoryId)}`, idToken, { method: "DELETE" });
   },
   async listExceptions(idToken: string): Promise<{ exceptions: readonly IngestionException[] }> {
     return request<{ exceptions: readonly IngestionException[] }>("/exceptions", idToken);

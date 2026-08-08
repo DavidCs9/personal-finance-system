@@ -785,6 +785,12 @@ html.private-mode .hero-amount .amt {
 
 .assistant-sheet { display: grid; gap: 14px; }
 .assistant-month-chip { margin: 0; font-size: 13px; color: var(--ink-soft); }
+.assistant-memories { border: 1px solid #d7cfc4; border-radius: 10px; padding: 10px 12px; background: #f8f4ed; }
+.assistant-memories summary { cursor: pointer; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
+.assistant-memories > p { margin: 9px 0 0; color: var(--ink-soft); font-size: 12px; line-height: 1.4; }
+.assistant-memories ul { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
+.assistant-memories li { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; font-size: 13px; line-height: 1.35; }
+.assistant-memories li span { min-width: 0; }
 .assistant-examples { display: grid; gap: 8px; }
 .assistant-examples > p { margin: 0; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); }
 .assistant-example { text-align: left; border: 1px solid #e7e1d8; background: #f8f4ed; color: var(--ink); padding: 12px 14px; border-radius: 10px; }

@@ -32,7 +32,7 @@ SPA (JWT Cognito)
 - El loop del agente lo corre **Harness** (no un Converse manual en la Lambda).
 - Las tools viven detrás de **Gateway** (Lambda target).
 - Code interpreter: **apagado**.
-- Memoria de producto: solo mientras el sheet está abierto (`runtimeSessionId`); al cerrar o cambiar el mes se limpia el hilo. Harness memory = `disabled`.
+- Memoria de conversación: AgentCore Memory conserva automáticamente y de forma amplia contexto útil entre sesiones (planes, metas, preferencias, restricciones y decisiones), aislado por Cognito `sub`. Se prefiere retener de más para que el usuario no tenga que repetir contexto; las memorias durables se pueden revisar y borrar desde el sheet. El hilo visible sigue limpiándose al cerrar o cambiar el mes. Nunca escribe ni modifica el ledger, Resumen, proyecciones o Patrimonio.
 - CDK provisiona Gateway + Target + Harness vía custom resource (`OlbiaAgentCore`) y inyecta `HARNESS_ARN` en las Lambdas de chat.
 
 ## Prompt Management (runtime, sin deploy)

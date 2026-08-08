@@ -3,12 +3,15 @@ import {
   CreateGatewayCommand,
   CreateGatewayTargetCommand,
   CreateHarnessCommand,
+  CreateMemoryCommand,
   DeleteGatewayCommand,
   DeleteGatewayTargetCommand,
   DeleteHarnessCommand,
+  DeleteMemoryCommand,
   GetGatewayCommand,
   GetGatewayTargetCommand,
   GetHarnessCommand,
+  GetMemoryCommand,
   ListGatewaysCommand,
   ListGatewayTargetsCommand,
   ListHarnessesCommand,
@@ -40,6 +43,7 @@ interface ProviderEvent {
     readonly GatewayRoleArn?: string;
     readonly ToolsLambdaArn?: string;
     readonly ModelId?: string;
+    readonly MemoryName?: string;
   };
   readonly PhysicalResourceId?: string;
   readonly OldResourceProperties?: Record<string, unknown>;
@@ -90,6 +94,42 @@ const findHarnessIdByName = async (name: string): Promise<string | undefined> =>
     nextToken = page.nextToken;
   } while (nextToken);
   return undefined;
+};
+
+const memoryIdFromPhysicalId = (physicalId: string | undefined): string | undefined =>
+  physicalId?.split('::')[1] || undefined;
+
+const ensureMemory = async (name: string, existingId?: string): Promise<{ memoryId: string; memoryArn: string }> => {
+  if (existingId) {
+    const existing = await control.send(new GetMemoryCommand({ memoryId: existingId }));
+    if (existing.memory?.status === 'ACTIVE' && existing.memory.arn) {
+      return { memoryId: existingId, memoryArn: existing.memory.arn };
+    }
+  }
+  const created = await control.send(new CreateMemoryCommand({
+    name,
+    description: 'Durable, user-scoped conversational memory for the Olbia assistant.',
+    // Raw events are short-lived; extracted long-term facts persist until the user deletes them.
+    eventExpiryDuration: 30,
+    memoryStrategies: [
+      { semanticMemoryStrategy: { name: 'OlbiaFacts', namespaceTemplates: ['/users/{actorId}/facts/'] } },
+      { userPreferenceMemoryStrategy: { name: 'OlbiaPreferences', namespaceTemplates: ['/users/{actorId}/preferences/'] } },
+      { summaryMemoryStrategy: { name: 'OlbiaSummaries', namespaceTemplates: ['/users/{actorId}/summaries/{sessionId}/'] } },
+    ],
+  }));
+  const memoryId = created.memory?.id;
+  if (!memoryId) throw new Error('CreateMemory did not return memory ID.');
+  const ready = await waitUntil(
+    'memory',
+    async () => {
+      const response = await control.send(new GetMemoryCommand({ memoryId }));
+      return { status: response.memory?.status, memory: response.memory };
+    },
+    ['ACTIVE'],
+    ['FAILED'],
+  );
+  if (!ready.memory?.arn) throw new Error('Memory active without ARN.');
+  return { memoryId, memoryArn: ready.memory.arn };
 };
 
 const toolSchemaInline = (): ToolDefinition[] =>
@@ -229,6 +269,7 @@ const ensureHarness = async (input: {
   readonly executionRoleArn: string;
   readonly gatewayArn: string;
   readonly modelId: string;
+  readonly memoryArn: string;
 }): Promise<{ harnessId: string; harnessArn: string }> => {
   const model = harnessModel(input.modelId);
   const systemPrompt = [{ text: HARNESS_PLACEHOLDER_SYSTEM_PROMPT }];
@@ -242,7 +283,7 @@ const ensureHarness = async (input: {
         model,
         systemPrompt,
         tools: harnessTools(input.gatewayArn),
-        memory: { optionalValue: { disabled: {} } },
+        memory: { optionalValue: { agentCoreMemoryConfiguration: { arn: input.memoryArn, messagesCount: 12 } } },
         maxIterations: 25,
         maxTokens: 4096,
         timeoutSeconds: 300,
@@ -285,7 +326,7 @@ const ensureHarness = async (input: {
     model,
     systemPrompt,
     tools: harnessTools(input.gatewayArn),
-    memory: { disabled: {} },
+    memory: { agentCoreMemoryConfiguration: { arn: input.memoryArn, messagesCount: 12 } },
     maxIterations: 25,
     maxTokens: 4096,
     timeoutSeconds: 300,
@@ -328,6 +369,7 @@ export const handler = async (event: ProviderEvent): Promise<{
     readonly GatewayArn: string;
     readonly GatewayId: string;
     readonly TargetId: string;
+    readonly MemoryId: string;
   };
 }> => {
   const props = event.ResourceProperties;
@@ -338,6 +380,7 @@ export const handler = async (event: ProviderEvent): Promise<{
   const gatewayRole = props.GatewayRoleArn ?? '';
   const toolsLambdaArn = props.ToolsLambdaArn ?? '';
   const modelId = props.ModelId ?? OLBIA_SYSTEM_PROMPT_MODEL_ID;
+  const memoryName = props.MemoryName ?? 'OlbiaFinanceMemory';
   if (!harnessRole || !gatewayRole || !toolsLambdaArn) {
     throw new Error('HarnessExecutionRoleArn, GatewayRoleArn, and ToolsLambdaArn are required.');
   }
@@ -348,8 +391,26 @@ export const handler = async (event: ProviderEvent): Promise<{
     const harnessId = await findHarnessIdByName(harnessName);
     if (harnessId) {
       await control.send(new DeleteHarnessCommand({ harnessId }));
+      const started = Date.now();
+      for (;;) {
+        try {
+          await control.send(new GetHarnessCommand({ harnessId }));
+        } catch (error) {
+          const name = error && typeof error === 'object' && 'name' in error
+            ? String((error as { name: string }).name)
+            : '';
+          if (/ResourceNotFound|NotFound/i.test(name)) break;
+          throw error;
+        }
+        if (Date.now() - started > 5 * 60_000) {
+          throw new Error(`Timed out deleting harness ${harnessId}`);
+        }
+        await sleep(5_000);
+      }
     }
     const gatewayId = await findGatewayIdByName(gatewayName);
+    const memoryId = memoryIdFromPhysicalId(event.PhysicalResourceId);
+    if (memoryId) await control.send(new DeleteMemoryCommand({ memoryId }));
     if (gatewayId) {
       let nextToken: string | undefined;
       do {
@@ -378,11 +439,13 @@ export const handler = async (event: ProviderEvent): Promise<{
         GatewayArn: '',
         GatewayId: '',
         TargetId: '',
+        MemoryId: '',
       },
     };
   }
 
   const gateway = await ensureGateway({ name: gatewayName, roleArn: gatewayRole });
+  const memory = await ensureMemory(memoryName, memoryIdFromPhysicalId(event.PhysicalResourceId));
   const targetId = await ensureGatewayTarget({
     gatewayId: gateway.gatewayId,
     name: targetName,
@@ -393,16 +456,18 @@ export const handler = async (event: ProviderEvent): Promise<{
     executionRoleArn: harnessRole,
     gatewayArn: gateway.gatewayArn,
     modelId,
+    memoryArn: memory.memoryArn,
   });
 
   return {
-    PhysicalResourceId: physicalId,
+    PhysicalResourceId: `${physicalId.split('::')[0]}::${memory.memoryId}`,
     Data: {
       HarnessArn: harness.harnessArn,
       HarnessId: harness.harnessId,
       GatewayArn: gateway.gatewayArn,
       GatewayId: gateway.gatewayId,
       TargetId: targetId,
+      MemoryId: memory.memoryId,
     },
   };
 };

@@ -62,7 +62,7 @@ Assume at least 95% of usage is mobile.
 - The primary state must be understandable in a few seconds without horizontal scrolling.
 - Keep primary actions reachable and touch targets comfortable.
 - Preserve the three-destination model: **Resumen** (month state), **Movimientos** (sortable raw list), **Patrimonio** (net worth).
-- The **assistant** is a global sheet opened from the topbar (not a fourth tab). Session memory lasts only while the sheet is open; changing the month selector clears the thread. Ground answers in tool results; show citation chips. Private mode blurs amounts in the sheet too. See [`../../docs/ai-assistant.md`](../../docs/ai-assistant.md).
+- The **assistant** is a global sheet opened from the topbar (not a fourth tab). Its visible thread clears when the sheet closes or the month changes, while durable conversational memory remains user-scoped, visible, and deletable inside the sheet. It must never change ledger data or financial calculations. Ground answers in tool results; show citation chips. Private mode blurs amounts in the sheet too. See [`../../docs/ai-assistant.md`](../../docs/ai-assistant.md).
 - Patrimonio keeps the month selector enabled so you can change period without leaving the tab (Patrimonio totals themselves stay current, not month-scoped).
 - Desktop should be a contained adaptation of the same experience, not a separate dashboard with extra density.
 
