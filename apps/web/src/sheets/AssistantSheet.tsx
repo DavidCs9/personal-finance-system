@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { ledgerApi, type AgentChatEvent, type AssistantMemory } from "../api/client";
 import { Sheet } from "../components/Sheet";
 import { AssistantMarkdown } from "../lib/assistant-markdown";
@@ -57,6 +57,9 @@ export function AssistantSheet({
   const [sessionId, setSessionId] = useState<string>();
   const [memories, setMemories] = useState<readonly AssistantMemory[]>([]);
   const [memoriesOpen, setMemoriesOpen] = useState(false);
+  const [memoriesLoading, setMemoriesLoading] = useState(false);
+  const [memoriesError, setMemoriesError] = useState<string>();
+  const [deletingMemoryId, setDeletingMemoryId] = useState<string>();
 
   useEffect(() => {
     setMessages([]);
@@ -66,19 +69,36 @@ export function AssistantSheet({
     setSessionId(undefined);
   }, [onMonthChanged, month]);
 
+  const loadMemories = useCallback(async () => {
+    if (demoMode) return;
+    setMemoriesLoading(true);
+    setMemoriesError(undefined);
+    try {
+      const result = await ledgerApi.listAssistantMemories(idToken);
+      setMemories(result.memories);
+    } catch (err) {
+      setMemoriesError(err instanceof Error ? err.message : "No pude cargar tus memorias.");
+    } finally {
+      setMemoriesLoading(false);
+    }
+  }, [demoMode, idToken]);
+
   useEffect(() => {
-    if (demoMode || !memoriesOpen) return;
-    void ledgerApi.listAssistantMemories(idToken)
-      .then((result) => setMemories(result.memories))
-      .catch(() => setMemories([]));
-  }, [demoMode, idToken, memoriesOpen]);
+    if (!memoriesOpen) return;
+    void loadMemories();
+  }, [loadMemories, memoriesOpen]);
 
   const deleteMemory = async (memoryId: string) => {
+    setDeletingMemoryId(memoryId);
+    setMemoriesError(undefined);
     try {
       await ledgerApi.deleteAssistantMemory(memoryId, idToken);
       setMemories((current) => current.filter((memory) => memory.id !== memoryId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo borrar la memoria.");
+      setMemoriesError(err instanceof Error ? err.message : "No se pudo borrar la memoria.");
+      throw err;
+    } finally {
+      setDeletingMemoryId(undefined);
     }
   };
 
@@ -290,15 +310,27 @@ export function AssistantSheet({
     }
   };
 
+  if (memoriesOpen) {
+    return (
+      <AssistantMemoriesSheet
+        memories={memories}
+        loading={memoriesLoading}
+        error={memoriesError}
+        deletingMemoryId={deletingMemoryId}
+        onClose={() => setMemoriesOpen(false)}
+        onRetry={loadMemories}
+        onDelete={deleteMemory}
+      />
+    );
+  }
+
   return (
     <Sheet eyebrow="ASISTENTE" title={`Pregunta · ${month}`} onClose={onClose}>
       <div className="assistant-sheet">
         <p className="assistant-month-chip">Mes activo: {month}</p>
-        {!demoMode && (
-          <button type="button" className="assistant-memory-link" onClick={() => setMemoriesOpen(true)}>
-            Gestionar memoria
-          </button>
-        )}
+        <button type="button" className="assistant-memory-link" onClick={() => setMemoriesOpen(true)}>
+          Gestionar memoria
+        </button>
         {messages.length === 0 && (
           <div className="assistant-examples">
             <p>Ejemplos</p>
@@ -380,40 +412,97 @@ export function AssistantSheet({
           </button>
         </form>
       </div>
-      {memoriesOpen && (
-        <AssistantMemoriesSheet
-          memories={memories}
-          onClose={() => setMemoriesOpen(false)}
-          onDelete={deleteMemory}
-        />
-      )}
     </Sheet>
   );
 }
 
 function AssistantMemoriesSheet({
   memories,
+  loading,
+  error,
+  deletingMemoryId,
   onClose,
+  onRetry,
   onDelete,
 }: {
   readonly memories: readonly AssistantMemory[];
+  readonly loading: boolean;
+  readonly error?: string;
+  readonly deletingMemoryId?: string;
   onClose(): void;
+  onRetry(): Promise<void>;
   onDelete(memoryId: string): Promise<void>;
 }) {
+  const [pendingDeleteId, setPendingDeleteId] = useState<string>();
+
   return (
-    <Sheet eyebrow="ASISTENTE" title="Memoria" onClose={onClose} className="assistant-memories-sheet">
+    <Sheet
+      eyebrow="ASISTENTE"
+      title="Lo que recuerdo"
+      onClose={onClose}
+      className="assistant-memories-sheet"
+      closeLabel="Volver al chat"
+      closeIcon="←"
+    >
       <div className="assistant-memories">
-        <p>Olbia usa estas notas para conversar contigo. No cambian tus cifras ni movimientos.</p>
-        {memories.length === 0 ? <p>Aún no hay memorias guardadas.</p> : (
-          <ul>
+        <p className="assistant-memories-intro">
+          Contexto que Olbia conserva entre conversaciones. Nunca cambia tus cifras ni movimientos.
+        </p>
+        {error && (
+          <div className="assistant-memories-error" role="alert">
+            <p>{error}</p>
+            <button type="button" className="text-button" onClick={() => void onRetry()} disabled={loading}>
+              Reintentar
+            </button>
+          </div>
+        )}
+        {loading ? (
+          <p className="assistant-memories-state" role="status">Cargando memorias…</p>
+        ) : memories.length === 0 && !error ? (
+          <div className="assistant-memories-empty">
+            <strong>Aún no hay nada guardado.</strong>
+            <p>Cuando le pidas a Olbia recordar algo, aparecerá aquí.</p>
+          </div>
+        ) : memories.length > 0 ? (
+          <ul className="assistant-memories-list">
             {memories.map((memory) => (
-              <li key={memory.id}>
-                <span>{memory.text}</span>
-                <button type="button" className="text-button" onClick={() => void onDelete(memory.id)}>Borrar</button>
+              <li key={memory.id} className={pendingDeleteId === memory.id ? "confirming" : undefined}>
+                <p>{memory.text}</p>
+                {pendingDeleteId === memory.id ? (
+                  <div className="assistant-memory-confirm">
+                    <span>Esta acción no se puede deshacer.</span>
+                    <div>
+                      <button
+                        type="button"
+                        className="assistant-memory-cancel"
+                        onClick={() => setPendingDeleteId(undefined)}
+                        disabled={deletingMemoryId === memory.id}
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        className="assistant-memory-delete confirm"
+                        onClick={() => void onDelete(memory.id).then(() => setPendingDeleteId(undefined)).catch(() => undefined)}
+                        disabled={deletingMemoryId === memory.id}
+                      >
+                        {deletingMemoryId === memory.id ? "Borrando…" : "Confirmar borrar"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="assistant-memory-delete"
+                    onClick={() => setPendingDeleteId(memory.id)}
+                  >
+                    Borrar
+                  </button>
+                )}
               </li>
             ))}
           </ul>
-        )}
+        ) : null}
       </div>
     </Sheet>
   );
