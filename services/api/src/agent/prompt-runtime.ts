@@ -20,7 +20,6 @@ export interface RuntimePrompt {
   readonly text: string;
   readonly modelId: string;
   readonly temperature: number;
-  readonly topP: number;
   readonly maxTokens: number;
 }
 
@@ -61,7 +60,6 @@ const extractInference = (response: GetPromptResponse) => {
   return {
     modelId: variant?.modelId ?? OLBIA_SYSTEM_PROMPT_MODEL_ID,
     temperature: inference?.temperature ?? OLBIA_SYSTEM_PROMPT_INFERENCE.temperature,
-    topP: inference?.topP ?? OLBIA_SYSTEM_PROMPT_INFERENCE.topP,
     maxTokens: inference?.maxTokens ?? OLBIA_SYSTEM_PROMPT_INFERENCE.maxTokens,
   };
 };

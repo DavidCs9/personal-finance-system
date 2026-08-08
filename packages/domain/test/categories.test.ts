@@ -43,6 +43,22 @@ describe('suggestCategoryIdFromMerchant', () => {
   it('suggests restaurantes for food merchants', () => {
     expect(suggestCategoryIdFromMerchant('Rappi Mexico')).toBe('restaurantes');
   });
+
+  it('keeps uber eats as restaurantes, not transporte', () => {
+    expect(suggestCategoryIdFromMerchant('UBER EATS https://help.ub')).toBe('restaurantes');
+    expect(suggestCategoryIdFromMerchant('UBER TRIP https://help.ub')).toBe('transporte');
+  });
+
+  it('matches normalized subscription merchants', () => {
+    expect(suggestCategoryIdFromMerchant('APPLE.COM/BILL CUPERTINO')).toBe('suscripciones');
+    expect(suggestCategoryIdFromMerchant('CLAUDE.AI SUBSCRIPTION SAN FRANCISCO')).toBe('suscripciones');
+  });
+
+  it('matches Mexican bank REST* and OXXO abbreviations', () => {
+    expect(suggestCategoryIdFromMerchant('REST SANTI MARISCOS')).toBe('restaurantes');
+    expect(suggestCategoryIdFromMerchant('OXXO HDAS DE VALLE CUF')).toBe('supermercado');
+    expect(suggestCategoryIdFromMerchant('ALSUPER SANTA FE ALSUPE CHIHUAHUA, CHIH')).toBe('supermercado');
+  });
 });
 
 describe('spendAmountForMonth', () => {

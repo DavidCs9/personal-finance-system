@@ -8,9 +8,9 @@ export const OLBIA_SYSTEM_PROMPT_VARIANT = 'default';
 /** Cross-region inference profile — base model IDs fail Converse with ValidationException. */
 export const OLBIA_SYSTEM_PROMPT_MODEL_ID = 'us.anthropic.claude-sonnet-4-6';
 
+/** Claude rejects temperature + topP together on Converse/ConverseStream. */
 export const OLBIA_SYSTEM_PROMPT_INFERENCE = {
   temperature: 0.2,
-  topP: 0.9,
   maxTokens: 2048,
 } as const;
 

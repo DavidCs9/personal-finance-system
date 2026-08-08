@@ -68,21 +68,43 @@ export const categoryLabel = (
   return catalog.find((item) => item.id === categoryId)?.name ?? categoryId;
 };
 
-/** Heuristic seed suggestions from merchant text (rules-first; LLM fills residuals later). */
+/**
+ * Heuristic seed suggestions from merchant text (rules-first; LLM fills residuals later).
+ * Patterns run against normalizeMerchantKey output (spaces, no punctuation).
+ * Order matters: more specific phrases before broader tokens (e.g. uber eats before uber).
+ * Prefer leading `\b` only — trailing `\b` blocks prefixes (restaur→restaurants, oxxo→oxxomuller).
+ */
 export const suggestCategoryIdFromMerchant = (merchantRaw: string): string | undefined => {
   const key = normalizeMerchantKey(merchantRaw);
   if (!key) return undefined;
   const tests: readonly (readonly [RegExp, string])[] = [
-    [/\b(uber|didi|cabify|metro|pemex|gasolin|oxxo gas|toll|caseta)\b/, "transporte"],
-    [/\b(uber eats|rappi|didi food|restaur|cafe|coffee|starbucks|vips|toks|sushi|pizza|burger|tacos)\b/, "restaurantes"],
-    [/\b(walmart|soriana|chedraui|heb|costco|sam s|super|abarrotes|la comer)\b/, "supermercado"],
-    [/\b(netflix|spotify|apple\.com|icloud|google|amazon prime|disney|youtube|microsoft|adobe)\b/, "suscripciones"],
-    [/\b(cfe|telmex|totalplay|izzi|megacable|agua|predial|renta)\b/, "servicios"],
-    [/\b(farmacia|hospital|doctor|dental|laboratorio)\b/, "salud"],
-    [/\b(aeroméxico|aeromexico|vivaaerobus|volaris|hotel|booking|airbnb|expedia)\b/, "viajes"],
-    [/\b(amazon|liverpool|palacio|zara|shein|mercado libre|mercadolibre)\b/, "shopping"],
-    [/\b(cinepolis|cinemex|steam|playstation|xbox)\b/, "entretenimiento"],
-    [/\b(spei|transfer|traspaso)\b/, "transferencias"],
+    [/\b(uber eats|rappi|didi food|app foods)/, "restaurantes"],
+    [/\b(uber|didi|cabify|metro|pemex|petro7|gasolin|oxxo gas|toll|caseta|loungekey)/, "transporte"],
+    [
+      /\b(rest|restaur|cafe|coffee|starbucks|vips|toks|sushi|pizza|burger|taco|domino|carls?\s*jr|carl s jr|dairy queen|wendy|apple bees|mariscos|neveria|snacks house|kampai|fonda|bistro|elote|qiang|sala de desp|madre perla|losarbolitos|come camila|hecho con amor|coyotlan|gardenia|peperon|desterrados|yoguth|praline|hanky bar|goat bar|bar fonda|dulc)/,
+      "restaurantes",
+    ],
+    [
+      /\b(farmacia|farm simi|far guad|f ahorro|botica|hospital|doctor|dental|laboratorio|anytime fitness)/,
+      "salud",
+    ],
+    [
+      /\b(walmart|wal mart|soriana|chedraui|heb|costco|sam s|abarrotes|la comer|alsuper|fresh market|supercenter|gomart|carnic|carnes)|oxxo/,
+      "supermercado",
+    ],
+    [
+      /\b(netflix|spotify|apple com|icloud|google|amazon prime|disney|youtube|microsoft|adobe|nytimes|claude ai|openai|chatgpt|cursor|anthropic|openrouter|leetcode|dazn|hellointerview|hetzner|moonshot|telcel|tutorials dojo|daisydisk|vue testing)/,
+      "suscripciones",
+    ],
+    [/\b(cfe|telmex|totalplay|izzi|megacable|agua|predial|renta|tint|martinizing|united parcel|\bups\b|conekta|parco)/, "servicios"],
+    [/\b(aeromexico|vivaaerobus|volaris|hotel|booking|airbnb|expedia|asur c conv)/, "viajes"],
+    [
+      /\b(amazon|liverpool|palacio|zara|shein|mercado libre|mercadolibre|mango|veja|office max|fashion|liquor depot|japi party|globale|crzyoga|mugu studio|zap flex)/,
+      "shopping",
+    ],
+    [/\b(cinepolis|cinemex|steam|playstation|xbox|draftea|zona futbol|padel|playtomic|go fast|ctro cultural|club campestre)/, "entretenimiento"],
+    [/\b(spei|transfer|traspaso|meses en automatico|amex msi auto|servicio de facturacion|redencion)/, "transferencias"],
+    [/\b(unicef|world wildlife|world wild life|polar bear|donativo|wildlife|gobierno del estado)/, "otros"],
   ];
   for (const [pattern, categoryId] of tests) {
     if (pattern.test(key)) return categoryId;

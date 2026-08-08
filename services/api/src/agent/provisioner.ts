@@ -220,7 +220,6 @@ const harnessModel = (modelId: string) => ({
     modelId,
     maxTokens: OLBIA_SYSTEM_PROMPT_INFERENCE.maxTokens,
     temperature: OLBIA_SYSTEM_PROMPT_INFERENCE.temperature,
-    topP: OLBIA_SYSTEM_PROMPT_INFERENCE.topP,
     apiFormat: 'converse_stream' as const,
   },
 });
