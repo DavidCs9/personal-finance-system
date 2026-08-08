@@ -121,11 +121,24 @@ const resourceIdsFromPhysicalId = (physicalId: string | undefined): AgentCoreRes
   return { memoryId: parts[1] };
 };
 
+const isNotFound = (error: unknown): boolean => {
+  const name = error && typeof error === 'object' && 'name' in error
+    ? String((error as { name: string }).name)
+    : '';
+  return /ResourceNotFound|NotFound/i.test(name);
+};
+
 const ensureMemory = async (name: string, existingId?: string): Promise<{ memoryId: string; memoryArn: string }> => {
   if (existingId) {
-    const existing = await control.send(new GetMemoryCommand({ memoryId: existingId }));
-    if (existing.memory?.status === 'ACTIVE' && existing.memory.arn) {
-      return { memoryId: existingId, memoryArn: existing.memory.arn };
+    try {
+      const existing = await control.send(new GetMemoryCommand({ memoryId: existingId }));
+      if (existing.memory?.status === 'ACTIVE' && existing.memory.arn) {
+        return { memoryId: existingId, memoryArn: existing.memory.arn };
+      }
+    } catch (error) {
+      // A previous failed replacement can leave a Harness with a stale Memory ARN.
+      // Recreate it below and repoint the existing Harness during this update.
+      if (!isNotFound(error)) throw error;
     }
   }
   const created = await control.send(new CreateMemoryCommand({
@@ -490,7 +503,12 @@ export const handler = async (event: ProviderEvent): Promise<{
   });
 
   return {
-    PhysicalResourceId: `olbia-agentcore-v2::${harness.harnessId}::${gateway.gatewayId}::${targetId}::${memory.memoryId}`,
+    // Updates may recover a deleted Memory while retaining the same Harness.
+    // Keep the physical ID stable so CloudFormation does not issue a delete for
+    // the still-live Harness, Gateway, and target after this response.
+    PhysicalResourceId: event.RequestType === 'Update'
+      ? physicalId
+      : `olbia-agentcore-v2::${harness.harnessId}::${gateway.gatewayId}::${targetId}::${memory.memoryId}`,
     Data: {
       HarnessArn: harness.harnessArn,
       HarnessId: harness.harnessId,
