@@ -120,3 +120,57 @@ describe("iOS web app session recovery", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 });
+
+describe("postAgentChat buffered JSON", () => {
+  it("posts to apiBaseUrl/agent/chat and fans out events", async () => {
+    const idToken = token(Date.now() + 10 * 60 * 1000, "user");
+    ledgerApi.saveSession({ idToken, refreshToken: "refresh-token" });
+    const onEvent = vi.fn();
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({
+      sessionId: "11111111-1111-1111-1111-111111111111",
+      events: [
+        { type: "token", text: "Hola" },
+        { type: "done", requestId: "r1", sessionId: "11111111-1111-1111-1111-111111111111" },
+      ],
+    }));
+
+    await expect(ledgerApi.postAgentChat(
+      { message: "hola", month: "2026-08" },
+      idToken,
+      onEvent,
+    )).resolves.toBe("11111111-1111-1111-1111-111111111111");
+
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe("https://api.example.test/agent/chat");
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+      method: "POST",
+      headers: expect.objectContaining({
+        Authorization: `Bearer ${idToken}`,
+        "Content-Type": "application/json",
+      }),
+    });
+    expect(onEvent).toHaveBeenCalledTimes(2);
+    expect(onEvent).toHaveBeenNthCalledWith(1, { type: "token", text: "Hola" });
+  });
+
+  it("renews once after 401 on agent chat", async () => {
+    const oldToken = token(Date.now() + 60 * 60 * 1000, "old");
+    const newToken = token(Date.now() + 60 * 60 * 1000, "new");
+    ledgerApi.saveSession({ idToken: oldToken, refreshToken: "refresh-token" });
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse({ message: "Unauthorized" }, 401))
+      .mockResolvedValueOnce(jsonResponse({ AuthenticationResult: { IdToken: newToken } }))
+      .mockResolvedValueOnce(jsonResponse({
+        sessionId: "11111111-1111-1111-1111-111111111111",
+        events: [{ type: "done", requestId: "r1", sessionId: "11111111-1111-1111-1111-111111111111" }],
+      }));
+
+    await expect(ledgerApi.postAgentChat(
+      { message: "hola", month: "2026-08" },
+      oldToken,
+      vi.fn(),
+    )).resolves.toBe("11111111-1111-1111-1111-111111111111");
+    expect(vi.mocked(fetch).mock.calls[2]?.[1]?.headers).toMatchObject({
+      Authorization: `Bearer ${newToken}`,
+    });
+  });
+});

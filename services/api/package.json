@@ -12,6 +12,7 @@
     "./daily-balance-push": "./src/push/daily-balance-push.ts",
     "./card-cycle-push": "./src/push/card-cycle-push.ts",
     "./agent-proxy": "./src/agent/proxy.ts",
+    "./agent-chat-buffered": "./src/agent/chat-buffered.ts",
     "./agent-tools": "./src/agent/tools-handler.ts",
     "./agentcore-provisioner": "./src/agent/provisioner.ts",
     "./agent-prompts": "./src/agent/prompts/olbia-system.ts"

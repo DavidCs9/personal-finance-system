@@ -10,8 +10,8 @@ Un solo asistente: consultas ahora; asesor de decisión (“¿qué tan responsab
 
 ```
 SPA (JWT Cognito)
-  → Lambda Function URL (RESPONSE_STREAM)  ← solo POST chat SSE
-    → Lambda agent-proxy (streamifyResponse + verifica JWT)
+  → API Gateway HTTP API  POST /agent/chat  ← chat producto (JSON buffered)
+    → Lambda agent-chat (collectAgentChat)
       → SSM pointer → Bedrock Prompt Management (versión pineada)
       → AgentCore Harness (InvokeHarness + systemPrompt/model override)
         → AgentCore Gateway (MCP, AWS_IAM)
@@ -20,18 +20,18 @@ SPA (JWT Cognito)
               → DynamoDB + computeMonthSummary
 
 SPA (JWT Cognito)
-  → API Gateway HTTP API  ← resto del ledger (sin streaming)
+  → API Gateway HTTP API  ← resto del ledger
     → Lambda api / tools auxiliares
 ```
 
 - El browser **nunca** habla con AgentCore.
-- El chat **no** pasa por API Gateway: HTTP API bufferiza y rompe SSE. Por eso `agentChatUrl` es una Function URL con `InvokeMode=RESPONSE_STREAM`.
-- CORS del stream: solo en la Function URL (`cors`). No pongas `Access-Control-*` en `agent-proxy` — con `RESPONSE_STREAM` el platform también los inyecta y un ACAO duplicado tumba el browser.
+- El chat de producto usa **JSON buffered** por API Gateway (`POST /agent/chat`), el mismo CORS/JWT que el resto de la app. Esto evita fallos de Safari/iOS con SSE cross-origin a Function URL.
+- Function URL `RESPONSE_STREAM` + `agent-proxy` quedan **deprecated** (rollback only); el SPA ya no publica ni usa `agentChatUrl`.
 - El loop del agente lo corre **Harness** (no un Converse manual en la Lambda).
 - Las tools viven detrás de **Gateway** (Lambda target).
 - Code interpreter: **apagado**.
 - Memoria de producto: solo mientras el sheet está abierto (`runtimeSessionId`); al cerrar o cambiar el mes se limpia el hilo. Harness memory = `disabled`.
-- CDK provisiona Gateway + Target + Harness vía custom resource (`OlbiaAgentCore`) y inyecta `HARNESS_ARN` en `agent-proxy`.
+- CDK provisiona Gateway + Target + Harness vía custom resource (`OlbiaAgentCore`) y inyecta `HARNESS_ARN` en las Lambdas de chat.
 
 ## Prompt Management (runtime, sin deploy)
 
@@ -40,7 +40,7 @@ Prompt Management **no** se hornea en el Harness al desplegar. Eso lo volvería 
 1. Source of truth editable: Bedrock Prompt Management (`OlbiaFinanceSystem`).
 2. Repo seed (solo bootstrap / sync de DRAFT): `services/api/src/agent/prompts/olbia-system.ts` → `AWS::Bedrock::Prompt` + versión `bootstrap`.
 3. Puntero activo (mutable sin CDK): SSM `/personal-finance-v1/agent/system-prompt-version-arn` → ARN versionado (`…:prompt/ID:N`).
-4. En cada `InvokeHarness`, `agent-proxy` lee el puntero (caché ~30s), hace `GetPrompt`, y pasa `systemPrompt` + `model` como **override** de invocación.
+4. En cada `InvokeHarness`, el chat Lambda lee el puntero (caché ~30s), hace `GetPrompt`, y pasa `systemPrompt` + `model` como **override** de invocación.
 
 ### Promote / rollback (sin redeploy)
 
@@ -86,13 +86,12 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 - Seed: `infrastructure/scripts/propose-category-seed.ts` (aprobar con `--apply`).
 - Backfill: `infrastructure/scripts/backfill-event-categories.ts`.
 
-## Auth y streaming
+## Auth y chat
 
-- Ledger API: JWT Cognito vía authorizer de API Gateway HTTP API.
-- Chat SSE: Function URL pública (`AuthType=NONE`) + validación JWT Cognito **dentro** de `agent-proxy` (`aws-jwt-verify`). El SPA manda `Authorization: Bearer <idToken>` a `agentChatUrl` (runtime-config).
-- `agent-proxy` hace `InvokeHarness` (override de Prompt Management) y escribe cada evento SSE al response stream (`awslambda.streamifyResponse`).
-- El cliente lee `response.body` con `ReadableStream` y pinta tokens al llegar.
-- Errores: 1–2 reintentos silenciosos; luego mensaje corto + `requestId`.
+- Ledger API + chat: JWT Cognito vía authorizer de API Gateway HTTP API.
+- `POST /agent/chat` body: `{ message, month, sessionId? }` → `{ requestId, sessionId, events: [...] }` (mismos shapes que antes: `token`, `citation`, `proposal`, `done`, `error`).
+- El cliente (`postAgentChat`) aplica los `events` en orden; la UI pinta la respuesta completa al llegar (sin stream token-a-token).
+- Errores: 1–2 reintentos silenciosos en harness; luego mensaje corto + `requestId`.
 
 ## Observabilidad y costo
 
@@ -106,3 +105,4 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 - Code interpreter.
 - Historial de chat durable en UI.
 - Subcategorías.
+- Reintroducir SSE (solo si hay path same-origin estable en iOS).
