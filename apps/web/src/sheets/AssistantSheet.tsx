@@ -191,7 +191,12 @@ export function AssistantSheet({
               {message.proposal && (
                 <div className="assistant-proposal">
                   <p>{message.proposal.message}</p>
-                  <button type="button" disabled={busy} onClick={() => void confirmProposal(message.proposal!)}>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={busy}
+                    onClick={() => void confirmProposal(message.proposal!)}
+                  >
                     Confirmar categoría
                   </button>
                 </div>
