@@ -11,6 +11,12 @@ Treat both documents as binding product constraints for every UI feature, includ
 
 Do not introduce a conflicting visual direction, interaction pattern, or tone by inference. If a new explicit product decision changes the personality, update both guides in the same change so future work receives the new direction.
 
+## Prefer native capabilities
+
+Before designing or implementing a manual solution for infrastructure, observability, logging, authentication, caching, integrations, or other platform concerns, first verify whether the relevant provider or framework already offers a native capability that meets the need.
+
+Prefer the native capability when it provides the required behavior, reliability, security, and observability. Build custom code only for a documented gap, and state that gap and the reason the native option is insufficient before adding the custom implementation. Do not duplicate provider-managed telemetry or data capture with application logs merely because it is easier to add locally.
+
 ## Pull requests and linear history
 
 `main` requires linear history. Use this workflow for every pull request:
