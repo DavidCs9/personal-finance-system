@@ -44,6 +44,7 @@ jobs:
     env:
       SES_SENDER_EMAIL: ${{ vars.SES_SENDER_EMAIL }}
       ALERT_RECIPIENT_EMAIL: ${{ vars.ALERT_RECIPIENT_EMAIL }}
+      AGENT_OWNER_SUB: ${{ vars.AGENT_OWNER_SUB }}
     permissions:
       contents: read
       id-token: write
@@ -64,12 +65,14 @@ jobs:
           npx cdk diff PersonalFinanceV1
           --parameters PersonalFinanceV1:SesSenderEmail="$SES_SENDER_EMAIL"
           --parameters PersonalFinanceV1:AlertRecipientEmail="$ALERT_RECIPIENT_EMAIL"
+          --parameters PersonalFinanceV1:AgentOwnerSub="$AGENT_OWNER_SUB"
           --output cdk.out.github-diff
         working-directory: infrastructure
       - run: >-
           npx cdk deploy PersonalFinanceV1
           --parameters PersonalFinanceV1:SesSenderEmail="$SES_SENDER_EMAIL"
           --parameters PersonalFinanceV1:AlertRecipientEmail="$ALERT_RECIPIENT_EMAIL"
+          --parameters PersonalFinanceV1:AgentOwnerSub="$AGENT_OWNER_SUB"
           --require-approval never
           --output cdk.out.github-deploy
         working-directory: infrastructure
