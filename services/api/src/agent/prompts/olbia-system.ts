@@ -5,7 +5,8 @@
  */
 export const OLBIA_SYSTEM_PROMPT_NAME = 'OlbiaFinanceSystem';
 export const OLBIA_SYSTEM_PROMPT_VARIANT = 'default';
-export const OLBIA_SYSTEM_PROMPT_MODEL_ID = 'anthropic.claude-sonnet-4-6';
+/** Cross-region inference profile — base model IDs fail Converse with ValidationException. */
+export const OLBIA_SYSTEM_PROMPT_MODEL_ID = 'us.anthropic.claude-sonnet-4-6';
 
 export const OLBIA_SYSTEM_PROMPT_INFERENCE = {
   temperature: 0.2,
