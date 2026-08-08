@@ -91,8 +91,10 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 ## Auth y chat
 
 - Ledger API: JWT Cognito vía authorizer de API Gateway HTTP API. Chat: authorizer Cognito de API Gateway REST.
-- `POST /agent/chat` body: `{ message, month, sessionId? }` → `text/event-stream`; cada evento `data:` usa los shapes `token`, `citation`, `proposal`, `done`, `error`.
-- El cliente (`streamAgentChat`) aplica cada evento en orden y pinta tokens conforme llegan.
+- `POST /agent/chat` body: `{ message, month, sessionId? }` → `text/event-stream`; cada evento `data:` usa los shapes `token`, `tool_start`, `tool_complete`, `tool_failed`, `citation`, `proposal`, `done`, `error`.
+- El cliente (`streamAgentChat`) aplica cada evento en orden y pinta tokens y actividad de tools conforme llegan.
+- La actividad se inserta dentro de la burbuja del asistente como una nota de trabajo compacta: cada llamada conserva nombre, estado, intento y duración. Al tocar una línea se abre su resumen legible; no se exponen inputs ni payloads crudos.
+- Un fallo de tool queda visible como dato no disponible. El agente puede seguir con una respuesta parcial; las mutaciones siguen limitadas a confirmar `propose_recategorize`.
 - Errores: 1–2 reintentos silenciosos en harness; luego mensaje corto + `requestId`.
 
 ## Observabilidad y costo
@@ -107,4 +109,3 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 - Code interpreter.
 - Historial de chat durable en UI.
 - Subcategorías.
-- Visibilidad de invocaciones de tools (fase 2): estados humanos de inicio/fin, sin exponer argumentos ni salidas crudas.

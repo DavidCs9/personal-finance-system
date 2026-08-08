@@ -21,6 +21,9 @@ const jwtVerifier = cognitoUserPoolId && cognitoClientId
 
 export type AgentSseEvent =
   | { readonly type: 'token'; readonly text: string }
+  | { readonly type: 'tool_start'; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number }
+  | { readonly type: 'tool_complete'; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly summary?: string; readonly material: boolean }
+  | { readonly type: 'tool_failed'; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly message: string }
   | { readonly type: 'citation'; readonly kind: string; readonly id?: string; readonly label: string }
   | { readonly type: 'proposal'; readonly eventId: string; readonly categoryId: string; readonly message: string }
   | { readonly type: 'done'; readonly requestId: string; readonly sessionId: string }
@@ -137,6 +140,55 @@ const citationsFromPayload = (data: Record<string, unknown>): AgentSseEvent[] =>
   return out;
 };
 
+const toolLabel = (name: string): string => {
+  switch (name) {
+    case 'month_snapshot': return 'Revisando el resumen del mes';
+    case 'spend_by_category': return 'Revisando categorías de gasto';
+    case 'spend_by_merchant': return 'Revisando comercios';
+    case 'list_movements': return 'Revisando movimientos';
+    case 'compare_months': return 'Comparando meses';
+    case 'wealth_snapshot': return 'Revisando patrimonio';
+    case 'propose_recategorize': return 'Preparando una categoría';
+    default: return 'Consultando datos';
+  }
+};
+
+const asArray = (value: unknown): readonly unknown[] => Array.isArray(value) ? value : [];
+
+/** A concise audit note; never include raw tool inputs or returned financial rows. */
+export const summarizeToolResult = (
+  name: string,
+  payload: Record<string, unknown>,
+): { readonly summary?: string; readonly material: boolean } => {
+  switch (name) {
+    case 'month_snapshot':
+      return { summary: `Resumen de ${String(payload.month ?? 'este mes')} consultado.`, material: true };
+    case 'spend_by_category': {
+      const count = asArray(payload.buckets).length;
+      return { summary: `Revisé ${count} categoría${count === 1 ? '' : 's'} de gasto.`, material: true };
+    }
+    case 'spend_by_merchant': {
+      const count = asArray(payload.buckets).length;
+      return { summary: `Revisé ${count} comercio${count === 1 ? '' : 's'}.`, material: true };
+    }
+    case 'list_movements': {
+      const count = asArray(payload.movements).length;
+      return { summary: `Revisé ${count} movimiento${count === 1 ? '' : 's'}.`, material: true };
+    }
+    case 'compare_months':
+      return {
+        summary: `Comparé ${String(payload.month ?? 'el mes')} con ${String(payload.againstMonth ?? 'el mes anterior')}.`,
+        material: true,
+      };
+    case 'wealth_snapshot':
+      return { summary: 'Patrimonio consultado.', material: true };
+    case 'propose_recategorize':
+      return { summary: 'Propuesta de categoría preparada.', material: false };
+    default:
+      return { material: false };
+  }
+};
+
 const tryParseJsonObject = (raw: string): Record<string, unknown> | undefined => {
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -182,7 +234,10 @@ async function* invokeHarnessStream(
     }],
   }));
 
-  const toolUseByIndex = new Map<number, { name: string; inputJson: string }>();
+  const toolUseByIndex = new Map<number, { toolUseId: string; name: string; inputJson: string }>();
+  const toolResultByIndex = new Map<number, { toolUseId: string; status?: string; payload?: Record<string, unknown> }>();
+  const activeTools = new Map<string, { name: string; label: string; attempt: number; startedAt: number }>();
+  const attemptsByTool = new Map<string, number>();
 
   for await (const event of response.stream ?? []) {
     if (event.contentBlockDelta?.delta?.text) {
@@ -191,9 +246,25 @@ async function* invokeHarnessStream(
 
     const startToolUse = event.contentBlockStart?.start?.toolUse;
     if (startToolUse && event.contentBlockStart?.contentBlockIndex !== undefined) {
+      const toolUseId = startToolUse.toolUseId ?? `tool-${event.contentBlockStart.contentBlockIndex}`;
+      const name = startToolUse.name ?? 'unknown';
+      const attempt = (attemptsByTool.get(name) ?? 0) + 1;
+      const label = toolLabel(name);
+      attemptsByTool.set(name, attempt);
       toolUseByIndex.set(event.contentBlockStart.contentBlockIndex, {
-        name: startToolUse.name ?? '',
+        toolUseId,
+        name,
         inputJson: '',
+      });
+      activeTools.set(toolUseId, { name, label, attempt, startedAt: Date.now() });
+      yield { type: 'tool_start', toolUseId, name, label, attempt };
+    }
+
+    const startToolResult = event.contentBlockStart?.start?.toolResult;
+    if (startToolResult && event.contentBlockStart?.contentBlockIndex !== undefined) {
+      toolResultByIndex.set(event.contentBlockStart.contentBlockIndex, {
+        toolUseId: startToolResult.toolUseId ?? '',
+        status: startToolResult.status,
       });
     }
 
@@ -221,16 +292,60 @@ async function* invokeHarnessStream(
         }
       }
       toolUseByIndex.delete(event.contentBlockStop.contentBlockIndex);
+
+      const result = toolResultByIndex.get(event.contentBlockStop.contentBlockIndex);
+      if (result) {
+        const active = activeTools.get(result.toolUseId);
+        if (active) {
+          const durationMs = Math.max(0, Date.now() - active.startedAt);
+          if (result.status === 'error') {
+            yield {
+              type: 'tool_failed',
+              toolUseId: result.toolUseId,
+              name: active.name,
+              label: active.label,
+              attempt: active.attempt,
+              durationMs,
+              message: `No se pudo completar: ${active.label.toLowerCase()}.`,
+            };
+          } else {
+            const summary = result.payload ? summarizeToolResult(active.name, result.payload) : { material: false };
+            yield {
+              type: 'tool_complete',
+              toolUseId: result.toolUseId,
+              name: active.name,
+              label: active.label,
+              attempt: active.attempt,
+              durationMs,
+              ...summary,
+            };
+          }
+          activeTools.delete(result.toolUseId);
+        }
+        toolResultByIndex.delete(event.contentBlockStop.contentBlockIndex);
+      }
     }
 
     const toolResultDeltas = event.contentBlockDelta?.delta?.toolResult;
     if (Array.isArray(toolResultDeltas)) {
+      const toolResultIndex = event.contentBlockDelta?.contentBlockIndex;
       for (const block of toolResultDeltas) {
         if (block.json && typeof block.json === 'object' && !Array.isArray(block.json)) {
-          yield* citationsFromPayload(block.json as Record<string, unknown>);
+          const payload = block.json as Record<string, unknown>;
+          const result = toolResultIndex === undefined
+            ? undefined
+            : toolResultByIndex.get(toolResultIndex);
+          if (result) result.payload = payload;
+          yield* citationsFromPayload(payload);
         } else if (typeof block.text === 'string') {
           const parsed = tryParseJsonObject(block.text);
-          if (parsed) yield* citationsFromPayload(parsed);
+          if (parsed) {
+            const result = toolResultIndex === undefined
+              ? undefined
+              : toolResultByIndex.get(toolResultIndex);
+            if (result) result.payload = parsed;
+            yield* citationsFromPayload(parsed);
+          }
         }
       }
     }
