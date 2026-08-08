@@ -429,27 +429,11 @@ export class PersonalFinanceV1Stack extends Stack {
       timeout: Duration.minutes(15),
       memorySize: 256,
     });
+    // Harness/Gateway create a web of control-plane resources (workload identity,
+    // managed runtime, endpoints). Scope is the provisioner custom resource only.
     agentcoreProvisionerFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: [
-        'bedrock-agentcore:CreateGateway',
-        'bedrock-agentcore:GetGateway',
-        'bedrock-agentcore:ListGateways',
-        'bedrock-agentcore:DeleteGateway',
-        'bedrock-agentcore:CreateGatewayTarget',
-        'bedrock-agentcore:GetGatewayTarget',
-        'bedrock-agentcore:ListGatewayTargets',
-        'bedrock-agentcore:DeleteGatewayTarget',
-        'bedrock-agentcore:CreateHarness',
-        'bedrock-agentcore:GetHarness',
-        'bedrock-agentcore:ListHarnesses',
-        'bedrock-agentcore:UpdateHarness',
-        'bedrock-agentcore:DeleteHarness',
-        // CreateGateway (AWS_IAM) provisions a workload identity under the hood.
-        'bedrock-agentcore:CreateWorkloadIdentity',
-        'bedrock-agentcore:GetWorkloadIdentity',
-        'bedrock-agentcore:ListWorkloadIdentities',
-        'bedrock-agentcore:UpdateWorkloadIdentity',
-        'bedrock-agentcore:DeleteWorkloadIdentity',
+        'bedrock-agentcore:*',
         'iam:PassRole',
       ],
       resources: ['*'],
