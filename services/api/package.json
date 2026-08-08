@@ -36,7 +36,8 @@
     "@aws-sdk/lib-dynamodb": "^3.883.0",
     "@finance/domain": "*",
     "@finance/ledger": "*",
-    "@finance/notify": "*"
+    "@finance/notify": "*",
+    "aws-jwt-verify": "^5.2.1"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.147",

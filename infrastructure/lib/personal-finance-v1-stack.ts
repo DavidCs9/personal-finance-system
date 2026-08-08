@@ -559,7 +559,7 @@ export class PersonalFinanceV1Stack extends Stack {
       logGroup: this.createLogGroup('AgentProxyLogGroup', 'personal-finance-v1-agent-proxy'),
       entry: path.join(__dirname, '..', 'lambda', 'agent-proxy.ts'),
       handler: 'handler',
-      description: 'JWT proxy → Prompt Management + AgentCore InvokeHarness (SSE).',
+      description: 'JWT proxy → Prompt Management + AgentCore InvokeHarness (SSE Function URL stream).',
       timeout: Duration.seconds(29),
       memorySize: 512,
       environment: {
@@ -567,6 +567,8 @@ export class PersonalFinanceV1Stack extends Stack {
         HARNESS_ARN: harnessArn,
         SYSTEM_PROMPT_VERSION_PARAM: systemPromptVersionParamName,
         SYSTEM_PROMPT_CACHE_TTL_MS: '30000',
+        COGNITO_USER_POOL_ID: userPool.userPoolId,
+        COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
       },
     });
     agentProxyFunction.addToRolePolicy(new iam.PolicyStatement({
@@ -591,9 +593,25 @@ export class PersonalFinanceV1Stack extends Stack {
       ],
     }));
 
+    // API Gateway HTTP API buffers Lambda responses; real SSE needs Function URL RESPONSE_STREAM.
+    const agentProxyFunctionUrl = agentProxyFunction.addFunctionUrl({
+      authType: lambda.FunctionUrlAuthType.NONE,
+      invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
+      cors: {
+        allowedOrigins: [webAppUrl],
+        allowedMethods: [lambda.HttpMethod.POST],
+        allowedHeaders: ['authorization', 'content-type', 'accept'],
+        maxAge: Duration.hours(24),
+      },
+    });
+
     new cdk.CfnOutput(this, 'AgentCoreHarnessArn', { value: harnessArn });
     new cdk.CfnOutput(this, 'AgentCoreGatewayArn', {
       value: agentcoreResources.getAttString('GatewayArn'),
+    });
+    new cdk.CfnOutput(this, 'AgentChatUrl', {
+      value: agentProxyFunctionUrl.url,
+      description: 'Streaming SSE Function URL for POST agent chat (JWT in Authorization header).',
     });
     new cdk.CfnOutput(this, 'OlbiaSystemPromptVersionParam', {
       value: systemPromptVersionParamName,
@@ -897,7 +915,6 @@ export class PersonalFinanceV1Stack extends Stack {
       { jwtAudience: [userPoolClient.userPoolClientId] },
     );
     const apiIntegration = new HttpLambdaIntegration('ApiLambdaIntegration', apiFunction);
-    const agentProxyIntegration = new HttpLambdaIntegration('AgentProxyIntegration', agentProxyFunction);
     const applePayCaptureIntegration = new HttpLambdaIntegration('ApplePayCaptureIntegration', applePayCaptureFunction);
     for (const route of [
       'GET /events',
@@ -953,12 +970,6 @@ export class PersonalFinanceV1Stack extends Stack {
       });
     }
     httpApi.addRoutes({
-      path: '/agent/chat',
-      methods: [apigatewayv2.HttpMethod.POST],
-      integration: agentProxyIntegration,
-      authorizer,
-    });
-    httpApi.addRoutes({
       path: '/captures/apple-pay',
       methods: [apigatewayv2.HttpMethod.POST],
       integration: applePayCaptureIntegration,
@@ -1002,6 +1013,7 @@ export class PersonalFinanceV1Stack extends Stack {
         s3deploy.Source.asset(path.join(__dirname, '..', '..', 'apps', 'web', 'dist')),
         s3deploy.Source.data('runtime-config.js', `window.__LEDGER_CONFIG__ = ${JSON.stringify({
           apiBaseUrl: httpApi.apiEndpoint.replace(/\/$/, ''),
+          agentChatUrl: agentProxyFunctionUrl.url.replace(/\/$/, ''),
           cognitoUserPoolId: userPool.userPoolId,
           cognitoUserPoolClientId: userPoolClient.userPoolClientId,
           region: this.region,
