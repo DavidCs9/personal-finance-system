@@ -393,8 +393,9 @@ export class PersonalFinanceV1Stack extends Stack {
       assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com', {
         conditions: {
           StringEquals: { 'aws:SourceAccount': this.account },
+          // Harness provisions a managed Runtime under the hood; both ARN shapes must match.
           ArnLike: {
-            'aws:SourceArn': `arn:aws:bedrock-agentcore:${this.region}:${this.account}:harness/*`,
+            'aws:SourceArn': `arn:aws:bedrock-agentcore:${this.region}:${this.account}:*`,
           },
         },
       }),

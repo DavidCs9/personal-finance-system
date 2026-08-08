@@ -47,7 +47,7 @@ interface ProviderEvent {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const waitUntil = async <T extends { status?: string }>(
+const waitUntil = async <T extends { status?: string; failureReason?: string }>(
   label: string,
   read: () => Promise<T>,
   ready: readonly string[],
@@ -60,7 +60,8 @@ const waitUntil = async <T extends { status?: string }>(
     const status = current.status ?? '';
     if (ready.includes(status)) return current;
     if (failed.includes(status)) {
-      throw new Error(`${label} entered terminal status ${status}`);
+      const reason = current.failureReason ? `: ${current.failureReason}` : '';
+      throw new Error(`${label} entered terminal status ${status}${reason}`);
     }
     if (Date.now() - started > timeoutMs) {
       throw new Error(`${label} timed out waiting for READY (last=${status})`);
@@ -234,26 +235,49 @@ const ensureHarness = async (input: {
   const systemPrompt = [{ text: HARNESS_PLACEHOLDER_SYSTEM_PROMPT }];
   const existingId = await findHarnessIdByName(input.name);
   if (existingId) {
-    await control.send(new UpdateHarnessCommand({
-      harnessId: existingId,
-      model,
-      systemPrompt,
-      tools: harnessTools(input.gatewayArn),
-      memory: { optionalValue: { disabled: {} } },
-      maxIterations: 25,
-      maxTokens: 4096,
-      timeoutSeconds: 300,
-    }));
-    const ready = await waitUntil(
-      'harness',
-      async () => {
-        const response = await control.send(new GetHarnessCommand({ harnessId: existingId }));
-        return { status: response.harness?.status, harness: response.harness };
-      },
-      ['READY'],
-      ['CREATE_FAILED', 'UPDATE_FAILED', 'DELETE_FAILED'],
-    );
-    return { harnessId: existingId, harnessArn: ready.harness!.arn! };
+    const existing = await control.send(new GetHarnessCommand({ harnessId: existingId }));
+    const status = existing.harness?.status;
+    if (status === 'READY') {
+      await control.send(new UpdateHarnessCommand({
+        harnessId: existingId,
+        model,
+        systemPrompt,
+        tools: harnessTools(input.gatewayArn),
+        memory: { optionalValue: { disabled: {} } },
+        maxIterations: 25,
+        maxTokens: 4096,
+        timeoutSeconds: 300,
+      }));
+      const ready = await waitUntil(
+        'harness',
+        async () => {
+          const response = await control.send(new GetHarnessCommand({ harnessId: existingId }));
+          return { status: response.harness?.status, harness: response.harness };
+        },
+        ['READY'],
+        ['CREATE_FAILED', 'UPDATE_FAILED', 'DELETE_FAILED'],
+      );
+      return { harnessId: existingId, harnessArn: ready.harness!.arn! };
+    }
+    if (status === 'CREATE_FAILED' || status === 'UPDATE_FAILED' || status === 'DELETE_FAILED') {
+      await control.send(new DeleteHarnessCommand({ harnessId: existingId }));
+      const started = Date.now();
+      for (;;) {
+        try {
+          await control.send(new GetHarnessCommand({ harnessId: existingId }));
+        } catch (error) {
+          const name = error && typeof error === 'object' && 'name' in error
+            ? String((error as { name: string }).name)
+            : '';
+          if (/ResourceNotFound|NotFound/i.test(name)) break;
+          throw error;
+        }
+        if (Date.now() - started > 5 * 60_000) {
+          throw new Error(`Timed out deleting failed harness ${existingId}`);
+        }
+        await sleep(5_000);
+      }
+    }
   }
 
   const created = await control.send(new CreateHarnessCommand({
@@ -282,12 +306,19 @@ const ensureHarness = async (input: {
     'harness',
     async () => {
       const response = await control.send(new GetHarnessCommand({ harnessId }));
-      return { status: response.harness?.status, harness: response.harness };
+      return {
+        status: response.harness?.status,
+        harness: response.harness,
+        failureReason: (response.harness as { failureReason?: string } | undefined)?.failureReason,
+      };
     },
     ['READY'],
     ['CREATE_FAILED', 'UPDATE_FAILED', 'DELETE_FAILED'],
   );
-  return { harnessId, harnessArn: ready.harness!.arn! };
+  if (!ready.harness?.arn) {
+    throw new Error(`Harness ready without ARN${ready.failureReason ? `: ${ready.failureReason}` : ''}`);
+  }
+  return { harnessId, harnessArn: ready.harness.arn };
 };
 
 export const handler = async (event: ProviderEvent): Promise<{
