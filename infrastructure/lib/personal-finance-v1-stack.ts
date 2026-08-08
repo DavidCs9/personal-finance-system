@@ -553,6 +553,8 @@ export class PersonalFinanceV1Stack extends Stack {
         GatewayRoleArn: gatewayRole.roleArn,
         ToolsLambdaArn: agentToolsFunction.functionArn,
         ModelId: OLBIA_SYSTEM_PROMPT_MODEL_ID,
+        // Reconcile AgentCore resources when the provisioner lifecycle logic changes.
+        ProvisionerVersion: agentcoreProvisionerFunction.currentVersion.version,
         // Force replace when tools Lambda changes identity.
         ToolsLambdaVersion: agentToolsFunction.currentVersion.version,
       },
