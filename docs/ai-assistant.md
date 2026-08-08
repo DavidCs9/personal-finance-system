@@ -26,7 +26,7 @@ SPA (JWT Cognito)
 
 - El browser **nunca** habla con AgentCore.
 - El chat **no** pasa por API Gateway: HTTP API bufferiza y rompe SSE. Por eso `agentChatUrl` es una Function URL con `InvokeMode=RESPONSE_STREAM`.
-- CORS del stream: con `RESPONSE_STREAM`, **no** configures CORS en la Function URL (duplica `Access-Control-Allow-Origin` y Safari/Chrome fallan). `agent-proxy` pone `Access-Control-*` solo en OPTIONS, errores y el `HttpResponseStream`.
+- CORS del stream: solo en la Function URL (`cors`). No pongas `Access-Control-*` en `agent-proxy` — con `RESPONSE_STREAM` el platform también los inyecta y un ACAO duplicado tumba el browser.
 - El loop del agente lo corre **Harness** (no un Converse manual en la Lambda).
 - Las tools viven detrás de **Gateway** (Lambda target).
 - Code interpreter: **apagado**.
