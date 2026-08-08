@@ -11,6 +11,8 @@ import { resolveRuntimePrompt } from './prompt-runtime.js';
 const harnessArn = process.env.HARNESS_ARN?.trim();
 const cognitoUserPoolId = process.env.COGNITO_USER_POOL_ID?.trim();
 const cognitoClientId = process.env.COGNITO_CLIENT_ID?.trim();
+/** SPA origin — required on every RESPONSE_STREAM reply; Function URL CORS does not attach to streamed metadata. */
+const webAppOrigin = (process.env.WEB_APP_URL?.trim() || 'https://finance.castrodavid.dev').replace(/\/$/, '');
 const agentcore = new BedrockAgentCoreClient({});
 
 const jwtVerifier = cognitoUserPoolId && cognitoClientId
@@ -265,7 +267,19 @@ const runWithRetries = async function* (
   };
 };
 
+const corsHeaders = (event: APIGatewayProxyEventV2): Record<string, string> => {
+  const requestOrigin = headerValue(event.headers, 'origin');
+  const allowOrigin = requestOrigin === webAppOrigin ? requestOrigin : webAppOrigin;
+  return {
+    'access-control-allow-origin': allowOrigin,
+    'access-control-allow-headers': 'authorization,content-type,accept',
+    'access-control-allow-methods': 'POST,OPTIONS',
+    vary: 'Origin',
+  };
+};
+
 const writeJsonError = (
+  event: APIGatewayProxyEventV2,
   responseStream: Writable,
   statusCode: number,
   message: string,
@@ -275,6 +289,7 @@ const writeJsonError = (
   const httpStream = lambdaRuntime.HttpResponseStream.from(responseStream, {
     statusCode,
     headers: {
+      ...corsHeaders(event),
       'content-type': 'application/json; charset=utf-8',
       'x-request-id': requestId,
     },
@@ -297,14 +312,18 @@ const streamHandler = async (
   if (method === 'OPTIONS') {
     const httpStream = lambdaRuntime.HttpResponseStream.from(responseStream, {
       statusCode: 204,
-      headers: { 'cache-control': 'no-cache' },
+      headers: {
+        ...corsHeaders(event),
+        'cache-control': 'no-cache',
+        'access-control-max-age': '86400',
+      },
     });
     httpStream.end();
     return;
   }
 
   if (method !== 'POST') {
-    writeJsonError(responseStream, 404, 'Route not found.', requestId);
+    writeJsonError(event, responseStream, 404, 'Route not found.', requestId);
     return;
   }
 
@@ -314,6 +333,7 @@ const streamHandler = async (
     const httpStream = lambdaRuntime.HttpResponseStream.from(responseStream, {
       statusCode: 200,
       headers: {
+        ...corsHeaders(event),
         'content-type': 'text/event-stream; charset=utf-8',
         'cache-control': 'no-cache',
         'x-request-id': requestId,
@@ -332,7 +352,7 @@ const streamHandler = async (
   } catch (error) {
     const message = error instanceof Error ? error.message : 'No pude consultar tus datos.';
     const statusCode = /principal|Bearer|JWT|Unauthorized|token/i.test(message) ? 401 : 400;
-    writeJsonError(responseStream, statusCode, message, requestId);
+    writeJsonError(event, responseStream, statusCode, message, requestId);
   }
 };
 
