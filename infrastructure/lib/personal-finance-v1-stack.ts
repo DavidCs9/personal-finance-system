@@ -569,6 +569,8 @@ export class PersonalFinanceV1Stack extends Stack {
         SYSTEM_PROMPT_CACHE_TTL_MS: '30000',
         COGNITO_USER_POOL_ID: userPool.userPoolId,
         COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+        // Streamed Function URL responses must set CORS themselves (see agent-proxy).
+        WEB_APP_URL: webAppUrl,
       },
     });
     agentProxyFunction.addToRolePolicy(new iam.PolicyStatement({
@@ -601,6 +603,7 @@ export class PersonalFinanceV1Stack extends Stack {
         allowedOrigins: [webAppUrl],
         allowedMethods: [lambda.HttpMethod.POST],
         allowedHeaders: ['authorization', 'content-type', 'accept'],
+        // Platform CORS is incomplete for RESPONSE_STREAM; proxy also sets headers.
         maxAge: Duration.hours(24),
       },
     });

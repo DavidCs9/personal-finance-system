@@ -500,6 +500,7 @@ export const ledgerApi = {
 
     const execute = (token: string) => fetch(chatUrl, {
       method: "POST",
+      mode: "cors",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
@@ -508,11 +509,20 @@ export const ledgerApi = {
       body: JSON.stringify(input),
     });
 
-    let response = await execute(requestToken);
+    let response: Response;
+    try {
+      response = await execute(requestToken);
+    } catch {
+      throw new Error("No pude consultar tus datos. Reintenta.");
+    }
     if (response.status === 401) {
       requestToken = await refreshSession();
       if (!requestToken) throw endedSessionError();
-      response = await execute(requestToken);
+      try {
+        response = await execute(requestToken);
+      } catch {
+        throw new Error("No pude consultar tus datos. Reintenta.");
+      }
     }
     if (!response.ok) {
       const body = await response.json().catch(() => ({ message: "No pude consultar tus datos." })) as {
@@ -521,13 +531,7 @@ export const ledgerApi = {
       };
       throw new Error(body.message ?? "No pude consultar tus datos.");
     }
-    if (!response.body) {
-      throw new Error("No pude consultar tus datos.");
-    }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
     let sessionId: string | undefined = input.sessionId;
 
     const consumeBlock = (block: string) => {
@@ -543,6 +547,23 @@ export const ledgerApi = {
         // ignore malformed chunks
       }
     };
+
+    const consumeSseText = (raw: string) => {
+      const parts = raw.split("\n\n");
+      for (const part of parts) {
+        if (part.trim()) consumeBlock(part);
+      }
+    };
+
+    // Some iOS WebKit builds expose a null body even on OK responses; fall back to buffered text.
+    if (!response.body) {
+      consumeSseText(await response.text());
+      return sessionId;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
 
     while (true) {
       const { done, value } = await reader.read();

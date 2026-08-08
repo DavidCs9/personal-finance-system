@@ -821,6 +821,44 @@ html.private-mode .hero-amount .amt {
   padding: 1px 5px;
 }
 .assistant-md .amt { font-variant-numeric: tabular-nums; font-weight: 650; }
+.assistant-md-hr {
+  border: 0;
+  border-top: 1px solid #e0d8ce;
+  margin: 4px 0;
+}
+.assistant-md-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 2px 0;
+}
+.assistant-md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.assistant-md-table th,
+.assistant-md-table td {
+  padding: 7px 8px;
+  text-align: left;
+  border-bottom: 1px solid #ebe4da;
+  vertical-align: top;
+}
+.assistant-md-table th {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  border-bottom-color: #d7cfc4;
+}
+.assistant-md-table td.num,
+.assistant-md-table th.num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.assistant-md-table tbody tr:last-child td { border-bottom: 0; }
 .assistant-citations { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .assistant-citation { border: 1px solid #d7cfc4; border-radius: 4px; padding: 2px 8px; font-size: 11px; color: var(--ink-soft); }
 .assistant-proposal { margin-top: 10px; display: grid; gap: 8px; }

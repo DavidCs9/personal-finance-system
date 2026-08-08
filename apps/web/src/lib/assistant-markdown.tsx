@@ -7,12 +7,14 @@ const escapeHtml = (value: string): string =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 
+const MONEY_PART = String.raw`~?\$\s?-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?`;
+
 const wrapMoney = (raw: string, keyPrefix: string): ReactNode[] => {
-  const parts = raw.split(/(\$\s?-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)/g);
+  const parts = raw.split(new RegExp(`(${MONEY_PART})`, "g"));
   const nodes: ReactNode[] = [];
   for (const [index, part] of parts.entries()) {
     if (!part) continue;
-    if (/^\$\s?-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?$/.test(part)) {
+    if (new RegExp(`^${MONEY_PART}$`).test(part)) {
       nodes.push(
         <span key={`${keyPrefix}-m${index}`} className="amt">
           {part}
@@ -54,10 +56,46 @@ type Block =
   | { readonly kind: "heading"; readonly level: 2 | 3; readonly text: string }
   | { readonly kind: "paragraph"; readonly text: string }
   | { readonly kind: "ul"; readonly items: readonly string[] }
-  | { readonly kind: "ol"; readonly items: readonly string[] };
+  | { readonly kind: "ol"; readonly items: readonly string[] }
+  | { readonly kind: "hr" }
+  | { readonly kind: "table"; readonly headers: readonly string[]; readonly rows: readonly (readonly string[])[] };
+
+const isTableSeparator = (line: string): boolean =>
+  /^\|?[\s:|-]+\|[\s:|-]+/.test(line) && /---/.test(line);
+
+const splitTableRow = (line: string): string[] => {
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return trimmed.split("|").map((cell) => cell.trim());
+};
+
+const looksLikeTableRow = (line: string): boolean => {
+  const trimmed = line.trim();
+  return trimmed.includes("|") && splitTableRow(trimmed).length >= 2;
+};
+
+/** Recover tables the model collapsed into one line: `| a | b | |---|---| | c | d |`. */
+export const expandCollapsedTableLines = (line: string): string[] => {
+  const trimmed = line.trim();
+  if (!trimmed.includes("|")) return [line];
+  const chunks = trimmed
+    .split(/\s*\|\s*\|\s*/)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+  if (chunks.length < 2) return [line];
+  const hasSeparator = chunks.some((chunk) => /^[\s:|-]*---[\s:|-]*$/.test(chunk.replace(/\|/g, "").trim()) || isTableSeparator(`|${chunk}|`));
+  if (!hasSeparator && chunks.length < 3) return [line];
+  return chunks.map((chunk) => (chunk.startsWith("|") ? chunk : `| ${chunk} |`));
+};
 
 const parseBlocks = (markdown: string): Block[] => {
-  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const rawLines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const lines: string[] = [];
+  for (const line of rawLines) {
+    const expanded = expandCollapsedTableLines(line);
+    if (expanded.length > 1) lines.push(...expanded);
+    else lines.push(line);
+  }
+
   const blocks: Block[] = [];
   let i = 0;
 
@@ -65,6 +103,12 @@ const parseBlocks = (markdown: string): Block[] => {
     const line = lines[i] ?? "";
     const trimmed = line.trim();
     if (!trimmed) {
+      i += 1;
+      continue;
+    }
+
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      blocks.push({ kind: "hr" });
       i += 1;
       continue;
     }
@@ -77,6 +121,29 @@ const parseBlocks = (markdown: string): Block[] => {
         text: heading[2].trim(),
       });
       i += 1;
+      continue;
+    }
+
+    if (looksLikeTableRow(trimmed)) {
+      const tableLines: string[] = [];
+      while (i < lines.length) {
+        const candidate = (lines[i] ?? "").trim();
+        if (!candidate) break;
+        if (!looksLikeTableRow(candidate) && !isTableSeparator(candidate)) break;
+        tableLines.push(candidate);
+        i += 1;
+      }
+      const bodyLines = tableLines.filter((row) => !isTableSeparator(row));
+      if (bodyLines.length >= 1) {
+        const headers = splitTableRow(bodyLines[0] ?? "");
+        const rows = bodyLines.slice(1).map(splitTableRow);
+        if (headers.length >= 2) {
+          blocks.push({ kind: "table", headers, rows });
+          continue;
+        }
+      }
+      // Fall through as paragraph if malformed.
+      blocks.push({ kind: "paragraph", text: tableLines.join(" ") });
       continue;
     }
 
@@ -108,7 +175,14 @@ const parseBlocks = (markdown: string): Block[] => {
     i += 1;
     while (i < lines.length) {
       const next = (lines[i] ?? "").trim();
-      if (!next || /^(#{2,3})\s+/.test(next) || /^[-*]\s+/.test(next) || /^\d+[.)]\s+/.test(next)) {
+      if (
+        !next
+        || /^(#{2,3})\s+/.test(next)
+        || /^[-*]\s+/.test(next)
+        || /^\d+[.)]\s+/.test(next)
+        || /^(-{3,}|\*{3,}|_{3,})$/.test(next)
+        || looksLikeTableRow(next)
+      ) {
         break;
       }
       paragraph.push(next);
@@ -133,6 +207,44 @@ export function AssistantMarkdown({ text }: { readonly text: string }) {
             <Tag key={index} className="assistant-md-heading">
               {renderInlineMarkdown(block.text)}
             </Tag>
+          );
+        }
+        if (block.kind === "hr") {
+          return <hr key={index} className="assistant-md-hr" />;
+        }
+        if (block.kind === "table") {
+          const numericCol = block.headers.length === 2 ? 1 : -1;
+          return (
+            <div key={index} className="assistant-md-table-wrap">
+              <table className="assistant-md-table">
+                <thead>
+                  <tr>
+                    {block.headers.map((header, headerIndex) => (
+                      <th
+                        key={headerIndex}
+                        className={headerIndex === numericCol ? "num" : undefined}
+                      >
+                        {renderInlineMarkdown(header)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {block.rows.map((row, rowIndex) => (
+                    <tr key={rowIndex}>
+                      {block.headers.map((_, cellIndex) => (
+                        <td
+                          key={cellIndex}
+                          className={cellIndex === numericCol ? "num" : undefined}
+                        >
+                          {renderInlineMarkdown(row[cellIndex] ?? "")}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           );
         }
         if (block.kind === "ul") {

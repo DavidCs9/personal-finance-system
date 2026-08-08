@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AssistantMarkdown, renderInlineMarkdown } from "./assistant-markdown";
+import {
+  AssistantMarkdown,
+  expandCollapsedTableLines,
+  renderInlineMarkdown,
+} from "./assistant-markdown";
 
 describe("renderInlineMarkdown", () => {
   it("wraps money and bold", () => {
@@ -8,6 +12,22 @@ describe("renderInlineMarkdown", () => {
     expect(html).toContain('class="amt"');
     expect(html).toContain("$1,234.50");
     expect(html).toContain("<strong>");
+  });
+
+  it("wraps approximate money with tilde", () => {
+    const html = renderToStaticMarkup(<>{renderInlineMarkdown("Quedan ~$5,836")}</>);
+    expect(html).toContain('class="amt"');
+    expect(html).toContain("~$5,836");
+  });
+});
+
+describe("expandCollapsedTableLines", () => {
+  it("splits a one-line pipe table into rows", () => {
+    const lines = expandCollapsedTableLines(
+      "| Concepto | Monto | |---|---| | Gasto total | ~$24,164 | | Disponible | ~$5,836 |",
+    );
+    expect(lines.length).toBeGreaterThanOrEqual(3);
+    expect(lines.some((line) => /---/.test(line))).toBe(true);
   });
 });
 
@@ -23,5 +43,41 @@ describe("AssistantMarkdown", () => {
     expect(html).toContain("<ul");
     expect(html).toContain('class="amt"');
     expect(html).toContain("Cierre");
+  });
+
+  it("renders GFM tables and horizontal rules", () => {
+    const html = renderToStaticMarkup(
+      <AssistantMarkdown
+        text={[
+          "| Concepto | Monto |",
+          "|---|---|",
+          "| Gasto total | ~$24,164 |",
+          "| Disponible | ~$5,836 |",
+          "",
+          "---",
+          "",
+          "Listo.",
+        ].join("\n")}
+      />,
+    );
+    expect(html).toContain("<table");
+    expect(html).toContain("assistant-md-table");
+    expect(html).toContain("<th");
+    expect(html).toContain("Gasto total");
+    expect(html).toContain('class="amt"');
+    expect(html).toContain("~$24,164");
+    expect(html).toContain("<hr");
+    expect(html).not.toContain("|---|");
+  });
+
+  it("recovers collapsed single-line tables", () => {
+    const html = renderToStaticMarkup(
+      <AssistantMarkdown
+        text="| Concepto | Monto | |---|---| | Gasto total | ~$24,164 | | Disponible | ~$5,836 |"
+      />,
+    );
+    expect(html).toContain("<table");
+    expect(html).toContain("Disponible");
+    expect(html).not.toMatch(/\|\s*---/);
   });
 });
