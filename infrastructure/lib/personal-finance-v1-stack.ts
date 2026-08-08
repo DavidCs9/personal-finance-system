@@ -596,16 +596,12 @@ export class PersonalFinanceV1Stack extends Stack {
     }));
 
     // API Gateway HTTP API buffers Lambda responses; real SSE needs Function URL RESPONSE_STREAM.
+    // Do NOT set Function URL `cors:` — the platform would also inject Access-Control-* on
+    // RESPONSE_STREAM replies and browsers reject duplicate ACAO (full CORS failure).
+    // agent-proxy sets CORS on OPTIONS + every HttpResponseStream metadata.
     const agentProxyFunctionUrl = agentProxyFunction.addFunctionUrl({
       authType: lambda.FunctionUrlAuthType.NONE,
       invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
-      cors: {
-        allowedOrigins: [webAppUrl],
-        allowedMethods: [lambda.HttpMethod.POST],
-        allowedHeaders: ['authorization', 'content-type', 'accept'],
-        // Platform CORS is incomplete for RESPONSE_STREAM; proxy also sets headers.
-        maxAge: Duration.hours(24),
-      },
     });
 
     new cdk.CfnOutput(this, 'AgentCoreHarnessArn', { value: harnessArn });
