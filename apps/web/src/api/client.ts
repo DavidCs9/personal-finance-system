@@ -18,7 +18,7 @@ import { CAJITA_ACCOUNT_ID, type WealthSnapshot } from "@finance/domain";
 
 interface LedgerRuntimeConfig {
   readonly apiBaseUrl: string;
-  /** Streaming SSE endpoint (Lambda Function URL). Falls back to apiBaseUrl/agent/chat. */
+  /** @deprecated SSE Function URL; ignored — chat uses apiBaseUrl/agent/chat. */
   readonly agentChatUrl?: string;
   readonly cognitoUserPoolId: string;
   readonly cognitoUserPoolClientId: string;
@@ -482,7 +482,7 @@ export const ledgerApi = {
       body: JSON.stringify({ action: "set_category", ...body }),
     });
   },
-  async streamAgentChat(
+  async postAgentChat(
     input: { readonly message: string; readonly month: string; readonly sessionId?: string },
     idToken: string,
     onEvent: (event: AgentChatEvent) => void,
@@ -495,16 +495,13 @@ export const ledgerApi = {
         : await refreshSession();
     if (!requestToken) throw endedSessionError();
 
-    const chatUrl = config().agentChatUrl?.trim()
-      || `${config().apiBaseUrl.replace(/\/$/, "")}/agent/chat`;
+    const chatUrl = `${config().apiBaseUrl.replace(/\/$/, "")}/agent/chat`;
 
     const execute = (token: string) => fetch(chatUrl, {
       method: "POST",
-      mode: "cors",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
-        Accept: "text/event-stream",
       },
       body: JSON.stringify(input),
     });
@@ -532,50 +529,25 @@ export const ledgerApi = {
       throw new Error(body.message ?? "No pude consultar tus datos.");
     }
 
-    let sessionId: string | undefined = input.sessionId;
-
-    const consumeBlock = (block: string) => {
-      const line = block.trim();
-      if (!line.startsWith("data:")) return;
-      const payload = line.slice(5).trim();
-      if (!payload) return;
-      try {
-        const event = JSON.parse(payload) as AgentChatEvent;
-        onEvent(event);
-        if (event.type === "done") sessionId = event.sessionId;
-      } catch {
-        // ignore malformed chunks
-      }
+    const payload = await response.json() as {
+      sessionId?: string;
+      events?: AgentChatEvent[];
     };
-
-    const consumeSseText = (raw: string) => {
-      const parts = raw.split("\n\n");
-      for (const part of parts) {
-        if (part.trim()) consumeBlock(part);
-      }
-    };
-
-    // Some iOS WebKit builds expose a null body even on OK responses; fall back to buffered text.
-    if (!response.body) {
-      consumeSseText(await response.text());
-      return sessionId;
+    let sessionId: string | undefined = payload.sessionId ?? input.sessionId;
+    for (const event of payload.events ?? []) {
+      onEvent(event);
+      if (event.type === "done") sessionId = event.sessionId;
     }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() ?? "";
-      for (const part of parts) consumeBlock(part);
-    }
-    buffer += decoder.decode();
-    if (buffer.trim()) consumeBlock(buffer);
     return sessionId;
+  },
+
+  /** @deprecated Use postAgentChat — SSE path removed from product. */
+  async streamAgentChat(
+    input: { readonly message: string; readonly month: string; readonly sessionId?: string },
+    idToken: string,
+    onEvent: (event: AgentChatEvent) => void,
+  ): Promise<string | undefined> {
+    return this.postAgentChat(input, idToken, onEvent);
   },
 };
 

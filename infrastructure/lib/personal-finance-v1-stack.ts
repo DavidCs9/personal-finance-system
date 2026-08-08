@@ -596,6 +596,7 @@ export class PersonalFinanceV1Stack extends Stack {
     // API Gateway HTTP API buffers Lambda responses; real SSE needs Function URL RESPONSE_STREAM.
     // CORS must live ONLY on the Function URL config. Do not also set Access-Control-* in
     // agent-proxy — RESPONSE_STREAM replies get platform CORS and duplicate ACAO breaks browsers.
+    // Product path is buffered POST /agent/chat; Function URL kept deprecated for rollback only.
     const agentProxyFunctionUrl = agentProxyFunction.addFunctionUrl({
       authType: lambda.FunctionUrlAuthType.NONE,
       invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
@@ -607,13 +608,51 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
 
+    const agentChatBufferedFunction = new NodejsFunction(this, 'AgentChatBufferedFunction', {
+      ...lambdaDefaults,
+      functionName: 'personal-finance-v1-agent-chat',
+      logGroup: this.createLogGroup('AgentChatBufferedLogGroup', 'personal-finance-v1-agent-chat'),
+      entry: path.join(__dirname, '..', 'lambda', 'agent-chat-buffered.ts'),
+      handler: 'handler',
+      description: 'JWT (APIGW) → Prompt Management + AgentCore InvokeHarness (buffered JSON).',
+      timeout: Duration.seconds(29),
+      memorySize: 512,
+      environment: {
+        ...dataStorageEnvironment,
+        HARNESS_ARN: harnessArn,
+        SYSTEM_PROMPT_VERSION_PARAM: systemPromptVersionParamName,
+        SYSTEM_PROMPT_CACHE_TTL_MS: '30000',
+        COGNITO_USER_POOL_ID: userPool.userPoolId,
+        COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+      },
+    });
+    agentChatBufferedFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: [
+        'bedrock-agentcore:InvokeHarness',
+        'bedrock-agentcore:InvokeAgentRuntime',
+      ],
+      resources: ['*'],
+    }));
+    agentChatBufferedFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:GetPrompt'],
+      resources: [
+        `arn:aws:bedrock:${this.region}:${this.account}:prompt/*`,
+      ],
+    }));
+    agentChatBufferedFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ssm:GetParameter'],
+      resources: [
+        `arn:aws:ssm:${this.region}:${this.account}:parameter${systemPromptVersionParamName}`,
+      ],
+    }));
+
     new cdk.CfnOutput(this, 'AgentCoreHarnessArn', { value: harnessArn });
     new cdk.CfnOutput(this, 'AgentCoreGatewayArn', {
       value: agentcoreResources.getAttString('GatewayArn'),
     });
     new cdk.CfnOutput(this, 'AgentChatUrl', {
       value: agentProxyFunctionUrl.url,
-      description: 'Streaming SSE Function URL for POST agent chat (JWT in Authorization header).',
+      description: 'DEPRECATED streaming SSE Function URL; product chat uses POST /agent/chat on the HTTP API.',
     });
     new cdk.CfnOutput(this, 'OlbiaSystemPromptVersionParam', {
       value: systemPromptVersionParamName,
@@ -918,6 +957,7 @@ export class PersonalFinanceV1Stack extends Stack {
     );
     const apiIntegration = new HttpLambdaIntegration('ApiLambdaIntegration', apiFunction);
     const applePayCaptureIntegration = new HttpLambdaIntegration('ApplePayCaptureIntegration', applePayCaptureFunction);
+    const agentChatIntegration = new HttpLambdaIntegration('AgentChatBufferedIntegration', agentChatBufferedFunction);
     for (const route of [
       'GET /events',
       'POST /events/manual',
@@ -963,11 +1003,14 @@ export class PersonalFinanceV1Stack extends Stack {
       'GET /agent/movements',
       'GET /agent/wealth-snapshot',
       'POST /agent/propose-recategorize',
+      'POST /agent/chat',
     ]) {
+      const pathName = route.split(' ')[1];
+      const methodName = route.split(' ')[0] as apigatewayv2.HttpMethod;
       httpApi.addRoutes({
-        path: route.split(' ')[1],
-        methods: [route.split(' ')[0] as apigatewayv2.HttpMethod],
-        integration: apiIntegration,
+        path: pathName,
+        methods: [methodName],
+        integration: pathName === '/agent/chat' ? agentChatIntegration : apiIntegration,
         authorizer,
       });
     }
@@ -1015,7 +1058,6 @@ export class PersonalFinanceV1Stack extends Stack {
         s3deploy.Source.asset(path.join(__dirname, '..', '..', 'apps', 'web', 'dist')),
         s3deploy.Source.data('runtime-config.js', `window.__LEDGER_CONFIG__ = ${JSON.stringify({
           apiBaseUrl: httpApi.apiEndpoint.replace(/\/$/, ''),
-          agentChatUrl: agentProxyFunctionUrl.url.replace(/\/$/, ''),
           cognitoUserPoolId: userPool.userPoolId,
           cognitoUserPoolClientId: userPoolClient.userPoolClientId,
           region: this.region,
