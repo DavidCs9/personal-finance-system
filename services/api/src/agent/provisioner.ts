@@ -19,7 +19,7 @@ import {
   OLBIA_SYSTEM_PROMPT_INFERENCE,
   OLBIA_SYSTEM_PROMPT_MODEL_ID,
 } from './prompts/olbia-system.js';
-import { TOOL_DEFINITIONS } from './tools.js';
+import { TOOL_DEFINITIONS } from './tool-definitions.js';
 
 const control = new BedrockAgentCoreControlClient({});
 
