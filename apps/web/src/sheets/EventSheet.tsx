@@ -14,7 +14,7 @@ import {
   money,
   statusLabel,
 } from "../lib/format";
-import { eventsQueryKey, eventsQueryRoot } from "../lib/query-keys";
+import { eventsQueryRoot } from "../lib/query-keys";
 import type { EventFeed, PurchaseEvent } from "../types";
 
 export function EventSheet({
@@ -74,16 +74,22 @@ export function EventSheet({
 
   const updateCache = (updated: PurchaseEvent) => {
     const spendMonth = monthKeyInZone(eventDate(updated));
-    queryClient.setQueryData<EventFeed>(eventsQueryKey(spendMonth), (current) =>
-      current
-        ? {
-            ...current,
-            events: current.events.map((item) => (item.id === updated.id ? updated : item)),
-            msiRelated: current.msiRelated.map((item) => (item.id === updated.id ? updated : item)),
-          }
-        : current,
-    );
-    void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
+    // The mutation response is authoritative. Keep every cached month coherent
+    // locally instead of refetching all of them, including MSI cuota months.
+    for (const [queryKey, current] of queryClient.getQueriesData<EventFeed>({ queryKey: eventsQueryRoot })) {
+      const month = queryKey[1];
+      if (!current || typeof month !== "string") continue;
+      const isSpendMonth = month === spendMonth;
+      const hasInstallment = updated.msi?.installments.some((item) => item.month === month) ?? false;
+      queryClient.setQueryData<EventFeed>(queryKey, {
+        ...current,
+        events: current.events.map((item) => (item.id === updated.id ? updated : item)),
+        msiRelated: [
+          ...current.msiRelated.filter((item) => item.id !== updated.id),
+          ...(!isSpendMonth && hasInstallment ? [updated] : []),
+        ],
+      });
+    }
     onVerified(updated);
     setMsiEnabled(Boolean(updated.msi));
     if (updated.msi) {

@@ -239,28 +239,29 @@ export function Dashboard({
   const plan = monthlyPlanQuery.data ?? planFor({}, selectedMonth);
   const cards = cardsQuery.data?.cards ?? [];
   const wealth = wealthQuery.data;
-  const loading = eventsQuery.isPending || eventsQuery.isFetching;
+  // A refetch keeps cached data visible. Only an initial load earns a full loader.
+  const loading = eventsQuery.isPending;
   const error =
     eventsQuery.error instanceof Error
       ? eventsQuery.error.message
       : eventsQuery.error
         ? "No se pudieron cargar los movimientos."
         : undefined;
-  const planLoading = monthlyPlanQuery.isPending || monthlyPlanQuery.isFetching;
+  const planLoading = monthlyPlanQuery.isPending;
   const planLoadError =
     monthlyPlanQuery.error instanceof Error
       ? monthlyPlanQuery.error.message
       : monthlyPlanQuery.error
         ? "No se pudo cargar la configuración del mes."
         : undefined;
-  const cardsLoading = cardsQuery.isPending || cardsQuery.isFetching;
+  const cardsLoading = cardsQuery.isPending;
   const cardsLoadError =
     cardsQuery.error instanceof Error
       ? cardsQuery.error.message
       : cardsQuery.error
         ? "No se pudieron cargar tus tarjetas."
         : undefined;
-  const wealthLoading = wealthQuery.isPending || wealthQuery.isFetching;
+  const wealthLoading = wealthQuery.isPending;
   const wealthLoadError =
     wealthQuery.error instanceof Error
       ? wealthQuery.error.message
@@ -376,7 +377,6 @@ export function Dashboard({
       ? nextPlan
       : await ledgerApi.saveMonthlyPlan(selectedMonth, nextPlan, idToken);
     queryClient.setQueryData(monthlyPlanQueryKey(selectedMonth), saved);
-    await queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
   };
 
   const reviewLargest = () => {
@@ -395,8 +395,10 @@ export function Dashboard({
           setSelectedMonth(month);
           setAssistantMonthEpoch((value) => value + 1);
         }}
-        syncing={tab === "wealth" ? wealthLoading : loading}
-        refreshing={tab === "wealth" ? wealthLoading : loading || planLoading}
+        syncing={tab === "wealth" ? wealthQuery.isFetching : eventsQuery.isFetching}
+        refreshing={tab === "wealth"
+          ? wealthQuery.isFetching
+          : eventsQuery.isFetching || monthlyPlanQuery.isFetching || cardsQuery.isFetching}
         onRefresh={refresh}
         privateMode={privateMode}
         onTogglePrivateMode={togglePrivateMode}
@@ -595,7 +597,6 @@ export function Dashboard({
                 ),
               };
             });
-            await queryClient.invalidateQueries({ queryKey: cardsQueryKey });
             setEditingCard(undefined);
           }}
           onDelete={
@@ -605,7 +606,6 @@ export function Dashboard({
                   queryClient.setQueryData<{ cards: readonly CardCycle[] }>(cardsQueryKey, (current) => ({
                     cards: (current?.cards ?? cards).filter((item) => item.id !== editingCard.id),
                   }));
-                  await queryClient.invalidateQueries({ queryKey: cardsQueryKey });
                   setEditingCard(undefined);
                 }
               : undefined
@@ -676,7 +676,6 @@ export function Dashboard({
               events: [created, ...(current?.events ?? [])],
               msiRelated: current?.msiRelated ?? [],
             }));
-            void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             setActiveEvent(created);
             setTab("movements");
           }}

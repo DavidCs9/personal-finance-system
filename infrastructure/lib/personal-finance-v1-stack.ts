@@ -416,6 +416,7 @@ export class PersonalFinanceV1Stack extends Stack {
         'bedrock-agentcore:InvokeGateway',
         'bedrock-agentcore:GetGateway',
         'bedrock-agentcore:CreateEvent',
+        'bedrock-agentcore:ListEvents',
         'bedrock-agentcore:GetMemory',
         'bedrock-agentcore:RetrieveMemoryRecords',
       ],
