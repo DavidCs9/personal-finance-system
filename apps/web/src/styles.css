@@ -787,11 +787,63 @@ html.private-mode .hero-amount .amt {
 .assistant-month-chip { margin: 0; font-size: 13px; color: var(--ink-soft); }
 .assistant-memory-link { justify-self: start; border: 0; padding: 0; background: transparent; color: var(--ink-soft); font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
 .assistant-memory-link:hover { color: var(--ink); }
-.assistant-memories { display: grid; gap: 12px; }
-.assistant-memories > p { margin: 0; color: var(--ink-soft); font-size: 13px; line-height: 1.45; }
-.assistant-memories ul { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
-.assistant-memories li { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-top: 10px; border-top: 1px solid #e7e1d8; font-size: 13px; line-height: 1.35; }
-.assistant-memories li span { min-width: 0; }
+.assistant-memories-sheet {
+  display: flex;
+  flex-direction: column;
+  height: min(88dvh, 760px);
+  max-height: calc(100dvh - max(10px, env(safe-area-inset-top)));
+  overflow: hidden;
+}
+.assistant-memories-sheet > header { flex: 0 0 auto; padding-bottom: 16px; }
+.assistant-memories-sheet .close-button { font-size: 20px; }
+.assistant-memories { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.assistant-memories-intro { flex: 0 0 auto; margin: 0 0 17px; color: var(--ink-soft); font-size: 13px; line-height: 1.5; }
+.assistant-memories-list {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  margin: 0 -4px 0 0;
+  padding: 0 4px 4px 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+.assistant-memories-list li {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #e4ddd3;
+  border-radius: 13px;
+  background: #f8f4ed;
+  padding: 14px;
+}
+.assistant-memories-list li.confirming { border-color: #d9b0aa; background: #fbefec; }
+.assistant-memories-list li > p { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--ink); font-size: 14px; line-height: 1.5; }
+.assistant-memory-delete,
+.assistant-memory-cancel {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.assistant-memory-delete { justify-self: end; color: var(--red-dark); }
+.assistant-memory-delete.confirm { border-color: var(--red-dark); color: #fffaf6; background: var(--red-dark); }
+.assistant-memory-cancel { color: var(--ink-soft); }
+.assistant-memory-delete:disabled,
+.assistant-memory-cancel:disabled { opacity: .58; cursor: wait; }
+.assistant-memory-confirm { display: grid; gap: 9px; border-top: 1px solid #e4c5c0; padding-top: 11px; }
+.assistant-memory-confirm > span { color: var(--red-dark); font-size: 11px; line-height: 1.4; }
+.assistant-memory-confirm > div { display: grid; grid-template-columns: 1fr 1.35fr; gap: 8px; }
+.assistant-memories-state { margin: auto 0; color: var(--muted); font-size: 13px; text-align: center; }
+.assistant-memories-empty { margin: auto 0; padding: 28px 18px; border: 1px dashed var(--line); border-radius: 14px; text-align: center; }
+.assistant-memories-empty strong { font: 600 18px/1.2 "Fraunces", serif; }
+.assistant-memories-empty p { margin: 8px auto 0; max-width: 280px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.assistant-memories-error { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; border: 1px solid #e9b6ae; border-radius: 10px; color: var(--red-dark); background: #f9e4e0; padding: 9px 10px 9px 13px; }
+.assistant-memories-error p { margin: 0; font-size: 12px; line-height: 1.4; }
+.assistant-memories-error .text-button { flex: 0 0 auto; min-height: 40px; color: var(--red-dark); font-weight: 700; }
 .assistant-examples { display: grid; gap: 8px; }
 .assistant-examples > p { margin: 0; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); }
 .assistant-example { text-align: left; border: 1px solid #e7e1d8; background: #f8f4ed; color: var(--ink); padding: 12px 14px; border-radius: 10px; }

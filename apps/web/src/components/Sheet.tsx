@@ -6,12 +6,16 @@ export function Sheet({
   onClose,
   children,
   className,
+  closeLabel = "Cerrar",
+  closeIcon = "×",
 }: {
   title: string;
   eyebrow: string;
   onClose(): void;
   children: ReactNode;
   className?: string;
+  closeLabel?: string;
+  closeIcon?: ReactNode;
 }) {
   return (
     <div
@@ -32,8 +36,8 @@ export function Sheet({
             <p className="eyebrow">{eyebrow}</p>
             <h2>{title}</h2>
           </div>
-          <button className="close-button" onClick={onClose} aria-label="Cerrar">
-            ×
+          <button type="button" className="close-button" onClick={onClose} aria-label={closeLabel}>
+            {closeIcon}
           </button>
         </header>
         {children}
