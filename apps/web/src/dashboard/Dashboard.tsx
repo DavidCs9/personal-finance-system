@@ -17,6 +17,7 @@ import {
 import { demoCards } from "../card-cycle-demo";
 import type { CardCycle } from "../card-cycle";
 import { EventSheet } from "../sheets/EventSheet";
+import { AssistantSheet } from "../sheets/AssistantSheet";
 import { MonthIncomeSheet } from "../sheets/MonthIncomeSheet";
 import { NominaUploadSheet } from "../sheets/NominaUploadSheet";
 import { PayslipSheet } from "../sheets/PayslipSheet";
@@ -59,6 +60,8 @@ export function Dashboard({
   const [editingPayment, setEditingPayment] = useState<PlannedPayment | null | undefined>();
   const [editingCard, setEditingCard] = useState<CardCycle | null | undefined>();
   const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantMonthEpoch, setAssistantMonthEpoch] = useState(0);
   const [movementSort, setMovementSort] = useState<"recent" | "largest">("recent");
   const [importOpen, setImportOpen] = useState(false);
   const [amexImportOpen, setAmexImportOpen] = useState(false);
@@ -388,12 +391,16 @@ export function Dashboard({
         tab={tab}
         onTabChange={setTab}
         month={selectedMonth}
-        onMonthChange={setSelectedMonth}
+        onMonthChange={(month) => {
+          setSelectedMonth(month);
+          setAssistantMonthEpoch((value) => value + 1);
+        }}
         syncing={tab === "wealth" ? wealthLoading : loading}
         refreshing={tab === "wealth" ? wealthLoading : loading || planLoading}
         onRefresh={refresh}
         privateMode={privateMode}
         onTogglePrivateMode={togglePrivateMode}
+        onOpenAssistant={() => setAssistantOpen(true)}
         demoMode={demoMode}
         showSignOut={!demoMode}
         onSignOut={
@@ -613,6 +620,15 @@ export function Dashboard({
           demoMode={demoMode}
           onClose={() => setActiveEvent(undefined)}
           onVerified={setActiveEvent}
+        />
+      )}
+      {assistantOpen && (
+        <AssistantSheet
+          month={selectedMonth}
+          idToken={idToken}
+          demoMode={demoMode}
+          onClose={() => setAssistantOpen(false)}
+          onMonthChanged={assistantMonthEpoch}
         />
       )}
       {importOpen && (

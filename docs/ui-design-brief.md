@@ -49,8 +49,10 @@ Patrimonio no mezcla el gasto del mes ni “Te quedan”. Detalle en [`patrimoni
 La experiencia se diseña primero para móvil (95% del uso esperado):
 
 - **Resumen** — estado mensual, proyección, Planes con fin (MSI), gastos fijos y fechas de corte/pago de tarjetas.
-- **Movimientos** — lista ordenable de evidencia/compras (sin duplicar el bloque de planes MSI).
+- **Movimientos** — lista ordenable de evidencia/compras (sin duplicar el bloque de planes MSI), con categoría (badge) editable en el detalle.
 - **Patrimonio** — neto, activos, deudas de tarjeta, historial y holdings; el selector de mes permanece usable para cambiar periodo sin salir de la tab (el patrimonio sigue siendo el estado actual, no un corte mensual).
+
+**Asistente** — no es una cuarta tab. Se abre como **sheet global** desde un icono del topbar (disponible en las tres destinaciones). Consultas en lenguaje natural sobre el mes (y patrimonio de solo lectura); citas a movimientos/cifras; sin historial durable en UI (el hilo vive solo mientras el sheet está abierto; cambiar el mes del selector limpia el hilo). Detalle técnico en [`ai-assistant.md`](ai-assistant.md).
 
 En escritorio se conserva la misma arquitectura con un ancho de lectura contenido; no se convierte en un dashboard distinto.
 

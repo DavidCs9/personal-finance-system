@@ -50,6 +50,24 @@ import {
 import { syncBitsoForOwner } from '../wealth/bitso-sync.js';
 import { syncIbkrForOwner } from '../wealth/ibkr-sync.js';
 import {
+  ensureDefaultCatalog,
+  InvalidCategoryError,
+  listCategories,
+  listMerchantRules,
+  putCategoryCatalog,
+  upsertMerchantRule,
+} from '../categories/service.js';
+import {
+  compareMonths,
+  InvalidAgentQueryError,
+  listMovementsForAgent,
+  monthSnapshot,
+  proposeRecategorize,
+  spendByCategory,
+  spendByMerchant,
+  wealthSnapshotForAgent,
+} from '../agent/aggregates.js';
+import {
   deletePushSubscription,
   InvalidPushSubscriptionError,
   listOwnerPushSubscriptions,
@@ -58,10 +76,10 @@ import {
 } from '@finance/notify';
 import { database, tableName } from './clients.js';
 import { errorMessage, principal, requestBody } from './response.js';
-
+import { isValidCategoryId, type SpendCategory } from '@finance/domain';
 const app = new Router();
 
-const json = (statusCode: number, body: Record<string, unknown>) => ({
+const json = (statusCode: number, body: unknown) => ({
   statusCode,
   headers: { 'content-type': 'application/json; charset=utf-8' },
   body: JSON.stringify(body),
@@ -83,6 +101,8 @@ const clientErrors = [
   InvalidMsiError,
   InvalidCardError,
   InvalidWealthSnapshotError,
+  InvalidCategoryError,
+  InvalidAgentQueryError,
 ] as const;
 
 app.errorHandler([...clientErrors], async (error) =>
@@ -339,6 +359,113 @@ app.post('/imports/amex/:importId/apply', async ({ event, params }) => {
     HttpStatusCodes.OK,
     await applyAmexImport(params.importId, ownerOf(gatewayEvent), requestBody(gatewayEvent)),
   );
+});
+
+app.get('/categories', async () =>
+  json(HttpStatusCodes.OK, { categories: await listCategories() }),
+);
+
+app.post('/categories/ensure-defaults', async () =>
+  json(HttpStatusCodes.OK, { categories: await ensureDefaultCatalog() }),
+);
+
+app.put('/categories', async ({ event }) => {
+  const body = JSON.parse(requestBody(asHttpEvent(event)) || '{}') as { categories?: SpendCategory[] };
+  if (!Array.isArray(body.categories)) {
+    throw new InvalidCategoryError('categories must be an array.');
+  }
+  for (const category of body.categories) {
+    if (!isValidCategoryId(category.id)) throw new InvalidCategoryError(`Categoría inválida: ${category.id}`);
+  }
+  return json(HttpStatusCodes.OK, { categories: await putCategoryCatalog(body.categories) });
+});
+
+app.get('/categories/rules', async () =>
+  json(HttpStatusCodes.OK, { rules: await listMerchantRules() }),
+);
+
+app.post('/categories/rules', async ({ event }) => {
+  const body = JSON.parse(requestBody(asHttpEvent(event)) || '{}') as {
+    merchantRaw?: string;
+    categoryId?: string;
+    pattern?: string;
+  };
+  if (!body.merchantRaw || !body.categoryId) {
+    throw new InvalidCategoryError('merchantRaw y categoryId son obligatorios.');
+  }
+  return json(HttpStatusCodes.OK, await upsertMerchantRule({
+    merchantRaw: body.merchantRaw,
+    categoryId: body.categoryId,
+    pattern: body.pattern,
+    source: 'human',
+  }));
+});
+
+app.get('/agent/month-snapshot', async ({ event }) => {
+  const gatewayEvent = asHttpEvent(event);
+  const month = gatewayEvent.queryStringParameters?.month;
+  if (!month || !isValidMonth(month)) {
+    throw new InvalidAgentQueryError('Query parameter month (YYYY-MM) is required.');
+  }
+  return json(HttpStatusCodes.OK, await monthSnapshot(ownerOf(gatewayEvent), month));
+});
+
+app.get('/agent/spend-by-category', async ({ event }) => {
+  const month = asHttpEvent(event).queryStringParameters?.month;
+  if (!month || !isValidMonth(month)) {
+    throw new InvalidAgentQueryError('Query parameter month (YYYY-MM) is required.');
+  }
+  return json(HttpStatusCodes.OK, await spendByCategory(month));
+});
+
+app.get('/agent/spend-by-merchant', async ({ event }) => {
+  const query = asHttpEvent(event).queryStringParameters ?? {};
+  const month = query.month;
+  if (!month || !isValidMonth(month)) {
+    throw new InvalidAgentQueryError('Query parameter month (YYYY-MM) is required.');
+  }
+  return json(HttpStatusCodes.OK, await spendByMerchant(month, {
+    categoryId: query.categoryId,
+    limit: query.limit ? Number(query.limit) : undefined,
+  }));
+});
+
+app.get('/agent/compare-months', async ({ event }) => {
+  const query = asHttpEvent(event).queryStringParameters ?? {};
+  const month = query.month;
+  if (!month || !isValidMonth(month)) {
+    throw new InvalidAgentQueryError('Query parameter month (YYYY-MM) is required.');
+  }
+  return json(HttpStatusCodes.OK, await compareMonths(month, query.against));
+});
+
+app.get('/agent/movements', async ({ event }) => {
+  const query = asHttpEvent(event).queryStringParameters ?? {};
+  const month = query.month;
+  if (!month || !isValidMonth(month)) {
+    throw new InvalidAgentQueryError('Query parameter month (YYYY-MM) is required.');
+  }
+  return json(HttpStatusCodes.OK, await listMovementsForAgent(month, {
+    categoryId: query.categoryId,
+    limit: query.limit ? Number(query.limit) : undefined,
+  }));
+});
+
+app.get('/agent/wealth-snapshot', async ({ event }) =>
+  json(HttpStatusCodes.OK, await wealthSnapshotForAgent(ownerOf(asHttpEvent(event)))),
+);
+
+app.post('/agent/propose-recategorize', async ({ event }) => {
+  const body = JSON.parse(requestBody(asHttpEvent(event)) || '{}') as {
+    eventId?: string;
+    categoryId?: string;
+    merchantRaw?: string;
+  };
+  return json(HttpStatusCodes.OK, await proposeRecategorize({
+    eventId: String(body.eventId ?? ''),
+    categoryId: String(body.categoryId ?? ''),
+    merchantRaw: body.merchantRaw,
+  }));
 });
 
 export const handler = async (event: APIGatewayProxyEventV2, context: Context) =>

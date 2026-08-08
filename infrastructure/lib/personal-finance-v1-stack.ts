@@ -4,6 +4,7 @@ import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpJwtAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as budgets from 'aws-cdk-lib/aws-budgets';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
@@ -20,6 +21,7 @@ import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as ses from 'aws-cdk-lib/aws-ses';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53targets from 'aws-cdk-lib/aws-route53-targets';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
@@ -27,6 +29,13 @@ import { LambdaInvoke } from 'aws-cdk-lib/aws-scheduler-targets';
 import type { IConstruct } from 'constructs';
 import { Construct } from 'constructs';
 import * as path from 'node:path';
+import {
+  OLBIA_SYSTEM_PROMPT,
+  OLBIA_SYSTEM_PROMPT_INFERENCE,
+  OLBIA_SYSTEM_PROMPT_MODEL_ID,
+  OLBIA_SYSTEM_PROMPT_NAME,
+  OLBIA_SYSTEM_PROMPT_VARIANT,
+} from '@finance/api/agent-prompts';
 
 export class PersonalFinanceV1Stack extends Stack {
   public constructor(scope: Construct, id: string, props?: StackProps) {
@@ -56,6 +65,11 @@ export class PersonalFinanceV1Stack extends Stack {
       type: 'String',
       default: 'replace-with-alert-recipient@example.com',
       description: 'Primary address that receives V1 event alerts.',
+    });
+    const agentOwnerSub = new cdk.CfnParameter(this, 'AgentOwnerSub', {
+      type: 'String',
+      default: '',
+      description: 'Cognito sub of the single finance owner used by AgentCore Gateway tools.',
     });
     const webDomainName = 'finance.castrodavid.dev';
     const inboundDomainName = 'inbound.finance.castrodavid.dev';
@@ -343,6 +357,255 @@ export class PersonalFinanceV1Stack extends Stack {
       actions: ['textract:StartDocumentAnalysis', 'textract:GetDocumentAnalysis'],
       resources: ['*'],
     }));
+
+    const agentToolsFunction = new NodejsFunction(this, 'AgentToolsFunction', {
+      ...lambdaDefaults,
+      functionName: 'personal-finance-v1-agent-tools',
+      logGroup: this.createLogGroup('AgentToolsLogGroup', 'personal-finance-v1-agent-tools'),
+      entry: path.join(__dirname, '..', 'lambda', 'agent-tools.ts'),
+      handler: 'handler',
+      description: 'AgentCore Gateway Lambda target — Olbia finance aggregation tools.',
+      timeout: Duration.seconds(29),
+      memorySize: 512,
+      environment: {
+        ...dataStorageEnvironment,
+        AGENT_OWNER: agentOwnerSub.valueAsString,
+      },
+    });
+    metadataTable.grantReadWriteData(agentToolsFunction);
+
+    const gatewayRole = new iam.Role(this, 'AgentCoreGatewayRole', {
+      roleName: 'personal-finance-v1-agentcore-gateway',
+      assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com'),
+      description: 'Gateway execution role that invokes Olbia finance tools Lambda.',
+    });
+    gatewayRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['lambda:InvokeFunction'],
+      resources: [agentToolsFunction.functionArn],
+    }));
+    agentToolsFunction.addPermission('AllowAgentCoreGatewayInvoke', {
+      principal: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com'),
+      action: 'lambda:InvokeFunction',
+      sourceAccount: this.account,
+    });
+
+    const harnessExecutionRole = new iam.Role(this, 'AgentCoreHarnessExecutionRole', {
+      roleName: 'personal-finance-v1-agentcore-harness',
+      assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com', {
+        conditions: {
+          StringEquals: { 'aws:SourceAccount': this.account },
+          ArnLike: {
+            'aws:SourceArn': `arn:aws:bedrock-agentcore:${this.region}:${this.account}:harness/*`,
+          },
+        },
+      }),
+      description: 'Execution role for Olbia AgentCore Harness.',
+    });
+    harnessExecutionRole.addToPolicy(new iam.PolicyStatement({
+      actions: [
+        'bedrock:InvokeModel',
+        'bedrock:InvokeModelWithResponseStream',
+        'bedrock:Converse',
+        'bedrock:ConverseStream',
+      ],
+      resources: ['*'],
+    }));
+    harnessExecutionRole.addToPolicy(new iam.PolicyStatement({
+      actions: [
+        'bedrock-agentcore:InvokeGateway',
+        'bedrock-agentcore:GetGateway',
+      ],
+      resources: [
+        `arn:aws:bedrock-agentcore:${this.region}:${this.account}:gateway/*`,
+      ],
+    }));
+
+    const agentcoreProvisionerFunction = new NodejsFunction(this, 'AgentCoreProvisionerFunction', {
+      ...lambdaDefaults,
+      functionName: 'personal-finance-v1-agentcore-provisioner',
+      logGroup: this.createLogGroup('AgentCoreProvisionerLogGroup', 'personal-finance-v1-agentcore-provisioner'),
+      entry: path.join(__dirname, '..', 'lambda', 'agentcore-provisioner.ts'),
+      handler: 'handler',
+      description: 'Creates/updates AgentCore Gateway + Harness for Olbia assistant.',
+      timeout: Duration.minutes(15),
+      memorySize: 256,
+    });
+    agentcoreProvisionerFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: [
+        'bedrock-agentcore:CreateGateway',
+        'bedrock-agentcore:GetGateway',
+        'bedrock-agentcore:ListGateways',
+        'bedrock-agentcore:DeleteGateway',
+        'bedrock-agentcore:CreateGatewayTarget',
+        'bedrock-agentcore:GetGatewayTarget',
+        'bedrock-agentcore:ListGatewayTargets',
+        'bedrock-agentcore:DeleteGatewayTarget',
+        'bedrock-agentcore:CreateHarness',
+        'bedrock-agentcore:GetHarness',
+        'bedrock-agentcore:ListHarnesses',
+        'bedrock-agentcore:UpdateHarness',
+        'bedrock-agentcore:DeleteHarness',
+        'iam:PassRole',
+      ],
+      resources: ['*'],
+    }));
+
+    // Prompt Management: repo seeds DRAFT + bootstrap version.
+    // Runtime promote/rollback = create a new Prompt version, then move the SSM pointer
+    // (custom resource seeds the pointer once and does not overwrite later stack updates).
+    const systemPromptVersionParamName = '/personal-finance-v1/agent/system-prompt-version-arn';
+    const olbiaSystemPrompt = new cdk.CfnResource(this, 'OlbiaSystemPrompt', {
+      type: 'AWS::Bedrock::Prompt',
+      properties: {
+        Name: OLBIA_SYSTEM_PROMPT_NAME,
+        Description: 'System prompt for the Olbia finance AgentCore Harness.',
+        DefaultVariant: OLBIA_SYSTEM_PROMPT_VARIANT,
+        Variants: [{
+          Name: OLBIA_SYSTEM_PROMPT_VARIANT,
+          TemplateType: 'TEXT',
+          ModelId: OLBIA_SYSTEM_PROMPT_MODEL_ID,
+          InferenceConfiguration: {
+            Text: {
+              Temperature: OLBIA_SYSTEM_PROMPT_INFERENCE.temperature,
+              TopP: OLBIA_SYSTEM_PROMPT_INFERENCE.topP,
+              MaxTokens: OLBIA_SYSTEM_PROMPT_INFERENCE.maxTokens,
+            },
+          },
+          TemplateConfiguration: {
+            Text: {
+              Text: OLBIA_SYSTEM_PROMPT,
+            },
+          },
+        }],
+      },
+    });
+    const olbiaSystemPromptVersion = new cdk.CfnResource(this, 'OlbiaSystemPromptVersion', {
+      type: 'AWS::Bedrock::PromptVersion',
+      properties: {
+        PromptArn: olbiaSystemPrompt.getAtt('Arn'),
+        Description: 'bootstrap',
+      },
+    });
+    olbiaSystemPromptVersion.addDependency(olbiaSystemPrompt);
+
+    const seedPromptPointer = new cr.AwsCustomResource(this, 'SeedSystemPromptVersionPointer', {
+      onCreate: {
+        service: 'SSM',
+        action: 'putParameter',
+        parameters: {
+          Name: systemPromptVersionParamName,
+          Type: 'String',
+          Value: olbiaSystemPromptVersion.getAtt('Arn'),
+          Overwrite: true,
+          Description: 'Active Bedrock Prompt Management version ARN for Olbia assistant (promote/rollback without deploy).',
+        },
+        physicalResourceId: cr.PhysicalResourceId.of('olbia-system-prompt-version-pointer'),
+      },
+      // Intentionally no onUpdate: runtime promote/rollback must not be clobbered by redeploys.
+      onDelete: {
+        service: 'SSM',
+        action: 'deleteParameter',
+        parameters: { Name: systemPromptVersionParamName },
+        // Ignore if already deleted / retained.
+        ignoreErrorCodesMatching: 'ParameterNotFound',
+      },
+      policy: cr.AwsCustomResourcePolicy.fromSdkCalls({ resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE }),
+      installLatestAwsSdk: false,
+    });
+    seedPromptPointer.node.addDependency(olbiaSystemPromptVersion);
+    // Import for grants / env wiring (value owned by runtime after seed).
+    const systemPromptVersionParam = ssm.StringParameter.fromStringParameterName(
+      this,
+      'SystemPromptVersionParam',
+      systemPromptVersionParamName,
+    );
+
+    const agentcoreProvider = new cr.Provider(this, 'AgentCoreProvider', {
+      onEventHandler: agentcoreProvisionerFunction,
+      logGroup: this.createLogGroup('AgentCoreProviderLogGroup', 'personal-finance-v1-agentcore-provider'),
+    });
+    const agentcoreResources = new cdk.CustomResource(this, 'OlbiaAgentCore', {
+      serviceToken: agentcoreProvider.serviceToken,
+      properties: {
+        HarnessName: 'OlbiaFinance',
+        GatewayName: 'OlbiaFinanceGateway',
+        TargetName: 'olbia_tools',
+        HarnessExecutionRoleArn: harnessExecutionRole.roleArn,
+        GatewayRoleArn: gatewayRole.roleArn,
+        ToolsLambdaArn: agentToolsFunction.functionArn,
+        ModelId: OLBIA_SYSTEM_PROMPT_MODEL_ID,
+        // Force replace when tools Lambda changes identity.
+        ToolsLambdaVersion: agentToolsFunction.currentVersion.version,
+      },
+    });
+    const harnessArn = agentcoreResources.getAttString('HarnessArn');
+
+    const agentProxyFunction = new NodejsFunction(this, 'AgentProxyFunction', {
+      ...lambdaDefaults,
+      functionName: 'personal-finance-v1-agent-proxy',
+      logGroup: this.createLogGroup('AgentProxyLogGroup', 'personal-finance-v1-agent-proxy'),
+      entry: path.join(__dirname, '..', 'lambda', 'agent-proxy.ts'),
+      handler: 'handler',
+      description: 'JWT proxy → Prompt Management + AgentCore InvokeHarness (SSE).',
+      timeout: Duration.seconds(29),
+      memorySize: 512,
+      environment: {
+        ...dataStorageEnvironment,
+        HARNESS_ARN: harnessArn,
+        SYSTEM_PROMPT_VERSION_PARAM: systemPromptVersionParamName,
+        SYSTEM_PROMPT_CACHE_TTL_MS: '30000',
+      },
+    });
+    agentProxyFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: [
+        'bedrock-agentcore:InvokeHarness',
+        'bedrock-agentcore:InvokeAgentRuntime',
+      ],
+      resources: ['*'],
+    }));
+    agentProxyFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:GetPrompt'],
+      resources: [
+        `arn:aws:bedrock:${this.region}:${this.account}:prompt/*`,
+      ],
+    }));
+    systemPromptVersionParam.grantRead(agentProxyFunction);
+
+    new cdk.CfnOutput(this, 'AgentCoreHarnessArn', { value: harnessArn });
+    new cdk.CfnOutput(this, 'AgentCoreGatewayArn', {
+      value: agentcoreResources.getAttString('GatewayArn'),
+    });
+    new cdk.CfnOutput(this, 'OlbiaSystemPromptVersionParam', {
+      value: systemPromptVersionParamName,
+      description: 'SSM pointer to the active Prompt Management version ARN (promote/rollback without deploy).',
+    });
+    new cdk.CfnOutput(this, 'OlbiaSystemPromptBootstrapVersionArn', {
+      value: cdk.Token.asString(olbiaSystemPromptVersion.getAtt('Arn')),
+      description: 'Bootstrap Prompt Management version; runtime may point elsewhere via SSM.',
+    });
+
+    // Low-threshold estimated charges alarm (single-user agent cost guardrail).
+    new budgets.CfnBudget(this, 'AgentBedrockBudget', {
+      budget: {
+        budgetType: 'COST',
+        timeUnit: 'MONTHLY',
+        budgetLimit: { amount: 15, unit: 'USD' },
+        budgetName: 'personal-finance-v1-bedrock-agent',
+        costFilters: { Service: ['Amazon Bedrock'] },
+      },
+      notificationsWithSubscribers: [{
+        notification: {
+          comparisonOperator: 'GREATER_THAN',
+          threshold: 80,
+          thresholdType: 'PERCENTAGE',
+          notificationType: 'ACTUAL',
+        },
+        subscribers: [{
+          subscriptionType: 'EMAIL',
+          address: alertRecipientEmail.valueAsString,
+        }],
+      }],
+    });
     // Textract reads statement PDFs from the KMS-encrypted raw bucket.
     rawEmailBucket.addToResourcePolicy(new iam.PolicyStatement({
       sid: 'AllowTextractReadStatementPdfs',
@@ -614,6 +877,7 @@ export class PersonalFinanceV1Stack extends Stack {
       { jwtAudience: [userPoolClient.userPoolClientId] },
     );
     const apiIntegration = new HttpLambdaIntegration('ApiLambdaIntegration', apiFunction);
+    const agentProxyIntegration = new HttpLambdaIntegration('AgentProxyIntegration', agentProxyFunction);
     const applePayCaptureIntegration = new HttpLambdaIntegration('ApplePayCaptureIntegration', applePayCaptureFunction);
     for (const route of [
       'GET /events',
@@ -648,6 +912,18 @@ export class PersonalFinanceV1Stack extends Stack {
       'POST /wealth/liabilities/{cardId}/snapshots',
       'POST /wealth/sync/bitso',
       'POST /wealth/sync/ibkr',
+      'GET /categories',
+      'PUT /categories',
+      'POST /categories/ensure-defaults',
+      'GET /categories/rules',
+      'POST /categories/rules',
+      'GET /agent/month-snapshot',
+      'GET /agent/spend-by-category',
+      'GET /agent/spend-by-merchant',
+      'GET /agent/compare-months',
+      'GET /agent/movements',
+      'GET /agent/wealth-snapshot',
+      'POST /agent/propose-recategorize',
     ]) {
       httpApi.addRoutes({
         path: route.split(' ')[1],
@@ -656,6 +932,12 @@ export class PersonalFinanceV1Stack extends Stack {
         authorizer,
       });
     }
+    httpApi.addRoutes({
+      path: '/agent/chat',
+      methods: [apigatewayv2.HttpMethod.POST],
+      integration: agentProxyIntegration,
+      authorizer,
+    });
     httpApi.addRoutes({
       path: '/captures/apple-pay',
       methods: [apigatewayv2.HttpMethod.POST],

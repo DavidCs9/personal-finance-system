@@ -144,6 +144,9 @@ export function MovementsView({
                     })()}
                   </span>
                 ) : null}
+                <span className="category-badge">
+                  {event.categoryId ?? "Sin categoría"}
+                </span>
               </strong>
               <small>
                 {institutionLabel(event.institution)} · {dateFormatter.format(eventDate(event))}

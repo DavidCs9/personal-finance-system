@@ -38,6 +38,8 @@ export function EventSheet({
   const [msiCuota, setMsiCuota] = useState(
     ((event.msi?.cuotaMinor ?? defaultCuotaMinor(event.amount.amountMinor, event.msi?.months ?? 3)) / 100).toFixed(2),
   );
+  const [categoryId, setCategoryId] = useState(event.categoryId ?? "");
+  const [categories, setCategories] = useState<readonly { id: string; name: string }[]>([]);
 
   useEffect(() => {
     setRawEmail(undefined);
@@ -51,7 +53,24 @@ export function EventSheet({
         100
       ).toFixed(2),
     );
-  }, [event.id, event.msi, event.amount.amountMinor]);
+    setCategoryId(event.categoryId ?? "");
+  }, [event.id, event.msi, event.amount.amountMinor, event.categoryId]);
+
+  useEffect(() => {
+    if (demoMode) {
+      setCategories([
+        { id: "restaurantes", name: "Restaurantes" },
+        { id: "transporte", name: "Transporte" },
+        { id: "otros", name: "Otros" },
+      ]);
+      return;
+    }
+    void ledgerApi.listCategories(idToken).then((result) => {
+      setCategories(result.categories);
+    }).catch(() => {
+      setCategories([]);
+    });
+  }, [demoMode, idToken]);
 
   const updateCache = (updated: PurchaseEvent) => {
     const spendMonth = monthKeyInZone(eventDate(updated));
@@ -148,6 +167,19 @@ export function EventSheet({
           })
         : ledgerApi.updateEventMsi(event.id, { action: "cancel_msi_remaining" }, idToken),
     onSuccess: updateCache,
+  });
+
+  const categoryMutation = useMutation({
+    mutationFn: async () => {
+      const next = categoryId.trim() ? categoryId.trim() : null;
+      if (demoMode) return { ...event, categoryId: next };
+      return ledgerApi.setEventCategory(event.id, { categoryId: next, updateRule: true }, idToken);
+    },
+    onSuccess: (updated) => {
+      updateCache(updated);
+      setCategoryId(updated.categoryId ?? "");
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "No se pudo guardar la categoría."),
   });
 
   const toggleRaw = async () => {
@@ -271,6 +303,34 @@ export function EventSheet({
             <dd>{statusLabel[event.status]}</dd>
           </div>
         </dl>
+
+        <form
+          className="sheet-form"
+          onSubmit={(formEvent) => {
+            formEvent.preventDefault();
+            categoryMutation.mutate();
+          }}
+        >
+          <div className="detail-section-heading">
+            <div>
+              <p className="eyebrow">CATEGORÍA</p>
+              <h3>Clasificación del gasto</h3>
+            </div>
+          </div>
+          <Field label="Categoría">
+            <select value={categoryId} onChange={(change) => setCategoryId(change.target.value)}>
+              <option value="">Sin categoría</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <button type="submit" disabled={categoryMutation.isPending}>
+            {categoryMutation.isPending ? "Guardando…" : "Guardar categoría"}
+          </button>
+        </form>
 
         <form className="sheet-form" onSubmit={(formEvent) => void saveMsi(formEvent)}>
           <div className="detail-section-heading">

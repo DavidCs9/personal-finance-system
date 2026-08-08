@@ -11,9 +11,9 @@ import { InvalidManualEntryError } from './manual-entry-input.js';
 import { database, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
 import { getEventDetail, toPublicEvent } from './queries.js';
+import { setEventCategory } from '../categories/service.js';
 
 export class InvalidMsiError extends Error {}
-
 
 export const patchEvent = async (
   eventId: string,
@@ -42,6 +42,7 @@ export const patchEvent = async (
   if (action === 'clear_msi') return clearEventMsi(eventId, changedBy);
   if (action === 'cancel_msi_remaining') return cancelEventMsiRemaining(eventId, changedBy);
   if (action === 'complete_msi_schedule') return completeEventMsiSchedule(eventId, changedBy, parsed);
+  if (action === 'set_category') return setEventCategoryAction(eventId, changedBy, parsed);
   if (action === 'verify') return markVerified(eventId, changedBy);
   throw new InvalidManualEntryError('Unsupported PATCH action.');
 };
@@ -262,4 +263,25 @@ export const markDeferredMsi = async (
     },
   }));
   return true;
+};
+
+const setEventCategoryAction = async (
+  eventId: string,
+  changedBy: string,
+  body: JsonObject,
+): Promise<JsonObject | undefined> => {
+  const rawCategory = body.categoryId;
+  const categoryId = rawCategory === null || rawCategory === ''
+    ? null
+    : typeof rawCategory === 'string'
+      ? rawCategory
+      : (() => { throw new InvalidManualEntryError('categoryId must be a string or null.'); })();
+  const updateRule = body.updateRule === true;
+  const existing = await getEventDetail(eventId);
+  if (!existing) return undefined;
+  await setEventCategory(eventId, changedBy, categoryId, {
+    updateRule,
+    source: updateRule ? 'human' : 'human',
+  });
+  return getEventDetail(eventId);
 };
