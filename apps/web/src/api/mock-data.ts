@@ -1,4 +1,5 @@
-import { buildMsiSchedule, monthKeyInZone } from "@finance/domain";
+import { buildMsiSchedule, computeMonthSummary, monthKeyInZone, type MonthSummary } from "@finance/domain";
+import type { MonthlyPlan } from "../monthly-plan";
 import type { EventFeed, IngestionException, PurchaseEvent } from "../types";
 
 const source = (key: string) => ({
@@ -258,6 +259,27 @@ export function mockFeedForMonth(month: string): EventFeed {
     return Boolean(event.msi?.installments.some((item) => item.month === month));
   });
   return { events, msiRelated };
+}
+
+/** Demo-only stand-in for the API's canonical month-summary endpoint. */
+export function mockMonthSummaryFor(month: string, plan: MonthlyPlan, now: Date): MonthSummary {
+  const feed = mockFeedForMonth(month);
+  return computeMonthSummary({
+    events: [...feed.events, ...feed.msiRelated].map((event) => ({
+      id: event.id,
+      amountMinor: event.amount.amountMinor,
+      status: event.status,
+      occurredAt: event.occurredAt,
+      receivedAt: event.receivedAt,
+      merchantRaw: event.merchantRaw,
+      msi: event.msi,
+    })),
+    month,
+    incomeMinor: plan.incomeMinor,
+    incomeConfigured: plan.configured,
+    upcomingPaymentsMinor: plan.upcomingPayments.reduce((sum, payment) => sum + payment.amountMinor, 0),
+    now,
+  });
 }
 
 /** @deprecated Prefer `mockFeedForMonth`; kept for callers that need the full July-shaped feed. */

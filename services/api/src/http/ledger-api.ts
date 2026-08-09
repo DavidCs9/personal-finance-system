@@ -40,6 +40,7 @@ import {
 } from '../imports/cfdi-nomina-flow.js';
 import { InvalidMonthlyPlanError, isValidMonth, parseMonthlyPlan } from '../months/monthly-plan.js';
 import { getMonthlyPlan, saveMonthlyPlan } from '../months/service.js';
+import { getMonthSummary } from '../months/summary.js';
 import { InvalidWealthSnapshotError } from '../wealth/input.js';
 import {
   assertCajitaAccountParam,
@@ -265,6 +266,13 @@ app.get('/months/:month', async ({ event, params }) => {
     return json(HttpStatusCodes.BAD_REQUEST, { message: 'Month must use YYYY-MM format.' });
   }
   return json(HttpStatusCodes.OK, await getMonthlyPlan(ownerOf(asHttpEvent(event)), params.month));
+});
+
+app.get('/months/:month/summary', async ({ event, params }) => {
+  if (!isValidMonth(params.month)) {
+    return json(HttpStatusCodes.BAD_REQUEST, { message: 'Month must use YYYY-MM format.' });
+  }
+  return json(HttpStatusCodes.OK, await getMonthSummary(ownerOf(asHttpEvent(event)), params.month));
 });
 
 app.put('/months/:month', async ({ event, params }) => {

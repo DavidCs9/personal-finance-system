@@ -14,7 +14,7 @@ import {
   money,
   statusLabel,
 } from "../lib/format";
-import { eventsQueryRoot } from "../lib/query-keys";
+import { eventsQueryRoot, monthlySummaryQueryRoot } from "../lib/query-keys";
 import type { EventFeed, PurchaseEvent } from "../types";
 
 export function EventSheet({
@@ -90,6 +90,7 @@ export function EventSheet({
         ],
       });
     }
+    void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
     onVerified(updated);
     setMsiEnabled(Boolean(updated.msi));
     if (updated.msi) {

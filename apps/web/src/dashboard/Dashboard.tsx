@@ -1,12 +1,11 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { computeMonthSummary } from "@finance/domain";
 import { ledgerApi } from "../api/client";
-import { mockExceptionRawEmail, mockExceptions, mockFeedForMonth } from "../api/mock-data";
+import { mockExceptionRawEmail, mockExceptions, mockFeedForMonth, mockMonthSummaryFor } from "../api/mock-data";
 import { AppShell } from "../layout/AppShell";
 import { eventDate, monthKey } from "../lib/format";
 import { usePrivateMode } from "../lib/private-mode";
-import { eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, cardsQueryKey, wealthQueryKey } from "../lib/query-keys";
+import { eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, monthlySummaryQueryKey, monthlySummaryQueryRoot, cardsQueryKey, wealthQueryKey } from "../lib/query-keys";
 import type { Tab } from "../lib/tabs";
 import {
   demoPlans,
@@ -90,6 +89,13 @@ export function Dashboard({
       demoMode
         ? Promise.resolve(planFor(demoPlans, selectedMonth))
         : ledgerApi.monthlyPlan(selectedMonth, idToken),
+  });
+  const monthlySummaryQuery = useQuery({
+    queryKey: monthlySummaryQueryKey(selectedMonth),
+    queryFn: () =>
+      demoMode
+        ? Promise.resolve(mockMonthSummaryFor(selectedMonth, planFor(demoPlans, selectedMonth), now))
+        : ledgerApi.monthlySummary(selectedMonth, idToken),
   });
   const cardsQuery = useQuery({
     queryKey: cardsQueryKey,
@@ -273,6 +279,7 @@ export function Dashboard({
     void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
     void queryClient.invalidateQueries({ queryKey: exceptionsQueryKey });
     void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
+    void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
     void queryClient.invalidateQueries({ queryKey: cardsQueryKey });
     void queryClient.invalidateQueries({ queryKey: wealthQueryKey });
   };
@@ -325,40 +332,16 @@ export function Dashboard({
     () => [...events, ...msiRelated],
     [events, msiRelated],
   );
-  const summary = useMemo(
-    () =>
-      computeMonthSummary({
-        events: summaryEvents.map((event) => ({
-          id: event.id,
-          amountMinor: event.amount.amountMinor,
-          status: event.status,
-          occurredAt: event.occurredAt,
-          receivedAt: event.receivedAt,
-          merchantRaw: event.merchantRaw,
-          msi: event.msi,
-        })),
-        month: selectedMonth,
-        incomeMinor: plan.incomeMinor,
-        incomeConfigured: plan.configured,
-        upcomingPaymentsMinor: plan.upcomingPayments.reduce(
-          (sum, payment) => sum + payment.amountMinor,
-          0,
-        ),
-        now,
-      }),
-    [summaryEvents, selectedMonth, plan.incomeMinor, plan.configured, plan.upcomingPayments, now],
-  );
-  const {
-    spentMinor,
-    uncertainMinor,
-    billUpcomingMinor,
-    remainingMinor,
-    projectedRemainingMinor,
-    isCurrentMonth,
-    msiSpentMinor,
-    msiCommittedMinor,
-    monthMsiRows,
-  } = summary;
+  const summary = monthlySummaryQuery.data;
+  const spentMinor = summary?.spentMinor ?? 0;
+  const uncertainMinor = summary?.uncertainMinor ?? 0;
+  const billUpcomingMinor = summary?.billUpcomingMinor ?? 0;
+  const remainingMinor = summary?.remainingMinor ?? 0;
+  const projectedRemainingMinor = summary?.projectedRemainingMinor ?? 0;
+  const isCurrentMonth = summary?.isCurrentMonth ?? false;
+  const msiSpentMinor = summary?.msiSpentMinor ?? 0;
+  const msiCommittedMinor = summary?.msiCommittedMinor ?? 0;
+  const monthMsiRows = summary?.monthMsiRows ?? [];
 
   const openMsiEvent = (eventId: string) => {
     const found = summaryEvents.find((event) => event.id === eventId);
@@ -377,6 +360,7 @@ export function Dashboard({
       ? nextPlan
       : await ledgerApi.saveMonthlyPlan(selectedMonth, nextPlan, idToken);
     queryClient.setQueryData(monthlyPlanQueryKey(selectedMonth), saved);
+    await queryClient.invalidateQueries({ queryKey: monthlySummaryQueryKey(selectedMonth) });
   };
 
   const reviewLargest = () => {
@@ -398,7 +382,7 @@ export function Dashboard({
         syncing={tab === "wealth" ? wealthQuery.isFetching : eventsQuery.isFetching}
         refreshing={tab === "wealth"
           ? wealthQuery.isFetching
-          : eventsQuery.isFetching || monthlyPlanQuery.isFetching || cardsQuery.isFetching}
+          : eventsQuery.isFetching || monthlyPlanQuery.isFetching || monthlySummaryQuery.isFetching || cardsQuery.isFetching}
         onRefresh={refresh}
         privateMode={privateMode}
         onTogglePrivateMode={togglePrivateMode}
@@ -418,10 +402,11 @@ export function Dashboard({
           <SummaryView
             month={selectedMonth}
             plan={plan}
-            loading={planLoading}
-            loadError={planLoadError}
+            loading={planLoading || monthlySummaryQuery.isPending}
+            loadError={planLoadError ?? (monthlySummaryQuery.error instanceof Error ? monthlySummaryQuery.error.message : monthlySummaryQuery.error ? "No se pudo cargar el resumen del mes." : undefined)}
             onRetry={() => {
               void monthlyPlanQuery.refetch();
+              void monthlySummaryQuery.refetch();
             }}
             spentMinor={spentMinor}
             uncertainMinor={uncertainMinor}
@@ -537,6 +522,7 @@ export function Dashboard({
           onUpload={async (files) => {
             const response = await ledgerApi.uploadNominas(files, idToken);
             await queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
+            await queryClient.invalidateQueries({ queryKey: monthlySummaryQueryKey(selectedMonth) });
             return response;
           }}
         />
@@ -638,6 +624,7 @@ export function Dashboard({
           onApplied={() => {
             setImportOpen(false);
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
           }}
         />
       )}
@@ -649,6 +636,7 @@ export function Dashboard({
           onApplied={() => {
             setAmexImportOpen(false);
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
           }}
         />
       )}
@@ -660,6 +648,7 @@ export function Dashboard({
           onApplied={() => {
             setSantanderStatementOpen(false);
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
           }}
         />
       )}
@@ -676,6 +665,7 @@ export function Dashboard({
               events: [created, ...(current?.events ?? [])],
               msiRelated: current?.msiRelated ?? [],
             }));
+            void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
             setActiveEvent(created);
             setTab("movements");
           }}
