@@ -15,6 +15,7 @@ import {
   ListGatewaysCommand,
   ListGatewayTargetsCommand,
   ListHarnessesCommand,
+  ListMemoriesCommand,
   UpdateHarnessCommand,
   type ToolDefinition,
 } from '@aws-sdk/client-bedrock-agentcore-control';
@@ -88,6 +89,20 @@ const findHarnessIdByName = async (name: string): Promise<string | undefined> =>
   return undefined;
 };
 
+const findMemoryIdByName = async (name: string): Promise<string | undefined> => {
+  let nextToken: string | undefined;
+  do {
+    const page = await control.send(new ListMemoriesCommand({ maxResults: 100, nextToken }));
+    const match = page.memories?.find((item) =>
+      item.id?.startsWith(`${name}-`)
+      && item.status !== 'DELETING'
+      && item.status !== 'FAILED');
+    if (match?.id) return match.id;
+    nextToken = page.nextToken;
+  } while (nextToken);
+  return undefined;
+};
+
 type AgentCoreResourceIds = {
   readonly harnessId?: string;
   readonly gatewayId?: string;
@@ -131,11 +146,27 @@ const isNotFound = (error: unknown): boolean => {
 };
 
 const ensureMemory = async (name: string, existingId?: string): Promise<{ memoryId: string; memoryArn: string }> => {
-  if (existingId) {
+  // Prefer a same-region name match during regional migrations; the physical ID
+  // may still refer to the previous region until CloudFormation accepts v3.
+  const reusableId = await findMemoryIdByName(name) ?? existingId;
+  if (reusableId) {
     try {
-      const existing = await control.send(new GetMemoryCommand({ memoryId: existingId }));
+      const existing = await control.send(new GetMemoryCommand({ memoryId: reusableId }));
       if (existing.memory?.status === 'ACTIVE' && existing.memory.arn) {
-        return { memoryId: existingId, memoryArn: existing.memory.arn };
+        return { memoryId: reusableId, memoryArn: existing.memory.arn };
+      }
+      if (existing.memory?.status !== 'DELETING' && existing.memory?.status !== 'FAILED') {
+        const ready = await waitUntil(
+          'memory',
+          async () => {
+            const response = await control.send(new GetMemoryCommand({ memoryId: reusableId }));
+            return { status: response.memory?.status, memory: response.memory };
+          },
+          ['ACTIVE'],
+          ['FAILED'],
+        );
+        if (!ready.memory?.arn) throw new Error('Memory active without ARN.');
+        return { memoryId: reusableId, memoryArn: ready.memory.arn };
       }
     } catch (error) {
       // A previous failed replacement can leave a Harness with a stale Memory ARN.
