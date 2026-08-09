@@ -452,6 +452,16 @@ export class PersonalFinanceV1Stack extends Stack {
         `arn:aws:bedrock-agentcore:${agentCoreRegion}:${this.account}:memory/*`,
       ],
     }));
+    harnessExecutionRole.addToPolicy(new iam.PolicyStatement({
+      actions: [
+        'logs:CreateLogGroup',
+        'logs:CreateLogStream',
+        'logs:PutLogEvents',
+      ],
+      resources: [this.region, agentCoreRegion].map(
+        (region) => `arn:aws:logs:${region}:${this.account}:log-group:/aws/bedrock-agentcore/*`,
+      ),
+    }));
 
     const agentcoreProvisionerFunction = new NodejsFunction(this, 'AgentCoreProvisionerFunction', {
       ...lambdaDefaults,
