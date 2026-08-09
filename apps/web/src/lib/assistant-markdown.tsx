@@ -1,12 +1,5 @@
 import { type ReactNode } from "react";
 
-const escapeHtml = (value: string): string =>
-  value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-
 const MONEY_PART = String.raw`~?\$\s?-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?`;
 
 const wrapMoney = (raw: string, keyPrefix: string): ReactNode[] => {
@@ -29,9 +22,8 @@ const wrapMoney = (raw: string, keyPrefix: string): ReactNode[] => {
 
 /** Split text into React nodes: money → .amt, **bold**, *italic*, `code`. */
 export const renderInlineMarkdown = (raw: string): ReactNode[] => {
-  const source = escapeHtml(raw);
   const pattern = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g;
-  const parts = source.split(pattern);
+  const parts = raw.split(pattern);
   const nodes: ReactNode[] = [];
   for (const [index, part] of parts.entries()) {
     if (!part) continue;
