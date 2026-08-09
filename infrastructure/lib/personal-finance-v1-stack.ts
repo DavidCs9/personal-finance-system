@@ -64,6 +64,33 @@ export class PersonalFinanceV1Stack extends Stack {
       default: '',
       description: 'Cognito sub of the single finance owner used by AgentCore Gateway tools.',
     });
+    const olbiaSystemPromptTextPart1 = new cdk.CfnParameter(this, 'OlbiaSystemPromptTextPart1', {
+      type: 'String',
+      noEcho: true,
+      maxLength: 4096,
+      description: 'First part of the current Olbia DRAFT, read from Prompt Management by CI.',
+    });
+    const olbiaSystemPromptTextPart2 = new cdk.CfnParameter(this, 'OlbiaSystemPromptTextPart2', {
+      type: 'String',
+      noEcho: true,
+      maxLength: 4096,
+      description: 'Second part of the current Olbia DRAFT, read from Prompt Management by CI.',
+    });
+    const olbiaSystemPromptModelId = new cdk.CfnParameter(this, 'OlbiaSystemPromptModelId', {
+      type: 'String',
+      description: 'Current Olbia DRAFT model ID, read from Bedrock Prompt Management by the deploy workflow.',
+    });
+    const olbiaSystemPromptTemperature = new cdk.CfnParameter(this, 'OlbiaSystemPromptTemperature', {
+      type: 'Number',
+      minValue: 0,
+      maxValue: 1,
+      description: 'Current Olbia DRAFT temperature, read from Bedrock Prompt Management by the deploy workflow.',
+    });
+    const olbiaSystemPromptMaxTokens = new cdk.CfnParameter(this, 'OlbiaSystemPromptMaxTokens', {
+      type: 'Number',
+      minValue: 1,
+      description: 'Current Olbia DRAFT maxTokens, read from Bedrock Prompt Management by the deploy workflow.',
+    });
     const webDomainName = 'finance.castrodavid.dev';
     // The AWS-managed Web Search Tool connector is currently available only here.
     const agentCoreRegion = 'us-east-1';
@@ -478,6 +505,43 @@ export class PersonalFinanceV1Stack extends Stack {
         },
       }));
     }
+
+    // CDK owns the Prompt Management resource lifecycle. The deployment workflow
+    // reads the current DRAFT and passes it through NoEcho parameters, preserving
+    // native CloudFormation ownership without storing prompt content in this repo.
+    const olbiaSystemPrompt = new cdk.CfnResource(this, 'OlbiaSystemPrompt', {
+      type: 'AWS::Bedrock::Prompt',
+      properties: {
+        Name: 'OlbiaFinanceSystem',
+        Description: 'Runtime-managed system prompt for the Olbia finance assistant.',
+        DefaultVariant: 'default',
+        Variants: [{
+          Name: 'default',
+          TemplateType: 'TEXT',
+          ModelId: olbiaSystemPromptModelId.valueAsString,
+          InferenceConfiguration: {
+            Text: {
+              Temperature: olbiaSystemPromptTemperature.valueAsNumber,
+              MaxTokens: olbiaSystemPromptMaxTokens.valueAsNumber,
+            },
+          },
+          TemplateConfiguration: {
+            Text: {
+              Text: cdk.Fn.join('', [
+                olbiaSystemPromptTextPart1.valueAsString,
+                olbiaSystemPromptTextPart2.valueAsString,
+              ]),
+            },
+          },
+        }],
+        Tags: {
+          Project: 'personal-finance-system',
+          Environment: 'prod',
+          ManagedBy: 'cdk',
+        },
+      },
+    });
+    olbiaSystemPrompt.applyRemovalPolicy(RemovalPolicy.RETAIN);
 
     // Prompt content, model and inference settings are owned exclusively by Bedrock
     // Prompt Management. CDK only knows the stable SSM pointer name used at runtime.

@@ -44,7 +44,7 @@ Prompt Management **no** se hornea en el Harness ni se guarda en este repositori
 3. El provisioner lee esa versión para crear o reconciliar el Harness.
 4. En cada `InvokeHarness`, la Lambda de chat lee el puntero (caché ~30s), hace `GetPrompt`, y pasa prompt, modelo y configuración de inferencia como **override**.
 
-El prompt, el modelo, `temperature` y `maxTokens` nunca tienen contenido, seeds, defaults ni fallbacks hardcodeados en código. CDK no crea, actualiza ni elimina el recurso de Prompt Management ni el parámetro SSM; ambos son prerrequisitos operativos externos al stack. Véase también [`services/api/src/agent/README.md`](../services/api/src/agent/README.md).
+El prompt, el modelo, `temperature` y `maxTokens` nunca tienen contenido, seeds, defaults ni fallbacks hardcodeados en código. CDK administra el recurso nativo `AWS::Bedrock::Prompt`; antes de desplegar, CI lee el DRAFT actual desde Prompt Management y lo pasa como parámetros `NoEcho`, por lo que CloudFormation lo preserva sin guardar contenido en Git. Las versiones inmutables y el puntero activo se administran en runtime. Véase también [`services/api/src/agent/README.md`](../services/api/src/agent/README.md).
 
 ### Promote / rollback (sin redeploy)
 

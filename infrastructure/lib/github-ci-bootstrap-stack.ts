@@ -37,7 +37,14 @@ export class GitHubCiBootstrapStack extends Stack {
     }));
     deployRole.addToPolicy(new iam.PolicyStatement({
       actions: ['ssm:GetParameter'],
-      resources: [`arn:${this.partition}:ssm:${this.region}:${this.account}:parameter/cdk-bootstrap/hnb659fds/version`],
+      resources: [
+        `arn:${this.partition}:ssm:${this.region}:${this.account}:parameter/cdk-bootstrap/hnb659fds/version`,
+        `arn:${this.partition}:ssm:${this.region}:${this.account}:parameter/personal-finance-v1/agent/runtime-system-prompt-version-arn`,
+      ],
+    }));
+    deployRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['bedrock:GetPrompt'],
+      resources: [`arn:${this.partition}:bedrock:${this.region}:${this.account}:prompt/*`],
     }));
 
     new cdk.CfnOutput(this, 'GitHubDeployRoleArn', { value: deployRole.roleArn });
