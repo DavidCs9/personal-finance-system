@@ -32,11 +32,11 @@ Reglas (`dailyBalancePushMessage` en `packages/domain`):
 - si la proyección no es negativa y hay incertidumbre: añade `Incluye $N por confirmar`;
 - `contentMode: private`: `Tu balance diario está listo.`
 
-No es saldo bancario. El cálculo usa `computeMonthSummary` (ingreso, gasto no rechazado, MSI spent/committed, próximos pagos).
+No es saldo bancario. El cálculo usa el resumen mensual canónico de la API (ingreso, gasto no rechazado, MSI spent/committed y próximos pagos), que internamente llama a `computeMonthSummary`.
 
 ### Paridad con Resumen
 
-La Lambda carga eventos con importe, status y fechas, pero **hoy no proyecta el campo `msi`**. En meses con planes MSI, el push puede tratar el principal como gasto discrecional y **divergir** de las cifras de Resumen. Hasta que el job cargue `msi`, trata el aviso diario como orientación, no como fuente de verdad frente al tablero.
+`GET /months/{month}/summary` entrega el resumen canónico al tablero. La Lambda llama al mismo servicio interno, que arma el feed con las compras del mes y los planes MSI anteriores cuya cuota cae en el mes. Por tanto, Resumen y el aviso diario comparten la misma semántica y cálculo.
 
 ## Arquitectura
 
@@ -44,8 +44,7 @@ La Lambda carga eventos con importe, status y fechas, pero **hoy no proyecta el 
 EventBridge Scheduler (07:00 America/Chihuahua)
   └─ Lambda daily-balance-push
        ├─ suscripciones activas (GSI1 PUSH_SUBSCRIPTIONS)
-       ├─ plan del mes + eventos paginados
-       ├─ computeMonthSummary (dominio compartido)
+       ├─ resumen mensual canónico (mismo servicio que GET /months/{month}/summary)
        └─ Declarative Web Push
 ```
 

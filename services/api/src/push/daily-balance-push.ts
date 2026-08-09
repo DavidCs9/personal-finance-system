@@ -1,18 +1,15 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
-import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import {
-  computeMonthSummary,
   dailyBalancePushMessage,
   dayKeyInZone,
   monthKeyInZone,
-  type MonthSpendEvent,
   type MonthSummary,
 } from '@finance/domain';
 import { loadVapidCredentials, sendPushToSubscriptions } from '@finance/notify';
 import { listActivePushSubscriptions, type PushSubscriptionRecord } from '@finance/notify';
-import { monthlyPlanKey } from '../months/monthly-plan.js';
-import { incomeFieldsForMonth } from '../imports/cfdi-nomina-flow.js';
+import { getMonthSummary } from '../months/summary.js';
 
 const database = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const secrets = new SecretsManagerClient({});
@@ -41,7 +38,6 @@ export const handler = async (): Promise<{
   }
 
   const byOwner = groupByOwner(subscriptions);
-  const events = await listAllObservedEvents();
   const vapid = await loadVapidCredentials(secrets, vapidSecretArn);
 
   let users = 0;
@@ -51,7 +47,7 @@ export const handler = async (): Promise<{
 
   for (const [owner, ownerSubscriptions] of byOwner) {
     users += 1;
-    const summary = await summaryForOwner(owner, month, events, now);
+    const summary = await summaryForOwner(owner, month, now);
     const result = await sendPushToSubscriptions({
       database,
       tableName,
@@ -96,19 +92,8 @@ export const handler = async (): Promise<{
 export const summaryForOwner = async (
   owner: string,
   month: string,
-  events: readonly MonthSpendEvent[],
   now: Date,
-): Promise<MonthSummary> => {
-  const plan = await loadMonthlyPlan(owner, month);
-  return computeMonthSummary({
-    events,
-    month,
-    incomeMinor: plan.incomeMinor,
-    incomeConfigured: plan.configured,
-    upcomingPaymentsMinor: plan.upcomingMinor,
-    now,
-  });
-};
+): Promise<MonthSummary> => getMonthSummary(owner, month, now);
 
 export const groupByOwner = (
   subscriptions: readonly PushSubscriptionRecord[],
@@ -120,67 +105,6 @@ export const groupByOwner = (
     byOwner.set(subscription.owner, existing);
   }
   return byOwner;
-};
-
-const loadMonthlyPlan = async (
-  owner: string,
-  month: string,
-): Promise<{ readonly configured: boolean; readonly incomeMinor: number; readonly upcomingMinor: number }> => {
-  const [result, income] = await Promise.all([
-    database.send(new GetCommand({
-      TableName: tableName,
-      Key: monthlyPlanKey(owner, month),
-      ConsistentRead: true,
-    })),
-    incomeFieldsForMonth(owner, month),
-  ]);
-  const payload = result.Item?.payload as {
-    readonly upcomingPayments?: unknown;
-  } | undefined;
-  const upcomingPayments = Array.isArray(payload?.upcomingPayments) ? payload.upcomingPayments : [];
-  const upcomingMinor = upcomingPayments.reduce((sum: number, payment: unknown) => {
-    if (!payment || typeof payment !== 'object') return sum;
-    const amountMinor = (payment as { amountMinor?: unknown }).amountMinor;
-    return typeof amountMinor === 'number' ? sum + amountMinor : sum;
-  }, 0);
-  return {
-    configured: income.configured,
-    incomeMinor: income.incomeMinor,
-    upcomingMinor,
-  };
-};
-
-const listAllObservedEvents = async (): Promise<readonly MonthSpendEvent[]> => {
-  const events: MonthSpendEvent[] = [];
-  let exclusiveStartKey: Record<string, unknown> | undefined;
-  do {
-    const result = await database.send(new QueryCommand({
-      TableName: tableName,
-      IndexName: 'GSI1',
-      KeyConditionExpression: 'GSI1PK = :partition',
-      ExpressionAttributeValues: { ':partition': 'EVENTS' },
-      ExclusiveStartKey: exclusiveStartKey,
-    }));
-    for (const item of result.Items ?? []) {
-      const payload = item.payload as {
-        readonly amount?: { readonly amountMinor?: unknown };
-        readonly status?: unknown;
-        readonly occurredAt?: unknown;
-        readonly receivedAt?: unknown;
-      } | undefined;
-      if (!payload) continue;
-      const amountMinor = payload.amount?.amountMinor;
-      if (typeof amountMinor !== 'number' || typeof payload.receivedAt !== 'string') continue;
-      events.push({
-        amountMinor,
-        status: typeof payload.status === 'string' ? payload.status : 'accepted',
-        occurredAt: typeof payload.occurredAt === 'string' ? payload.occurredAt : undefined,
-        receivedAt: payload.receivedAt,
-      });
-    }
-    exclusiveStartKey = result.LastEvaluatedKey;
-  } while (exclusiveStartKey);
-  return events;
 };
 
 const ensureTrailingSlash = (url: string): string => (url.endsWith('/') ? url : `${url}/`);

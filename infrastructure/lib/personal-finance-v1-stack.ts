@@ -1017,6 +1017,7 @@ export class PersonalFinanceV1Stack extends Stack {
       'GET /events/{eventId}/raw',
       'PATCH /events/{eventId}',
       'GET /months/{month}',
+      'GET /months/{month}/summary',
       'PUT /months/{month}',
       'GET /months/{month}/payslips/{uuid}',
       'POST /imports/nomina',
