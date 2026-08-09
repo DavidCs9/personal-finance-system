@@ -19,6 +19,16 @@ describe("renderInlineMarkdown", () => {
     expect(html).toContain('class="amt"');
     expect(html).toContain("~$5,836");
   });
+
+  it("renders quotes once while React safely escapes HTML characters", () => {
+    const html = renderToStaticMarkup(
+      <>{renderInlineMarkdown('Dijo "hola" & <script>alert("x")</script>')}</>,
+    );
+
+    expect(html).toContain('Dijo &quot;hola&quot; &amp; &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;');
+    expect(html).not.toContain("&amp;quot;");
+    expect(html).not.toContain("<script>");
+  });
 });
 
 describe("expandCollapsedTableLines", () => {
