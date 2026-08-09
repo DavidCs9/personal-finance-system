@@ -413,7 +413,7 @@ export class PersonalFinanceV1Stack extends Stack {
       principal: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com'),
       action: 'lambda:InvokeFunction',
       sourceAccount: this.account,
-      sourceArn: `arn:aws:bedrock-agentcore:${agentCoreRegion}:${this.account}:gateway/*`,
+      sourceArn: `arn:aws:bedrock-agentcore:${this.region}:${this.account}:gateway/*`,
     });
 
     const harnessExecutionRole = new iam.Role(this, 'AgentCoreHarnessExecutionRole', {
@@ -450,6 +450,7 @@ export class PersonalFinanceV1Stack extends Stack {
       resources: [
         `arn:aws:bedrock-agentcore:${agentCoreRegion}:${this.account}:gateway/*`,
         `arn:aws:bedrock-agentcore:${agentCoreRegion}:${this.account}:memory/*`,
+        `arn:aws:bedrock-agentcore:${this.region}:${this.account}:gateway/*`,
       ],
     }));
     harnessExecutionRole.addToPolicy(new iam.PolicyStatement({
@@ -582,6 +583,7 @@ export class PersonalFinanceV1Stack extends Stack {
         HarnessName: 'OlbiaFinance',
         MemoryName: 'OlbiaFinanceMemory',
         GatewayName: 'OlbiaFinanceGateway',
+        FinanceGatewayName: 'OlbiaFinanceGateway',
         TargetName: 'olbia-tools',
         WebSearchTargetName: 'olbia-web-search',
         HarnessExecutionRoleArn: harnessExecutionRole.roleArn,

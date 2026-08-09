@@ -18,4 +18,4 @@ Prompt changes are operational runtime changes. Edit the Prompt Management draft
 
 CDK owns the native `AWS::Bedrock::Prompt` resource (stable name, tags, retention, and lifecycle). Before deployment, CI reads the current DRAFT directly from Prompt Management and passes its text, model, and inference settings as CloudFormation `NoEcho` parameters. This preserves the DRAFT without storing prompt content in Git or application code. Immutable versions and promotion remain runtime operations in Prompt Management; the active SSM pointer is an operational prerequisite.
 
-AgentCore Harness, Memory, and Gateway run in `us-east-1`, the region required by the AWS-managed Web Search Tool connector. The finance tool Lambda and DynamoDB source data remain in `us-east-2`; Gateway invokes the Lambda cross-region.
+AgentCore Harness, Memory, and the Web Search Gateway run in `us-east-1`, the region required by the AWS-managed connector. The existing finance Gateway, tool Lambda, and DynamoDB source data remain together in `us-east-2`. The Harness attaches both Gateways.

@@ -16,6 +16,7 @@ import {
   ListGatewayTargetsCommand,
   ListHarnessesCommand,
   ListMemoriesCommand,
+  UpdateGatewayTargetCommand,
   UpdateHarnessCommand,
   type ToolDefinition,
 } from '@aws-sdk/client-bedrock-agentcore-control';
@@ -25,12 +26,16 @@ import { TOOL_DEFINITIONS } from './tool-definitions.js';
 const control = new BedrockAgentCoreControlClient({
   region: process.env.AGENTCORE_REGION?.trim() || undefined,
 });
+const financeControl = new BedrockAgentCoreControlClient({
+  region: process.env.AWS_REGION?.trim() || undefined,
+});
 
 interface ProviderEvent {
   readonly RequestType: 'Create' | 'Update' | 'Delete';
   readonly ResourceProperties: {
     readonly HarnessName?: string;
     readonly GatewayName?: string;
+    readonly FinanceGatewayName?: string;
     readonly TargetName?: string;
     readonly WebSearchTargetName?: string;
     readonly HarnessExecutionRoleArn?: string;
@@ -67,10 +72,13 @@ const waitUntil = async <T extends { status?: string; failureReason?: string }>(
   }
 };
 
-const findGatewayIdByName = async (name: string): Promise<string | undefined> => {
+const findGatewayIdByName = async (
+  client: BedrockAgentCoreControlClient,
+  name: string,
+): Promise<string | undefined> => {
   let nextToken: string | undefined;
   do {
-    const page = await control.send(new ListGatewaysCommand({ maxResults: 50, nextToken }));
+    const page = await client.send(new ListGatewaysCommand({ maxResults: 50, nextToken }));
     const match = page.items?.find((item) => item.name === name);
     if (match?.gatewayId) return match.gatewayId;
     nextToken = page.nextToken;
@@ -207,7 +215,7 @@ const ensureGateway = async (input: {
   readonly name: string;
   readonly roleArn: string;
 }): Promise<{ gatewayId: string; gatewayArn: string }> => {
-  const existingId = await findGatewayIdByName(input.name);
+  const existingId = await findGatewayIdByName(control, input.name);
   if (existingId) {
     const existing = await control.send(new GetGatewayCommand({ gatewayIdentifier: existingId }));
     if (existing.status === 'READY') {
@@ -238,7 +246,7 @@ const ensureGateway = async (input: {
   }
   const created = await control.send(new CreateGatewayCommand({
     name: input.name,
-    description: 'Olbia finance tools gateway for AgentCore Harness.',
+    description: 'Olbia managed web search gateway for AgentCore Harness.',
     roleArn: input.roleArn,
     protocolType: 'MCP',
     authorizerType: 'AWS_IAM',
@@ -252,6 +260,21 @@ const ensureGateway = async (input: {
   return { gatewayId: created.gatewayId!, gatewayArn: ready.gatewayArn! };
 };
 
+const resolveFinanceGateway = async (name: string): Promise<{
+  gatewayId: string;
+  gatewayArn: string;
+}> => {
+  const gatewayId = await findGatewayIdByName(financeControl, name);
+  if (!gatewayId) {
+    throw new Error(`Existing finance Gateway ${name} was not found in ${process.env.AWS_REGION}.`);
+  }
+  const gateway = await financeControl.send(new GetGatewayCommand({ gatewayIdentifier: gatewayId }));
+  if (gateway.status !== 'READY' || !gateway.gatewayArn) {
+    throw new Error(`Finance Gateway ${name} is not READY (status=${gateway.status ?? 'unknown'}).`);
+  }
+  return { gatewayId, gatewayArn: gateway.gatewayArn };
+};
+
 const ensureGatewayTarget = async (input: {
   readonly gatewayId: string;
   readonly name: string;
@@ -259,16 +282,33 @@ const ensureGatewayTarget = async (input: {
 }): Promise<string> => {
   let nextToken: string | undefined;
   do {
-    const page = await control.send(new ListGatewayTargetsCommand({
+    const page = await financeControl.send(new ListGatewayTargetsCommand({
       gatewayIdentifier: input.gatewayId,
       maxResults: 50,
       nextToken,
     }));
     const match = page.items?.find((item) => item.name === input.name);
     if (match?.targetId) {
+      await financeControl.send(new UpdateGatewayTargetCommand({
+        gatewayIdentifier: input.gatewayId,
+        targetId: match.targetId,
+        name: input.name,
+        description: 'Olbia ledger aggregation tools.',
+        targetConfiguration: {
+          mcp: {
+            lambda: {
+              lambdaArn: input.toolsLambdaArn,
+              toolSchema: { inlinePayload: toolSchemaInline() },
+            },
+          },
+        },
+        credentialProviderConfigurations: [
+          { credentialProviderType: 'GATEWAY_IAM_ROLE' },
+        ],
+      }));
       await waitUntil(
         'gateway-target',
-        async () => control.send(new GetGatewayTargetCommand({
+        async () => financeControl.send(new GetGatewayTargetCommand({
           gatewayIdentifier: input.gatewayId,
           targetId: match.targetId!,
         })),
@@ -280,7 +320,7 @@ const ensureGatewayTarget = async (input: {
     nextToken = page.nextToken;
   } while (nextToken);
 
-  const created = await control.send(new CreateGatewayTargetCommand({
+  const created = await financeControl.send(new CreateGatewayTargetCommand({
     gatewayIdentifier: input.gatewayId,
     name: input.name,
     description: 'Olbia ledger aggregation tools.',
@@ -300,7 +340,7 @@ const ensureGatewayTarget = async (input: {
   }));
   await waitUntil(
     'gateway-target',
-    async () => control.send(new GetGatewayTargetCommand({
+    async () => financeControl.send(new GetGatewayTargetCommand({
       gatewayIdentifier: input.gatewayId,
       targetId: created.targetId!,
     })),
@@ -366,13 +406,23 @@ const ensureWebSearchTarget = async (input: {
   return created.targetId!;
 };
 
-const harnessTools = (gatewayArn: string) => ([
+const harnessTools = (financeGatewayArn: string, webGatewayArn: string) => ([
   {
     type: 'agentcore_gateway' as const,
     name: 'olbia-finance',
     config: {
       agentCoreGateway: {
-        gatewayArn,
+        gatewayArn: financeGatewayArn,
+        outboundAuth: { awsIam: {} },
+      },
+    },
+  },
+  {
+    type: 'agentcore_gateway' as const,
+    name: 'olbia-web-search',
+    config: {
+      agentCoreGateway: {
+        gatewayArn: webGatewayArn,
         outboundAuth: { awsIam: {} },
       },
     },
@@ -391,7 +441,8 @@ const harnessModel = (prompt: RuntimePrompt) => ({
 const ensureHarness = async (input: {
   readonly name: string;
   readonly executionRoleArn: string;
-  readonly gatewayArn: string;
+  readonly financeGatewayArn: string;
+  readonly webGatewayArn: string;
   readonly prompt: RuntimePrompt;
   readonly memoryArn: string;
 }): Promise<{ harnessId: string; harnessArn: string }> => {
@@ -406,7 +457,7 @@ const ensureHarness = async (input: {
         harnessId: existingId,
         model,
         systemPrompt,
-        tools: harnessTools(input.gatewayArn),
+        tools: harnessTools(input.financeGatewayArn, input.webGatewayArn),
         memory: { optionalValue: { agentCoreMemoryConfiguration: { arn: input.memoryArn, messagesCount: 12 } } },
         maxIterations: 25,
         maxTokens: 4096,
@@ -449,7 +500,7 @@ const ensureHarness = async (input: {
     executionRoleArn: input.executionRoleArn,
     model,
     systemPrompt,
-    tools: harnessTools(input.gatewayArn),
+    tools: harnessTools(input.financeGatewayArn, input.webGatewayArn),
     memory: { agentCoreMemoryConfiguration: { arn: input.memoryArn, messagesCount: 12 } },
     maxIterations: 25,
     maxTokens: 4096,
@@ -500,6 +551,7 @@ export const handler = async (event: ProviderEvent): Promise<{
   const props = event.ResourceProperties;
   const harnessName = props.HarnessName ?? 'OlbiaFinance';
   const gatewayName = props.GatewayName ?? 'OlbiaFinanceGateway';
+  const financeGatewayName = props.FinanceGatewayName ?? 'OlbiaFinanceGateway';
   const targetName = props.TargetName ?? 'olbia-tools';
   const webSearchTargetName = props.WebSearchTargetName ?? 'olbia-web-search';
   const harnessRole = props.HarnessExecutionRoleArn ?? '';
@@ -595,32 +647,34 @@ export const handler = async (event: ProviderEvent): Promise<{
   }
 
   const prompt = await resolveRuntimePrompt();
-  const gateway = await ensureGateway({ name: gatewayName, roleArn: gatewayRole });
+  const webGateway = await ensureGateway({ name: gatewayName, roleArn: gatewayRole });
+  const financeGateway = await resolveFinanceGateway(financeGatewayName);
   const memory = await ensureMemory(memoryName, priorResources.memoryId);
   const targetId = await ensureGatewayTarget({
-    gatewayId: gateway.gatewayId,
+    gatewayId: financeGateway.gatewayId,
     name: targetName,
     toolsLambdaArn,
   });
   const webSearchTargetId = await ensureWebSearchTarget({
-    gatewayId: gateway.gatewayId,
+    gatewayId: webGateway.gatewayId,
     name: webSearchTargetName,
   });
   const harness = await ensureHarness({
     name: harnessName,
     executionRoleArn: harnessRole,
-    gatewayArn: gateway.gatewayArn,
+    financeGatewayArn: financeGateway.gatewayArn,
+    webGatewayArn: webGateway.gatewayArn,
     prompt,
     memoryArn: memory.memoryArn,
   });
 
   return {
-    PhysicalResourceId: `olbia-agentcore-v3::${harness.harnessId}::${gateway.gatewayId}::${targetId}::${webSearchTargetId}::${memory.memoryId}`,
+    PhysicalResourceId: `olbia-agentcore-v3::${harness.harnessId}::${webGateway.gatewayId}::${targetId}::${webSearchTargetId}::${memory.memoryId}`,
     Data: {
       HarnessArn: harness.harnessArn,
       HarnessId: harness.harnessId,
-      GatewayArn: gateway.gatewayArn,
-      GatewayId: gateway.gatewayId,
+      GatewayArn: webGateway.gatewayArn,
+      GatewayId: webGateway.gatewayId,
       TargetId: targetId,
       WebSearchTargetId: webSearchTargetId,
       MemoryId: memory.memoryId,
