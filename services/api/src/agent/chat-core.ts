@@ -9,7 +9,9 @@ import { resolveRuntimePrompt } from './prompt-runtime.js';
 const harnessArn = process.env.HARNESS_ARN?.trim();
 const cognitoUserPoolId = process.env.COGNITO_USER_POOL_ID?.trim();
 const cognitoClientId = process.env.COGNITO_CLIENT_ID?.trim();
-const agentcore = new BedrockAgentCoreClient({});
+const agentcore = new BedrockAgentCoreClient({
+  region: process.env.AGENTCORE_REGION?.trim() || undefined,
+});
 
 const jwtVerifier = cognitoUserPoolId && cognitoClientId
   ? CognitoJwtVerifier.create({

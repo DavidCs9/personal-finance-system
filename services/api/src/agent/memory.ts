@@ -5,7 +5,9 @@ import {
 } from '@aws-sdk/client-bedrock-agentcore';
 
 const memoryId = process.env.AGENT_MEMORY_ID?.trim();
-const agentcore = new BedrockAgentCoreClient({});
+const agentcore = new BedrockAgentCoreClient({
+  region: process.env.AGENTCORE_REGION?.trim() || undefined,
+});
 
 export type AssistantMemory = {
   readonly id: string;

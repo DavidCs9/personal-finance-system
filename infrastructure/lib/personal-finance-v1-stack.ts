@@ -29,13 +29,6 @@ import { LambdaInvoke } from 'aws-cdk-lib/aws-scheduler-targets';
 import type { IConstruct } from 'constructs';
 import { Construct } from 'constructs';
 import * as path from 'node:path';
-import {
-  OLBIA_SYSTEM_PROMPT,
-  OLBIA_SYSTEM_PROMPT_INFERENCE,
-  OLBIA_SYSTEM_PROMPT_MODEL_ID,
-  OLBIA_SYSTEM_PROMPT_NAME,
-  OLBIA_SYSTEM_PROMPT_VARIANT,
-} from '@finance/api/agent-prompts';
 
 export class PersonalFinanceV1Stack extends Stack {
   public constructor(scope: Construct, id: string, props?: StackProps) {
@@ -72,6 +65,8 @@ export class PersonalFinanceV1Stack extends Stack {
       description: 'Cognito sub of the single finance owner used by AgentCore Gateway tools.',
     });
     const webDomainName = 'finance.castrodavid.dev';
+    // The AWS-managed Web Search Tool connector is currently available only here.
+    const agentCoreRegion = 'us-east-1';
     const inboundDomainName = 'inbound.finance.castrodavid.dev';
     const inboundRecipientEmail = `alertas@${inboundDomainName}`;
     const hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'CastroDavidDevZone', {
@@ -383,10 +378,15 @@ export class PersonalFinanceV1Stack extends Stack {
       actions: ['lambda:InvokeFunction'],
       resources: [agentToolsFunction.functionArn],
     }));
+    gatewayRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['bedrock-agentcore:InvokeWebSearch'],
+      resources: ['*'],
+    }));
     agentToolsFunction.addPermission('AllowAgentCoreGatewayInvoke', {
       principal: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com'),
       action: 'lambda:InvokeFunction',
       sourceAccount: this.account,
+      sourceArn: `arn:aws:bedrock-agentcore:${agentCoreRegion}:${this.account}:gateway/*`,
     });
 
     const harnessExecutionRole = new iam.Role(this, 'AgentCoreHarnessExecutionRole', {
@@ -396,7 +396,7 @@ export class PersonalFinanceV1Stack extends Stack {
           StringEquals: { 'aws:SourceAccount': this.account },
           // Harness provisions a managed Runtime under the hood; both ARN shapes must match.
           ArnLike: {
-            'aws:SourceArn': `arn:aws:bedrock-agentcore:${this.region}:${this.account}:*`,
+            'aws:SourceArn': `arn:aws:bedrock-agentcore:${agentCoreRegion}:${this.account}:*`,
           },
         },
       }),
@@ -421,8 +421,8 @@ export class PersonalFinanceV1Stack extends Stack {
         'bedrock-agentcore:RetrieveMemoryRecords',
       ],
       resources: [
-        `arn:aws:bedrock-agentcore:${this.region}:${this.account}:gateway/*`,
-        `arn:aws:bedrock-agentcore:${this.region}:${this.account}:memory/*`,
+        `arn:aws:bedrock-agentcore:${agentCoreRegion}:${this.account}:gateway/*`,
+        `arn:aws:bedrock-agentcore:${agentCoreRegion}:${this.account}:memory/*`,
       ],
     }));
 
@@ -435,6 +435,9 @@ export class PersonalFinanceV1Stack extends Stack {
       description: 'Creates/updates AgentCore Gateway + Harness for Olbia assistant.',
       timeout: Duration.minutes(15),
       memorySize: 256,
+      environment: {
+        AGENTCORE_REGION: agentCoreRegion,
+      },
     });
     // Harness/Gateway create a web of control-plane resources (workload identity,
     // managed runtime, endpoints). Scope is the provisioner custom resource only.
@@ -476,68 +479,24 @@ export class PersonalFinanceV1Stack extends Stack {
       }));
     }
 
-    // Prompt Management: repo seeds DRAFT + bootstrap version.
-    // Runtime promote/rollback = create a new Prompt version, then move the SSM pointer
-    // (custom resource seeds the pointer once and does not overwrite later stack updates).
-    const systemPromptVersionParamName = '/personal-finance-v1/agent/system-prompt-version-arn';
-    const olbiaSystemPrompt = new cdk.CfnResource(this, 'OlbiaSystemPrompt', {
-      type: 'AWS::Bedrock::Prompt',
-      properties: {
-        Name: OLBIA_SYSTEM_PROMPT_NAME,
-        Description: 'System prompt for the Olbia finance AgentCore Harness.',
-        DefaultVariant: OLBIA_SYSTEM_PROMPT_VARIANT,
-        Variants: [{
-          Name: OLBIA_SYSTEM_PROMPT_VARIANT,
-          TemplateType: 'TEXT',
-          ModelId: OLBIA_SYSTEM_PROMPT_MODEL_ID,
-          InferenceConfiguration: {
-            Text: {
-              Temperature: OLBIA_SYSTEM_PROMPT_INFERENCE.temperature,
-              MaxTokens: OLBIA_SYSTEM_PROMPT_INFERENCE.maxTokens,
-            },
-          },
-          TemplateConfiguration: {
-            Text: {
-              Text: OLBIA_SYSTEM_PROMPT,
-            },
-          },
-        }],
-      },
-    });
-    const olbiaSystemPromptVersion = new cdk.CfnResource(this, 'OlbiaSystemPromptVersion', {
-      type: 'AWS::Bedrock::PromptVersion',
-      properties: {
-        PromptArn: olbiaSystemPrompt.getAtt('Arn'),
-        Description: 'bootstrap',
-      },
-    });
-    olbiaSystemPromptVersion.addDependency(olbiaSystemPrompt);
+    // Prompt content, model and inference settings are owned exclusively by Bedrock
+    // Prompt Management. CDK only knows the stable SSM pointer name used at runtime.
+    const systemPromptVersionParamName = '/personal-finance-v1/agent/runtime-system-prompt-version-arn';
 
-    const seedPromptPointer = new cr.AwsCustomResource(this, 'SeedSystemPromptVersionPointer', {
-      onCreate: {
-        service: 'SSM',
-        action: 'putParameter',
-        parameters: {
-          Name: systemPromptVersionParamName,
-          Type: 'String',
-          Value: olbiaSystemPromptVersion.getAtt('Arn'),
-          Overwrite: true,
-          Description: 'Active Bedrock Prompt Management version ARN for Olbia assistant (promote/rollback without deploy).',
-        },
-        physicalResourceId: cr.PhysicalResourceId.of('olbia-system-prompt-version-pointer'),
-      },
-      // Intentionally no onUpdate: runtime promote/rollback must not be clobbered by redeploys.
-      onDelete: {
-        service: 'SSM',
-        action: 'deleteParameter',
-        parameters: { Name: systemPromptVersionParamName },
-        // Ignore if already deleted / retained.
-        ignoreErrorCodesMatching: 'ParameterNotFound',
-      },
-      policy: cr.AwsCustomResourcePolicy.fromSdkCalls({ resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE }),
-      installLatestAwsSdk: false,
-    });
-    seedPromptPointer.node.addDependency(olbiaSystemPromptVersion);
+    agentcoreProvisionerFunction.addEnvironment(
+      'SYSTEM_PROMPT_VERSION_PARAM',
+      systemPromptVersionParamName,
+    );
+    agentcoreProvisionerFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ssm:GetParameter'],
+      resources: [
+        `arn:aws:ssm:${this.region}:${this.account}:parameter${systemPromptVersionParamName}`,
+      ],
+    }));
+    agentcoreProvisionerFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:GetPrompt'],
+      resources: [`arn:aws:bedrock:${this.region}:${this.account}:prompt/*`],
+    }));
 
     const agentcoreProvider = new cr.Provider(this, 'AgentCoreProvider', {
       onEventHandler: agentcoreProvisionerFunction,
@@ -550,10 +509,10 @@ export class PersonalFinanceV1Stack extends Stack {
         MemoryName: 'OlbiaFinanceMemory',
         GatewayName: 'OlbiaFinanceGateway',
         TargetName: 'olbia-tools',
+        WebSearchTargetName: 'olbia-web-search',
         HarnessExecutionRoleArn: harnessExecutionRole.roleArn,
         GatewayRoleArn: gatewayRole.roleArn,
         ToolsLambdaArn: agentToolsFunction.functionArn,
-        ModelId: OLBIA_SYSTEM_PROMPT_MODEL_ID,
         // Reconcile AgentCore resources when the provisioner lifecycle logic changes.
         ProvisionerVersion: agentcoreProvisionerFunction.currentVersion.version,
         // Force replace when tools Lambda changes identity.
@@ -565,9 +524,10 @@ export class PersonalFinanceV1Stack extends Stack {
 
     // Conversational memory is isolated from the ledger and its financial source of truth.
     apiFunction.addEnvironment('AGENT_MEMORY_ID', agentMemoryId);
+    apiFunction.addEnvironment('AGENTCORE_REGION', agentCoreRegion);
     apiFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock-agentcore:ListMemoryRecords', 'bedrock-agentcore:DeleteMemoryRecord'],
-      resources: [`arn:aws:bedrock-agentcore:${this.region}:${this.account}:memory/*`],
+      resources: [`arn:aws:bedrock-agentcore:${agentCoreRegion}:${this.account}:memory/*`],
     }));
 
     const agentProxyFunction = new NodejsFunction(this, 'AgentProxyFunction', {
@@ -582,6 +542,7 @@ export class PersonalFinanceV1Stack extends Stack {
       environment: {
         ...dataStorageEnvironment,
         HARNESS_ARN: harnessArn,
+        AGENTCORE_REGION: agentCoreRegion,
         SYSTEM_PROMPT_VERSION_PARAM: systemPromptVersionParamName,
         SYSTEM_PROMPT_CACHE_TTL_MS: '30000',
         COGNITO_USER_POOL_ID: userPool.userPoolId,
@@ -668,6 +629,7 @@ export class PersonalFinanceV1Stack extends Stack {
       environment: {
         ...dataStorageEnvironment,
         HARNESS_ARN: harnessArn,
+        AGENTCORE_REGION: agentCoreRegion,
         SYSTEM_PROMPT_VERSION_PARAM: systemPromptVersionParamName,
         SYSTEM_PROMPT_CACHE_TTL_MS: '30000',
         COGNITO_USER_POOL_ID: userPool.userPoolId,
@@ -706,11 +668,6 @@ export class PersonalFinanceV1Stack extends Stack {
       value: systemPromptVersionParamName,
       description: 'SSM pointer to the active Prompt Management version ARN (promote/rollback without deploy).',
     });
-    new cdk.CfnOutput(this, 'OlbiaSystemPromptBootstrapVersionArn', {
-      value: cdk.Token.asString(olbiaSystemPromptVersion.getAtt('Arn')),
-      description: 'Bootstrap Prompt Management version; runtime may point elsewhere via SSM.',
-    });
-
     // Low-threshold estimated charges alarm (single-user agent cost guardrail).
     new budgets.CfnBudget(this, 'AgentBedrockBudget', {
       budget: {
