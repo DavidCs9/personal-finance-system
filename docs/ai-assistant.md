@@ -30,7 +30,7 @@ SPA (JWT Cognito)
 - CORS pertenece a este REST API y a las respuestas de la Lambda proxy. El origen permitido es el dominio web de Olbia; las respuestas de autorización 4xx/5xx también incluyen CORS.
 - El loop del agente lo corre **Harness** (no un Converse manual en la Lambda).
 - Las tools viven detrás de **Gateway**: un target Lambda para finanzas y el [conector administrado Web Search Tool](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-connector-web-search-tool.html) para información pública con citas.
-- Harness, Memory y Gateway corren en `us-east-1`, requerido por Web Search Tool. La Lambda financiera y DynamoDB permanecen en `us-east-2` y se invocan cross-region.
+- Harness, Memory y el Gateway de Web Search corren en `us-east-1`, requerido por el conector. El Gateway financiero existente, su Lambda y DynamoDB permanecen juntos en `us-east-2`; el Harness conecta ambos Gateways.
 - Code interpreter: **apagado**.
 - Memoria de conversación: AgentCore Memory conserva automáticamente y de forma amplia contexto útil entre sesiones (planes, metas, preferencias, restricciones y decisiones), aislado por Cognito `sub`. Se prefiere retener de más para que el usuario no tenga que repetir contexto; las memorias durables se pueden revisar y borrar desde el sheet. El hilo visible sigue limpiándose al cerrar o cambiar el mes. Nunca escribe ni modifica el ledger, Resumen, proyecciones o Patrimonio.
 - CDK provisiona Gateway + Target + Harness vía custom resource (`OlbiaAgentCore`) y inyecta `HARNESS_ARN` en las Lambdas de chat.
