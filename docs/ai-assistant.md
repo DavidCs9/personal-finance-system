@@ -79,6 +79,7 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 | `list_movements` | Detalle acotado (N filas) |
 | `compare_months` | Mes vs anterior / deltas |
 | `wealth_snapshot` | Neto / activos / deudas (solo lectura) |
+| `investment_history` | Historial DDB de cuenta o posición Bitso/IBKR por día, rango o all-time; distingue cambio de valor de rendimiento cuando cambió la cantidad |
 | `propose_recategorize` | Propone cambio; la UI confirma (`set_category` + regla) |
 
 ## Categorías

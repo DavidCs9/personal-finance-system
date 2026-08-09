@@ -148,6 +148,7 @@ const toolLabel = (name: string): string => {
     case 'list_movements': return 'Revisando movimientos';
     case 'compare_months': return 'Comparando meses';
     case 'wealth_snapshot': return 'Revisando patrimonio';
+    case 'investment_history': return 'Revisando historial de inversiones';
     case 'propose_recategorize': return 'Preparando una categoría';
     default: return 'Consultando datos';
   }
@@ -182,6 +183,11 @@ export const summarizeToolResult = (
       };
     case 'wealth_snapshot':
       return { summary: 'Patrimonio consultado.', material: true };
+    case 'investment_history':
+      return {
+        summary: `Revisé el historial de ${String(payload.symbol ?? payload.accountId ?? 'la inversión')}.`,
+        material: true,
+      };
     case 'propose_recategorize':
       return { summary: 'Propuesta de categoría preparada.', material: false };
     default:
