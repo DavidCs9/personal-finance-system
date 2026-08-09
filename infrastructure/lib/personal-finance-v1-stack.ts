@@ -473,6 +473,12 @@ export class PersonalFinanceV1Stack extends Stack {
       description: 'Creates/updates AgentCore Gateway + Harness for Olbia assistant.',
       timeout: Duration.minutes(15),
       memorySize: 256,
+      bundling: {
+        ...lambdaDefaults.bundling,
+        // Web Search connector support is newer than the SDK bundled in the
+        // Lambda runtime; ship the repository-pinned AgentCore client.
+        bundleAwsSDK: true,
+      },
       environment: {
         AGENTCORE_REGION: agentCoreRegion,
       },
