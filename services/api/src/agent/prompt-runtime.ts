@@ -4,10 +4,6 @@ import {
   type GetPromptResponse,
 } from '@aws-sdk/client-bedrock-agent';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
-import {
-  OLBIA_SYSTEM_PROMPT_INFERENCE,
-  OLBIA_SYSTEM_PROMPT_MODEL_ID,
-} from './prompts/olbia-system.js';
 
 const ssm = new SSMClient({});
 const bedrockAgent = new BedrockAgentClient({});
@@ -57,10 +53,19 @@ const extractPromptText = (response: GetPromptResponse): string => {
 const extractInference = (response: GetPromptResponse) => {
   const variant = pickVariant(response);
   const inference = variant?.inferenceConfiguration?.text;
+  if (!variant?.modelId) {
+    throw new Error('Active Prompt Management version has no modelId.');
+  }
+  if (typeof inference?.temperature !== 'number') {
+    throw new Error('Active Prompt Management version has no temperature.');
+  }
+  if (typeof inference.maxTokens !== 'number') {
+    throw new Error('Active Prompt Management version has no maxTokens.');
+  }
   return {
-    modelId: variant?.modelId ?? OLBIA_SYSTEM_PROMPT_MODEL_ID,
-    temperature: inference?.temperature ?? OLBIA_SYSTEM_PROMPT_INFERENCE.temperature,
-    maxTokens: inference?.maxTokens ?? OLBIA_SYSTEM_PROMPT_INFERENCE.maxTokens,
+    modelId: variant.modelId,
+    temperature: inference.temperature,
+    maxTokens: inference.maxTokens,
   };
 };
 

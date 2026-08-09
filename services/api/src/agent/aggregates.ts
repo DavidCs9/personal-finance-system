@@ -7,14 +7,27 @@ import {
   type CategorizedSpendEvent,
   type MonthSummary,
   type SpendAggregateResult,
+  type WealthAccountId,
 } from '@finance/domain';
 import { getMonthlyPlan } from '../months/service.js';
 import { listEventsForMonth } from '../events/queries.js';
-import { getWealthOverview } from '../wealth/service.js';
+import { getWealthOverview, listWealthSnapshotsForAccount } from '../wealth/service.js';
 import { listCategories } from '../categories/service.js';
 import { isValidMonth } from '../months/monthly-plan.js';
+import {
+  investmentHistoryFromSnapshots,
+  InvalidInvestmentHistoryQueryError,
+  type InvestmentHistoryGranularity,
+  type InvestmentHistoryQuery,
+  type InvestmentHistoryRange,
+} from './investment-history.js';
 
 export class InvalidAgentQueryError extends Error {}
+
+const investmentAccountId = (value: unknown): WealthAccountId => {
+  if (value === 'bitso' || value === 'ibkr') return value;
+  throw new InvalidAgentQueryError('La cuenta debe ser Bitso o IBKR.');
+};
 
 const toCategorized = (events: readonly Record<string, unknown>[]): CategorizedSpendEvent[] =>
   events.map((event) => {
@@ -203,6 +216,58 @@ export const wealthSnapshotForAgent = async (owner: string): Promise<Record<stri
       latestMxnMinor: (liability.latestSnapshot as { amountMinor?: number } | undefined)?.amountMinor ?? null,
     })),
   };
+};
+
+export const investmentHistory = async (
+  owner: string,
+  input: Record<string, unknown>,
+  now: Date = new Date(),
+) => {
+  const symbol = typeof input.symbol === 'string' && input.symbol.trim()
+    ? input.symbol.trim().toUpperCase()
+    : undefined;
+  const requestedAccount = input.accountId === undefined
+    ? undefined
+    : investmentAccountId(input.accountId);
+  if (!requestedAccount && !symbol) {
+    throw new InvalidAgentQueryError('Indica accountId o un símbolo que permita inferir la cuenta.');
+  }
+
+  const accounts: readonly WealthAccountId[] = requestedAccount ? [requestedAccount] : ['bitso', 'ibkr'];
+  const candidates = await Promise.all(accounts.map(async (accountId) => ({
+    accountId,
+    snapshots: await listWealthSnapshotsForAccount(owner, accountId),
+  })));
+  const matching = requestedAccount || !symbol
+    ? candidates
+    : candidates.filter(({ snapshots }) => snapshots.some(
+      (snapshot) => snapshot.holdings.some((holding) => holding.symbol.toUpperCase() === symbol),
+    ));
+  if (matching.length === 0) {
+    throw new InvalidAgentQueryError(`No hay historial de ${symbol ?? 'esa inversión'}.`);
+  }
+  if (matching.length > 1) {
+    throw new InvalidAgentQueryError(`El símbolo ${symbol} existe en más de una cuenta; indica Bitso o IBKR.`);
+  }
+
+  const query: InvestmentHistoryQuery = {
+    ...(symbol ? { symbol } : {}),
+    ...(typeof input.range === 'string' ? { range: input.range as InvestmentHistoryRange } : {}),
+    ...(typeof input.fromDay === 'string' ? { fromDay: input.fromDay } : {}),
+    ...(typeof input.toDay === 'string' ? { toDay: input.toDay } : {}),
+    ...(typeof input.granularity === 'string'
+      ? { granularity: input.granularity as InvestmentHistoryGranularity }
+      : {}),
+    ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
+  };
+  try {
+    return investmentHistoryFromSnapshots(matching[0]!.accountId, matching[0]!.snapshots, query, now);
+  } catch (error) {
+    if (error instanceof InvalidInvestmentHistoryQueryError) {
+      throw new InvalidAgentQueryError(error.message);
+    }
+    throw error;
+  }
 };
 
 export const proposeRecategorize = async (input: {

@@ -70,6 +70,27 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'investment_history',
+    description:
+      'Historial general de Bitso o IBKR desde snapshots diarios. Consulta una cuenta o posición por día/rango/all-time; devuelve cambio, serie y cambios por holding. Si cambió la cantidad, trata el resultado como cambio de valor, no rendimiento. accountId puede omitirse si symbol identifica una sola cuenta.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        accountId: { type: 'string', enum: ['bitso', 'ibkr'] },
+        symbol: { type: 'string', description: 'Posición opcional, por ejemplo VOO o SOL' },
+        range: {
+          type: 'string',
+          enum: ['yesterday', 'this_week', 'last_7_days', 'this_month', 'this_year', 'all', 'custom'],
+          description: 'Default: this_week. Usa custom con fromDay/toDay para fechas explícitas.',
+        },
+        fromDay: { type: 'string', description: 'Inicio YYYY-MM-DD para range=custom' },
+        toDay: { type: 'string', description: 'Fin YYYY-MM-DD para range=custom' },
+        granularity: { type: 'string', enum: ['daily', 'monthly'] },
+        limit: { type: 'number', description: 'Máximo de puntos devueltos (1–366; default 120)' },
+      },
+    },
+  },
+  {
     name: 'propose_recategorize',
     description:
       'Propone recategorizar un movimiento. No aplica el cambio; la UI debe confirmar.',

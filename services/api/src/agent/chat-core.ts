@@ -9,7 +9,9 @@ import { resolveRuntimePrompt } from './prompt-runtime.js';
 const harnessArn = process.env.HARNESS_ARN?.trim();
 const cognitoUserPoolId = process.env.COGNITO_USER_POOL_ID?.trim();
 const cognitoClientId = process.env.COGNITO_CLIENT_ID?.trim();
-const agentcore = new BedrockAgentCoreClient({});
+const agentcore = new BedrockAgentCoreClient({
+  region: process.env.AGENTCORE_REGION?.trim() || undefined,
+});
 
 const jwtVerifier = cognitoUserPoolId && cognitoClientId
   ? CognitoJwtVerifier.create({
@@ -148,6 +150,7 @@ const toolLabel = (name: string): string => {
     case 'list_movements': return 'Revisando movimientos';
     case 'compare_months': return 'Comparando meses';
     case 'wealth_snapshot': return 'Revisando patrimonio';
+    case 'investment_history': return 'Revisando historial de inversiones';
     case 'propose_recategorize': return 'Preparando una categoría';
     default: return 'Consultando datos';
   }
@@ -182,6 +185,11 @@ export const summarizeToolResult = (
       };
     case 'wealth_snapshot':
       return { summary: 'Patrimonio consultado.', material: true };
+    case 'investment_history':
+      return {
+        summary: `Revisé el historial de ${String(payload.symbol ?? payload.accountId ?? 'la inversión')}.`,
+        material: true,
+      };
     case 'propose_recategorize':
       return { summary: 'Propuesta de categoría preparada.', material: false };
     default:

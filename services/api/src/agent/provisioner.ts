@@ -18,20 +18,12 @@ import {
   UpdateHarnessCommand,
   type ToolDefinition,
 } from '@aws-sdk/client-bedrock-agentcore-control';
-import {
-  OLBIA_SYSTEM_PROMPT_INFERENCE,
-  OLBIA_SYSTEM_PROMPT_MODEL_ID,
-} from './prompts/olbia-system.js';
+import { resolveRuntimePrompt, type RuntimePrompt } from './prompt-runtime.js';
 import { TOOL_DEFINITIONS } from './tool-definitions.js';
 
-const control = new BedrockAgentCoreControlClient({});
-
-/**
- * Placeholder only. Live system prompt + inference come from Bedrock Prompt Management
- * at InvokeHarness time (SSM-pinned version ARN). Do not bake Prompt Management content here.
- */
-const HARNESS_PLACEHOLDER_SYSTEM_PROMPT =
-  'Eres el asistente de Olbia. Las instrucciones operativas se inyectan en cada invocación desde Prompt Management.';
+const control = new BedrockAgentCoreControlClient({
+  region: process.env.AGENTCORE_REGION?.trim() || undefined,
+});
 
 interface ProviderEvent {
   readonly RequestType: 'Create' | 'Update' | 'Delete';
@@ -39,10 +31,10 @@ interface ProviderEvent {
     readonly HarnessName?: string;
     readonly GatewayName?: string;
     readonly TargetName?: string;
+    readonly WebSearchTargetName?: string;
     readonly HarnessExecutionRoleArn?: string;
     readonly GatewayRoleArn?: string;
     readonly ToolsLambdaArn?: string;
-    readonly ModelId?: string;
     readonly MemoryName?: string;
   };
   readonly PhysicalResourceId?: string;
@@ -100,6 +92,7 @@ type AgentCoreResourceIds = {
   readonly harnessId?: string;
   readonly gatewayId?: string;
   readonly targetId?: string;
+  readonly webSearchTargetId?: string;
   readonly memoryId?: string;
 };
 
@@ -110,6 +103,15 @@ type AgentCoreResourceIds = {
  */
 const resourceIdsFromPhysicalId = (physicalId: string | undefined): AgentCoreResourceIds => {
   const parts = physicalId?.split('::') ?? [];
+  if (parts[0] === 'olbia-agentcore-v3') {
+    return {
+      harnessId: parts[1],
+      gatewayId: parts[2],
+      targetId: parts[3],
+      webSearchTargetId: parts[4],
+      memoryId: parts[5],
+    };
+  }
   if (parts[0] === 'olbia-agentcore-v2') {
     return {
       harnessId: parts[1],
@@ -277,6 +279,62 @@ const ensureGatewayTarget = async (input: {
   return created.targetId!;
 };
 
+const ensureWebSearchTarget = async (input: {
+  readonly gatewayId: string;
+  readonly name: string;
+}): Promise<string> => {
+  let nextToken: string | undefined;
+  do {
+    const page = await control.send(new ListGatewayTargetsCommand({
+      gatewayIdentifier: input.gatewayId,
+      maxResults: 50,
+      nextToken,
+    }));
+    const match = page.items?.find((item) => item.name === input.name);
+    if (match?.targetId) {
+      await waitUntil(
+        'web-search-target',
+        async () => control.send(new GetGatewayTargetCommand({
+          gatewayIdentifier: input.gatewayId,
+          targetId: match.targetId!,
+        })),
+        ['READY'],
+        ['FAILED', 'UPDATE_UNSUCCESSFUL', 'SYNCHRONIZE_UNSUCCESSFUL'],
+      );
+      return match.targetId;
+    }
+    nextToken = page.nextToken;
+  } while (nextToken);
+
+  const created = await control.send(new CreateGatewayTargetCommand({
+    gatewayIdentifier: input.gatewayId,
+    name: input.name,
+    description: 'AWS-managed web search with source citations for Olbia.',
+    targetConfiguration: {
+      mcp: {
+        connector: {
+          source: { connectorId: 'web-search' },
+          enabled: ['WebSearch'],
+          configurations: [{ name: 'WebSearch', parameterValues: {} }],
+        },
+      },
+    },
+    credentialProviderConfigurations: [
+      { credentialProviderType: 'GATEWAY_IAM_ROLE' },
+    ],
+  }));
+  await waitUntil(
+    'web-search-target',
+    async () => control.send(new GetGatewayTargetCommand({
+      gatewayIdentifier: input.gatewayId,
+      targetId: created.targetId!,
+    })),
+    ['READY'],
+    ['FAILED', 'UPDATE_UNSUCCESSFUL', 'SYNCHRONIZE_UNSUCCESSFUL'],
+  );
+  return created.targetId!;
+};
+
 const harnessTools = (gatewayArn: string) => ([
   {
     type: 'agentcore_gateway' as const,
@@ -290,11 +348,11 @@ const harnessTools = (gatewayArn: string) => ([
   },
 ]);
 
-const harnessModel = (modelId: string) => ({
+const harnessModel = (prompt: RuntimePrompt) => ({
   bedrockModelConfig: {
-    modelId,
-    maxTokens: OLBIA_SYSTEM_PROMPT_INFERENCE.maxTokens,
-    temperature: OLBIA_SYSTEM_PROMPT_INFERENCE.temperature,
+    modelId: prompt.modelId,
+    maxTokens: prompt.maxTokens,
+    temperature: prompt.temperature,
     apiFormat: 'converse_stream' as const,
   },
 });
@@ -303,11 +361,11 @@ const ensureHarness = async (input: {
   readonly name: string;
   readonly executionRoleArn: string;
   readonly gatewayArn: string;
-  readonly modelId: string;
+  readonly prompt: RuntimePrompt;
   readonly memoryArn: string;
 }): Promise<{ harnessId: string; harnessArn: string }> => {
-  const model = harnessModel(input.modelId);
-  const systemPrompt = [{ text: HARNESS_PLACEHOLDER_SYSTEM_PROMPT }];
+  const model = harnessModel(input.prompt);
+  const systemPrompt = [{ text: input.prompt.text }];
   const existingId = await findHarnessIdByName(input.name);
   if (existingId) {
     const existing = await control.send(new GetHarnessCommand({ harnessId: existingId }));
@@ -404,6 +462,7 @@ export const handler = async (event: ProviderEvent): Promise<{
     readonly GatewayArn: string;
     readonly GatewayId: string;
     readonly TargetId: string;
+    readonly WebSearchTargetId: string;
     readonly MemoryId: string;
   };
 }> => {
@@ -411,10 +470,10 @@ export const handler = async (event: ProviderEvent): Promise<{
   const harnessName = props.HarnessName ?? 'OlbiaFinance';
   const gatewayName = props.GatewayName ?? 'OlbiaFinanceGateway';
   const targetName = props.TargetName ?? 'olbia-tools';
+  const webSearchTargetName = props.WebSearchTargetName ?? 'olbia-web-search';
   const harnessRole = props.HarnessExecutionRoleArn ?? '';
   const gatewayRole = props.GatewayRoleArn ?? '';
   const toolsLambdaArn = props.ToolsLambdaArn ?? '';
-  const modelId = props.ModelId ?? OLBIA_SYSTEM_PROMPT_MODEL_ID;
   const memoryName = props.MemoryName ?? 'OlbiaFinanceMemory';
   if (!harnessRole || !gatewayRole || !toolsLambdaArn) {
     throw new Error('HarnessExecutionRoleArn, GatewayRoleArn, and ToolsLambdaArn are required.');
@@ -426,7 +485,11 @@ export const handler = async (event: ProviderEvent): Promise<{
   if (event.RequestType === 'Delete') {
     const harnessId = priorResources.harnessId;
     if (harnessId) {
-      await control.send(new DeleteHarnessCommand({ harnessId }));
+      try {
+        await control.send(new DeleteHarnessCommand({ harnessId }));
+      } catch (error) {
+        if (!isNotFound(error)) throw error;
+      }
       const started = Date.now();
       for (;;) {
         try {
@@ -446,34 +509,46 @@ export const handler = async (event: ProviderEvent): Promise<{
     }
     const gatewayId = priorResources.gatewayId;
     if (gatewayId) {
-      if (priorResources.targetId) {
-        await control.send(new DeleteGatewayTargetCommand({
-          gatewayIdentifier: gatewayId,
-          targetId: priorResources.targetId,
-        }));
+      for (const targetId of [priorResources.targetId, priorResources.webSearchTargetId]) {
+        if (!targetId) continue;
+        try {
+          await control.send(new DeleteGatewayTargetCommand({
+            gatewayIdentifier: gatewayId,
+            targetId,
+          }));
+        } catch (error) {
+          if (!isNotFound(error)) throw error;
+        }
         const started = Date.now();
         for (;;) {
           try {
             await control.send(new GetGatewayTargetCommand({
               gatewayIdentifier: gatewayId,
-              targetId: priorResources.targetId,
+              targetId,
             }));
           } catch (error) {
-            const name = error && typeof error === 'object' && 'name' in error
-              ? String((error as { name: string }).name)
-              : '';
-            if (/ResourceNotFound|NotFound/i.test(name)) break;
+            if (isNotFound(error)) break;
             throw error;
           }
           if (Date.now() - started > 5 * 60_000) {
-            throw new Error(`Timed out deleting gateway target ${priorResources.targetId}`);
+            throw new Error(`Timed out deleting gateway target ${targetId}`);
           }
           await sleep(5_000);
         }
       }
-      await control.send(new DeleteGatewayCommand({ gatewayIdentifier: gatewayId }));
+      try {
+        await control.send(new DeleteGatewayCommand({ gatewayIdentifier: gatewayId }));
+      } catch (error) {
+        if (!isNotFound(error)) throw error;
+      }
     }
-    if (priorResources.memoryId) await control.send(new DeleteMemoryCommand({ memoryId: priorResources.memoryId }));
+    if (priorResources.memoryId) {
+      try {
+        await control.send(new DeleteMemoryCommand({ memoryId: priorResources.memoryId }));
+      } catch (error) {
+        if (!isNotFound(error)) throw error;
+      }
+    }
     return {
       PhysicalResourceId: physicalId,
       Data: {
@@ -482,11 +557,13 @@ export const handler = async (event: ProviderEvent): Promise<{
         GatewayArn: '',
         GatewayId: '',
         TargetId: '',
+        WebSearchTargetId: '',
         MemoryId: '',
       },
     };
   }
 
+  const prompt = await resolveRuntimePrompt();
   const gateway = await ensureGateway({ name: gatewayName, roleArn: gatewayRole });
   const memory = await ensureMemory(memoryName, priorResources.memoryId);
   const targetId = await ensureGatewayTarget({
@@ -494,27 +571,27 @@ export const handler = async (event: ProviderEvent): Promise<{
     name: targetName,
     toolsLambdaArn,
   });
+  const webSearchTargetId = await ensureWebSearchTarget({
+    gatewayId: gateway.gatewayId,
+    name: webSearchTargetName,
+  });
   const harness = await ensureHarness({
     name: harnessName,
     executionRoleArn: harnessRole,
     gatewayArn: gateway.gatewayArn,
-    modelId,
+    prompt,
     memoryArn: memory.memoryArn,
   });
 
   return {
-    // Updates may recover a deleted Memory while retaining the same Harness.
-    // Keep the physical ID stable so CloudFormation does not issue a delete for
-    // the still-live Harness, Gateway, and target after this response.
-    PhysicalResourceId: event.RequestType === 'Update'
-      ? physicalId
-      : `olbia-agentcore-v2::${harness.harnessId}::${gateway.gatewayId}::${targetId}::${memory.memoryId}`,
+    PhysicalResourceId: `olbia-agentcore-v3::${harness.harnessId}::${gateway.gatewayId}::${targetId}::${webSearchTargetId}::${memory.memoryId}`,
     Data: {
       HarnessArn: harness.harnessArn,
       HarnessId: harness.harnessId,
       GatewayArn: gateway.gatewayArn,
       GatewayId: gateway.gatewayId,
       TargetId: targetId,
+      WebSearchTargetId: webSearchTargetId,
       MemoryId: memory.memoryId,
     },
   };

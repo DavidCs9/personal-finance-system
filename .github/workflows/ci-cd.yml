@@ -60,12 +60,44 @@ jobs:
           role-to-assume: arn:aws:iam::225989371926:role/personal-finance-v1-github-deploy
           aws-region: us-east-2
           role-session-name: personal-finance-github-deploy
+      - name: Load Prompt Management DRAFT
+        shell: bash
+        run: |
+          set -euo pipefail
+          pointer='/personal-finance-v1/agent/runtime-system-prompt-version-arn'
+          active_arn="$(aws ssm get-parameter --name "$pointer" --query Parameter.Value --output text)"
+          draft_arn="${active_arn%:*}"
+          prompt_json="$(aws bedrock-agent get-prompt --prompt-identifier "$draft_arn" --output json)"
+          default_variant="$(jq -er '.defaultVariant' <<<"$prompt_json")"
+          prompt_text="$(jq -er --arg name "$default_variant" '.variants[] | select(.name == $name) | .templateConfiguration.text.text' <<<"$prompt_json")"
+          prompt_text_part_1="${prompt_text:0:3500}"
+          prompt_text_part_2="${prompt_text:3500}"
+          prompt_model="$(jq -er '.defaultVariant as $name | .variants[] | select(.name == $name) | .modelId' <<<"$prompt_json")"
+          prompt_temperature="$(jq -er '.defaultVariant as $name | .variants[] | select(.name == $name) | .inferenceConfiguration.text.temperature' <<<"$prompt_json")"
+          prompt_max_tokens="$(jq -er '.defaultVariant as $name | .variants[] | select(.name == $name) | .inferenceConfiguration.text.maxTokens' <<<"$prompt_json")"
+          delimiter="OLBIA_PROMPT_$(date +%s%N)"
+          {
+            echo "OLBIA_SYSTEM_PROMPT_PART_1<<${delimiter}_1"
+            echo "$prompt_text_part_1"
+            echo "${delimiter}_1"
+            echo "OLBIA_SYSTEM_PROMPT_PART_2<<${delimiter}_2"
+            echo "$prompt_text_part_2"
+            echo "${delimiter}_2"
+            echo "OLBIA_SYSTEM_PROMPT_MODEL_ID=$prompt_model"
+            echo "OLBIA_SYSTEM_PROMPT_TEMPERATURE=$prompt_temperature"
+            echo "OLBIA_SYSTEM_PROMPT_MAX_TOKENS=$prompt_max_tokens"
+          } >> "$GITHUB_ENV"
       - run: npm run build --workspace @finance/web
       - run: >-
           npx cdk diff PersonalFinanceV1
           --parameters PersonalFinanceV1:SesSenderEmail="$SES_SENDER_EMAIL"
           --parameters PersonalFinanceV1:AlertRecipientEmail="$ALERT_RECIPIENT_EMAIL"
           --parameters PersonalFinanceV1:AgentOwnerSub="$AGENT_OWNER_SUB"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart1="$OLBIA_SYSTEM_PROMPT_PART_1"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart2="$OLBIA_SYSTEM_PROMPT_PART_2"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptModelId="$OLBIA_SYSTEM_PROMPT_MODEL_ID"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTemperature="$OLBIA_SYSTEM_PROMPT_TEMPERATURE"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptMaxTokens="$OLBIA_SYSTEM_PROMPT_MAX_TOKENS"
           --output cdk.out.github-diff
         working-directory: infrastructure
       - run: >-
@@ -73,6 +105,11 @@ jobs:
           --parameters PersonalFinanceV1:SesSenderEmail="$SES_SENDER_EMAIL"
           --parameters PersonalFinanceV1:AlertRecipientEmail="$ALERT_RECIPIENT_EMAIL"
           --parameters PersonalFinanceV1:AgentOwnerSub="$AGENT_OWNER_SUB"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart1="$OLBIA_SYSTEM_PROMPT_PART_1"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart2="$OLBIA_SYSTEM_PROMPT_PART_2"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptModelId="$OLBIA_SYSTEM_PROMPT_MODEL_ID"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTemperature="$OLBIA_SYSTEM_PROMPT_TEMPERATURE"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptMaxTokens="$OLBIA_SYSTEM_PROMPT_MAX_TOKENS"
           --require-approval never
           --output cdk.out.github-deploy
         working-directory: infrastructure

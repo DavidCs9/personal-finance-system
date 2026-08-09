@@ -1,5 +1,6 @@
 import {
   compareMonths,
+  investmentHistory,
   listMovementsForAgent,
   monthSnapshot,
   proposeRecategorize,
@@ -38,6 +39,8 @@ export const runAgentTool = async (
       );
     case 'wealth_snapshot':
       return wealthSnapshotForAgent(owner);
+    case 'investment_history':
+      return investmentHistory(owner, input);
     case 'propose_recategorize':
       return proposeRecategorize({
         eventId: String(input.eventId),
@@ -67,6 +70,14 @@ export const citationsFromToolResult = (
   }
   if (toolName === 'wealth_snapshot') {
     return [{ kind: 'wealth', label: 'Patrimonio' }];
+  }
+  if (toolName === 'investment_history') {
+    return [{
+      kind: 'wealth',
+      label: [String(data.accountId ?? '').toUpperCase(), data.symbol ? String(data.symbol) : 'Historial']
+        .filter(Boolean)
+        .join(' · '),
+    }];
   }
   if (toolName === 'spend_by_category' && Array.isArray(data.buckets)) {
     return (data.buckets as { label: string }[]).slice(0, 6).map((bucket) => ({

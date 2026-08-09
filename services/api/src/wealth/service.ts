@@ -89,6 +89,17 @@ const listCanonicalSnapshots = async (owner: string): Promise<readonly WealthSna
     .sort((left, right) => left.day.localeCompare(right.day) || left.accountId.localeCompare(right.accountId));
 };
 
+/**
+ * Canonical daily snapshots for a connected account. Used by read-only agent
+ * queries that compare a holding's value over time; evidence itself remains
+ * private in S3 and is not returned here.
+ */
+export const listWealthSnapshotsForAccount = async (
+  owner: string,
+  accountId: WealthAccountId,
+): Promise<readonly WealthSnapshot[]> =>
+  (await listCanonicalSnapshots(owner)).filter((snapshot) => snapshot.accountId === accountId);
+
 const latestByAccount = (
   snapshots: readonly WealthSnapshot[],
 ): ReadonlyMap<WealthAccountId, WealthSnapshot> => {
