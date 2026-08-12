@@ -169,6 +169,16 @@ describe("emailParsers", () => {
     });
   });
 
+  it("captures a completed Nu transfer with a numeric Mexican date", () => {
+    const numericDateTransfer = nuTransferWithoutTypeEmail
+      .replace("31/JUL/2026", "12/08/2026")
+      .replace("09:47", "14:50");
+    expect(parser("nu_mx").parse(numericDateTransfer)).toMatchObject({
+      institution: "nu_mx",
+      occurredAt: "2026-08-12T20:50:00.000Z",
+    });
+  });
+
   it("decodes Nu quoted-printable HTML without matching Santander destination as merchant", () => {
     const nu = parser("nu_mx");
     expect(nu.matches(nuQuotedPrintableHtmlEmail)).toBe(true);
@@ -184,7 +194,7 @@ describe("emailParsers", () => {
       trackingKey: "NU3TESTTRACKINGKEY",
       occurredAt: "2026-08-01T22:06:00.000Z",
     });
-    expect(nu.version).toBe("nu-mx-outgoing-transfer-v5");
+    expect(nu.version).toBe("nu-mx-outgoing-transfer-v6");
   });
 
   it("captures an AWS MXN billing statement as a card charge", () => {

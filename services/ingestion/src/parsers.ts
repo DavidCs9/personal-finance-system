@@ -194,7 +194,7 @@ export const emailParsers: readonly EmailParser[] = [
   },
   {
     institution: "nu_mx",
-    version: "nu-mx-outgoing-transfer-v5",
+    version: "nu-mx-outgoing-transfer-v6",
     matches: (mime) => {
       const from = (header(mime, "from") ?? "").toLowerCase();
       const subject = (header(mime, "subject") ?? "").toLowerCase();
@@ -206,7 +206,7 @@ export const emailParsers: readonly EmailParser[] = [
     parse: (mime) => {
       const text = readableBody(mime);
       const amount = /(?:^|\n)\s*monto\s*:\s*\$?\s*([\d,.]+)/im.exec(text)?.[1];
-      const date = /(?:^|\n)\s*fecha\s*:\s*(\d{1,2})\/(ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|OCT|NOV|DIC)\/(\d{4})/im.exec(text);
+      const date = /(?:^|\n)\s*fecha\s*:\s*(\d{1,2})\/(ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|OCT|NOV|DIC|\d{1,2})\/(\d{4})/im.exec(text);
       const time = /(?:^|\n)\s*hora\s*:\s*(\d{1,2}):(\d{2})/im.exec(text);
       const transferType = /(?:^|\n)\s*tipo de transferencia\s*:\s*([^\r\n]+)/im.exec(text)?.[1]?.trim().toLowerCase();
       const recipient = /(?:^|\n)\s*nombre\s*:\s*([^\r\n]+)/im.exec(text)?.[1];
@@ -219,8 +219,9 @@ export const emailParsers: readonly EmailParser[] = [
       if (!amount || !recipient || !date || !time || (transferType !== undefined && transferType !== "spei") || !status || !/completada/i.test(status)) {
         throw new Error("Nu MX outgoing-transfer alert is missing amount, recipient, date, time, completed status, or has an unsupported transfer type");
       }
-      const month = nuMonthMap[date[2] as keyof typeof nuMonthMap];
-      if (month === undefined) throw new Error(`Invalid Nu MX transfer month: ${date[2]}`);
+      const monthToken = date[2].toUpperCase();
+      const month = nuMonthMap[monthToken as keyof typeof nuMonthMap] ?? (Number(monthToken) - 1);
+      if (!Number.isInteger(month) || month < 0 || month > 11) throw new Error(`Invalid Nu MX transfer month: ${date[2]}`);
       const localDate = new Date(Date.UTC(Number(date[3]), month, Number(date[1])));
       if (localDate.getUTCFullYear() !== Number(date[3]) || localDate.getUTCMonth() !== month || localDate.getUTCDate() !== Number(date[1])) {
         throw new Error("Invalid Nu MX transfer date");
