@@ -163,6 +163,19 @@ export class PersonalFinanceV1Stack extends Stack {
       deadLetterQueue: { queue: deadLetterQueue, maxReceiveCount: 3 },
       removalPolicy: RemovalPolicy.RETAIN,
     });
+    const bedrockFallbackDeadLetterQueue = new sqs.Queue(this, 'BedrockEmailFallbackDeadLetterQueue', {
+      encryption: sqs.QueueEncryption.KMS,
+      encryptionMasterKey: encryptionKey,
+      retentionPeriod: Duration.days(14),
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+    const bedrockFallbackQueue = new sqs.Queue(this, 'BedrockEmailFallbackQueue', {
+      encryption: sqs.QueueEncryption.KMS,
+      encryptionMasterKey: encryptionKey,
+      visibilityTimeout: Duration.minutes(30),
+      deadLetterQueue: { queue: bedrockFallbackDeadLetterQueue, maxReceiveCount: 3 },
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
 
     const dataStorageEnvironment = {
       METADATA_TABLE_NAME: metadataTable.tableName,
@@ -228,6 +241,7 @@ export class PersonalFinanceV1Stack extends Stack {
         ALERT_RECIPIENT_EMAIL: alertRecipientEmail.valueAsString,
         VAPID_SECRET_ARN: vapidSecret.secretArn,
         WEB_APP_URL: webAppUrl,
+        BEDROCK_FALLBACK_QUEUE_URL: bedrockFallbackQueue.queueUrl,
       },
     });
     rawEmailBucket.grantRead(ingestionFunction);
@@ -244,6 +258,39 @@ export class PersonalFinanceV1Stack extends Stack {
       reportBatchItemFailures: true,
     });
     ingestionQueue.grantConsumeMessages(ingestionFunction);
+    bedrockFallbackQueue.grantSendMessages(ingestionFunction);
+
+    const bedrockEmailModelId = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+    const bedrockEmailFallbackFunction = new NodejsFunction(this, 'BedrockEmailFallbackFunction', {
+      ...lambdaDefaults,
+      functionName: 'personal-finance-v1-bedrock-email-fallback',
+      logGroup: this.createLogGroup('BedrockEmailFallbackLogGroup', 'personal-finance-v1-bedrock-email-fallback'),
+      entry: path.join(__dirname, '..', 'lambda', 'bedrock-email-fallback.ts'),
+      handler: 'handler',
+      description: 'Extracts failed financial emails with Bedrock structured output and returns them to ingestion.',
+      timeout: Duration.minutes(5),
+      memorySize: 512,
+      environment: {
+        ...dataStorageEnvironment,
+        INGESTION_QUEUE_URL: ingestionQueue.queueUrl,
+        BEDROCK_EMAIL_MODEL_ID: bedrockEmailModelId,
+      },
+    });
+    rawEmailBucket.grantRead(bedrockEmailFallbackFunction);
+    ingestionQueue.grantSendMessages(bedrockEmailFallbackFunction);
+    bedrockFallbackQueue.grantConsumeMessages(bedrockEmailFallbackFunction);
+    bedrockEmailFallbackFunction.addEventSourceMapping('BedrockEmailFallbackQueueMapping', {
+      eventSourceArn: bedrockFallbackQueue.queueArn,
+      batchSize: 1,
+      reportBatchItemFailures: true,
+    });
+    bedrockEmailFallbackFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:InvokeModel'],
+      resources: [
+        `arn:${cdk.Aws.PARTITION}:bedrock:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:inference-profile/${bedrockEmailModelId}`,
+        `arn:${cdk.Aws.PARTITION}:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0`,
+      ],
+    }));
 
     const retryDispatcherFunction = new NodejsFunction(this, 'RetryDispatcherFunction', {
       ...lambdaDefaults,
@@ -1172,6 +1219,11 @@ export class PersonalFinanceV1Stack extends Stack {
       threshold: 1,
       evaluationPeriods: 2,
     });
+    const bedrockFallbackErrorAlarm = new cdk.aws_cloudwatch.Alarm(this, 'BedrockEmailFallbackErrorsAlarm', {
+      metric: bedrockEmailFallbackFunction.metricErrors({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
     const applePayCaptureErrorAlarm = new cdk.aws_cloudwatch.Alarm(this, 'ApplePayCaptureErrorsAlarm', {
       metric: applePayCaptureFunction.metricErrors({ period: Duration.minutes(5) }),
       threshold: 1,
@@ -1184,6 +1236,11 @@ export class PersonalFinanceV1Stack extends Stack {
     });
     const deadLetterAlarm = new cdk.aws_cloudwatch.Alarm(this, 'DeadLetterMessagesAlarm', {
       metric: deadLetterQueue.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
+    const bedrockFallbackDeadLetterAlarm = new cdk.aws_cloudwatch.Alarm(this, 'BedrockEmailFallbackDeadLetterMessagesAlarm', {
+      metric: bedrockFallbackDeadLetterQueue.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(5) }),
       threshold: 1,
       evaluationPeriods: 1,
     });
@@ -1245,9 +1302,11 @@ export class PersonalFinanceV1Stack extends Stack {
     new cdk.CfnOutput(this, 'WebCustomDomainUrl', { value: `https://${webDomainName}` });
     new cdk.CfnOutput(this, 'EmailReceiptErrorsAlarmName', { value: receiptErrorAlarm.alarmName });
     new cdk.CfnOutput(this, 'IngestionErrorsAlarmName', { value: ingestionErrorAlarm.alarmName });
+    new cdk.CfnOutput(this, 'BedrockEmailFallbackErrorsAlarmName', { value: bedrockFallbackErrorAlarm.alarmName });
     new cdk.CfnOutput(this, 'ApplePayCaptureErrorsAlarmName', { value: applePayCaptureErrorAlarm.alarmName });
     new cdk.CfnOutput(this, 'ApplePayCaptureThrottlesAlarmName', { value: applePayCaptureThrottleAlarm.alarmName });
     new cdk.CfnOutput(this, 'DeadLetterMessagesAlarmName', { value: deadLetterAlarm.alarmName });
+    new cdk.CfnOutput(this, 'BedrockEmailFallbackDeadLetterMessagesAlarmName', { value: bedrockFallbackDeadLetterAlarm.alarmName });
     new cdk.CfnOutput(this, 'DailyBalancePushErrorsAlarmName', { value: dailyBalancePushErrorAlarm.alarmName });
     new cdk.CfnOutput(this, 'DailyBalancePushDlqAlarmName', { value: dailyBalancePushDlqAlarm.alarmName });
     new cdk.CfnOutput(this, 'CardCyclePushErrorsAlarmName', { value: cardCyclePushErrorAlarm.alarmName });

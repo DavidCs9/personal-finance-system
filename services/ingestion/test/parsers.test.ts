@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { emailParsers, shouldIgnoreEmail } from "../src/parsers.js";
+import { normalizeEmail } from '../src/email.js';
 
 const parser = (institution: string) => {
   const match = emailParsers.find((candidate) => candidate.institution === institution);
@@ -69,14 +70,15 @@ Content-Transfer-Encoding: quoted-printable\r
 `;
 
 describe("emailParsers", () => {
-  it("ignores Gmail forwarding confirmation messages", () => {
-    expect(shouldIgnoreEmail("From: Gmail Team <forwarding-noreply@google.com>\r\nSubject: Gmail Forwarding Confirmation - Receive Mail\r\n\r\nConfirmation instructions")).toBe(true);
+  it("ignores Gmail forwarding confirmation messages", async () => {
+    expect(shouldIgnoreEmail(await normalizeEmail("From: Gmail Team <forwarding-noreply@google.com>\r\nSubject: Gmail Forwarding Confirmation - Receive Mail\r\n\r\nConfirmation instructions"))).toBe(true);
   });
 
-  it("parses a valid Amex purchase", () => {
+  it("parses a valid Amex purchase", async () => {
     const amex = parser("american_express_mx");
-    expect(amex.matches(amexEmail)).toBe(true);
-    expect(amex.parse(amexEmail)).toMatchObject({
+    const email = await normalizeEmail(amexEmail);
+    expect(amex.matches(email)).toBe(true);
+    expect(amex.parse(email)).toMatchObject({
       institution: "american_express_mx",
       merchantRaw: "UBER *TRIP",
       amount: { amountMinor: 34700, currency: "MXN" },
@@ -84,8 +86,8 @@ describe("emailParsers", () => {
     });
   });
 
-  it("parses a valid Santander purchase", () => {
-    expect(parser("santander_mx").parse(santanderEmail)).toMatchObject({
+  it("parses a valid Santander purchase", async () => {
+    expect(parser("santander_mx").parse(await normalizeEmail(santanderEmail))).toMatchObject({
       institution: "santander_mx",
       merchantRaw: "CAFETERIA ROMA",
       amount: { amountMinor: 125050, currency: "MXN" },
@@ -93,8 +95,8 @@ describe("emailParsers", () => {
     });
   });
 
-  it("prioritizes the Santander Unique Rewards purchase wording", () => {
-    expect(parser("santander_mx").parse(santanderUniqueRewardsEmail)).toMatchObject({
+  it("prioritizes the Santander Unique Rewards purchase wording", async () => {
+    expect(parser("santander_mx").parse(await normalizeEmail(santanderUniqueRewardsEmail))).toMatchObject({
       institution: "santander_mx",
       merchantRaw: "LIBRERIA DEL CENTRO",
       amount: { amountMinor: 5236, currency: "MXN" },
@@ -103,9 +105,9 @@ describe("emailParsers", () => {
     });
   });
 
-  it("decodes a forwarded Santander quoted-printable HTML purchase", () => {
+  it("decodes a forwarded Santander quoted-printable HTML purchase", async () => {
     const santander = parser("santander_mx");
-    expect(santander.parse(santanderQuotedPrintableHtmlEmail)).toMatchObject({
+    expect(santander.parse(await normalizeEmail(santanderQuotedPrintableHtmlEmail))).toMatchObject({
       institution: "santander_mx",
       merchantRaw: "LIBRERIA DEL CENTRO",
       amount: { amountMinor: 5236, currency: "MXN" },
@@ -115,10 +117,11 @@ describe("emailParsers", () => {
     expect(santander.version).toBe("santander-mx-card-purchase-v3");
   });
 
-  it("parses a quoted-printable Windows-1252 Santander alert forwarded through a multipart email", () => {
+  it("parses a quoted-printable Windows-1252 Santander alert forwarded through a multipart email", async () => {
     const santander = parser("santander_mx");
-    expect(santander.matches(forwardedSantanderPurchase)).toBe(true);
-    expect(santander.parse(forwardedSantanderPurchase)).toMatchObject({
+    const email = await normalizeEmail(forwardedSantanderPurchase);
+    expect(santander.matches(email)).toBe(true);
+    expect(santander.parse(email)).toMatchObject({
       institution: "santander_mx",
       merchantRaw: "ZARA CHIHUAHUA",
       account: { lastFour: "6349" },
@@ -126,12 +129,13 @@ describe("emailParsers", () => {
     });
   });
 
-  it("fails when Santander amount/merchant are missing", () => {
-    expect(() => parser("santander_mx").parse("From: alertas@santander.com.mx\n\nSantander\nCompra por $99.99 MXN")).toThrow(/missing amount or merchant/i);
+  it("fails when Santander amount/merchant are missing", async () => {
+    const email = await normalizeEmail("From: alertas@santander.com.mx\n\nSantander\nCompra por $99.99 MXN");
+    expect(() => parser("santander_mx").parse(email)).toThrow(/missing amount or merchant/i);
   });
 
-  it("captures a completed outgoing Nu SPEI transfer", () => {
-    expect(parser("nu_mx").parse(nuTransferEmail)).toMatchObject({
+  it("captures a completed outgoing Nu SPEI transfer", async () => {
+    expect(parser("nu_mx").parse(await normalizeEmail(nuTransferEmail))).toMatchObject({
       institution: "nu_mx",
       eventType: "outgoing_transfer",
       account: { accountId: "nu_mx:primary", displayName: "Cuenta Nu" },
@@ -148,8 +152,8 @@ describe("emailParsers", () => {
     });
   });
 
-  it("captures a completed Nu transfer when the alert omits its transfer-type row", () => {
-    expect(parser("nu_mx").parse(nuTransferWithoutTypeEmail)).toMatchObject({
+  it("captures a completed Nu transfer when the alert omits its transfer-type row", async () => {
+    expect(parser("nu_mx").parse(await normalizeEmail(nuTransferWithoutTypeEmail))).toMatchObject({
       institution: "nu_mx",
       eventType: "outgoing_transfer",
       merchantRaw: "Moneypool",
@@ -159,30 +163,31 @@ describe("emailParsers", () => {
     });
   });
 
-  it("preserves a late-night Nu transfer's local calendar date when converting to UTC", () => {
+  it("preserves a late-night Nu transfer's local calendar date when converting to UTC", async () => {
     const lateTransfer = nuTransferWithoutTypeEmail
       .replace("31/JUL/2026", "10/AGO/2026")
       .replace("09:47", "23:47");
-    expect(parser("nu_mx").parse(lateTransfer)).toMatchObject({
+    expect(parser("nu_mx").parse(await normalizeEmail(lateTransfer))).toMatchObject({
       institution: "nu_mx",
       occurredAt: "2026-08-11T05:47:00.000Z",
     });
   });
 
-  it("captures a completed Nu transfer with a numeric Mexican date", () => {
+  it("captures a completed Nu transfer with a numeric Mexican date", async () => {
     const numericDateTransfer = nuTransferWithoutTypeEmail
       .replace("31/JUL/2026", "12/08/2026")
       .replace("09:47", "14:50");
-    expect(parser("nu_mx").parse(numericDateTransfer)).toMatchObject({
+    expect(parser("nu_mx").parse(await normalizeEmail(numericDateTransfer))).toMatchObject({
       institution: "nu_mx",
       occurredAt: "2026-08-12T20:50:00.000Z",
     });
   });
 
-  it("decodes Nu quoted-printable HTML without matching Santander destination as merchant", () => {
+  it("decodes Nu quoted-printable HTML without matching Santander destination as merchant", async () => {
     const nu = parser("nu_mx");
-    expect(nu.matches(nuQuotedPrintableHtmlEmail)).toBe(true);
-    expect(nu.parse(nuQuotedPrintableHtmlEmail)).toMatchObject({
+    const email = await normalizeEmail(nuQuotedPrintableHtmlEmail);
+    expect(nu.matches(email)).toBe(true);
+    expect(nu.parse(email)).toMatchObject({
       institution: "nu_mx",
       eventType: "outgoing_transfer",
       amount: { amountMinor: 1, currency: "MXN" },
@@ -197,10 +202,11 @@ describe("emailParsers", () => {
     expect(nu.version).toBe("nu-mx-outgoing-transfer-v6");
   });
 
-  it("captures an AWS MXN billing statement as a card charge", () => {
+  it("captures an AWS MXN billing statement as a card charge", async () => {
     const aws = parser("amazon_web_services");
-    expect(aws.matches(awsBillingHtmlEmail)).toBe(true);
-    expect(aws.parse(awsBillingHtmlEmail)).toMatchObject({
+    const email = await normalizeEmail(awsBillingHtmlEmail);
+    expect(aws.matches(email)).toBe(true);
+    expect(aws.parse(email)).toMatchObject({
       institution: "amazon_web_services",
       eventType: "card_charge",
       merchantRaw: "Amazon Web Services",

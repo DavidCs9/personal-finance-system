@@ -12,17 +12,21 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1106.0",
     "@aws-sdk/client-dynamodb": "^3.883.0",
     "@aws-sdk/client-s3": "^3.883.0",
     "@aws-sdk/client-secrets-manager": "^3.1101.0",
     "@aws-sdk/client-ses": "^3.883.0",
+    "@aws-sdk/client-sqs": "^3.1101.0",
     "@aws-sdk/lib-dynamodb": "^3.883.0",
     "@finance/domain": "*",
+    "@finance/ledger": "*",
     "@finance/notify": "*",
-    "@finance/ledger": "*"
+    "mailparser": "^3.9.15"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.147",
+    "@types/mailparser": "^3.4.6",
     "vitest": "^3.0.8"
   }
 }

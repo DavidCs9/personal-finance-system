@@ -72,6 +72,9 @@ _Enqueues pointer-only jobs_`"]
       ingest["`**Ingestion Worker**
 «Container: Lambda»
 _Parse, dedupe, reconcile, notify_`"]
+      bedrock["`**Bedrock Fallback Worker**
+«Container: Lambda + SQS/DLQ»
+_Structured extraction + evidence_`"]
       retry["`**Retry Dispatcher**
 «Container: Lambda»
 _Re-queues recoverable exceptions_`"]
@@ -110,6 +113,9 @@ _06:45 America/Chihuahua_`"]
   receipt -->|"Enqueues pointer"| queue
   queue -->|"Delivers jobs"| ingest
   ingest -->|"Reads MIME"| raw
+  ingest -->|"Queues parser failures"| bedrock
+  bedrock -->|"Returns structured candidates"| queue
+  bedrock -->|"Reads MIME"| raw
   ingest -->|"Writes events/exceptions"| ddb
   ingest -->|"Emails exceptions"| ses
   ses -->|"Delivers exception mail"| owner
@@ -138,7 +144,7 @@ _06:45 America/Chihuahua_`"]
 
   class owner person
   class gmail,shortcuts,bitso,ibkr,textract,webpush external
-  class spa,cognito,api,apple,ses,receipt,ingest,retry,daily,cardsPush,bitsoSync,ibkrSync container
+  class spa,cognito,api,apple,ses,receipt,ingest,bedrock,retry,daily,cardsPush,bitsoSync,ibkrSync container
   class queue,ddb,raw store
 ```
 
@@ -161,6 +167,10 @@ flowchart TB
 «Container: SES»`"]
   webpush["`**Web Push network**
 «Software System»`"]
+  bedrock["`**Amazon Bedrock**
+«Software System»`"]
+  fallbackQueue[("`**Fallback Queue + DLQ**
+«Container: SQS»`")]
 
   subgraph ingest["`**Ingestion Worker**`"]
     direction TB
@@ -173,6 +183,12 @@ _Claims message-id + SHA-256_`"]
     parsers["`**Email Parsers**
 «Component: TypeScript»
 _Amex, Santander, Nu, AWS Billing_`"]
+    mime["`**MIME Normalizer**
+«Component: mailparser»
+_RFC MIME and HTML to text_`"]
+    validator["`**Extraction Validator**
+«Component: TypeScript»
+_Schema, evidence, money, time_`"]
     reconcile["`**Observed Event Writer**
 «Component: TypeScript»
 _Persists observations, links matches_`"]
@@ -189,11 +205,16 @@ _Notifies on accepted events_`"]
 
   queue -->|"Delivers jobs"| consumer
   consumer -->|"Reads MIME"| raw
+  consumer -->|"Normalizes MIME"| mime
   consumer -->|"Claims source identity"| dedupe
   dedupe -->|"Writes dedupe claim"| ddb
   consumer -->|"Selects parser"| parsers
   parsers -->|"Parsed purchase"| reconcile
-  parsers -->|"Parse failure"| exceptions
+  parsers -->|"Parse failure"| fallbackQueue
+  fallbackQueue -->|"Structured extraction"| bedrock
+  bedrock -->|"Candidate + evidence"| validator
+  validator -->|"Validated purchase"| reconcile
+  validator -->|"Rejected extraction"| exceptions
   reconcile -->|"Writes event + observation"| ddb
   reconcile -->|"New accepted event"| push
   exceptions -->|"Writes exception"| ddb
@@ -201,8 +222,8 @@ _Notifies on accepted events_`"]
   mail -->|"Sends email"| ses
   push -->|"Sends notification"| webpush
 
-  class consumer,dedupe,parsers,reconcile,exceptions,mail,push component
-  class queue,raw,ddb,ses,webpush external
+  class consumer,dedupe,mime,parsers,validator,reconcile,exceptions,mail,push component
+  class queue,fallbackQueue,raw,ddb,ses,webpush,bedrock external
 ```
 
 ## Component diagram — Ledger API (C3)
