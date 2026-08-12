@@ -194,7 +194,7 @@ export const emailParsers: readonly EmailParser[] = [
   },
   {
     institution: "nu_mx",
-    version: "nu-mx-outgoing-transfer-v4",
+    version: "nu-mx-outgoing-transfer-v5",
     matches: (mime) => {
       const from = (header(mime, "from") ?? "").toLowerCase();
       const subject = (header(mime, "subject") ?? "").toLowerCase();
@@ -221,8 +221,11 @@ export const emailParsers: readonly EmailParser[] = [
       }
       const month = nuMonthMap[date[2] as keyof typeof nuMonthMap];
       if (month === undefined) throw new Error(`Invalid Nu MX transfer month: ${date[2]}`);
+      const localDate = new Date(Date.UTC(Number(date[3]), month, Number(date[1])));
+      if (localDate.getUTCFullYear() !== Number(date[3]) || localDate.getUTCMonth() !== month || localDate.getUTCDate() !== Number(date[1])) {
+        throw new Error("Invalid Nu MX transfer date");
+      }
       const occurredAt = new Date(Date.UTC(Number(date[3]), month, Number(date[1]), Number(time[1]) + 6, Number(time[2])));
-      if (occurredAt.getUTCFullYear() !== Number(date[3]) || occurredAt.getUTCMonth() !== month || occurredAt.getUTCDate() !== Number(date[1])) throw new Error("Invalid Nu MX transfer date");
       return {
         institution: "nu_mx",
         eventType: "outgoing_transfer",
