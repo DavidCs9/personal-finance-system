@@ -194,7 +194,7 @@ export const emailParsers: readonly EmailParser[] = [
   },
   {
     institution: "nu_mx",
-    version: "nu-mx-outgoing-transfer-v3",
+    version: "nu-mx-outgoing-transfer-v4",
     matches: (mime) => {
       const from = (header(mime, "from") ?? "").toLowerCase();
       const subject = (header(mime, "subject") ?? "").toLowerCase();
@@ -216,8 +216,8 @@ export const emailParsers: readonly EmailParser[] = [
       const folio = /(?:^|\n)\s*folio\s*:\s*([^\r\n]+)/im.exec(text)?.[1];
       const trackingKey = /(?:^|\n)\s*clave de rastreo\s*:\s*([^\r\n]+)/im.exec(text)?.[1];
       const status = /(?:^|\n)\s*estatus\s*:\s*([^\r\n]+)/im.exec(text)?.[1]?.trim();
-      if (!amount || !recipient || !date || !time || transferType !== "spei" || !status || !/completada/i.test(status)) {
-        throw new Error("Nu MX outgoing-transfer alert is missing amount, recipient, date, time, SPEI type, or completed status");
+      if (!amount || !recipient || !date || !time || (transferType !== undefined && transferType !== "spei") || !status || !/completada/i.test(status)) {
+        throw new Error("Nu MX outgoing-transfer alert is missing amount, recipient, date, time, completed status, or has an unsupported transfer type");
       }
       const month = nuMonthMap[date[2] as keyof typeof nuMonthMap];
       if (month === undefined) throw new Error(`Invalid Nu MX transfer month: ${date[2]}`);

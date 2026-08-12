@@ -22,6 +22,7 @@ Content-Type: text/html; charset=utf-8\r
 <div>Te informamos que se autoriz=C3=B3 una compra en LIBRERIA DEL CEN=\r
 TRO por un monto de $52.36 M.N.</div></body></html>`;
 const nuTransferEmail = `From: Nu <nu@nu.com.mx>\nSubject: Tu transferencia fue exitosa\nMessage-ID: <nu-transfer-1@example.com>\n\nTransferencia exitosa\nDetalles de la transferencia:\nMonto: $2,139.00\nFecha: 31/JUL/2026\nHora: 09:47\nTipo de transferencia: SPEI\nConcepto: Transferencia\nNúmero de referencia: 310726\nFolio: QUD7JAXQ4\nNombre: Moneypool\nEntidad: STP\nCLABE: ••••7067\nEstatus: Completada\nClave de rastreo: NU3ADJ1PN3U499UASNLP4FJDQBU9`;
+const nuTransferWithoutTypeEmail = `From: Nu <nu@nu.com.mx>\nSubject: Tu transferencia fue exitosa\nMessage-ID: <nu-transfer-no-type-1@example.com>\n\nTransferencia exitosa\nDetalles de la transferencia:\nMonto: $2,139.00\nFecha: 31/JUL/2026\nHora: 09:47\nNúmero de referencia: 310726\nFolio: QUD7JAXQ4\nNombre: Moneypool\nEntidad: STP\nCLABE: ••••7067\nEstatus: Completada\nClave de rastreo: NU3ADJ1PN3U499UASNLP4FJDQBU9`;
 const nuQuotedPrintableHtmlEmail = `From: Nu <nu@nu.com.mx>\r
 To: owner@example.com\r
 Subject: Tu transferencia fue exitosa\r
@@ -147,6 +148,17 @@ describe("emailParsers", () => {
     });
   });
 
+  it("captures a completed Nu transfer when the alert omits its transfer-type row", () => {
+    expect(parser("nu_mx").parse(nuTransferWithoutTypeEmail)).toMatchObject({
+      institution: "nu_mx",
+      eventType: "outgoing_transfer",
+      merchantRaw: "Moneypool",
+      amount: { amountMinor: 213900, currency: "MXN" },
+      transferType: "spei",
+      occurredAt: "2026-07-31T15:47:00.000Z",
+    });
+  });
+
   it("decodes Nu quoted-printable HTML without matching Santander destination as merchant", () => {
     const nu = parser("nu_mx");
     expect(nu.matches(nuQuotedPrintableHtmlEmail)).toBe(true);
@@ -162,7 +174,7 @@ describe("emailParsers", () => {
       trackingKey: "NU3TESTTRACKINGKEY",
       occurredAt: "2026-08-01T22:06:00.000Z",
     });
-    expect(nu.version).toBe("nu-mx-outgoing-transfer-v3");
+    expect(nu.version).toBe("nu-mx-outgoing-transfer-v4");
   });
 
   it("captures an AWS MXN billing statement as a card charge", () => {
