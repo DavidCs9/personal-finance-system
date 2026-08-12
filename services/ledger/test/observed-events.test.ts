@@ -264,4 +264,24 @@ describe('observed event persistence', () => {
       created: false,
     });
   });
+
+  it('replaces a legacy exception-only claim so a corrected extraction can be saved', async () => {
+    const canceled = new Error('cancelled');
+    canceled.name = 'TransactionCanceledException';
+    const send = vi.fn()
+      .mockResolvedValueOnce({ Items: [] })
+      .mockRejectedValueOnce(canceled)
+      .mockResolvedValueOnce({ Item: { entityType: 'source_dedupe_claim' } })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({});
+
+    await expect(saveObservedEvent(inputWith(send))).resolves.toMatchObject({
+      eventId: 'apple-event-1', created: true, duplicate: false,
+    });
+    expect(send.mock.calls[3][0].input).toMatchObject({
+      Key: { PK: 'DEDUPE#apple_pay_shortcut:capture-1', SK: 'CLAIM' },
+      ConditionExpression: 'attribute_not_exists(eventId) AND attribute_not_exists(observationId)',
+    });
+  });
 });

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { GetCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { DeleteCommand, GetCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { eventMonthIndexKeys } from './event-month-index.js';
 
 export type CaptureSource =
@@ -181,6 +181,7 @@ const existingClaim = async (input: SaveObservedEventInput): Promise<SaveObserve
     ConsistentRead: true,
   }));
   if (!result.Item) return undefined;
+  if (!result.Item.eventId || !result.Item.observationId) throw new LegacyExceptionClaimError();
   return {
     eventId: String(result.Item.eventId),
     observationId: String(result.Item.observationId),
@@ -190,10 +191,20 @@ const existingClaim = async (input: SaveObservedEventInput): Promise<SaveObserve
   };
 };
 
+class LegacyExceptionClaimError extends Error {}
+
+const removeLegacyExceptionClaim = async (input: SaveObservedEventInput): Promise<void> => {
+  await input.database.send(new DeleteCommand({
+    TableName: input.tableName,
+    Key: { PK: `DEDUPE#${input.dedupeKey}`, SK: 'CLAIM' },
+    ConditionExpression: 'attribute_not_exists(eventId) AND attribute_not_exists(observationId)',
+  }));
+};
+
 const isTransactionCanceled = (error: unknown): boolean =>
   error instanceof Error && error.name === 'TransactionCanceledException';
 
-export const saveObservedEvent = async (input: SaveObservedEventInput): Promise<SaveObservedEventResult> => {
+export const saveObservedEvent = async (input: SaveObservedEventInput, recoveredLegacyClaim = false): Promise<SaveObservedEventResult> => {
   const candidates = await findCandidates(input);
   const center = Date.parse(input.reconciliationAt);
   const sameSourceRetry = candidates.find((candidate) =>
@@ -225,8 +236,16 @@ export const saveObservedEvent = async (input: SaveObservedEventInput): Promise<
       };
     } catch (error) {
       if (!isTransactionCanceled(error)) throw error;
-      const claim = await existingClaim(input);
-      if (claim) return claim;
+      try {
+        const claim = await existingClaim(input);
+        if (claim) return claim;
+      } catch (claimError) {
+        if (claimError instanceof LegacyExceptionClaimError && !recoveredLegacyClaim) {
+          await removeLegacyExceptionClaim(input);
+          return saveObservedEvent(input, true);
+        }
+        throw claimError;
+      }
       throw error;
     }
   }
@@ -333,8 +352,16 @@ export const saveObservedEvent = async (input: SaveObservedEventInput): Promise<
     await input.database.send(new TransactWriteCommand({ TransactItems: transactItems }));
   } catch (error) {
     if (!isTransactionCanceled(error)) throw error;
-    const existing = await existingClaim(input);
-    if (existing) return existing;
+    try {
+      const existing = await existingClaim(input);
+      if (existing) return existing;
+    } catch (claimError) {
+      if (claimError instanceof LegacyExceptionClaimError && !recoveredLegacyClaim) {
+        await removeLegacyExceptionClaim(input);
+        return saveObservedEvent(input, true);
+      }
+      throw claimError;
+    }
     throw error;
   }
   return {

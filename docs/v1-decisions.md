@@ -55,14 +55,16 @@
 - DynamoDB bajo demanda es la base de datos operativa.
 - La UI es una SPA de React en S3 + CloudFront. La API es API Gateway HTTP API + Lambdas con autorización JWT de Cognito.
 - Cognito tiene un único usuario administrado, sin registro público y sin MFA por ahora. El login web está personalizado para ese propietario.
-- Una regla de recepción de SES guarda primero el MIME y luego publica su puntero en SQS; una Lambda de ingestión persiste metadatos, deduplica y parsea. La cola tiene una DLQ.
+- Una regla de recepción de SES guarda primero el MIME y luego publica su puntero en SQS; una Lambda de ingestión normaliza MIME con `mailparser`, deduplica y usa los parsers deterministas conocidos como fast path.
+- Si un correo de una institución conocida no coincide o falla su parser, una cola aislada invoca Claude Haiku 4.5 en Bedrock con JSON Schema. La salida sólo se acepta cuando validadores deterministas comprueban institución, tipo, monto, estado, fecha/hora y evidencia literal. La cola de fallback tiene DLQ y alarmas propias.
+- La identidad de fuente (`Message-ID` + SHA-256) no cambia entre retries. Las excepciones se deduplican aparte por fuente y versión del extractor, y un intento fallido nunca consume permanentemente el claim del movimiento.
 - Amazon SES sólo alerta excepciones de ingestión (parser fallido, origen no soportado, datos incompletos) y fallos de sync Bitso/IBKR. Los movimientos aceptados no generan correo.
 - Si el usuario activó Web Push, el alta de un evento nuevo (correo o Apple Pay) envía un aviso al dispositivo; cada mañana a las 07:00 America/Chihuahua el resumen diario; a las 07:05 los recordatorios de corte/pago. Detalle en [Avisos push de movimientos observados](push-on-new-observable.md), [Push diario del balance](daily-balance-push.md) y [Push de corte y pago](card-cycle-push.md).
 - Sync de patrimonio: Bitso 06:30 y IBKR 06:45 America/Chihuahua, con DLQ y alarmas.
-- El monitoreo V1 cubre fallos de recepción, mensajes en DLQ, errores persistentes de ingestión, fallos del push diario/card-cycle, y fallos/DLQ de sync Bitso e IBKR.
+- El monitoreo V1 cubre fallos de recepción, mensajes en DLQ, errores persistentes de ingestión, errores/DLQ del fallback Bedrock, fallos del push diario/card-cycle, y fallos/DLQ de sync Bitso e IBKR.
 - Ninguna Lambda usa concurrencia reservada. Los endpoints públicos limitan tráfico en API Gateway para conservar la concurrencia compartida de la cuenta.
 
 ## Calidad y salida de V1
 
-- Los parsers se prueban con fixtures `.eml` anonimizadas y fieles a los formatos reales; los correos reales no se versionan.
+- Los parsers y validadores Bedrock se prueban con fixtures `.eml` anonimizadas y fieles a los formatos reales; los correos reales no se versionan. Antes de promover un extractor se replayan las fuentes cifradas de S3 y se comparan sus campos sin imprimir PII.
 - V1 está lista cuando los flujos de captura conservan su fuente, avisan por push si está activo, muestran gasto y patrimonio en UI, y hacen recuperables los fallos de parser y de sync.
