@@ -463,7 +463,8 @@ app.get('/agent/movements', async ({ event }) => {
   if (!month || !isValidMonth(month)) {
     throw new InvalidAgentQueryError('Query parameter month (YYYY-MM) is required.');
   }
-  return json(HttpStatusCodes.OK, await listMovementsForAgent(month, {
+  return json(HttpStatusCodes.OK, await listMovementsForAgent({
+    month,
     categoryId: query.categoryId,
     limit: query.limit ? Number(query.limit) : undefined,
   }));

@@ -78,7 +78,7 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 | `month_snapshot` | Has gastado, Te quedan, proyección, MSI, incertidumbre, sin categoría |
 | `spend_by_category` | Totales por categoría (cuota MSI del mes) |
 | `spend_by_merchant` | Top comercios (opcional filtro de categoría) |
-| `list_movements` | Detalle acotado (N filas) |
+| `list_movements` | Total sin truncar + detalle acotado por hoy/ayer/semana/7 días/mes/año o rango explícito; conserva semántica de cuota MSI y declara cuando evidencia histórica solo permite precisión mensual |
 | `compare_months` | Mes vs anterior / deltas |
 | `wealth_snapshot` | Neto / activos / deudas (solo lectura) |
 | `investment_history` | Historial DDB de cuenta o posición Bitso/IBKR por día, rango o all-time; distingue cambio de valor de rendimiento cuando cambió la cantidad |

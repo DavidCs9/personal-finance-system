@@ -141,6 +141,7 @@ const confirmMatch = (
   previous: match.plan,
   next: markInstallmentSpent(match.plan, match.installment.index, {
     amountMinor: line.amountMinor,
+    occurredOn: line.occurredOn,
     confirmedAt: new Date().toISOString(),
     evidenceObservationId: line.identity,
   }),
@@ -318,6 +319,7 @@ export const buildPlanFromCreateDecision = (
   };
   return markInstallmentSpent(withPriorSpent, indexForSpent, {
     amountMinor: line.amountMinor,
+    occurredOn: line.occurredOn,
     confirmedAt: new Date().toISOString(),
     evidenceObservationId: line.identity,
   });

@@ -175,8 +175,16 @@ export const summarizeToolResult = (
       return { summary: `Revisé ${count} comercio${count === 1 ? '' : 's'}.`, material: true };
     }
     case 'list_movements': {
-      const count = asArray(payload.movements).length;
-      return { summary: `Revisé ${count} movimiento${count === 1 ? '' : 's'}.`, material: true };
+      const count = typeof payload.movementCount === 'number'
+        ? payload.movementCount
+        : asArray(payload.movements).length;
+      const period = payload.fromDay && payload.toDay
+        ? ` entre ${String(payload.fromDay)} y ${String(payload.toDay)}`
+        : '';
+      return {
+        summary: `Revisé ${count} movimiento${count === 1 ? '' : 's'}${period}.`,
+        material: true,
+      };
     }
     case 'compare_months':
       return {

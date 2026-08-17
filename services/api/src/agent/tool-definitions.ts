@@ -38,15 +38,22 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'list_movements',
-    description: 'Lista acotada de movimientos que respaldan un total (máx 50).',
+    description:
+      'Total y lista de movimientos de gasto para un periodo (máx 50 filas, total sin truncar). Usa range para hoy, ayer, esta semana, últimos 7 días, este mes o este año; custom para fechas explícitas; month para un mes calendario completo. Las fechas usan la zona financiera de México. Si complete=false, aclara que excludedMonthOnlySpentMinor no pudo asignarse al día exacto; no lo sumes al total.',
     inputSchema: {
       type: 'object',
       properties: {
-        month: { type: 'string' },
+        month: { type: 'string', description: 'Mes calendario YYYY-MM. No combinar con range/fromDay/toDay.' },
+        range: {
+          type: 'string',
+          enum: ['today', 'yesterday', 'this_week', 'last_7_days', 'this_month', 'this_year', 'custom'],
+          description: 'Default: this_month. Para custom, fromDay y toDay son obligatorios.',
+        },
+        fromDay: { type: 'string', description: 'Inicio inclusivo YYYY-MM-DD para range=custom.' },
+        toDay: { type: 'string', description: 'Fin inclusivo YYYY-MM-DD para range=custom.' },
         categoryId: { type: 'string' },
-        limit: { type: 'number' },
+        limit: { type: 'number', description: 'Máximo de filas devueltas (1–50; default 20).' },
       },
-      required: ['month'],
     },
   },
   {

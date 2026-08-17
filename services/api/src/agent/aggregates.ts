@@ -3,14 +3,13 @@ import {
   aggregateSpendByMerchant,
   computeMonthSummary,
   previousCalendarMonth,
-  spendAmountForMonth,
   type CategorizedSpendEvent,
   type MonthSummary,
   type SpendAggregateResult,
   type WealthAccountId,
 } from '@finance/domain';
 import { getMonthlyPlan } from '../months/service.js';
-import { listEventsForMonth } from '../events/queries.js';
+import { listEventsForMonth, listEventsForMonths } from '../events/queries.js';
 import { getWealthOverview, listWealthSnapshotsForAccount } from '../wealth/service.js';
 import { listCategories } from '../categories/service.js';
 import { isValidMonth } from '../months/monthly-plan.js';
@@ -21,6 +20,12 @@ import {
   type InvestmentHistoryQuery,
   type InvestmentHistoryRange,
 } from './investment-history.js';
+import {
+  InvalidSpendingRangeQueryError,
+  resolveSpendingRange,
+  spendingRangeFromEvents,
+  type SpendingRangeQuery,
+} from './spending-range.js';
 
 export class InvalidAgentQueryError extends Error {}
 
@@ -52,6 +57,19 @@ const categoryNameMap = async (): Promise<Map<string, string>> => {
 const loadMonthEvents = async (month: string): Promise<CategorizedSpendEvent[]> => {
   if (!isValidMonth(month)) throw new InvalidAgentQueryError('Mes inválido (YYYY-MM).');
   const feed = await listEventsForMonth(month);
+  const events = [
+    ...((feed.events as readonly Record<string, unknown>[]) ?? []),
+    ...((feed.msiRelated as readonly Record<string, unknown>[]) ?? []),
+  ];
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const event of events) {
+    if (typeof event.id === 'string') byId.set(event.id, event);
+  }
+  return toCategorized([...byId.values()]);
+};
+
+const loadRangeEvents = async (months: readonly string[]): Promise<CategorizedSpendEvent[]> => {
+  const feed = await listEventsForMonths(months);
   const events = [
     ...((feed.events as readonly Record<string, unknown>[]) ?? []),
     ...((feed.msiRelated as readonly Record<string, unknown>[]) ?? []),
@@ -159,42 +177,24 @@ export const compareMonths = async (
 };
 
 export const listMovementsForAgent = async (
-  month: string,
-  options?: { readonly categoryId?: string; readonly limit?: number },
-): Promise<{
-  readonly month: string;
-  readonly movements: readonly {
-    readonly id: string;
-    readonly merchantRaw: string;
-    readonly categoryId: string | null;
-    readonly amountMinor: number;
-    readonly status: string;
-  }[];
-  readonly truncated: boolean;
-}> => {
-  const events = await loadMonthEvents(month);
-  const limit = Math.min(Math.max(options?.limit ?? 20, 1), 50);
-  const categoryFilter = options?.categoryId;
-  const movements = events
-    .map((event) => ({
-      id: event.id,
-      merchantRaw: event.merchantRaw,
-      categoryId: event.categoryId ?? null,
-      amountMinor: spendAmountForMonth(event, month),
-      status: event.status,
-    }))
-    .filter((row) => {
-      if (row.amountMinor <= 0) return false;
-      if (!categoryFilter) return true;
-      if (categoryFilter === '_uncategorized') return row.categoryId === null;
-      return row.categoryId === categoryFilter;
-    })
-    .sort((left, right) => right.amountMinor - left.amountMinor);
-  return {
-    month,
-    movements: movements.slice(0, limit),
-    truncated: movements.length > limit,
-  };
+  query: SpendingRangeQuery,
+  now: Date = new Date(),
+) => {
+  try {
+    if (query.limit !== undefined && (!Number.isFinite(query.limit) || query.limit <= 0)) {
+      throw new InvalidSpendingRangeQueryError('limit debe ser un número positivo.');
+    }
+    const range = resolveSpendingRange(query, now);
+    const events = range.months.length === 1
+      ? await loadMonthEvents(range.months[0]!)
+      : await loadRangeEvents(range.months);
+    return spendingRangeFromEvents(events, query, now);
+  } catch (error) {
+    if (error instanceof InvalidSpendingRangeQueryError) {
+      throw new InvalidAgentQueryError(error.message);
+    }
+    throw error;
+  }
 };
 
 export const wealthSnapshotForAgent = async (owner: string): Promise<Record<string, unknown>> => {

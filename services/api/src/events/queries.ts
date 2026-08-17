@@ -1,7 +1,7 @@
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import {
-  buildMonthEventFeed,
+  eventHasInstallmentInMonth,
   eventMonthPartition,
   nextCalendarMonths,
   priorCalendarMonths,
@@ -41,6 +41,7 @@ export const allStoredEvents = async (): Promise<readonly JsonObject[]> => {
 };
 
 const MSI_LOOKBACK_MONTHS = 24;
+const MONTH_QUERY_CONCURRENCY = 8;
 
 const queryEventsForMonthPartition = async (month: string): Promise<readonly JsonObject[]> => {
   const events: JsonObject[] = [];
@@ -65,25 +66,57 @@ const queryEventsForMonthPartition = async (month: string): Promise<readonly Jso
 /** Spend-month events plus MSI plans whose cuota falls in `month` but purchase lives elsewhere. */
 export const listEventsForMonth = async (
   month: string,
+): Promise<{ readonly events: readonly JsonObject[]; readonly msiRelated: readonly JsonObject[] }> =>
+  listEventsForMonths([month]);
+
+/**
+ * Spend-month events for a bounded calendar range, plus any surrounding MSI plans
+ * whose cuotas fall in one of those months. Each DynamoDB month partition is read
+ * at most once even when the requested range spans a month boundary.
+ */
+export const listEventsForMonths = async (
+  months: readonly string[],
 ): Promise<{ readonly events: readonly JsonObject[]; readonly msiRelated: readonly JsonObject[] }> => {
-  const events = await queryEventsForMonthPartition(month);
-  const nearby: JsonObject[] = [];
-  const nearbyMonths = [
-    ...priorCalendarMonths(month, MSI_LOOKBACK_MONTHS),
-    ...nextCalendarMonths(month, MSI_LOOKBACK_MONTHS),
-  ];
-  for (const nearbyMonth of nearbyMonths) {
-    nearby.push(...await queryEventsForMonthPartition(nearbyMonth));
+  const requestedMonths = [...new Set(months)];
+  if (requestedMonths.length === 0) return { events: [], msiRelated: [] };
+
+  const requested = new Set(requestedMonths);
+  const candidateMonths = new Set(requestedMonths);
+  for (const month of requestedMonths) {
+    for (const nearby of [
+      ...priorCalendarMonths(month, MSI_LOOKBACK_MONTHS),
+      ...nextCalendarMonths(month, MSI_LOOKBACK_MONTHS),
+    ]) {
+      candidateMonths.add(nearby);
+    }
   }
-  const feed = buildMonthEventFeed(
-    month,
-    events as unknown as readonly MonthFeedEvent[],
-    nearby as unknown as readonly MonthFeedEvent[],
-  );
-  return {
-    events: feed.events as unknown as readonly JsonObject[],
-    msiRelated: feed.msiRelated as unknown as readonly JsonObject[],
-  };
+
+  const eventsByMonth = new Map<string, readonly JsonObject[]>();
+  const allCandidateMonths = [...candidateMonths];
+  for (let index = 0; index < allCandidateMonths.length; index += MONTH_QUERY_CONCURRENCY) {
+    const batch = allCandidateMonths.slice(index, index + MONTH_QUERY_CONCURRENCY);
+    const pages = await Promise.all(batch.map((month) => queryEventsForMonthPartition(month)));
+    batch.forEach((month, pageIndex) => eventsByMonth.set(month, pages[pageIndex] ?? []));
+  }
+
+  const events = requestedMonths.flatMap((month) => eventsByMonth.get(month) ?? []);
+  const eventIds = new Set(events.map((event) => String(event.id)));
+  const msiRelated: JsonObject[] = [];
+  const seen = new Set<string>();
+  for (const month of allCandidateMonths) {
+    if (requested.has(month)) continue;
+    for (const candidate of eventsByMonth.get(month) ?? []) {
+      const id = String(candidate.id);
+      if (eventIds.has(id) || seen.has(id)) continue;
+      if (!requestedMonths.some((target) =>
+        eventHasInstallmentInMonth(candidate as unknown as MonthFeedEvent, target))) {
+        continue;
+      }
+      seen.add(id);
+      msiRelated.push(candidate);
+    }
+  }
+  return { events, msiRelated };
 };
 
 export const getEventDetail = async (eventId: string): Promise<JsonObject | undefined> => {
