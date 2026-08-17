@@ -9,6 +9,7 @@ import {
   wealthSnapshotForAgent,
 } from './aggregates.js';
 import { TOOL_DEFINITIONS, type AgentToolName } from './tool-definitions.js';
+import type { SpendingRange } from './spending-range.js';
 
 export { TOOL_DEFINITIONS, type AgentToolName };
 
@@ -28,7 +29,11 @@ export const runAgentTool = async (
         limit: typeof input.limit === 'number' ? input.limit : undefined,
       });
     case 'list_movements':
-      return listMovementsForAgent(String(input.month), {
+      return listMovementsForAgent({
+        month: typeof input.month === 'string' ? input.month : undefined,
+        range: typeof input.range === 'string' ? input.range as SpendingRange : undefined,
+        fromDay: typeof input.fromDay === 'string' ? input.fromDay : undefined,
+        toDay: typeof input.toDay === 'string' ? input.toDay : undefined,
         categoryId: typeof input.categoryId === 'string' ? input.categoryId : undefined,
         limit: typeof input.limit === 'number' ? input.limit : undefined,
       });

@@ -13,6 +13,8 @@ export interface MsiInstallment {
   readonly month: string;
   readonly amountMinor: number;
   readonly status: InstallmentStatus;
+  /** Calendar day from the statement/CSV evidence when the cuota was spent. */
+  readonly occurredOn?: string;
   readonly evidenceObservationId?: string;
   readonly confirmedAt?: string;
 }
@@ -132,6 +134,7 @@ export const markInstallmentSpent = (
   index: number,
   input: {
     readonly amountMinor: number;
+    readonly occurredOn?: string;
     readonly evidenceObservationId?: string;
     readonly confirmedAt: string;
   },
@@ -142,6 +145,7 @@ export const markInstallmentSpent = (
       ...installment,
       amountMinor: input.amountMinor,
       status: "spent" as const,
+      occurredOn: input.occurredOn,
       evidenceObservationId: input.evidenceObservationId,
       confirmedAt: input.confirmedAt,
     };
@@ -180,6 +184,7 @@ const preserveTerminalInstallments = (
           ...installment,
           amountMinor: spent.amountMinor,
           status: "spent" as const,
+          occurredOn: spent.occurredOn,
           evidenceObservationId: spent.evidenceObservationId,
           confirmedAt: spent.confirmedAt,
         }
