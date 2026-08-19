@@ -28,7 +28,7 @@ Has gastado $12,430 este mes. Te quedan $8,570 después de compromisos.
 Reglas (`dailyBalancePushMessage` en `packages/domain`):
 
 - sin ingreso configurado: muestra el gasto y pide configurar el mes; no inventa restante ni proyección;
-- proyección negativa: añade `A este ritmo te faltarán $N`;
+- proyección negativa: añade `A este ritmo gastarás $N`;
 - si la proyección no es negativa y hay incertidumbre: añade `Incluye $N por confirmar`;
 - `contentMode: private`: `Tu balance diario está listo.`
 

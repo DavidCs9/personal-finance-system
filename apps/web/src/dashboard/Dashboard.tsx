@@ -338,6 +338,9 @@ export function Dashboard({
   const billUpcomingMinor = summary?.billUpcomingMinor ?? 0;
   const remainingMinor = summary?.remainingMinor ?? 0;
   const projectedRemainingMinor = summary?.projectedRemainingMinor ?? 0;
+  const projectedSpendMinor =
+    summary?.projectedSpendMinor ??
+    (summary ? Math.max(summary.incomeMinor - summary.projectedRemainingMinor, 0) : 0);
   const isCurrentMonth = summary?.isCurrentMonth ?? false;
   const msiSpentMinor = summary?.msiSpentMinor ?? 0;
   const msiCommittedMinor = summary?.msiCommittedMinor ?? 0;
@@ -412,6 +415,7 @@ export function Dashboard({
             uncertainMinor={uncertainMinor}
             billUpcomingMinor={billUpcomingMinor}
             remainingMinor={remainingMinor}
+            projectedSpendMinor={projectedSpendMinor}
             projectedRemainingMinor={projectedRemainingMinor}
             spendPercent={spendPercent}
             isCurrentMonth={isCurrentMonth}

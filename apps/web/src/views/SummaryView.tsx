@@ -17,6 +17,7 @@ export interface SummaryViewProps {
   readonly uncertainMinor: number;
   readonly billUpcomingMinor: number;
   readonly remainingMinor: number;
+  readonly projectedSpendMinor: number;
   readonly projectedRemainingMinor: number;
   readonly spendPercent: number;
   readonly isCurrentMonth: boolean;
@@ -162,26 +163,16 @@ export function SummaryView(props: SummaryViewProps) {
               </section>
               <section className={`projection-card ${props.risk}`}>
                 <p>{props.isCurrentMonth ? "A este ritmo" : "Cierre del mes"}</p>
+                <strong>
+                  {props.isCurrentMonth ? "Gastarás" : "Gastaste"}{" "}
+                  <Amt>{money(props.projectedSpendMinor)}</Amt>
+                </strong>
+                <span>{props.isCurrentMonth ? "si mantienes este paso" : "según tus registros"}</span>
                 {props.projectedRemainingMinor < 0 ? (
-                  <>
-                    <strong>
-                      Te faltarán <Amt>{money(Math.abs(props.projectedRemainingMinor))}</Amt>
-                    </strong>
-                    <span>si mantienes este paso</span>
-                    <button onClick={props.onReviewLargest}>
-                      Revisar gastos grandes <span>→</span>
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <strong>
-                      Cerrarás con <Amt>{money(props.projectedRemainingMinor)}</Amt>
-                    </strong>
-                    <span>
-                      {props.isCurrentMonth ? "si mantienes este paso" : "según tus registros"}
-                    </span>
-                  </>
-                )}
+                  <button onClick={props.onReviewLargest}>
+                    Revisar gastos grandes <span>→</span>
+                  </button>
+                ) : null}
               </section>
             </div>
 

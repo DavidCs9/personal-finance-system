@@ -58,6 +58,7 @@ export interface MonthSummary {
   readonly billUpcomingMinor: number;
   readonly msiCommittedMinor: number;
   readonly remainingMinor: number;
+  readonly projectedSpendMinor: number;
   readonly projectedRemainingMinor: number;
   readonly incomeConfigured: boolean;
   readonly incomeMinor: number;
@@ -221,8 +222,8 @@ export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
   const pacedDiscretionaryMinor = Math.round(
     (discretionarySpentMinor / Math.max(elapsedDays, 1)) * daysInMonth,
   );
-  const projectedMinor = pacedDiscretionaryMinor + msiSpentMinor + upcomingMinor;
-  const projectedRemainingMinor = input.incomeMinor - projectedMinor;
+  const projectedSpendMinor = pacedDiscretionaryMinor + msiSpentMinor + upcomingMinor;
+  const projectedRemainingMinor = input.incomeMinor - projectedSpendMinor;
 
   return {
     month: input.month,
@@ -234,6 +235,7 @@ export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
     billUpcomingMinor,
     msiCommittedMinor,
     remainingMinor,
+    projectedSpendMinor,
     projectedRemainingMinor,
     incomeConfigured: input.incomeConfigured,
     incomeMinor: input.incomeMinor,
@@ -278,7 +280,7 @@ export const dailyBalancePushMessage = (
   ];
 
   if (summary.projectedRemainingMinor < 0) {
-    parts.push(`A este ritmo te faltarán ${formatMxnWhole(Math.abs(summary.projectedRemainingMinor))}.`);
+    parts.push(`A este ritmo gastarás ${formatMxnWhole(summary.projectedSpendMinor)}.`);
   } else if (summary.uncertainMinor > 0) {
     parts.push(`Incluye ${formatMxnWhole(summary.uncertainMinor)} por confirmar.`);
   }

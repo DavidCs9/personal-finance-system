@@ -14,7 +14,7 @@ Do not collapse patrimonio into Resumen. Do not let patrimonio analytics compete
 ### Resumen hierarchy
 
 1. Amount spent this month.
-2. Projected month-end result at the current pace.
+2. Projected total month-end spend at the current pace.
 3. Money remaining after upcoming commitments.
 4. Explicit uncertainty for unconfirmed data.
 5. Meses sin intereses — dedicated “Planes con fin” section on **Resumen** for this month’s MSI cuotas (fixed total, start and end).
@@ -36,8 +36,8 @@ Card cycle profiles (cut-off / payment days) stay on Resumen. Outstanding balanc
 
 Olbia is precise, firm, useful, personal, and premium. It should create constructive pressure without shaming the user.
 
-- Address the user directly: “Has gastado”, “Te quedan”, “Te faltarán”, “Neto”, “Debes”.
-- Explain consequences: “A este ritmo te faltarán $N”.
+- Address the user directly: “Has gastado”, “Te quedan”, “Gastarás”, “Neto”, “Debes”.
+- Explain consequences: “A este ritmo gastarás $N”.
 - Prefer short, factual sentences and concrete amounts.
 - Surface uncertainty honestly: “Incluye $N por confirmar”, “Cajita sin actualizar hace N días”, “Tarjeta sin actualizar hace N días”.
 - Pair warnings with an investigative next step when one exists.
