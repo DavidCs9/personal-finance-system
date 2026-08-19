@@ -30,6 +30,7 @@ describe('computeMonthSummary', () => {
     expect(summary.isCurrentMonth).toBe(true);
     expect(summary.elapsedDays).toBe(2);
     expect(summary.daysInMonth).toBe(31);
+    expect(summary.projectedSpendMinor).toBe(Math.round((3_430_00 / 2) * 31) + 8_000_00);
     expect(summary.projectedRemainingMinor).toBe(
       21_000_00 - (Math.round((3_430_00 / 2) * 31) + 8_000_00),
     );
@@ -130,7 +131,9 @@ describe('dailyBalancePushMessage', () => {
     });
     expect(summary.projectedRemainingMinor).toBeLessThan(0);
     const message = dailyBalancePushMessage(summary, 'amounts', 'https://finance.castrodavid.dev/', '2026-08-02');
-    expect(message.body).toContain('A este ritmo te faltarán');
+    expect(message.body).toContain(
+      `A este ritmo gastarás ${formatMxnWhole(summary.projectedSpendMinor)}`,
+    );
     expect(message.body).not.toContain('por confirmar');
   });
 

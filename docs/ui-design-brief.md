@@ -9,7 +9,7 @@ Las reglas operativas que deben seguir futuras implementaciones del frontend est
 ### Resumen (gasto del mes)
 
 1. **Has gastado** — la cifra dominante. Para MSI cuenta solo la cuota ya reconciliada del mes, no el ticket completo.
-2. **A este ritmo** — proyección de cierre; el ritmo diario usa gasto discrecional (no MSI) y suma cuotas/compromisos pendientes.
+2. **A este ritmo** — gasto total proyectado al cierre; el ritmo diario usa gasto discrecional (no MSI) y suma cuotas/compromisos pendientes.
 3. **Te quedan** — disponible después de gasto realizado y dinero comprometido (bills + cuotas MSI aún no reconciliadas).
 4. **Incluye por confirmar** — incertidumbre del parser expuesta dentro del total.
 5. **Meses sin intereses** — en **Resumen**, sección “Planes con fin”: cuotas del mes con total fijo, inicio y última cuota (`Merchant · cuota i/N · total · rango`). Detalle operativo en [`msi.md`](msi.md).
@@ -32,7 +32,7 @@ Patrimonio no mezcla el gasto del mes ni “Te quedan”. Detalle en [`patrimoni
 
 - Precisa, firme y útil.
 - Premium por la jerarquía numérica, la materialidad y la tipografía.
-- Cercana en su lenguaje: “Has gastado”, “Te quedan”, “Te faltarán”, “Neto”, “Debes”.
+- Cercana en su lenguaje: “Has gastado”, “Te quedan”, “Gastarás”, “Neto”, “Debes”.
 - Sin gamificación, estética bancaria corporativa ni mensajes de bienestar.
 - El color se tensa gradualmente; el rojo pleno se reserva para una proyección negativa.
 
