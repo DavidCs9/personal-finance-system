@@ -920,6 +920,14 @@ html.private-mode .hero-amount .amt {
 .assistant-md-table tbody tr:last-child td { border-bottom: 0; }
 .assistant-citations { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .assistant-citation { border: 1px solid #d7cfc4; border-radius: 4px; padding: 2px 8px; font-size: 11px; color: var(--ink-soft); }
+.assistant-reasoning { display: flex; align-items: center; gap: 8px; margin: 7px 0; color: var(--ink-soft); font-size: 12px; line-height: 1.35; }
+.assistant-reasoning-mark { width: 7px; height: 7px; flex: 0 0 auto; border: 1px solid #766b5e; border-radius: 50%; background: transparent; }
+.assistant-reasoning.running .assistant-reasoning-mark { background: #766b5e; animation: assistant-reasoning-pulse 1.15s ease-in-out infinite; }
+.assistant-reasoning.stopped { color: var(--danger); }
+.assistant-reasoning.stopped .assistant-reasoning-mark { border-color: currentColor; }
+.assistant-reasoning-duration { margin-left: auto; color: #857b70; font-size: 11px; font-variant-numeric: tabular-nums; }
+@keyframes assistant-reasoning-pulse { 50% { opacity: .28; transform: scale(.72); } }
+@media (prefers-reduced-motion: reduce) { .assistant-reasoning.running .assistant-reasoning-mark { animation: none; } }
 .assistant-tool { margin: 8px 0; color: var(--ink-soft); font-size: 12px; line-height: 1.35; }
 .assistant-tool summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0; cursor: pointer; list-style: none; }
 .assistant-tool summary::-webkit-details-marker { display: none; }
