@@ -144,6 +144,8 @@ describe("streamAgentChat REST SSE", () => {
     ledgerApi.saveSession({ idToken, refreshToken: "refresh-token" });
     const onEvent = vi.fn();
     vi.mocked(fetch).mockResolvedValueOnce(sseResponse([
+      { type: "reasoning_start", reasoningId: "reasoning-1", label: "Analizando contexto y restricciones" },
+      { type: "reasoning_complete", reasoningId: "reasoning-1", durationMs: 1200 },
       { type: "token", text: "Hola" },
       { type: "tool_start", toolUseId: "t1", name: "month_snapshot", label: "Revisando el resumen del mes", attempt: 1 },
       { type: "tool_complete", toolUseId: "t1", name: "month_snapshot", label: "Revisando el resumen del mes", attempt: 1, durationMs: 180, summary: "Resumen de 2026-08 consultado.", material: true },
@@ -165,9 +167,19 @@ describe("streamAgentChat REST SSE", () => {
         Accept: "text/event-stream",
       }),
     });
-    expect(onEvent).toHaveBeenCalledTimes(4);
-    expect(onEvent).toHaveBeenNthCalledWith(1, { type: "token", text: "Hola" });
+    expect(onEvent).toHaveBeenCalledTimes(6);
+    expect(onEvent).toHaveBeenNthCalledWith(1, {
+      type: "reasoning_start",
+      reasoningId: "reasoning-1",
+      label: "Analizando contexto y restricciones",
+    });
     expect(onEvent).toHaveBeenNthCalledWith(2, {
+      type: "reasoning_complete",
+      reasoningId: "reasoning-1",
+      durationMs: 1200,
+    });
+    expect(onEvent).toHaveBeenNthCalledWith(3, { type: "token", text: "Hola" });
+    expect(onEvent).toHaveBeenNthCalledWith(4, {
       type: "tool_start",
       toolUseId: "t1",
       name: "month_snapshot",

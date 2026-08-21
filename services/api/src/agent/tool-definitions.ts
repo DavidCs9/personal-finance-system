@@ -14,7 +14,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'plan_month_scenario',
     description:
-      'Calcula un plan mensual y escenarios de viaje con aritmética determinista usando el gasto real del Resumen. Úsala cuando el usuario quiera descubrir cuánto puede gastar: no le devuelvas la pregunta. Distingue días calendario de noches, convierte compromisos USD con un tipo de cambio explícito y devuelve cierres de mes. commitments solo debe incluir montos que no estén ya registrados; includeLedgerUpcoming incluye los pagos próximos del Resumen.',
+      'Calcula un plan mensual y escenarios de viaje con aritmética determinista usando el gasto real del Resumen. Debes volver a usarla ante cualquier corrección posterior de fecha, tramo, presupuesto, moneda o compromiso; el cálculo anterior queda inválido. Úsala cuando el usuario quiera descubrir cuánto puede gastar: nunca le devuelvas esa pregunta. tripStart y tripEnd son el primer y último día calendario en el destino; tripEnd es inclusivo y nights es la diferencia entre fechas. No infieras la salida de un destino a partir de un vuelo que parte de otra ciudad. Convierte compromisos USD con un tipo de cambio explícito y devuelve cierres de mes. commitments solo debe incluir montos que no estén ya registrados; includeLedgerUpcoming incluye los pagos próximos del Resumen.',
     inputSchema: {
       type: 'object',
       properties: {

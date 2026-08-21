@@ -22,9 +22,18 @@ type ToolActivity = {
   readonly message?: string;
 };
 
+type ReasoningActivity = {
+  readonly reasoningId: string;
+  readonly label: string;
+  readonly state: "running" | "complete" | "stopped";
+  readonly startedAt?: number;
+  readonly durationMs?: number;
+};
+
 type AssistantPart =
   | { readonly kind: "text"; readonly text: string }
-  | { readonly kind: "tool"; readonly activity: ToolActivity };
+  | { readonly kind: "tool"; readonly activity: ToolActivity }
+  | { readonly kind: "reasoning"; readonly activity: ReasoningActivity };
 
 type ChatMessage = {
   readonly role: "user" | "assistant";
@@ -117,6 +126,15 @@ export function AssistantSheet({
         next[next.length - 1] = {
           role: "assistant",
           parts: [
+            {
+              kind: "reasoning",
+              activity: {
+                reasoningId: "demo-reasoning",
+                label: "Analizando contexto y restricciones",
+                state: "complete",
+                durationMs: 1_240,
+              },
+            },
             { kind: "text", text: "Voy a revisar el resumen del mes.\n\n" },
             {
               kind: "tool",
@@ -179,7 +197,13 @@ export function AssistantSheet({
       else parts.push({ kind: "tool", activity });
     };
 
-    const markRunningToolsUnavailable = () => {
+    const updateReasoning = (reasoningId: string, activity: ReasoningActivity) => {
+      const index = parts.findIndex((part) => part.kind === "reasoning" && part.activity.reasoningId === reasoningId);
+      if (index >= 0) parts[index] = { kind: "reasoning", activity };
+      else parts.push({ kind: "reasoning", activity });
+    };
+
+    const markRunningActivityUnavailable = () => {
       const now = Date.now();
       for (let index = 0; index < parts.length; index += 1) {
         const part = parts[index];
@@ -191,6 +215,16 @@ export function AssistantSheet({
               state: "failed",
               durationMs: part.activity.startedAt === undefined ? undefined : Math.max(0, now - part.activity.startedAt),
               message: `No se pudo completar: ${part.activity.label.toLowerCase()}.`,
+            },
+          };
+        }
+        if (part?.kind === "reasoning" && part.activity.state === "running") {
+          parts[index] = {
+            kind: "reasoning",
+            activity: {
+              ...part.activity,
+              state: "stopped",
+              durationMs: part.activity.startedAt === undefined ? undefined : Math.max(0, now - part.activity.startedAt),
             },
           };
         }
@@ -206,6 +240,25 @@ export function AssistantSheet({
             const last = parts[parts.length - 1];
             if (last?.kind === "text") parts[parts.length - 1] = { kind: "text", text: last.text + event.text };
             else parts.push({ kind: "text", text: event.text });
+            publish();
+          }
+          if (event.type === "reasoning_start") {
+            updateReasoning(event.reasoningId, {
+              reasoningId: event.reasoningId,
+              label: event.label,
+              state: "running",
+              startedAt: Date.now(),
+            });
+            publish();
+          }
+          if (event.type === "reasoning_complete") {
+            const current = parts.find((part) => part.kind === "reasoning" && part.activity.reasoningId === event.reasoningId);
+            updateReasoning(event.reasoningId, {
+              reasoningId: event.reasoningId,
+              label: current?.kind === "reasoning" ? current.activity.label : "Analizando contexto y restricciones",
+              state: "complete",
+              durationMs: event.durationMs,
+            });
             publish();
           }
           if (event.type === "tool_start") {
@@ -263,7 +316,7 @@ export function AssistantSheet({
             publish();
           }
           if (event.type === "error") {
-            markRunningToolsUnavailable();
+            markRunningActivityUnavailable();
             setError(event.message);
             setRequestId(event.requestId);
             latestRequestId = event.requestId;
@@ -276,7 +329,7 @@ export function AssistantSheet({
       publish();
     } catch (err) {
       const messageText = err instanceof Error ? err.message : "No pude consultar tus datos. Reintenta.";
-      markRunningToolsUnavailable();
+      markRunningActivityUnavailable();
       if (parts.length === 0) parts.push({ kind: "text", text: "No pude terminar la consulta." });
       setError(messageText);
       publish();
@@ -346,11 +399,15 @@ export function AssistantSheet({
             <div key={`${message.role}-${index}`} className={`assistant-bubble ${message.role}`}>
               {message.role === "assistant" ? (
                 message.parts && message.parts.length > 0 ? (
-                  message.parts.map((part, partIndex) => part.kind === "text" ? (
-                    <AssistantMarkdown key={`text-${partIndex}`} text={part.text} />
-                  ) : (
-                    <AssistantToolActivity key={part.activity.toolUseId} activity={part.activity} />
-                  ))
+                  message.parts.map((part, partIndex) => {
+                    if (part.kind === "text") {
+                      return <AssistantMarkdown key={`text-${partIndex}`} text={part.text} />;
+                    }
+                    if (part.kind === "reasoning") {
+                      return <AssistantReasoningActivity key={part.activity.reasoningId} activity={part.activity} />;
+                    }
+                    return <AssistantToolActivity key={part.activity.toolUseId} activity={part.activity} />;
+                  })
                 ) : (
                   <p className="assistant-md-p">{busy && index === messages.length - 1 ? "…" : ""}</p>
                 )
@@ -505,6 +562,23 @@ function AssistantMemoriesSheet({
         ) : null}
       </div>
     </Sheet>
+  );
+}
+
+function AssistantReasoningActivity({ activity }: { readonly activity: ReasoningActivity }) {
+  const duration = activity.durationMs === undefined
+    ? undefined
+    : `${Math.max(0.1, activity.durationMs / 1000).toFixed(activity.durationMs < 1000 ? 1 : 0)} s`;
+  return (
+    <div className={`assistant-reasoning ${activity.state}`} role="status">
+      <span className="assistant-reasoning-mark" aria-hidden="true" />
+      <span>{activity.state === "running"
+        ? activity.label
+        : activity.state === "complete"
+          ? "Razonamiento completado"
+          : "Razonamiento interrumpido"}</span>
+      {duration && <span className="assistant-reasoning-duration">{duration}</span>}
+    </div>
   );
 }
 

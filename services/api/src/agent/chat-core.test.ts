@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildHarnessModelConfig,
+  buildHarnessSystemPrompt,
   readBody,
+  requiresTravelPlanRecalculation,
   requestIdOf,
   requestMethod,
   resolveOwner,
@@ -39,5 +42,39 @@ describe('REST API Gateway chat event helpers', () => {
       eventId: 'private-event-id',
       categoryId: 'food',
     })).toEqual({ summary: 'Propuesta de categoría preparada.', material: false });
+  });
+});
+
+describe('Harness reasoning and travel planning configuration', () => {
+  it('enables bounded adaptive thinking for Claude Sonnet 4.6 without temperature', () => {
+    expect(buildHarnessModelConfig({
+      modelId: 'us.anthropic.claude-sonnet-4-6',
+      maxTokens: 2_048,
+      temperature: 0.2,
+    })).toEqual({
+      modelId: 'us.anthropic.claude-sonnet-4-6',
+      maxTokens: 4_096,
+      apiFormat: 'converse_stream',
+      additionalParams: {
+        additionalModelRequestFields: {
+          thinking: { type: 'adaptive' },
+          output_config: { effort: 'medium' },
+        },
+      },
+    });
+  });
+
+  it('adds a current-turn recalculation directive for the reported regression', () => {
+    const message = 'no el tramo de CDMX es del 26 al 30. El 26 vuelo de tijuana a CDMX. Primero hay que acabar con las vegas';
+    expect(requiresTravelPlanRecalculation(message)).toBe(true);
+    const prompt = buildHarnessSystemPrompt('Prompt base.', message);
+    expect(prompt).toContain('Este turno continua una decision de presupuesto');
+    expect(prompt).toContain('vuelve a usar plan_month_scenario');
+    expect(prompt).toContain('Nunca preguntes cuanto quiere gastar');
+    expect(prompt).toContain('salida de Las Vegas hacia Tijuana');
+  });
+
+  it('does not add the travel directive to unrelated questions', () => {
+    expect(buildHarnessSystemPrompt('Prompt base.', 'Cuanto gaste en restaurantes?')).toBe('Prompt base.');
   });
 });

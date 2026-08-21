@@ -21,4 +21,14 @@ describe('assessGoldenThreadResponse', () => {
     expect(result.failures).toContain('response pushed budget discovery back to the user');
     expect(result.failures).toContain('plan_month_scenario was not used');
   });
+
+  it('rejects the exact production regression after the CDMX correction', () => {
+    const result = assessGoldenThreadResponse(
+      'Perfecto, corregido. Las Vegas es del 21 al 25. Son 5 días calendario, 4 noches. ¿Cuánto quieres gastar por día en Las Vegas? Dame un número o rango y calculo el cierre.',
+      [],
+    );
+    expect(result.passed).toBe(false);
+    expect(result.failures).toContain('plan_month_scenario was not used');
+    expect(result.failures).toContain('response pushed budget discovery back to the user');
+  });
 });

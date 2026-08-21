@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   BedrockAgentCoreClient,
   InvokeHarnessCommand,
+  type HarnessBedrockModelConfig,
 } from '@aws-sdk/client-bedrock-agentcore';
 import { CognitoJwtVerifier } from 'aws-jwt-verify';
 import { resolveRuntimePrompt } from './prompt-runtime.js';
@@ -23,6 +24,8 @@ const jwtVerifier = cognitoUserPoolId && cognitoClientId
 
 export type AgentSseEvent =
   | { readonly type: 'token'; readonly text: string }
+  | { readonly type: 'reasoning_start'; readonly reasoningId: string; readonly label: string }
+  | { readonly type: 'reasoning_complete'; readonly reasoningId: string; readonly durationMs: number }
   | { readonly type: 'tool_start'; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number }
   | { readonly type: 'tool_complete'; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly summary?: string; readonly material: boolean }
   | { readonly type: 'tool_failed'; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly message: string }
@@ -159,6 +162,60 @@ const toolLabel = (name: string): string => {
 
 const asArray = (value: unknown): readonly unknown[] => Array.isArray(value) ? value : [];
 
+const normalizeIntent = (value: string): string => value
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase();
+
+export const requiresTravelPlanRecalculation = (message: string): boolean => {
+  const normalized = normalizeIntent(message);
+  return /\b(vegas|viaje|vuelo|hotel|itinerario|tramo|cdmx|tijuana)\b/.test(normalized)
+    && /\b(gast|presupuest|plan|dia|fecha|regres|vuelo|tramo|primero|corr|del|hasta)\b/.test(normalized);
+};
+
+const travelTurnDirective = (message: string): string => {
+  if (!requiresTravelPlanRecalculation(message)) return '';
+  return [
+    '',
+    'Regla critica para este turno de planeacion de viaje:',
+    '- Este turno continua una decision de presupuesto aunque el mensaje actual solo corrija una fecha, ciudad o tramo.',
+    '- Antes de dar otra cifra, vuelve a usar plan_month_scenario con la correccion mas reciente y los datos ya confirmados en el hilo o memoria.',
+    '- Nunca preguntes cuanto quiere gastar ni pidas un rango de gasto. La tool debe derivar el techo y los escenarios.',
+    '- tripStart y tripEnd son el primer y ultimo dia calendario que el usuario esta fisicamente en el destino. tripEnd se incluye en calendarDays; nights es la diferencia entre fechas.',
+    '- No deduzcas la salida de Las Vegas a partir de un vuelo que parte de otra ciudad. Si falta esa conexion, pregunta solo la fecha exacta de salida de Las Vegas hacia Tijuana; no preguntes por presupuesto.',
+    '- Si una correccion cambia fechas, presupuesto, moneda o compromisos, invalida el calculo anterior y recalcula. No cuentes fechas mentalmente.',
+  ].join('\n');
+};
+
+export const buildHarnessSystemPrompt = (basePrompt: string, message: string): string =>
+  `${basePrompt}${travelTurnDirective(message)}`;
+
+export const buildHarnessModelConfig = (prompt: {
+  readonly modelId: string;
+  readonly maxTokens: number;
+  readonly temperature: number;
+}): HarnessBedrockModelConfig => {
+  if (/anthropic\.claude-sonnet-4-6(?:$|[-:])/.test(prompt.modelId)) {
+    return {
+      modelId: prompt.modelId,
+      maxTokens: Math.max(prompt.maxTokens, 4_096),
+      apiFormat: 'converse_stream',
+      additionalParams: {
+        additionalModelRequestFields: {
+          thinking: { type: 'adaptive' },
+          output_config: { effort: 'medium' },
+        },
+      },
+    };
+  }
+  return {
+    modelId: prompt.modelId,
+    maxTokens: prompt.maxTokens,
+    temperature: prompt.temperature,
+    apiFormat: 'converse_stream',
+  };
+};
+
 /** A concise audit note; never include raw tool inputs or returned financial rows. */
 export const summarizeToolResult = (
   name: string,
@@ -239,14 +296,9 @@ async function* invokeHarnessStream(
     // The Cognito subject is the hard boundary for durable AgentCore memory.
     // It is never accepted from the browser request body.
     actorId: owner,
-    systemPrompt: [{ text: prompt.text }],
+    systemPrompt: [{ text: buildHarnessSystemPrompt(prompt.text, userMessage) }],
     model: {
-      bedrockModelConfig: {
-        modelId: prompt.modelId,
-        maxTokens: prompt.maxTokens,
-        temperature: prompt.temperature,
-        apiFormat: 'converse_stream',
-      },
+      bedrockModelConfig: buildHarnessModelConfig(prompt),
     },
     messages: [{
       role: 'user',
@@ -260,10 +312,28 @@ async function* invokeHarnessStream(
   const toolResultByIndex = new Map<number, { toolUseId: string; status?: string; payload?: Record<string, unknown> }>();
   const activeTools = new Map<string, { name: string; label: string; attempt: number; startedAt: number }>();
   const attemptsByTool = new Map<string, number>();
+  const activeReasoning = new Map<number, { reasoningId: string; startedAt: number }>();
+  let reasoningSequence = 0;
 
   for await (const event of response.stream ?? []) {
     if (event.contentBlockDelta?.delta?.text) {
       yield { type: 'token', text: event.contentBlockDelta.delta.text };
+    }
+
+    if (event.contentBlockDelta?.delta?.reasoningContent
+      && event.contentBlockDelta.contentBlockIndex !== undefined
+      && !activeReasoning.has(event.contentBlockDelta.contentBlockIndex)) {
+      reasoningSequence += 1;
+      const reasoningId = `reasoning-${reasoningSequence}`;
+      activeReasoning.set(event.contentBlockDelta.contentBlockIndex, {
+        reasoningId,
+        startedAt: Date.now(),
+      });
+      yield {
+        type: 'reasoning_start',
+        reasoningId,
+        label: 'Analizando contexto y restricciones',
+      };
     }
 
     const startToolUse = event.contentBlockStart?.start?.toolUse;
@@ -299,6 +369,16 @@ async function* invokeHarnessStream(
     }
 
     if (event.contentBlockStop?.contentBlockIndex !== undefined) {
+      const reasoning = activeReasoning.get(event.contentBlockStop.contentBlockIndex);
+      if (reasoning) {
+        yield {
+          type: 'reasoning_complete',
+          reasoningId: reasoning.reasoningId,
+          durationMs: Math.max(0, Date.now() - reasoning.startedAt),
+        };
+        activeReasoning.delete(event.contentBlockStop.contentBlockIndex);
+      }
+
       const finished = toolUseByIndex.get(event.contentBlockStop.contentBlockIndex);
       if (finished?.name === 'propose_recategorize') {
         const input = tryParseJsonObject(finished.inputJson);
