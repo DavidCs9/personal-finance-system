@@ -26,6 +26,7 @@ import {
   spendingRangeFromEvents,
   type SpendingRangeQuery,
 } from './spending-range.js';
+import { buildMonthScenario, type ScenarioCommitment } from './month-scenario.js';
 
 export class InvalidAgentQueryError extends Error {}
 
@@ -113,6 +114,39 @@ export const monthSnapshot = async (
     uncategorizedMinor: byCategory.uncategorizedMinor,
     uncategorizedEventCount: byCategory.uncategorizedEventCount,
   };
+};
+
+export const planMonthScenario = async (
+  owner: string,
+  input: Record<string, unknown>,
+) => {
+  const month = String(input.month);
+  const snapshot = await monthSnapshot(owner, month);
+  const commitments = Array.isArray(input.commitments)
+    ? input.commitments.map((raw) => {
+      const item = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+      return {
+        label: String(item.label ?? ''),
+        amount: Number(item.amount),
+        currency: String(item.currency) as ScenarioCommitment['currency'],
+      };
+    })
+    : undefined;
+  const dailyUsdScenarios = Array.isArray(input.dailyUsdScenarios)
+    ? input.dailyUsdScenarios.map(Number)
+    : undefined;
+  return buildMonthScenario({
+    month,
+    budgetMxn: Number(input.budgetMxn),
+    recordedSpentMxnMinor: snapshot.summary.spentMinor,
+    ledgerUpcomingMxnMinor: snapshot.summary.upcomingMinor,
+    includeLedgerUpcoming: input.includeLedgerUpcoming === true,
+    commitments,
+    usdToMxn: input.usdToMxn === undefined ? undefined : Number(input.usdToMxn),
+    tripStart: String(input.tripStart),
+    tripEnd: String(input.tripEnd),
+    dailyUsdScenarios,
+  });
 };
 
 export const spendByCategory = async (month: string): Promise<SpendAggregateResult> => {

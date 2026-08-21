@@ -32,7 +32,7 @@ SPA (JWT Cognito)
 - Las tools viven detrás de **Gateway**: un target Lambda para finanzas y el [conector administrado Web Search Tool](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-connector-web-search-tool.html) para información pública con citas.
 - Harness, Memory y el Gateway de Web Search corren en `us-east-1`, requerido por el conector. El Gateway financiero existente, su Lambda y DynamoDB permanecen juntos en `us-east-2`; el Harness conecta ambos Gateways.
 - Code interpreter: **apagado**.
-- Memoria de conversación: AgentCore Memory conserva automáticamente y de forma amplia contexto útil entre sesiones (planes, metas, preferencias, restricciones y decisiones), aislado por Cognito `sub`. Se prefiere retener de más para que el usuario no tenga que repetir contexto; las memorias durables se pueden revisar y borrar desde el sheet. El hilo visible sigue limpiándose al cerrar o cambiar el mes. Nunca escribe ni modifica el ledger, Resumen, proyecciones o Patrimonio.
+- Memoria de conversación: AgentCore Memory conserva entre sesiones solo hechos durables y preferencias estables que el usuario expresó explícitamente, aislados por Cognito `sub`. Las estrategias personalizadas rechazan inferencias del asistente, cálculos intermedios, saldos actuales, unidades no confirmadas y fechas inferidas; una corrección posterior del usuario reemplaza el valor anterior. El Harness recupera únicamente hechos y preferencias relevantes (no resúmenes de sesión). Las memorias durables se pueden revisar y borrar desde el sheet. Nunca escribe ni modifica el ledger, Resumen, proyecciones o Patrimonio.
 - CDK provisiona Gateway + Target + Harness vía custom resource (`OlbiaAgentCore`) y inyecta `HARNESS_ARN` en las Lambdas de chat.
 
 ## Prompt Management (runtime, sin deploy)
@@ -76,6 +76,7 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 | Tool | Rol |
 |------|-----|
 | `month_snapshot` | Has gastado, Te quedan, proyección, MSI, incertidumbre, sin categoría |
+| `plan_month_scenario` | Presupuesto, compromisos con moneda explícita, días/noches y cierres what-if deterministas |
 | `spend_by_category` | Totales por categoría (cuota MSI del mes) |
 | `spend_by_merchant` | Top comercios (opcional filtro de categoría) |
 | `list_movements` | Total sin truncar + detalle acotado por hoy/ayer/semana/7 días/mes/año o rango explícito; conserva semántica de cuota MSI y declara cuando evidencia histórica solo permite precisión mensual |
@@ -107,8 +108,6 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 - Sin Bedrock Guardrails en el MVP.
 
 ## Fuera de este ship
-
-- Asesor de responsabilidad / what-if.
 - IBKR en vivo desde el agente (sigue siendo sync → `wealth_snapshot`).
 - Code interpreter.
 - Historial de chat durable en UI.

@@ -16,8 +16,10 @@ import {
   ListGatewayTargetsCommand,
   ListHarnessesCommand,
   ListMemoriesCommand,
+  UpdateMemoryCommand,
   UpdateGatewayTargetCommand,
   UpdateHarnessCommand,
+  type Memory,
   type ToolDefinition,
 } from '@aws-sdk/client-bedrock-agentcore-control';
 import { resolveRuntimePrompt, type RuntimePrompt } from './prompt-runtime.js';
@@ -42,6 +44,8 @@ interface ProviderEvent {
     readonly GatewayRoleArn?: string;
     readonly ToolsLambdaArn?: string;
     readonly MemoryName?: string;
+    readonly MemoryExecutionRoleArn?: string;
+    readonly MemoryModelId?: string;
   };
   readonly PhysicalResourceId?: string;
   readonly OldResourceProperties?: Record<string, unknown>;
@@ -153,15 +157,219 @@ const isNotFound = (error: unknown): boolean => {
   return /ResourceNotFound|NotFound/i.test(name);
 };
 
-const ensureMemory = async (name: string, existingId?: string): Promise<{ memoryId: string; memoryArn: string }> => {
+const VERIFIED_FACTS_STRATEGY = 'OlbiaVerifiedFacts';
+const VERIFIED_PREFERENCES_STRATEGY = 'OlbiaVerifiedPreferences';
+
+const verifiedMemoryStrategies = (modelId: string) => ([
+  {
+    customMemoryStrategy: {
+      name: VERIFIED_FACTS_STRATEGY,
+      description: 'Durable facts explicitly stated or corrected by the user.',
+      namespaceTemplates: ['/users/{actorId}/facts/'],
+      configuration: {
+        semanticOverride: {
+          extraction: {
+            modelId,
+            appendToPrompt: [
+              'Store only durable facts explicitly stated by the user.',
+              'Never store assistant claims, assistant calculations, intermediate planning values, current balances, projections, inferred dates, or an unconfirmed currency or unit.',
+              'Preserve the exact currency, unit, and date precision stated by the user.',
+              'When the user corrects a fact, treat the correction as authoritative and reject the older value.',
+            ].join(' '),
+          },
+          consolidation: {
+            modelId,
+            appendToPrompt: [
+              'Consolidate only explicit user facts.',
+              'Replace contradicted facts with the latest user correction instead of retaining both.',
+              'Do not turn assistant reasoning, arithmetic, uncertainty, or temporary plans into facts.',
+            ].join(' '),
+          },
+        },
+      },
+    },
+  },
+  {
+    customMemoryStrategy: {
+      name: VERIFIED_PREFERENCES_STRATEGY,
+      description: 'Stable preferences explicitly expressed by the user.',
+      namespaceTemplates: ['/users/{actorId}/preferences/'],
+      configuration: {
+        userPreferenceOverride: {
+          extraction: {
+            modelId,
+            appendToPrompt: [
+              'Store only stable preferences explicitly expressed by the user.',
+              'Do not infer a preference from one decision, an assistant suggestion, a current balance, a trip calculation, a temporary constraint, or silence.',
+              'Never store assistant-authored conclusions as user preferences.',
+              'A later explicit user correction supersedes an older preference.',
+            ].join(' '),
+          },
+          consolidation: {
+            modelId,
+            appendToPrompt: [
+              'Keep only explicit, durable user preferences.',
+              'Replace contradicted preferences with the latest explicit user statement.',
+              'Remove assistant inferences and temporary planning details during consolidation.',
+            ].join(' '),
+          },
+        },
+      },
+    },
+  },
+]);
+
+type VerifiedMemory = {
+  readonly memoryId: string;
+  readonly memoryArn: string;
+  readonly factsStrategyId: string;
+  readonly preferencesStrategyId: string;
+};
+
+const activeVerifiedMemory = (
+  memory: Pick<Memory, 'arn' | 'strategies'>,
+  memoryId: string,
+): VerifiedMemory | undefined => {
+  const facts = memory.strategies?.find((strategy) =>
+    strategy.name === VERIFIED_FACTS_STRATEGY && strategy.status === 'ACTIVE');
+  const preferences = memory.strategies?.find((strategy) =>
+    strategy.name === VERIFIED_PREFERENCES_STRATEGY && strategy.status === 'ACTIVE');
+  if (!memory.arn || !facts?.strategyId || !preferences?.strategyId) return undefined;
+  return {
+    memoryId,
+    memoryArn: memory.arn,
+    factsStrategyId: facts.strategyId,
+    preferencesStrategyId: preferences.strategyId,
+  };
+};
+
+const reconcileVerifiedMemory = async (input: {
+  readonly memoryId: string;
+  readonly executionRoleArn: string;
+  readonly modelId: string;
+}): Promise<VerifiedMemory> => {
+  let response = await control.send(new GetMemoryCommand({ memoryId: input.memoryId }));
+  let memory = response.memory;
+  if (!memory) throw new Error(`Memory ${input.memoryId} was not returned.`);
+  const names = new Set(memory.strategies?.map((strategy) => strategy.name));
+  if (!names.has(VERIFIED_FACTS_STRATEGY) || !names.has(VERIFIED_PREFERENCES_STRATEGY)) {
+    const desired = verifiedMemoryStrategies(input.modelId).filter((strategy) =>
+      !names.has(strategy.customMemoryStrategy.name));
+    await control.send(new UpdateMemoryCommand({
+      memoryId: input.memoryId,
+      memoryExecutionRoleArn: input.executionRoleArn,
+      memoryStrategies: { addMemoryStrategies: desired },
+    }));
+    const ready = await waitUntil(
+      'memory-strategy-add',
+      async () => {
+        const current = await control.send(new GetMemoryCommand({ memoryId: input.memoryId }));
+        const desiredActive = [VERIFIED_FACTS_STRATEGY, VERIFIED_PREFERENCES_STRATEGY].every(
+          (name) => current.memory?.strategies?.some((strategy) =>
+            strategy.name === name && strategy.status === 'ACTIVE'),
+        );
+        const desiredFailed = current.memory?.strategies?.some((strategy) =>
+          (strategy.name === VERIFIED_FACTS_STRATEGY || strategy.name === VERIFIED_PREFERENCES_STRATEGY)
+          && strategy.status === 'FAILED');
+        return {
+          status: desiredFailed
+            ? 'FAILED'
+            : current.memory?.status === 'ACTIVE'
+            ? (desiredActive ? 'ACTIVE' : 'UPDATING_STRATEGIES')
+            : current.memory?.status,
+          memory: current.memory,
+        };
+      },
+      ['ACTIVE'],
+      ['FAILED'],
+    );
+    memory = ready.memory;
+    if (!memory) throw new Error('Memory active after strategy add without details.');
+  } else if (memory.memoryExecutionRoleArn !== input.executionRoleArn) {
+    await control.send(new UpdateMemoryCommand({
+      memoryId: input.memoryId,
+      memoryExecutionRoleArn: input.executionRoleArn,
+    }));
+    const ready = await waitUntil(
+      'memory-role-update',
+      async () => {
+        const current = await control.send(new GetMemoryCommand({ memoryId: input.memoryId }));
+        return {
+          status: current.memory?.status === 'ACTIVE'
+            ? (current.memory.memoryExecutionRoleArn === input.executionRoleArn ? 'ACTIVE' : 'UPDATING_ROLE')
+            : current.memory?.status,
+          memory: current.memory,
+        };
+      },
+      ['ACTIVE'],
+      ['FAILED'],
+    );
+    memory = ready.memory;
+    if (!memory) throw new Error('Memory active after role update without details.');
+  }
+
+  const obsolete = memory.strategies?.filter((strategy) =>
+    strategy.name !== VERIFIED_FACTS_STRATEGY
+    && strategy.name !== VERIFIED_PREFERENCES_STRATEGY
+    && strategy.strategyId) ?? [];
+  if (obsolete.length > 0) {
+    await control.send(new UpdateMemoryCommand({
+      memoryId: input.memoryId,
+      memoryStrategies: {
+        deleteMemoryStrategies: obsolete.map((strategy) => ({
+          memoryStrategyId: strategy.strategyId!,
+        })),
+      },
+    }));
+    const ready = await waitUntil(
+      'memory-strategy-delete',
+      async () => {
+        const current = await control.send(new GetMemoryCommand({ memoryId: input.memoryId }));
+        const obsoleteRemain = current.memory?.strategies?.some((strategy) =>
+          strategy.name !== VERIFIED_FACTS_STRATEGY
+          && strategy.name !== VERIFIED_PREFERENCES_STRATEGY);
+        const desiredFailed = current.memory?.strategies?.some((strategy) =>
+          (strategy.name === VERIFIED_FACTS_STRATEGY || strategy.name === VERIFIED_PREFERENCES_STRATEGY)
+          && strategy.status === 'FAILED');
+        return {
+          status: desiredFailed
+            ? 'FAILED'
+            : current.memory?.status === 'ACTIVE'
+            ? (!obsoleteRemain ? 'ACTIVE' : 'UPDATING_STRATEGIES')
+            : current.memory?.status,
+          memory: current.memory,
+        };
+      },
+      ['ACTIVE'],
+      ['FAILED'],
+    );
+    memory = ready.memory;
+    if (!memory) throw new Error('Memory active after strategy delete without details.');
+  }
+
+  const verified = activeVerifiedMemory(memory, input.memoryId);
+  if (!verified) throw new Error('Verified memory strategies did not become ACTIVE.');
+  return verified;
+};
+
+const ensureMemory = async (input: {
+  readonly name: string;
+  readonly executionRoleArn: string;
+  readonly modelId: string;
+  readonly existingId?: string;
+}): Promise<VerifiedMemory> => {
   // Prefer a same-region name match during regional migrations; the physical ID
   // may still refer to the previous region until CloudFormation accepts v3.
-  const reusableId = await findMemoryIdByName(name) ?? existingId;
+  const reusableId = await findMemoryIdByName(input.name) ?? input.existingId;
   if (reusableId) {
     try {
       const existing = await control.send(new GetMemoryCommand({ memoryId: reusableId }));
       if (existing.memory?.status === 'ACTIVE' && existing.memory.arn) {
-        return { memoryId: reusableId, memoryArn: existing.memory.arn };
+        return reconcileVerifiedMemory({
+          memoryId: reusableId,
+          executionRoleArn: input.executionRoleArn,
+          modelId: input.modelId,
+        });
       }
       if (existing.memory?.status !== 'DELETING' && existing.memory?.status !== 'FAILED') {
         const ready = await waitUntil(
@@ -174,7 +382,11 @@ const ensureMemory = async (name: string, existingId?: string): Promise<{ memory
           ['FAILED'],
         );
         if (!ready.memory?.arn) throw new Error('Memory active without ARN.');
-        return { memoryId: reusableId, memoryArn: ready.memory.arn };
+        return reconcileVerifiedMemory({
+          memoryId: reusableId,
+          executionRoleArn: input.executionRoleArn,
+          modelId: input.modelId,
+        });
       }
     } catch (error) {
       // A previous failed replacement can leave a Harness with a stale Memory ARN.
@@ -183,15 +395,12 @@ const ensureMemory = async (name: string, existingId?: string): Promise<{ memory
     }
   }
   const created = await control.send(new CreateMemoryCommand({
-    name,
+    name: input.name,
     description: 'Durable, user-scoped conversational memory for the Olbia assistant.',
     // Raw events are short-lived; extracted long-term facts persist until the user deletes them.
     eventExpiryDuration: 30,
-    memoryStrategies: [
-      { semanticMemoryStrategy: { name: 'OlbiaFacts', namespaceTemplates: ['/users/{actorId}/facts/'] } },
-      { userPreferenceMemoryStrategy: { name: 'OlbiaPreferences', namespaceTemplates: ['/users/{actorId}/preferences/'] } },
-      { summaryMemoryStrategy: { name: 'OlbiaSummaries', namespaceTemplates: ['/users/{actorId}/summaries/{sessionId}/'] } },
-    ],
+    memoryExecutionRoleArn: input.executionRoleArn,
+    memoryStrategies: verifiedMemoryStrategies(input.modelId),
   }));
   const memoryId = created.memory?.id;
   if (!memoryId) throw new Error('CreateMemory did not return memory ID.');
@@ -205,7 +414,11 @@ const ensureMemory = async (name: string, existingId?: string): Promise<{ memory
     ['FAILED'],
   );
   if (!ready.memory?.arn) throw new Error('Memory active without ARN.');
-  return { memoryId, memoryArn: ready.memory.arn };
+  return reconcileVerifiedMemory({
+    memoryId,
+    executionRoleArn: input.executionRoleArn,
+    modelId: input.modelId,
+  });
 };
 
 const toolSchemaInline = (): ToolDefinition[] =>
@@ -445,6 +658,8 @@ const ensureHarness = async (input: {
   readonly webGatewayArn: string;
   readonly prompt: RuntimePrompt;
   readonly memoryArn: string;
+  readonly factsStrategyId: string;
+  readonly preferencesStrategyId: string;
 }): Promise<{ harnessId: string; harnessArn: string }> => {
   const model = harnessModel(input.prompt);
   const systemPrompt = [{ text: input.prompt.text }];
@@ -458,7 +673,22 @@ const ensureHarness = async (input: {
         model,
         systemPrompt,
         tools: harnessTools(input.financeGatewayArn, input.webGatewayArn),
-        memory: { optionalValue: { agentCoreMemoryConfiguration: { arn: input.memoryArn, messagesCount: 12 } } },
+        memory: { optionalValue: { agentCoreMemoryConfiguration: {
+          arn: input.memoryArn,
+          messagesCount: 12,
+          retrievalConfig: {
+            '/users/{actorId}/facts/': {
+              strategyId: input.factsStrategyId,
+              topK: 5,
+              relevanceScore: 0.65,
+            },
+            '/users/{actorId}/preferences/': {
+              strategyId: input.preferencesStrategyId,
+              topK: 3,
+              relevanceScore: 0.65,
+            },
+          },
+        } } },
         maxIterations: 25,
         maxTokens: 4096,
         timeoutSeconds: 300,
@@ -501,7 +731,22 @@ const ensureHarness = async (input: {
     model,
     systemPrompt,
     tools: harnessTools(input.financeGatewayArn, input.webGatewayArn),
-    memory: { agentCoreMemoryConfiguration: { arn: input.memoryArn, messagesCount: 12 } },
+    memory: { agentCoreMemoryConfiguration: {
+      arn: input.memoryArn,
+      messagesCount: 12,
+      retrievalConfig: {
+        '/users/{actorId}/facts/': {
+          strategyId: input.factsStrategyId,
+          topK: 5,
+          relevanceScore: 0.65,
+        },
+        '/users/{actorId}/preferences/': {
+          strategyId: input.preferencesStrategyId,
+          topK: 3,
+          relevanceScore: 0.65,
+        },
+      },
+    } },
     maxIterations: 25,
     maxTokens: 4096,
     timeoutSeconds: 300,
@@ -558,8 +803,10 @@ export const handler = async (event: ProviderEvent): Promise<{
   const gatewayRole = props.GatewayRoleArn ?? '';
   const toolsLambdaArn = props.ToolsLambdaArn ?? '';
   const memoryName = props.MemoryName ?? 'OlbiaFinanceMemory';
-  if (!harnessRole || !gatewayRole || !toolsLambdaArn) {
-    throw new Error('HarnessExecutionRoleArn, GatewayRoleArn, and ToolsLambdaArn are required.');
+  const memoryRole = props.MemoryExecutionRoleArn ?? '';
+  const memoryModelId = props.MemoryModelId ?? '';
+  if (!harnessRole || !gatewayRole || !toolsLambdaArn || !memoryRole || !memoryModelId) {
+    throw new Error('HarnessExecutionRoleArn, GatewayRoleArn, ToolsLambdaArn, MemoryExecutionRoleArn, and MemoryModelId are required.');
   }
 
   const physicalId = event.PhysicalResourceId ?? `olbia-agentcore-${harnessName}`;
@@ -649,7 +896,12 @@ export const handler = async (event: ProviderEvent): Promise<{
   const prompt = await resolveRuntimePrompt();
   const webGateway = await ensureGateway({ name: gatewayName, roleArn: gatewayRole });
   const financeGateway = await resolveFinanceGateway(financeGatewayName);
-  const memory = await ensureMemory(memoryName, priorResources.memoryId);
+  const memory = await ensureMemory({
+    name: memoryName,
+    executionRoleArn: memoryRole,
+    modelId: memoryModelId,
+    existingId: priorResources.memoryId,
+  });
   const targetId = await ensureGatewayTarget({
     gatewayId: financeGateway.gatewayId,
     name: targetName,
@@ -666,6 +918,8 @@ export const handler = async (event: ProviderEvent): Promise<{
     webGatewayArn: webGateway.gatewayArn,
     prompt,
     memoryArn: memory.memoryArn,
+    factsStrategyId: memory.factsStrategyId,
+    preferencesStrategyId: memory.preferencesStrategyId,
   });
 
   return {

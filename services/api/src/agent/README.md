@@ -14,6 +14,11 @@ The active Prompt Management version must contain:
 - `modelId`;
 - text inference configuration with `temperature` and `maxTokens`.
 
+Golden behavior for decision-support prompts is guarded in two layers:
+
+1. `plan_month_scenario` performs currency conversion, commitments, inclusive calendar-day counts, nights, daily ceilings, and month-close scenarios deterministically.
+2. `golden-thread-evaluation.test.ts` rejects the prior failure mode (asking the user to invent the budget they asked the agent to derive) and checks the expected financial/date outputs without an LLM call. Production releases use two bounded Harness canaries, not a recurring evaluation job.
+
 Prompt changes are operational runtime changes. Edit the Prompt Management draft, create an immutable version, and move the SSM pointer. Do not add prompt prose, model defaults, inference defaults, bootstrap prompts, or fallback prompts to application or infrastructure code.
 
 CDK owns the native `AWS::Bedrock::Prompt` resource (stable name, tags, retention, and lifecycle). Before deployment, CI reads the current DRAFT directly from Prompt Management and passes its text, model, and inference settings as CloudFormation `NoEcho` parameters. This preserves the DRAFT without storing prompt content in Git or application code. Immutable versions and promotion remain runtime operations in Prompt Management; the active SSM pointer is an operational prerequisite.

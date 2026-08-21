@@ -12,6 +12,44 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'plan_month_scenario',
+    description:
+      'Calcula un plan mensual y escenarios de viaje con aritmética determinista usando el gasto real del Resumen. Úsala cuando el usuario quiera descubrir cuánto puede gastar: no le devuelvas la pregunta. Distingue días calendario de noches, convierte compromisos USD con un tipo de cambio explícito y devuelve cierres de mes. commitments solo debe incluir montos que no estén ya registrados; includeLedgerUpcoming incluye los pagos próximos del Resumen.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        month: { type: 'string', description: 'Mes YYYY-MM.' },
+        budgetMxn: { type: 'number', description: 'Tope mensual total en MXN.' },
+        commitments: {
+          type: 'array',
+          description: 'Compromisos adicionales aún no registrados. La moneda es obligatoria; no infieras MXN o USD.',
+          items: {
+            type: 'object',
+            properties: {
+              label: { type: 'string' },
+              amount: { type: 'number' },
+              currency: { type: 'string', enum: ['MXN', 'USD'] },
+            },
+            required: ['label', 'amount', 'currency'],
+          },
+        },
+        usdToMxn: { type: 'number', description: 'MXN por USD; obligatorio si hay montos o escenarios USD.' },
+        tripStart: { type: 'string', description: 'Primer día del viaje, YYYY-MM-DD.' },
+        tripEnd: { type: 'string', description: 'Último día del viaje, YYYY-MM-DD.' },
+        dailyUsdScenarios: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Escenarios diarios en USD, por ejemplo 100, 150 y 200.',
+        },
+        includeLedgerUpcoming: {
+          type: 'boolean',
+          description: 'Default false. Activa solo si los pagos próximos del Resumen deben descontarse además de commitments.',
+        },
+      },
+      required: ['month', 'budgetMxn', 'tripStart', 'tripEnd'],
+    },
+  },
+  {
     name: 'spend_by_category',
     description:
       'Gasto del mes por categoría (cuota MSI del mes, no el ticket completo). Incluye Sin categoría.',
