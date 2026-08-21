@@ -3,6 +3,7 @@ import {
   investmentHistory,
   listMovementsForAgent,
   monthSnapshot,
+  planMonthScenario,
   proposeRecategorize,
   spendByCategory,
   spendByMerchant,
@@ -21,6 +22,8 @@ export const runAgentTool = async (
   switch (name as AgentToolName | string) {
     case 'month_snapshot':
       return monthSnapshot(owner, String(input.month));
+    case 'plan_month_scenario':
+      return planMonthScenario(owner, input);
     case 'spend_by_category':
       return spendByCategory(String(input.month));
     case 'spend_by_merchant':
@@ -72,6 +75,9 @@ export const citationsFromToolResult = (
   }
   if (toolName === 'month_snapshot') {
     return [{ kind: 'summary', label: `Resumen ${String(data.month ?? '')}`.trim() }];
+  }
+  if (toolName === 'plan_month_scenario') {
+    return [{ kind: 'summary', label: `Plan ${String(data.month ?? '')}`.trim() }];
   }
   if (toolName === 'wealth_snapshot') {
     return [{ kind: 'wealth', label: 'Patrimonio' }];

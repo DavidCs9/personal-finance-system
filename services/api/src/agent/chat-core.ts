@@ -145,6 +145,7 @@ const citationsFromPayload = (data: Record<string, unknown>): AgentSseEvent[] =>
 const toolLabel = (name: string): string => {
   switch (name) {
     case 'month_snapshot': return 'Revisando el resumen del mes';
+    case 'plan_month_scenario': return 'Calculando escenarios del mes';
     case 'spend_by_category': return 'Revisando categorías de gasto';
     case 'spend_by_merchant': return 'Revisando comercios';
     case 'list_movements': return 'Revisando movimientos';
@@ -166,6 +167,8 @@ export const summarizeToolResult = (
   switch (name) {
     case 'month_snapshot':
       return { summary: `Resumen de ${String(payload.month ?? 'este mes')} consultado.`, material: true };
+    case 'plan_month_scenario':
+      return { summary: `Plan de ${String(payload.month ?? 'este mes')} calculado.`, material: true };
     case 'spend_by_category': {
       const count = asArray(payload.buckets).length;
       return { summary: `Revisé ${count} categoría${count === 1 ? '' : 's'} de gasto.`, material: true };

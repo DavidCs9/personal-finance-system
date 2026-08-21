@@ -485,6 +485,26 @@ export class PersonalFinanceV1Stack extends Stack {
       ],
       resources: ['*'],
     }));
+
+    const memoryExecutionRole = new iam.Role(this, 'AgentCoreMemoryExecutionRole', {
+      roleName: 'personal-finance-v1-agentcore-memory',
+      assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com', {
+        conditions: {
+          StringEquals: { 'aws:SourceAccount': this.account },
+          ArnLike: {
+            'aws:SourceArn': `arn:aws:bedrock-agentcore:${agentCoreRegion}:${this.account}:memory/*`,
+          },
+        },
+      }),
+      description: 'Execution role for verified Olbia long-term memory extraction.',
+    });
+    const memoryModelPolicy = new iam.Policy(this, 'AgentCoreMemoryModelPolicy', {
+      statements: [new iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel', 'bedrock:Converse'],
+        resources: ['*'],
+      })],
+    });
+    memoryExecutionRole.attachInlinePolicy(memoryModelPolicy);
     harnessExecutionRole.addToPolicy(new iam.PolicyStatement({
       actions: [
         'bedrock-agentcore:InvokeGateway',
@@ -640,6 +660,8 @@ export class PersonalFinanceV1Stack extends Stack {
         TargetName: 'olbia-tools',
         WebSearchTargetName: 'olbia-web-search',
         HarnessExecutionRoleArn: harnessExecutionRole.roleArn,
+        MemoryExecutionRoleArn: memoryExecutionRole.roleArn,
+        MemoryModelId: 'us.amazon.nova-lite-v1:0',
         GatewayRoleArn: gatewayRole.roleArn,
         ToolsLambdaArn: agentToolsFunction.functionArn,
         // Reconcile AgentCore resources when the provisioner lifecycle logic changes.
@@ -648,6 +670,9 @@ export class PersonalFinanceV1Stack extends Stack {
         ToolsLambdaVersion: agentToolsFunction.currentVersion.version,
       },
     });
+    // Memory validates model access during UpdateMemory, so reconciliation must
+    // wait until the role's separately managed IAM policy is fully attached.
+    agentcoreResources.node.addDependency(memoryModelPolicy);
     const harnessArn = agentcoreResources.getAttString('HarnessArn');
     const agentMemoryId = agentcoreResources.getAttString('MemoryId');
 
