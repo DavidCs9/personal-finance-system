@@ -79,6 +79,17 @@ describe('spending ranges', () => {
     expect(result.truncated).toBe(true);
   });
 
+  it('uses Mi parte for shared non-MSI purchases', () => {
+    const result = spendingRangeFromEvents([
+      event('shared', 1_000_00, '2026-08-15T18:00:00.000Z', {
+        personalAmountMinor: 250_00,
+      }),
+    ], { range: 'yesterday' }, now);
+
+    expect(result.totalSpentMinor).toBe(250_00);
+    expect(result.movements[0]).toMatchObject({ id: 'shared', amountMinor: 250_00 });
+  });
+
   it('uses a reconciled MSI cuota instead of the full purchase principal', () => {
     const plan = markInstallmentSpent(buildMsiSchedule({
       principalMinor: 3_000_00,

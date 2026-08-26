@@ -39,6 +39,9 @@ export function EventSheet({
     ((event.msi?.cuotaMinor ?? defaultCuotaMinor(event.amount.amountMinor, event.msi?.months ?? 3)) / 100).toFixed(2),
   );
   const [categoryId, setCategoryId] = useState(event.categoryId ?? "");
+  const [personalAmount, setPersonalAmount] = useState(
+    event.personalAmountMinor === undefined ? "" : (event.personalAmountMinor / 100).toFixed(2),
+  );
   const [categories, setCategories] = useState<readonly { id: string; name: string }[]>([]);
 
   useEffect(() => {
@@ -54,7 +57,10 @@ export function EventSheet({
       ).toFixed(2),
     );
     setCategoryId(event.categoryId ?? "");
-  }, [event.id, event.msi, event.amount.amountMinor, event.categoryId]);
+    setPersonalAmount(
+      event.personalAmountMinor === undefined ? "" : (event.personalAmountMinor / 100).toFixed(2),
+    );
+  }, [event.id, event.msi, event.amount.amountMinor, event.categoryId, event.personalAmountMinor]);
 
   useEffect(() => {
     if (demoMode) {
@@ -189,6 +195,42 @@ export function EventSheet({
     onError: (err) => setError(err instanceof Error ? err.message : "No se pudo guardar la categoría."),
   });
 
+  const personalAmountMutation = useMutation({
+    mutationFn: async () => {
+      if (!personalAmount.trim()) {
+        throw new Error("Indica un monto válido para Mi parte.");
+      }
+      const personalAmountMinor = Math.round(Number(personalAmount) * 100);
+      if (!Number.isFinite(Number(personalAmount)) || !Number.isSafeInteger(personalAmountMinor)) {
+        throw new Error("Indica un monto válido para Mi parte.");
+      }
+      if (personalAmountMinor < 0 || personalAmountMinor > event.amount.amountMinor) {
+        throw new Error("Mi parte debe estar entre $0 y el total pagado.");
+      }
+      if (demoMode) return { ...event, personalAmountMinor };
+      return ledgerApi.setEventPersonalAmount(event.id, personalAmountMinor, idToken);
+    },
+    onSuccess: (updated) => {
+      updateCache(updated);
+      setPersonalAmount(
+        ((updated.personalAmountMinor ?? updated.amount.amountMinor) / 100).toFixed(2),
+      );
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "No se pudo guardar Mi parte."),
+  });
+
+  const clearPersonalAmountMutation = useMutation({
+    mutationFn: () =>
+      demoMode
+        ? Promise.resolve({ ...event, personalAmountMinor: undefined })
+        : ledgerApi.clearEventPersonalAmount(event.id, idToken),
+    onSuccess: (updated) => {
+      updateCache(updated);
+      setPersonalAmount("");
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "No se pudo usar el total pagado."),
+  });
+
   const toggleRaw = async () => {
     if (rawEmail) {
       setRawEmail(undefined);
@@ -212,6 +254,7 @@ export function EventSheet({
   const reject = async () => {
     try {
       await rejectMutation.mutateAsync();
+      onClose();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "No se pudo rechazar el movimiento.");
     }
@@ -273,11 +316,20 @@ export function EventSheet({
       <div className="event-detail">
         <div className="detail-amount">
           <strong>
-            <Amt>{eventMoney(event)}</Amt>
+            <Amt>
+              {event.personalAmountMinor === undefined
+                ? eventMoney(event)
+                : money(event.personalAmountMinor)}
+            </Amt>
           </strong>
-          <span className={`status ${event.status}`}>{statusLabel[event.status]}</span>
+          <span className={`status ${event.status}`}>
+            {event.personalAmountMinor === undefined
+              ? statusLabel[event.status]
+              : "Compartido"}
+          </span>
         </div>
         <p className="detail-subtitle">
+          {event.personalAmountMinor === undefined ? "" : `De ${eventMoney(event)} pagados · `}
           {institutionLabel(event.institution)} · {event.accountName}
           {event.msi ? ` · MSI ${event.msi.months}` : ""}
         </p>
@@ -310,6 +362,54 @@ export function EventSheet({
             <dd>{statusLabel[event.status]}</dd>
           </div>
         </dl>
+
+        {!event.msi && event.status !== "rejected" && event.status !== "deferred_msi" && (
+          <form
+            className="sheet-form"
+            onSubmit={(formEvent) => {
+              formEvent.preventDefault();
+              personalAmountMutation.mutate();
+            }}
+          >
+            <div className="detail-section-heading">
+              <div>
+                <p className="eyebrow">GASTO COMPARTIDO</p>
+                <h3>Mi parte</h3>
+              </div>
+            </div>
+            <p className="detail-subtitle">
+              Resumen usa este monto. El estado de cuenta conserva el total pagado de {eventMoney(event)}.
+            </p>
+            <Field label="Mi parte">
+              <div className="money-input">
+                <span>$</span>
+                <input
+                  inputMode="decimal"
+                  type="number"
+                  min="0"
+                  max={(event.amount.amountMinor / 100).toFixed(2)}
+                  step="0.01"
+                  placeholder={(event.amount.amountMinor / 100).toFixed(2)}
+                  value={personalAmount}
+                  onChange={(change) => setPersonalAmount(change.target.value)}
+                />
+              </div>
+            </Field>
+            <button className="primary-button" type="submit" disabled={personalAmountMutation.isPending}>
+              {personalAmountMutation.isPending ? "Guardando…" : "Guardar Mi parte"}
+            </button>
+            {event.personalAmountMinor !== undefined && (
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={clearPersonalAmountMutation.isPending}
+                onClick={() => clearPersonalAmountMutation.mutate()}
+              >
+                {clearPersonalAmountMutation.isPending ? "Guardando…" : "Usar el total pagado"}
+              </button>
+            )}
+          </form>
+        )}
 
         <form
           className="sheet-form"
@@ -349,6 +449,7 @@ export function EventSheet({
           <label className="checkbox-row">
             <input
               type="checkbox"
+              disabled={event.personalAmountMinor !== undefined}
               checked={msiEnabled}
               onChange={(change) => {
                 setMsiEnabled(change.target.checked);
@@ -360,6 +461,9 @@ export function EventSheet({
             />
             <span>Esta compra va a MSI</span>
           </label>
+          {event.personalAmountMinor !== undefined && (
+            <p className="detail-subtitle">Usa el total pagado antes de configurar MSI.</p>
+          )}
           {msiEnabled && (
             <>
               <Field label="Meses">

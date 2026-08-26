@@ -249,6 +249,24 @@ export const ledgerApi = {
       body: JSON.stringify({ action: "reject" }),
     });
   },
+  async setEventPersonalAmount(
+    eventId: string,
+    personalAmountMinor: number,
+    idToken: string,
+  ): Promise<PurchaseEvent> {
+    return request<PurchaseEvent>(`/events/${encodeURIComponent(eventId)}`, idToken, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set_personal_amount", personalAmountMinor }),
+    });
+  },
+  async clearEventPersonalAmount(eventId: string, idToken: string): Promise<PurchaseEvent> {
+    return request<PurchaseEvent>(`/events/${encodeURIComponent(eventId)}`, idToken, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "clear_personal_amount" }),
+    });
+  },
   async createManualEvent(
     input: {
       readonly institution: string;

@@ -17,6 +17,18 @@ Before designing or implementing a manual solution for infrastructure, observabi
 
 Prefer the native capability when it provides the required behavior, reliability, security, and observability. Build custom code only for a documented gap, and state that gap and the reason the native option is insufficient before adding the custom implementation. Do not duplicate provider-managed telemetry or data capture with application logs merely because it is easier to add locally.
 
+## AWS local access
+
+- Use `aws login` credentials for interactive local AWS access. Verify the active identity with `aws sts get-caller-identity` immediately before any production operation.
+- Never replace an expired or broken login session with permanent access keys. If automatic refresh fails, request confirmation and run `aws login` again.
+- Keep production data changes auditable: use an already-deployed application/API capability when one exists. Do not write directly to DynamoDB to bypass domain mutations, revision history, validation, or authentication.
+
+## Production deployment
+
+- Never deploy application or infrastructure code manually from a local machine. Do not run `cdk deploy`, update Lambda code/configuration directly, or invoke deployment APIs as a shortcut.
+- All production code changes must go through a pull request and the required `quality` check. Production deployment is owned exclusively by the `deploy-production` GitHub Actions job after the approved change lands on `main`.
+- Local AWS access may be used for read-only diagnosis and for auditable production data operations supported by code that is already deployed. It must not be used to release unreviewed code.
+
 ## Pull requests and linear history
 
 `main` requires linear history. Use this workflow for every pull request:

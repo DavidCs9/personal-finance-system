@@ -41,6 +41,7 @@ const toCategorized = (events: readonly Record<string, unknown>[]): CategorizedS
     return {
       id: String(event.id),
       amountMinor: Number(amount?.amountMinor ?? 0),
+      personalAmountMinor: typeof event.personalAmountMinor === 'number' ? event.personalAmountMinor : undefined,
       status: String(event.status ?? 'accepted'),
       occurredAt: typeof event.occurredAt === 'string' ? event.occurredAt : undefined,
       receivedAt: String(event.receivedAt ?? new Date(0).toISOString()),

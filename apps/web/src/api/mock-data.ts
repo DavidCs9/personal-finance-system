@@ -28,6 +28,7 @@ export const mockEvents: readonly PurchaseEvent[] = [
     status: "accepted",
     accountName: "Tarjeta personal • 1234",
     amount: { amountMinor: 48500, currency: "MXN" },
+    personalAmountMinor: 16200,
     merchantRaw: "CAFÉ DEL PARQUE CDMX",
     occurredAt: "2026-07-12T13:38:00Z",
     receivedAt: "2026-07-12T13:42:00Z",
@@ -268,6 +269,7 @@ export function mockMonthSummaryFor(month: string, plan: MonthlyPlan, now: Date)
     events: [...feed.events, ...feed.msiRelated].map((event) => ({
       id: event.id,
       amountMinor: event.amount.amountMinor,
+      personalAmountMinor: event.personalAmountMinor,
       status: event.status,
       occurredAt: event.occurredAt,
       receivedAt: event.receivedAt,

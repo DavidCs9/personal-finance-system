@@ -10,6 +10,8 @@ export const countsTowardMonthSpend = (status: string): boolean =>
 export interface MonthSpendEvent {
   readonly id?: string;
   readonly amountMinor: number;
+  /** Owner-attributed spend for shared, non-MSI purchases. Absent means the full amount. */
+  readonly personalAmountMinor?: number;
   readonly status: string;
   readonly occurredAt?: string;
   readonly receivedAt: string;
@@ -112,6 +114,11 @@ export const daysInCalendarMonth = (month: string): number =>
 export const eventMonthKey = (event: Pick<MonthSpendEvent, "occurredAt" | "receivedAt">): string =>
   monthKeyInZone(new Date(event.occurredAt ?? event.receivedAt));
 
+/** Amount attributed to the owner while preserving amountMinor as the observed bank total. */
+export const personalSpendAmountMinor = (
+  event: Pick<MonthSpendEvent, "amountMinor" | "personalAmountMinor">,
+): number => event.personalAmountMinor ?? event.amountMinor;
+
 export const formatMxnWhole = (amountMinor: number): string =>
   new Intl.NumberFormat("es-MX", {
     style: "currency",
@@ -206,8 +213,9 @@ export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
       continue;
     }
     if (eventMonthKey(event) !== input.month) continue;
-    discretionarySpentMinor += event.amountMinor;
-    if (event.status === "needs_review") uncertainMinor += event.amountMinor;
+    const amountMinor = personalSpendAmountMinor(event);
+    discretionarySpentMinor += amountMinor;
+    if (event.status === "needs_review") uncertainMinor += amountMinor;
   }
 
   const msiSpentMinor = installmentAmountFor(activeEvents, input.month, "spent");

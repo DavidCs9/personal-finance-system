@@ -62,6 +62,15 @@ describe('suggestCategoryIdFromMerchant', () => {
 });
 
 describe('spendAmountForMonth', () => {
+  it('uses Mi parte for a shared non-MSI purchase', () => {
+    expect(spendAmountForMonth({
+      amountMinor: 900_00,
+      personalAmountMinor: 225_00,
+      status: 'accepted',
+      receivedAt: '2026-08-01T12:00:00Z',
+    }, '2026-08')).toBe(225_00);
+  });
+
   it('uses MSI cuota spent for the month', () => {
     const amount = spendAmountForMonth(
       {

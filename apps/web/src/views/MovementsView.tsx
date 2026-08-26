@@ -9,6 +9,7 @@ import {
   movementAmountMinor,
   movementMoney,
   statusLabel,
+  visibleMovementEvents,
 } from "../lib/format";
 import { CaptureActionsSheet } from "../sheets/CaptureActionsSheet";
 import { RecoveryReviewSheet } from "../sheets/RecoveryReviewSheet";
@@ -51,7 +52,8 @@ export function MovementsView({
 }) {
   const [activeException, setActiveException] = useState<IngestionException>();
   const [captureOpen, setCaptureOpen] = useState(false);
-  const sorted = [...events].sort((a, b) =>
+  const visibleEvents = visibleMovementEvents(events);
+  const sorted = [...visibleEvents].sort((a, b) =>
     sort === "largest"
       ? movementAmountMinor(b, month) - movementAmountMinor(a, month)
       : eventDate(b).getTime() - eventDate(a).getTime(),
@@ -64,7 +66,7 @@ export function MovementsView({
           <p className="eyebrow">TRAZABILIDAD</p>
           <h1>Movimientos</h1>
           <p>
-            {events.length} registros · <Amt>{money(spentMinor)}</Amt>
+            {visibleEvents.length} registros · <Amt>{money(spentMinor)}</Amt>
           </p>
         </div>
         <div className="movement-actions">
@@ -144,6 +146,9 @@ export function MovementsView({
                     })()}
                   </span>
                 ) : null}
+                {event.personalAmountMinor !== undefined ? (
+                  <span className="category-badge">Compartido</span>
+                ) : null}
                 <span className="category-badge">
                   {event.categoryId ?? "Sin categoría"}
                 </span>
@@ -157,7 +162,11 @@ export function MovementsView({
               <strong>
                 <Amt>{movementMoney(event, month)}</Amt>
               </strong>
-              <small className={event.status}>{statusLabel[event.status]}</small>
+              <small className={event.status}>
+                {event.personalAmountMinor !== undefined
+                  ? `Mi parte · de ${money(event.amount.amountMinor)} pagados`
+                  : statusLabel[event.status]}
+              </small>
             </span>
             <span className="chevron">›</span>
           </button>

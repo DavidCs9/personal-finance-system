@@ -6,6 +6,7 @@ import {
   eventMonthKey,
   FINANCE_TIME_ZONE,
   isValidMonth,
+  personalSpendAmountMinor,
   type CategorizedSpendEvent,
 } from '@finance/domain';
 
@@ -209,7 +210,7 @@ export const spendingRangeFromEvents = (
         id: event.id,
         merchantRaw: event.merchantRaw,
         categoryId: event.categoryId ?? null,
-        amountMinor: event.amountMinor,
+        amountMinor: personalSpendAmountMinor(event),
         status: event.status,
         month: occurredOn.slice(0, 7),
         occurredOn,

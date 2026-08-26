@@ -34,6 +34,34 @@ describe('classifyPurchaseCharge', () => {
     expect(row).toMatchObject({ kind: 'purchase', status: 'matched', eventId: 'evt-1' });
   });
 
+  it('reconciles statements against the gross bank amount, not Mi parte', () => {
+    const row = classifyPurchaseCharge({
+      provider: 'santander',
+      accountLastFour: '6349',
+      institution: 'santander_mx',
+      charge: {
+        identity: 'shared-1',
+        merchantRaw: 'RESTAURANTE VEGAS',
+        amountMinor: 4_000_00,
+        occurredOn: '2026-08-23',
+      },
+      events: [{
+        id: 'evt-shared',
+        institution: 'santander_mx',
+        status: 'accepted',
+        account: { lastFour: '6349' },
+        amount: { amountMinor: 4_000_00, currency: 'MXN' },
+        personalAmountMinor: 1_000_00,
+        merchantRaw: 'RESTAURANTE VEGAS',
+        occurredAt: '2026-08-23T18:00:00.000Z',
+      }],
+      claimed: new Set(),
+      localDate: (value) => String(value).slice(0, 10),
+    });
+
+    expect(row).toMatchObject({ status: 'matched', eventId: 'evt-shared', amountMinor: 4_000_00 });
+  });
+
   it('marks zero candidates as new and credits as excluded', () => {
     const neu = classifyPurchaseCharge({
       provider: 'santander',

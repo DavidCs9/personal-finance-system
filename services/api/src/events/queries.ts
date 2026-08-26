@@ -172,6 +172,7 @@ export const toPublicEvent = (
     status: payload.status,
     accountName: account?.displayName ?? 'Tarjeta sin identificar',
     amount: payload.amount,
+    personalAmountMinor: payload.personalAmountMinor,
     merchantRaw: payload.merchantRaw,
     categoryId: (payload.categoryId as string | null | undefined) ?? null,
     billingPeriod: payload.billingPeriod,
