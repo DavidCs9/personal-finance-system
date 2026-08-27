@@ -1030,6 +1030,8 @@ html.private-mode .hero-amount .amt {
   font-size: 12px;
   border-radius: 11px;
 }
+.event-detail > .sheet-form + .sheet-form,
+.event-detail > .sheet-form + .detail-section-heading { margin-top: 28px; }
 .source-summary { display: flex; align-items: center; gap: 11px; border: 1px solid var(--line); border-radius: 12px; background: #f6f1ea; padding: 13px; }
 .source-summary .brand-mark { flex: 0 0 auto; transform: scale(.85); }
 .source-summary strong { font-size: 10px; }

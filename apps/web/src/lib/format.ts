@@ -45,8 +45,12 @@ export const money = (amountMinor: number) => formatMxnWhole(amountMinor);
 export const movementAmountMinor = (event: PurchaseEvent, month: string): number => {
   const installment = event.msi?.installments.find((item) => item.month === month);
   if (installment) return installment.amountMinor;
-  return event.amount.amountMinor;
+  return event.personalAmountMinor ?? event.amount.amountMinor;
 };
+
+/** Rejected events remain available through the API/DB for audit but stay out of the normal UI. */
+export const visibleMovementEvents = (events: readonly PurchaseEvent[]): readonly PurchaseEvent[] =>
+  events.filter((event) => event.status !== "rejected");
 
 export const eventMoney = (event: PurchaseEvent) =>
   new Intl.NumberFormat("es-MX", {

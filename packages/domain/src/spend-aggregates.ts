@@ -1,6 +1,7 @@
 import {
   countsTowardMonthSpend,
   eventMonthKey,
+  personalSpendAmountMinor,
   type MonthSpendEvent,
 } from "./month-summary.js";
 
@@ -36,7 +37,7 @@ export const spendAmountForMonth = (event: MonthSpendEvent, month: string): numb
       .filter((installment) => installment.month === month && installment.status === "spent")
       .reduce((sum, installment) => sum + installment.amountMinor, 0);
   }
-  return eventMonthKey(event) === month ? event.amountMinor : 0;
+  return eventMonthKey(event) === month ? personalSpendAmountMinor(event) : 0;
 };
 
 export const uncertainAmountForMonth = (event: MonthSpendEvent, month: string): number => {

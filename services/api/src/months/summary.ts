@@ -13,6 +13,7 @@ const toMonthSpendEvent = (event: JsonObject): MonthSpendEvent => {
   return {
     id: typeof event.id === 'string' ? event.id : undefined,
     amountMinor: typeof amount?.amountMinor === 'number' ? amount.amountMinor : 0,
+    personalAmountMinor: typeof event.personalAmountMinor === 'number' ? event.personalAmountMinor : undefined,
     status: typeof event.status === 'string' ? event.status : 'accepted',
     occurredAt: typeof event.occurredAt === 'string' ? event.occurredAt : undefined,
     receivedAt: typeof event.receivedAt === 'string' ? event.receivedAt : new Date(0).toISOString(),

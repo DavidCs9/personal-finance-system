@@ -57,6 +57,8 @@ export interface ObservedPurchase {
   readonly status: EventStatus;
   readonly account?: AccountReference;
   readonly amount: Money;
+  /** Optional owner-attributed portion. The observed bank amount remains immutable evidence. */
+  readonly personalAmountMinor?: number;
   readonly merchantRaw: string;
   /** Spend category id from the catalog; null/absent = Sin categoría. */
   readonly categoryId?: string | null;
@@ -120,6 +122,7 @@ export {
   dayKeyInZone,
   daysInCalendarMonth,
   eventMonthKey,
+  personalSpendAmountMinor,
   formatMxnWhole,
   listCommittedMsiRows,
   listMonthMsiRows,

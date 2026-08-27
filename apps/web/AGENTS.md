@@ -86,6 +86,9 @@ Assume at least 95% of usage is mobile.
 - Projection paces discretionary (non-MSI) spend only, then adds spent MSI cuotas and pending commitments.
 - Purchases needing review remain in totals, with the uncertain amount disclosed.
 - Rejected purchases do not count toward spending.
+- Rejected purchases remain persisted with their revisions for audit, but stay hidden from normal user-facing movement lists and detail flows.
+- A shared non-MSI purchase may have an optional **Mi parte** amount between zero and the observed gross amount. The observed bank amount remains immutable evidence and is always used for statement reconciliation; Resumen, Movimientos, categories, projections, assistant answers, and balance pushes use **Mi parte** when present.
+- In Movimientos, show **Mi parte** as the primary amount for a shared purchase and keep the gross bank amount visible as secondary evidence. Do not model participants, balances, settlements, or a Splitwise subsystem.
 - Amex Gold purchases deferred via `MONTO A DIFERIR MESES EN AUTOMÁTICO` use status `deferred_msi`: visible in Movimientos as “Diferido a MSI”, excluded from Has gastado; only the MESES EN AUTOMÁTICO cuota counts.
 - Preserve access to transaction provenance and original evidence.
 - Cajita manual captures are immutable; same-day replacement keeps prior versions for audit only. Mark Cajita stale after 7 days without a capture.

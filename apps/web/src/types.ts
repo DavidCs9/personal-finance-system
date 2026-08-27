@@ -18,6 +18,7 @@ export interface PurchaseEvent {
   readonly status: ReviewStatus;
   readonly accountName: string;
   readonly amount: Money;
+  readonly personalAmountMinor?: number;
   readonly merchantRaw: string;
   readonly categoryId?: string | null;
   readonly occurredAt?: string;

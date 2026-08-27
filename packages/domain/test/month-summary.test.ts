@@ -52,6 +52,34 @@ describe('computeMonthSummary', () => {
     expect(summary.remainingMinor).toBe(10_000_00);
   });
 
+  it('uses Mi parte for shared non-MSI purchases and uncertainty', () => {
+    const summary = computeMonthSummary({
+      events: [
+        {
+          amountMinor: 1_000_00,
+          personalAmountMinor: 250_00,
+          status: 'accepted',
+          receivedAt: '2026-08-01T12:00:00Z',
+        },
+        {
+          amountMinor: 500_00,
+          personalAmountMinor: 100_00,
+          status: 'needs_review',
+          receivedAt: '2026-08-02T12:00:00Z',
+        },
+      ],
+      month: '2026-08',
+      incomeMinor: 10_000_00,
+      incomeConfigured: true,
+      upcomingPaymentsMinor: 0,
+      now,
+    });
+
+    expect(summary.spentMinor).toBe(350_00);
+    expect(summary.discretionarySpentMinor).toBe(350_00);
+    expect(summary.uncertainMinor).toBe(100_00);
+  });
+
   it('ignores Amex purchases deferred into MESES EN AUTOMÁTICO', () => {
     const summary = computeMonthSummary({
       events: [
