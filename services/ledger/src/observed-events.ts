@@ -57,6 +57,9 @@ export interface SaveObservedEventResult {
 const RECONCILIATION_WINDOW_MS = 30 * 60 * 1000;
 const SANTANDER_CSV_WINDOW_MS = 18 * 60 * 60 * 1000;
 const SAME_SOURCE_RETRY_WINDOW_MS = 2 * 60 * 1000;
+const FOREIGN_LOOKUP_WINDOW_MS = 30 * 60 * 60 * 1000;
+const MIN_PLAUSIBLE_MXN_PER_USD = 10;
+const MAX_PLAUSIBLE_MXN_PER_USD = 30;
 
 export const normaliseMerchant = (merchant: string): string => merchant
   .normalize('NFKD')
@@ -69,6 +72,24 @@ const merchantsMatch = (left: string, right: string, allowTruncation: boolean): 
   const a = normaliseMerchant(left).replace(/\s+/g, '');
   const b = normaliseMerchant(right).replace(/\s+/g, '');
   return a === b || (allowTruncation && Math.min(a.length, b.length) >= 8 && (a.startsWith(b) || b.startsWith(a)));
+};
+
+const FOREIGN_MERCHANT_STOP_WORDS = new Set(['THE', 'STORE', 'STORES', 'SHOP', 'SHOPS', 'TO', 'LAS', 'VEG', 'VEGAS']);
+
+/**
+ * Foreign authorizations and posted bank alerts frequently use different descriptors.
+ * Require either the normal match or strong overlap of at least two meaningful tokens.
+ */
+export const foreignMerchantsMatch = (left: string, right: string): boolean => {
+  if (merchantsMatch(left, right, true)) return true;
+  const tokens = (value: string) => normaliseMerchant(value)
+    .split(' ')
+    .filter((token) => token.length >= 2 && !FOREIGN_MERCHANT_STOP_WORDS.has(token));
+  const a = new Set(tokens(left));
+  const b = new Set(tokens(right));
+  if (a.size === 0 || b.size === 0) return false;
+  const common = [...a].filter((token) => b.has(token)).length;
+  return common >= 2 && common / Math.min(a.size, b.size) >= 2 / 3;
 };
 
 const accountLastFour = (account: unknown): string | undefined => {
@@ -88,6 +109,15 @@ const localCalendarDate = (value: unknown): string | undefined => {
   const month = part('month');
   const day = part('day');
   return year && month && day ? `${year}-${month}-${day}` : undefined;
+};
+
+const nearbyCalendarDates = (left: string | undefined, right: string | undefined): boolean => {
+  if (!left || !right) return false;
+  const leftDay = Date.parse(`${left}T12:00:00.000Z`);
+  const rightDay = Date.parse(`${right}T12:00:00.000Z`);
+  return Number.isFinite(leftDay)
+    && Number.isFinite(rightDay)
+    && Math.abs(leftDay - rightDay) <= 24 * 60 * 60 * 1000;
 };
 
 export const reconciliationPartition = (event: Pick<ObservedEventInput, 'institution' | 'eventType' | 'amount'>): string =>
@@ -121,9 +151,10 @@ interface Candidate {
   readonly reconciliationAt: string;
   readonly captureSources: readonly CaptureSource[];
   readonly primaryObservationId?: string;
+  readonly matchKind: 'exact' | 'foreign';
 }
 
-const findCandidates = async (input: SaveObservedEventInput): Promise<readonly Candidate[]> => {
+const findExactCandidates = async (input: SaveObservedEventInput): Promise<readonly Candidate[]> => {
   const center = Date.parse(input.reconciliationAt);
   if (!Number.isFinite(center)) throw new Error('Invalid reconciliation timestamp.');
   // CSV and manual entries often lack precise clock times, so automatic sources query a same-day window.
@@ -170,8 +201,84 @@ const findCandidates = async (input: SaveObservedEventInput): Promise<readonly C
       if (inputLastFour && candidateLastFour && inputLastFour !== candidateLastFour) return [];
     }
     const primaryObservationId = typeof payload.primaryObservationId === 'string' ? payload.primaryObservationId : undefined;
-    return [{ eventId, reconciliationAt, captureSources: sources, primaryObservationId }];
+    return [{ eventId, reconciliationAt, captureSources: sources, primaryObservationId, matchKind: 'exact' as const }];
   });
+};
+
+const moneyFrom = (value: unknown): { readonly amountMinor: number; readonly currency: string } | undefined => {
+  if (!value || typeof value !== 'object') return undefined;
+  const amountMinor = 'amountMinor' in value ? value.amountMinor : undefined;
+  const currency = 'currency' in value ? value.currency : undefined;
+  return typeof amountMinor === 'number' && typeof currency === 'string' ? { amountMinor, currency } : undefined;
+};
+
+const isPlausibleForeignPair = (
+  inputAmount: ObservedEventInput['amount'],
+  candidateAmount: ObservedEventInput['amount'],
+): boolean => {
+  const usd = inputAmount.currency === 'USD' ? inputAmount : candidateAmount.currency === 'USD' ? candidateAmount : undefined;
+  const mxn = inputAmount.currency === 'MXN' ? inputAmount : candidateAmount.currency === 'MXN' ? candidateAmount : undefined;
+  if (!usd || !mxn || usd.amountMinor <= 0) return false;
+  const ratio = mxn.amountMinor / usd.amountMinor;
+  return ratio >= MIN_PLAUSIBLE_MXN_PER_USD && ratio <= MAX_PLAUSIBLE_MXN_PER_USD;
+};
+
+const findForeignCandidates = async (input: SaveObservedEventInput): Promise<readonly Candidate[]> => {
+  const incomingEmail = input.captureSource === 'email'
+    && input.event.institution === 'santander_mx'
+    && input.event.eventType === 'card_purchase'
+    && input.event.amount.currency === 'MXN';
+  const incomingApple = input.captureSource === 'apple_pay_shortcut'
+    && input.event.institution === 'santander_mx'
+    && input.event.eventType === 'card_purchase'
+    && input.event.amount.currency === 'USD';
+  if (!incomingEmail && !incomingApple) return [];
+
+  const occurredAt = input.event.occurredAt;
+  const center = occurredAt ? Date.parse(occurredAt) : Number.NaN;
+  if (!Number.isFinite(center)) return [];
+  const result = await input.database.send(new QueryCommand({
+    TableName: input.tableName,
+    IndexName: 'GSI1',
+    KeyConditionExpression: 'GSI1PK = :partition AND GSI1SK BETWEEN :from AND :to',
+    ExpressionAttributeValues: {
+      ':partition': 'EVENTS',
+      ':from': new Date(center - FOREIGN_LOOKUP_WINDOW_MS).toISOString(),
+      ':to': new Date(center + FOREIGN_LOOKUP_WINDOW_MS).toISOString(),
+    },
+    ConsistentRead: false,
+  }));
+
+  const inputDate = localCalendarDate(occurredAt);
+  return (result.Items ?? []).flatMap((item) => {
+    const payload = item.payload as Record<string, unknown> | undefined;
+    if (!payload || payload.institution !== input.event.institution || payload.eventType !== input.event.eventType) return [];
+    const eventId = typeof payload.id === 'string' ? payload.id : undefined;
+    const reconciliationAt = typeof item.reconciliationAt === 'string' ? item.reconciliationAt : undefined;
+    const candidateAmount = moneyFrom(payload.amount);
+    if (!eventId || !reconciliationAt || !candidateAmount) return [];
+    const sources = Array.isArray(payload.captureSources) ? payload.captureSources.filter(isCaptureSource) : [];
+    const isPendingApple = sources.includes('apple_pay_shortcut')
+      && candidateAmount.currency === 'USD'
+      && payload.status === 'pending_foreign';
+    const isPostedEmail = sources.includes('email')
+      && candidateAmount.currency === 'MXN'
+      && payload.status !== 'rejected'
+      && payload.status !== 'pending_foreign';
+    if ((incomingEmail && !isPendingApple) || (incomingApple && !isPostedEmail)) return [];
+    // Vegas and Chihuahua can disagree on the calendar day during the last local hour.
+    // The bounded lookup, merchant, FX sanity check, and uniqueness guard still all apply.
+    if (!nearbyCalendarDates(inputDate, localCalendarDate(payload.occurredAt ?? reconciliationAt))) return [];
+    if (!foreignMerchantsMatch(input.event.merchantRaw, String(payload.merchantRaw ?? ''))) return [];
+    if (!isPlausibleForeignPair(input.event.amount, candidateAmount)) return [];
+    const primaryObservationId = typeof payload.primaryObservationId === 'string' ? payload.primaryObservationId : undefined;
+    return [{ eventId, reconciliationAt, captureSources: sources, primaryObservationId, matchKind: 'foreign' as const }];
+  });
+};
+
+const findCandidates = async (input: SaveObservedEventInput): Promise<readonly Candidate[]> => {
+  const exact = await findExactCandidates(input);
+  return exact.length > 0 ? exact : findForeignCandidates(input);
 };
 
 const existingClaim = async (input: SaveObservedEventInput): Promise<SaveObservedEventResult | undefined> => {
@@ -265,6 +372,61 @@ export const saveObservedEvent = async (input: SaveObservedEventInput, recovered
     createdAt: input.event.ingestedAt,
   };
 
+  const promotesForeignAuthorization = candidate?.matchKind === 'foreign'
+    && input.captureSource === 'email'
+    && input.event.amount.currency === 'MXN';
+  const linkedUpdateExpression = promotesForeignAuthorization
+    ? [
+        'SET #payload.#count = if_not_exists(#payload.#count, :one) + :one',
+        '#payload.#sources = list_append(if_not_exists(#payload.#sources, :empty), :source)',
+        '#payload.#reconciledAt = :reconciledAt',
+        '#payload.#hasRawEmail = :true',
+        '#payload.#amount = :postedAmount',
+        '#payload.#status = :postedStatus',
+        '#payload.#merchantRaw = :postedMerchant',
+        ...(input.event.occurredAt ? ['#payload.#occurredAt = :postedOccurredAt'] : []),
+        ...(input.event.account ? ['#payload.#account = :postedAccount'] : []),
+        '#gsi2pk = :postedPartition',
+        '#gsi2sk = :postedSort',
+        '#topReconciliationAt = :sourceReconciliationAt',
+      ].join(', ')
+    : `SET #payload.#count = if_not_exists(#payload.#count, :one) + :one, #payload.#sources = list_append(if_not_exists(#payload.#sources, :empty), :source), #payload.#reconciledAt = :reconciledAt${input.captureSource === 'email' ? ', #payload.#hasRawEmail = :true' : ''}`;
+  const linkedExpressionNames = {
+    '#payload': 'payload',
+    '#count': 'observationCount',
+    '#sources': 'captureSources',
+    '#reconciledAt': 'reconciledAt',
+    ...(input.captureSource === 'email' ? { '#hasRawEmail': 'hasRawEmail' } : {}),
+    ...(promotesForeignAuthorization ? {
+      '#amount': 'amount',
+      '#status': 'status',
+      '#merchantRaw': 'merchantRaw',
+      ...(input.event.occurredAt ? { '#occurredAt': 'occurredAt' } : {}),
+      ...(input.event.account ? { '#account': 'account' } : {}),
+      '#gsi2pk': 'GSI2PK',
+      '#gsi2sk': 'GSI2SK',
+      '#topReconciliationAt': 'reconciliationAt',
+    } : {}),
+  };
+  const linkedExpressionValues = {
+    ':one': 1,
+    ':empty': [],
+    ':source': [input.captureSource],
+    ':reconciledAt': input.event.ingestedAt,
+    ...(input.captureSource === 'email' ? { ':true': true } : {}),
+    ...(promotesForeignAuthorization ? {
+      ':postedAmount': input.event.amount,
+      ':postedStatus': input.event.status,
+      ':postedMerchant': input.event.merchantRaw,
+      ...(input.event.occurredAt ? { ':postedOccurredAt': input.event.occurredAt } : {}),
+      ...(input.event.account ? { ':postedAccount': input.event.account } : {}),
+      ':postedPartition': reconciliationPartition(input.event),
+      ':postedSort': `${input.reconciliationAt}#${eventId}`,
+      ':sourceReconciliationAt': input.reconciliationAt,
+      ':pendingForeign': 'pending_foreign',
+    } : {}),
+  };
+
   const transactItems = candidate
     ? [
         { Put: {
@@ -285,22 +447,12 @@ export const saveObservedEvent = async (input: SaveObservedEventInput, recovered
         { Update: {
           TableName: input.tableName,
           Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
-          UpdateExpression: `SET #payload.#count = if_not_exists(#payload.#count, :one) + :one, #payload.#sources = list_append(if_not_exists(#payload.#sources, :empty), :source), #payload.#reconciledAt = :reconciledAt${input.captureSource === 'email' ? ', #payload.#hasRawEmail = :true' : ''}`,
-          ConditionExpression: 'attribute_exists(PK)',
-          ExpressionAttributeNames: {
-            '#payload': 'payload',
-            '#count': 'observationCount',
-            '#sources': 'captureSources',
-            '#reconciledAt': 'reconciledAt',
-            ...(input.captureSource === 'email' ? { '#hasRawEmail': 'hasRawEmail' } : {}),
-          },
-          ExpressionAttributeValues: {
-            ':one': 1,
-            ':empty': [],
-            ':source': [input.captureSource],
-            ':reconciledAt': input.event.ingestedAt,
-            ...(input.captureSource === 'email' ? { ':true': true } : {}),
-          },
+          UpdateExpression: linkedUpdateExpression,
+          ConditionExpression: promotesForeignAuthorization
+            ? '#payload.#status = :pendingForeign'
+            : 'attribute_exists(PK)',
+          ExpressionAttributeNames: linkedExpressionNames,
+          ExpressionAttributeValues: linkedExpressionValues,
         } },
       ]
     : [

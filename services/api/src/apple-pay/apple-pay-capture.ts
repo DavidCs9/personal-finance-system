@@ -32,7 +32,9 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       id: eventId,
       institution: input.institution,
       eventType: 'card_purchase' as const,
-      status: 'accepted' as const,
+      // A foreign Apple Pay amount is an authorization, not the posted MXN bank charge.
+      // It remains visible but excluded from spend until Santander email supplies the gross MXN amount.
+      status: input.currency === 'USD' ? 'pending_foreign' as const : 'accepted' as const,
       account: {
         institution: input.institution,
         accountId: `${input.institution}:apple-pay:${cardKey}`,
@@ -48,8 +50,10 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
         requestId: input.requestId,
         cardRaw: input.cardRaw,
         nameRaw: input.nameRaw,
+        amountRaw: input.amountRaw,
+        currency: input.currency,
       },
-      parserVersion: 'apple-pay-shortcut-v1',
+      parserVersion: 'apple-pay-shortcut-v2',
       parseWarnings: [] as string[],
     };
     const saved = await saveObservedEvent({

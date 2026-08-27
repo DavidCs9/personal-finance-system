@@ -106,6 +106,9 @@ const setEventPersonalAmount = async (
 ): Promise<JsonObject | undefined> => {
   const existing = await getEventDetail(eventId);
   if (!existing) return undefined;
+  if (existing.status === 'pending_foreign') {
+    throw new InvalidManualEntryError('Espera el cargo Santander en MXN antes de definir Mi parte.');
+  }
   if (existing.msi) {
     throw new InvalidManualEntryError('Mi parte todavía no está disponible para compras a MSI.');
   }
@@ -168,6 +171,9 @@ export const persistEventMsi = async (
 const setEventMsi = async (eventId: string, changedBy: string, body: JsonObject): Promise<JsonObject | undefined> => {
   const existing = await getEventDetail(eventId);
   if (!existing) return undefined;
+  if (existing.status === 'pending_foreign') {
+    throw new InvalidMsiError('Espera el cargo Santander en MXN antes de configurar MSI.');
+  }
   if (existing.personalAmountMinor !== undefined) {
     throw new InvalidMsiError('Usa el total pagado antes de configurar un plan MSI.');
   }
@@ -243,6 +249,9 @@ const completeEventMsiSchedule = async (
 const markVerified = async (eventId: string, changedBy: string): Promise<JsonObject | undefined> => {
   const existing = await getEventDetail(eventId);
   if (!existing) return undefined;
+  if (existing.status === 'pending_foreign') {
+    throw new InvalidManualEntryError('Una autorización USD sólo se confirma con el cargo Santander en MXN.');
+  }
   const previousWarnings = Array.isArray(existing.parseWarnings) ? existing.parseWarnings : [];
   const updated = await database.send(new UpdateCommand({
     TableName: tableName,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { movementAmountMinor, visibleMovementEvents } from './format';
+import { movementAmountMinor, statusLabel, visibleMovementEvents } from './format';
 import type { PurchaseEvent } from '../types';
 
 const event = (overrides: Partial<PurchaseEvent> = {}): PurchaseEvent => ({
@@ -29,5 +29,11 @@ describe('visibleMovementEvents', () => {
     const source = [event(), event({ id: 'event-2', status: 'rejected' })];
     expect(visibleMovementEvents(source).map((item) => item.id)).toEqual(['event-1']);
     expect(source).toHaveLength(2);
+  });
+
+  it('keeps pending foreign authorizations visible with an explicit status', () => {
+    const pending = event({ status: 'pending_foreign', amount: { amountMinor: 19_28, currency: 'USD' } });
+    expect(visibleMovementEvents([pending])).toEqual([pending]);
+    expect(statusLabel[pending.status]).toBe('Esperando cargo MXN');
   });
 });

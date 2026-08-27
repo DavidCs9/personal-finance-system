@@ -7,7 +7,7 @@ import type {
   ObservedSourcePointer,
 } from "@finance/domain";
 
-export type ReviewStatus = "accepted" | "needs_review" | "rejected" | "deferred_msi";
+export type ReviewStatus = "accepted" | "needs_review" | "rejected" | "deferred_msi" | "pending_foreign";
 
 export interface PurchaseEvent {
   readonly id: string;

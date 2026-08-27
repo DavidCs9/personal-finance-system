@@ -343,6 +343,18 @@ export function EventSheet({
             <button onClick={verify}>Confirmar</button>
           </div>
         )}
+        {event.status === "pending_foreign" && (
+          <div className="warning foreign-pending">
+            <span>!</span>
+            <div>
+              <strong>Aún no suma en Has gastado</strong>
+              <p>
+                Esta es la autorización en USD. Cuando llegue el correo Santander, Olbia usará el cargo
+                posteado en MXN y conservará ambas evidencias.
+              </p>
+            </div>
+          </div>
+        )}
         {error && <p className="form-error">{error}</p>}
         <dl className="facts">
           <div>
@@ -363,7 +375,10 @@ export function EventSheet({
           </div>
         </dl>
 
-        {!event.msi && event.status !== "rejected" && event.status !== "deferred_msi" && (
+        {!event.msi
+          && event.status !== "rejected"
+          && event.status !== "deferred_msi"
+          && event.status !== "pending_foreign" && (
           <form
             className="sheet-form"
             onSubmit={(formEvent) => {
@@ -439,6 +454,7 @@ export function EventSheet({
           </button>
         </form>
 
+        {event.status !== "pending_foreign" && (
         <form className="sheet-form" onSubmit={(formEvent) => void saveMsi(formEvent)}>
           <div className="detail-section-heading">
             <div>
@@ -521,6 +537,7 @@ export function EventSheet({
             </button>
           )}
         </form>
+        )}
 
         <div className="detail-section-heading">
           <div>
@@ -579,6 +596,12 @@ export function EventSheet({
           <p className="detail-subtitle">
             Diferida a MSI automático Amex. No suma en Has gastado; la cuota vive en el plan
             MESES EN AUTOMÁTICO.
+          </p>
+        )}
+        {event.status === "pending_foreign" && (
+          <p className="detail-subtitle">
+            La autorización seguirá visible aquí. Si no llega el cargo Santander, puedes marcarla como
+            “No cuenta en el mes” sin borrar su evidencia.
           </p>
         )}
       </div>

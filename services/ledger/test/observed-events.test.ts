@@ -1,6 +1,12 @@
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it, vi } from 'vitest';
-import { normaliseMerchant, reconciliationPartition, saveObservedEvent, type SaveObservedEventInput } from '../src/observed-events.js';
+import {
+  foreignMerchantsMatch,
+  normaliseMerchant,
+  reconciliationPartition,
+  saveObservedEvent,
+  type SaveObservedEventInput,
+} from '../src/observed-events.js';
 
 const event = {
   id: 'apple-event-1',
@@ -30,6 +36,138 @@ describe('observed event persistence', () => {
   it('normalises merchants and builds stable reconciliation partitions', () => {
     expect(normaliseMerchant(' Café—México #42 ')).toBe('CAFE MEXICO 42');
     expect(reconciliationPartition(event)).toBe('RECON#santander_mx#card_purchase#MXN#11500');
+  });
+
+  it('matches common foreign merchant descriptor variants without accepting weak overlap', () => {
+    expect(foreignMerchantsMatch('The LINQ Wine & Spirits', 'LINQ WINE & SPIRITS')).toBe(true);
+    expect(foreignMerchantsMatch('Bass Pro Shops', 'BASS PRO STORE LAS VEG')).toBe(true);
+    expect(foreignMerchantsMatch('Target', 'TARGET')).toBe(true);
+    expect(foreignMerchantsMatch('Bass Pro Shops', 'Pro Image Sports')).toBe(false);
+  });
+
+  it('promotes a unique pending USD Apple authorization to the posted Santander MXN charge', async () => {
+    const send = vi.fn()
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [{
+        reconciliationAt: '2026-08-22T21:30:00.000Z',
+        payload: {
+          id: 'apple-usd-1',
+          institution: 'santander_mx',
+          eventType: 'card_purchase',
+          status: 'pending_foreign',
+          amount: { amountMinor: 1928, currency: 'USD' },
+          merchantRaw: 'Target',
+          occurredAt: '2026-08-22T21:30:00.000Z',
+          captureSources: ['apple_pay_shortcut'],
+        },
+      }] })
+      .mockResolvedValueOnce({});
+    const emailInput: SaveObservedEventInput = {
+      ...inputWith(send),
+      dedupeKey: 'email:target-posted',
+      captureSource: 'email',
+      reconciliationAt: '2026-08-23T05:00:00.000Z',
+      event: {
+        ...event,
+        id: 'email-target-1',
+        status: 'accepted',
+        account: { lastFour: '6349', displayName: 'Santander LikeU' },
+        amount: { amountMinor: 32696, currency: 'MXN' },
+        merchantRaw: 'TARGET',
+        occurredAt: '2026-08-22T12:00:00.000-06:00',
+        source: { bucket: 'raw-email', key: 'inbound/target', contentType: 'message/rfc822' },
+        parserVersion: 'santander-email-v1',
+      },
+    };
+
+    await expect(saveObservedEvent(emailInput)).resolves.toMatchObject({
+      eventId: 'apple-usd-1', created: false, reconciled: true,
+    });
+    expect(send.mock.calls[1][0].input).toMatchObject({ IndexName: 'GSI1' });
+    const update = send.mock.calls[2][0].input.TransactItems[2].Update;
+    expect(update.ConditionExpression).toBe('#payload.#status = :pendingForeign');
+    expect(update.ExpressionAttributeValues).toMatchObject({
+      ':postedAmount': { amountMinor: 32696, currency: 'MXN' },
+      ':postedStatus': 'accepted',
+      ':postedPartition': 'RECON#santander_mx#card_purchase#MXN#32696',
+      ':pendingForeign': 'pending_foreign',
+    });
+    expect(update.UpdateExpression).toContain('#payload.#amount = :postedAmount');
+    expect(update.UpdateExpression).toContain('#gsi2pk = :postedPartition');
+  });
+
+  it('does not guess when two pending USD authorizations fit the same posted charge', async () => {
+    const pending = (id: string) => ({
+      reconciliationAt: '2026-08-22T21:30:00.000Z',
+      payload: {
+        id,
+        institution: 'santander_mx',
+        eventType: 'card_purchase',
+        status: 'pending_foreign',
+        amount: { amountMinor: 1928, currency: 'USD' },
+        merchantRaw: 'TARGET',
+        occurredAt: '2026-08-22T21:30:00.000Z',
+        captureSources: ['apple_pay_shortcut'],
+      },
+    });
+    const send = vi.fn()
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [pending('apple-usd-1'), pending('apple-usd-2')] })
+      .mockResolvedValueOnce({});
+    const emailInput: SaveObservedEventInput = {
+      ...inputWith(send),
+      dedupeKey: 'email:ambiguous-target',
+      captureSource: 'email',
+      reconciliationAt: '2026-08-23T05:00:00.000Z',
+      event: {
+        ...event,
+        id: 'email-target-new',
+        amount: { amountMinor: 32696, currency: 'MXN' },
+        merchantRaw: 'TARGET',
+        occurredAt: '2026-08-22T21:00:00.000Z',
+      },
+    };
+
+    await expect(saveObservedEvent(emailInput)).resolves.toMatchObject({
+      eventId: 'email-target-new', created: true, reconciled: false,
+    });
+  });
+
+  it('links a delayed USD Shortcut to an email that was already stored without replacing the MXN truth', async () => {
+    const send = vi.fn()
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [{
+        reconciliationAt: '2026-08-23T05:00:00.000Z',
+        payload: {
+          id: 'email-target-existing',
+          institution: 'santander_mx',
+          eventType: 'card_purchase',
+          status: 'accepted',
+          amount: { amountMinor: 32696, currency: 'MXN' },
+          merchantRaw: 'TARGET',
+          occurredAt: '2026-08-22T18:00:00.000Z',
+          captureSources: ['email'],
+        },
+      }] })
+      .mockResolvedValueOnce({});
+    const appleInput: SaveObservedEventInput = {
+      ...inputWith(send),
+      event: {
+        ...event,
+        status: 'pending_foreign',
+        amount: { amountMinor: 1928, currency: 'USD' },
+        merchantRaw: 'Target',
+        occurredAt: '2026-08-23T05:30:00.000Z',
+      },
+      reconciliationAt: '2026-08-23T05:30:00.000Z',
+    };
+
+    await expect(saveObservedEvent(appleInput)).resolves.toMatchObject({
+      eventId: 'email-target-existing', created: false, reconciled: true,
+    });
+    const update = send.mock.calls[2][0].input.TransactItems[2].Update;
+    expect(update.UpdateExpression).not.toContain(':postedAmount');
+    expect(update.ConditionExpression).toBe('attribute_exists(PK)');
   });
 
   it('atomically creates a primary event, observation, and dedupe claim', async () => {

@@ -9,7 +9,7 @@ export interface ApplePayCaptureInput {
   readonly nameRaw?: string;
   readonly occurredAt: string;
   readonly institution: 'santander_mx';
-  readonly currency: 'MXN';
+  readonly currency: 'MXN' | 'USD';
 }
 
 type JsonObject = Record<string, unknown>;
@@ -71,12 +71,21 @@ export const parseApplePayCapture = (rawBody: string | undefined, idempotencyKey
   if (institution !== 'santander_mx') {
     throw new InvalidApplePayCaptureError('institution must be santander_mx.');
   }
-  const currency = body.currency;
-  if (currency !== 'MXN') throw new InvalidApplePayCaptureError('currency must be MXN.');
+  const declaredCurrency = typeof body.currency === 'string' ? body.currency.trim().toUpperCase() : undefined;
+  if (declaredCurrency !== 'MXN' && declaredCurrency !== 'USD') {
+    throw new InvalidApplePayCaptureError('currency must be MXN or USD.');
+  }
   const occurredAt = requiredText(body, 'occurredAt', 64);
   const timestamp = Date.parse(occurredAt);
   if (!Number.isFinite(timestamp)) throw new InvalidApplePayCaptureError('occurredAt must be an ISO 8601 timestamp.');
   const amountRaw = requiredText(body, 'amountRaw', 64);
+  // Currency Amount text sometimes includes a stronger ISO/US$ signal than an older Shortcut
+  // whose JSON field is still hardcoded to MXN. Prefer that explicit signal when present.
+  const currency = /(?:\bUSD\b|US\$)/i.test(amountRaw)
+    ? 'USD' as const
+    : /(?:\bMXN\b|MX\$)/i.test(amountRaw)
+      ? 'MXN' as const
+      : declaredCurrency;
   const nameRaw = typeof body.nameRaw === 'string' && body.nameRaw.trim() ? body.nameRaw.trim().slice(0, 200) : undefined;
   return {
     requestId,

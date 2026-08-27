@@ -23,6 +23,29 @@ const spendMonth = (event: PurchaseEvent): string =>
 /** All mock purchases; served sliced per month via `mockFeedForMonth`. */
 export const mockEvents: readonly PurchaseEvent[] = [
   {
+    id: "evt_demo_usd_pending",
+    institution: "santander_mx",
+    status: "pending_foreign",
+    accountName: "Santander LikeU",
+    amount: { amountMinor: 1928, currency: "USD" },
+    merchantRaw: "TARGET",
+    occurredAt: "2026-08-22T21:30:00Z",
+    receivedAt: "2026-08-22T21:30:02Z",
+    ingestedAt: "2026-08-22T21:30:02Z",
+    parserVersion: "apple-pay-shortcut-v2",
+    source: {
+      kind: "apple_pay_shortcut",
+      requestId: "demo-usd-capture",
+      cardRaw: "Santander LikeU",
+      amountRaw: "$19.28",
+      currency: "USD",
+    },
+    captureSource: "apple_pay_shortcut",
+    captureSources: ["apple_pay_shortcut"],
+    parseWarnings: [],
+    revisions: [],
+  },
+  {
     id: "evt_01J5A0A1",
     institution: "american_express_mx",
     status: "accepted",

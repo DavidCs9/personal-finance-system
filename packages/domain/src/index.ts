@@ -4,7 +4,7 @@ export const INSTITUTIONS = ["american_express_mx", "santander_mx", "nu_mx", "am
 
 export type Institution = (typeof INSTITUTIONS)[number];
 
-export type EventStatus = "accepted" | "needs_review" | "rejected" | "deferred_msi";
+export type EventStatus = "accepted" | "needs_review" | "rejected" | "deferred_msi" | "pending_foreign";
 
 export interface Money {
   readonly amountMinor: number;
@@ -31,6 +31,8 @@ export interface ApplePayShortcutSourcePointer {
   readonly requestId: string;
   readonly cardRaw: string;
   readonly nameRaw?: string;
+  readonly amountRaw?: string;
+  readonly currency?: "MXN" | "USD";
 }
 
 export interface ManualEntrySourcePointer {
