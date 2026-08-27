@@ -11,6 +11,7 @@ import {
   eventMoney,
   institutionLabel,
   longDateFormatter,
+  longEventDateLabel,
   money,
   statusLabel,
 } from "../lib/format";
@@ -359,7 +360,7 @@ export function EventSheet({
         <dl className="facts">
           <div>
             <dt>Fecha de compra</dt>
-            <dd>{longDateFormatter.format(eventDate(event))}</dd>
+            <dd>{longEventDateLabel(event)}</dd>
           </div>
           <div>
             <dt>Procesado</dt>

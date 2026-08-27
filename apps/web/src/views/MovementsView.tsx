@@ -2,8 +2,8 @@ import { useState } from "react";
 import { Amt } from "../components/Amt";
 import { RecoveryNotice } from "../components/RecoveryNotice";
 import {
-  dateFormatter,
-  eventDate,
+  eventDateLabel,
+  eventRecencyKey,
   institutionLabel,
   money,
   movementAmountMinor,
@@ -56,7 +56,7 @@ export function MovementsView({
   const sorted = [...visibleEvents].sort((a, b) =>
     sort === "largest"
       ? movementAmountMinor(b, month) - movementAmountMinor(a, month)
-      : eventDate(b).getTime() - eventDate(a).getTime(),
+      : eventRecencyKey(b).localeCompare(eventRecencyKey(a)),
   );
 
   return (
@@ -156,7 +156,7 @@ export function MovementsView({
                 </span>
               </strong>
               <small>
-                {institutionLabel(event.institution)} · {dateFormatter.format(eventDate(event))}
+                {institutionLabel(event.institution)} · {eventDateLabel(event)}
                 {event.msi?.needsScheduleCompletion ? " · sin plan" : ""}
               </small>
             </span>

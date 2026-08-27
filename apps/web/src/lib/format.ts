@@ -3,9 +3,13 @@ import { FINANCE_TIME_ZONE, dayInZone as dayInZoneShared, formatMxnWhole, monthK
 
 export const timeZone = FINANCE_TIME_ZONE;
 
-export const dateFormatter = new Intl.DateTimeFormat("es-MX", {
+const dateFormatter = new Intl.DateTimeFormat("es-MX", {
   day: "numeric",
   month: "short",
+  timeZone,
+});
+
+const timeFormatter = new Intl.DateTimeFormat("es-MX", {
   hour: "numeric",
   minute: "2-digit",
   timeZone,
@@ -14,6 +18,11 @@ export const dateFormatter = new Intl.DateTimeFormat("es-MX", {
 export const longDateFormatter = new Intl.DateTimeFormat("es-MX", {
   dateStyle: "long",
   timeStyle: "short",
+  timeZone,
+});
+
+const longDayFormatter = new Intl.DateTimeFormat("es-MX", {
+  dateStyle: "long",
   timeZone,
 });
 
@@ -65,7 +74,45 @@ export const movementMoney = (event: PurchaseEvent, month: string) =>
     currency: event.amount.currency,
   }).format(movementAmountMinor(event, month) / 100);
 
-export const eventDate = (event: PurchaseEvent) => new Date(event.occurredAt ?? event.receivedAt);
+const dateOnlyOccurredAt = /^\d{4}-\d{2}-\d{2}T12:00:00(?:\.000)?Z$/;
+
+/**
+ * Date-only bank evidence uses noon UTC as a sentinel so its calendar day remains stable.
+ * When that sentinel is present, Olbia keeps the bank day but shows the time when the
+ * movement was registered in the system instead of presenting 6:00 a.m. as observed fact.
+ */
+export const eventDate = (event: PurchaseEvent) =>
+  new Date(event.occurredAt ?? event.ingestedAt ?? event.receivedAt);
+
+export const eventTime = (event: PurchaseEvent) =>
+  new Date(
+    !event.occurredAt || dateOnlyOccurredAt.test(event.occurredAt)
+      ? event.ingestedAt ?? event.receivedAt
+      : event.occurredAt,
+  );
+
+export const eventDateLabel = (event: PurchaseEvent) =>
+  `${dateFormatter.format(eventDate(event))}, ${timeFormatter.format(eventTime(event))}`;
+
+export const longEventDateLabel = (event: PurchaseEvent) =>
+  `${longDayFormatter.format(eventDate(event))}, ${timeFormatter.format(eventTime(event))}`;
+
+const zonedClockKey = (date: Date): string => {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+    timeZone,
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((candidate) => candidate.type === type)?.value ?? "00";
+  return `${part("hour")}${part("minute")}${part("second")}`;
+};
+
+/** Calendar-day + effective-clock key used by the "Más recientes" sort. */
+export const eventRecencyKey = (event: PurchaseEvent): string =>
+  `${monthKeyInZone(eventDate(event))}-${String(dayInZoneShared(eventDate(event))).padStart(2, "0")}T${zonedClockKey(eventTime(event))}`;
 
 export const monthDate = (month: string) => new Date(`${month}-01T12:00:00Z`);
 
