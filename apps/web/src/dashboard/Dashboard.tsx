@@ -619,6 +619,10 @@ export function Dashboard({
           demoMode={demoMode}
           onClose={() => setAssistantOpen(false)}
           onMonthChanged={assistantMonthEpoch}
+          onMutated={() => {
+            void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+          }}
         />
       )}
       {importOpen && (

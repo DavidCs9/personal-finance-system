@@ -85,7 +85,8 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 | `wealth_snapshot` | Neto / activos / deudas (solo lectura) |
 | `investment_history` | Historial DDB de cuenta o posición Bitso/IBKR por día, rango o all-time; distingue cambio de valor de rendimiento cuando cambió la cantidad |
 | `WebSearch` | Búsqueda web administrada por AWS; conserva citas y enlaces en la respuesta |
-| `propose_recategorize` | Propone cambio; la UI confirma (`set_category` + regla) |
+| `propose_recategorize` | Propone cambio individual; la UI confirma (`set_category` + regla) |
+| `preview_bulk_edit` | Congela movimientos `accepted` por rango y prepara tags/categoría; la UI confirma apply/undo por la API Cognito |
 
 ## Categorías
 
@@ -101,7 +102,17 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 - El cliente (`streamAgentChat`) aplica cada evento en orden y pinta tokens y actividad de tools conforme llegan.
 - La UI muestra un indicador compacto de razonamiento y su duración. El proxy nunca envía texto ni firmas privadas del bloque de razonamiento al browser.
 - La actividad se inserta dentro de la burbuja del asistente como una nota de trabajo compacta: cada llamada conserva nombre, estado, intento y duración. Al tocar una línea se abre su resumen legible; no se exponen inputs ni payloads crudos.
-- Un fallo de tool queda visible como dato no disponible. El agente puede seguir con una respuesta parcial; las mutaciones siguen limitadas a confirmar `propose_recategorize`.
+- Un fallo de tool queda visible como dato no disponible. El agente puede seguir con una respuesta parcial. `preview_bulk_edit` sólo persiste una propuesta owner-scoped con TTL; apply/undo no son tools del modelo y se ejecutan por la API Cognito con revisiones e idempotencia.
+
+## Tags y mutaciones confirmadas
+
+- `tags` es una lista normalizada de contexto (`viaje:vegas`, `ciudad:cdmx`) independiente de `categoryId`.
+- El mismo movimiento puede tener varios tags; no afectan Resumen, proyecciones, MSI, conciliación ni Patrimonio.
+- La tool de preview acepta un rango inclusivo y sólo movimientos `accepted`; rechazados quedan fuera.
+- El backend congela IDs, valores previos, conteo e importe. La UI muestra el preview y una sola confirmación aplica el lote.
+- Apply y undo pasan por endpoints JWT del ledger, no por Gateway. Cada evento recibe una revisión con el mismo `operationId`.
+- Si el evento cambió después del preview, DynamoDB cancela la transacción y exige generar uno nuevo.
+- Una categoría aplicada por rango nunca crea ni actualiza una regla comercio→categoría.
 - Errores: 1–2 reintentos silenciosos en harness; luego mensaje corto + `requestId`.
 
 ## Observabilidad y costo

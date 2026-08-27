@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import {
+  normalizeEventTags,
   cancelRemainingInstallments,
   completeUnplannedSchedule,
   monthKeyInZone,
@@ -44,6 +45,7 @@ export const patchEvent = async (
   if (action === 'cancel_msi_remaining') return cancelEventMsiRemaining(eventId, changedBy);
   if (action === 'complete_msi_schedule') return completeEventMsiSchedule(eventId, changedBy, parsed);
   if (action === 'set_category') return setEventCategoryAction(eventId, changedBy, parsed);
+  if (action === 'set_tags') return setEventTags(eventId, changedBy, parsed);
   if (action === 'set_personal_amount') return setEventPersonalAmount(eventId, changedBy, parsed);
   if (action === 'clear_personal_amount') return clearEventPersonalAmount(eventId, changedBy);
   if (action === 'verify') return markVerified(eventId, changedBy);
@@ -372,4 +374,43 @@ const setEventCategoryAction = async (
     source: updateRule ? 'human' : 'human',
   });
   return getEventDetail(eventId);
+};
+
+const setEventTags = async (
+  eventId: string,
+  changedBy: string,
+  body: JsonObject,
+): Promise<JsonObject | undefined> => {
+  if (!Array.isArray(body.tags)) throw new InvalidManualEntryError('tags must be an array.');
+  const tags = normalizeEventTags(body.tags);
+  const existing = await getEventDetail(eventId);
+  if (!existing) return undefined;
+  const previous = Array.isArray(existing.tags) ? existing.tags.map(String) : [];
+  if (JSON.stringify(previous) === JSON.stringify(tags)) return existing;
+  const updated = await database.send(new UpdateCommand({
+    TableName: tableName,
+    Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
+    UpdateExpression: 'SET #payload.#tags = :tags',
+    ExpressionAttributeNames: { '#payload': 'payload', '#tags': 'tags' },
+    ExpressionAttributeValues: { ':tags': tags },
+    ReturnValues: 'ALL_NEW',
+  }));
+  const revision = {
+    id: randomUUID(),
+    observedPurchaseId: eventId,
+    createdAt: new Date().toISOString(),
+    changedBy,
+    reason: 'Tags actualizados desde la UI.',
+    changes: { tags: { previous, next: tags } },
+  };
+  await database.send(new PutCommand({
+    TableName: tableName,
+    Item: {
+      PK: `EVENT#${eventId}`,
+      SK: `REVISION#${revision.createdAt}#${revision.id}`,
+      entityType: 'event_revision',
+      payload: revision,
+    },
+  }));
+  return toPublicEvent(updated.Attributes?.payload as JsonObject, [revision]);
 };

@@ -77,7 +77,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'list_movements',
     description:
-      'Total y lista de movimientos de gasto para un periodo (máx 50 filas, total sin truncar). Usa range para hoy, ayer, esta semana, últimos 7 días, este mes o este año; custom para fechas explícitas; month para un mes calendario completo. Las fechas usan la zona financiera de México. Si complete=false, aclara que excludedMonthOnlySpentMinor no pudo asignarse al día exacto; no lo sumes al total.',
+      'Total y lista de movimientos de gasto para un periodo (máx 50 filas, total sin truncar), opcionalmente filtrados por categoría o tag exacto. Usa range para hoy, ayer, esta semana, últimos 7 días, este mes o este año; custom para fechas explícitas; month para un mes calendario completo. Las fechas usan la zona financiera de México. Si complete=false, aclara que excludedMonthOnlySpentMinor no pudo asignarse al día exacto; no lo sumes al total.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -90,6 +90,7 @@ export const TOOL_DEFINITIONS = [
         fromDay: { type: 'string', description: 'Inicio inclusivo YYYY-MM-DD para range=custom.' },
         toDay: { type: 'string', description: 'Fin inclusivo YYYY-MM-DD para range=custom.' },
         categoryId: { type: 'string' },
+        tag: { type: 'string', description: 'Tag exacto, por ejemplo viaje:vegas.' },
         limit: { type: 'number', description: 'Máximo de filas devueltas (1–50; default 20).' },
       },
     },
@@ -147,6 +148,22 @@ export const TOOL_DEFINITIONS = [
         merchantRaw: { type: 'string' },
       },
       required: ['eventId', 'categoryId'],
+    },
+  },
+  {
+    name: 'preview_bulk_edit',
+    description:
+      'Prepara una edición masiva auditable por rango inclusivo. Sólo movimientos accepted. Crea un preview que la UI debe confirmar; no aplica el cambio.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fromDay: { type: 'string', description: 'Inicio inclusivo YYYY-MM-DD.' },
+        toDay: { type: 'string', description: 'Fin inclusivo YYYY-MM-DD.' },
+        addTags: { type: 'array', items: { type: 'string' } },
+        removeTags: { type: 'array', items: { type: 'string' } },
+        categoryId: { type: 'string' },
+      },
+      required: ['fromDay', 'toDay'],
     },
   },
 ] as const;

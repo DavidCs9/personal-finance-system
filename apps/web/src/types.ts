@@ -21,6 +21,7 @@ export interface PurchaseEvent {
   readonly personalAmountMinor?: number;
   readonly merchantRaw: string;
   readonly categoryId?: string | null;
+  readonly tags?: readonly string[];
   readonly occurredAt?: string;
   readonly receivedAt: string;
   readonly ingestedAt: string;

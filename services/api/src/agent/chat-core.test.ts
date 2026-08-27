@@ -42,6 +42,9 @@ describe('REST API Gateway chat event helpers', () => {
       eventId: 'private-event-id',
       categoryId: 'food',
     })).toEqual({ summary: 'Propuesta de categoría preparada.', material: false });
+    expect(summarizeToolResult('preview_bulk_edit', {
+      movementCount: 18,
+    })).toEqual({ summary: 'Preparé 18 movimientos para confirmar.', material: false });
   });
 });
 

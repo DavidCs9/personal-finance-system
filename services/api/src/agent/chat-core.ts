@@ -30,7 +30,8 @@ export type AgentSseEvent =
   | { readonly type: 'tool_complete'; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly summary?: string; readonly material: boolean }
   | { readonly type: 'tool_failed'; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly message: string }
   | { readonly type: 'citation'; readonly kind: string; readonly id?: string; readonly label: string }
-  | { readonly type: 'proposal'; readonly eventId: string; readonly categoryId: string; readonly message: string }
+  | { readonly type: 'proposal'; readonly kind: 'recategorize'; readonly eventId: string; readonly categoryId: string; readonly message: string }
+  | { readonly type: 'proposal'; readonly kind: 'bulk_edit'; readonly operationId: string; readonly movementCount: number; readonly amountMinor: number; readonly expiresAt: string; readonly fromDay: string; readonly toDay: string; readonly change: Record<string, unknown>; readonly sample: readonly { readonly id: string; readonly merchantRaw: string; readonly amountMinor: number }[]; readonly message: string }
   | { readonly type: 'done'; readonly requestId: string; readonly sessionId: string }
   | { readonly type: 'error'; readonly message: string; readonly requestId: string };
 
@@ -156,6 +157,7 @@ const toolLabel = (name: string): string => {
     case 'wealth_snapshot': return 'Revisando patrimonio';
     case 'investment_history': return 'Revisando historial de inversiones';
     case 'propose_recategorize': return 'Preparando una categoría';
+    case 'preview_bulk_edit': return 'Preparando la edición masiva';
     default: return 'Consultando datos';
   }
 };
@@ -260,6 +262,11 @@ export const summarizeToolResult = (
       };
     case 'propose_recategorize':
       return { summary: 'Propuesta de categoría preparada.', material: false };
+    case 'preview_bulk_edit':
+      return {
+        summary: `Preparé ${Number(payload.movementCount ?? 0)} movimientos para confirmar.`,
+        material: false,
+      };
     default:
       return { material: false };
   }
@@ -313,6 +320,7 @@ async function* invokeHarnessStream(
   const activeTools = new Map<string, { name: string; label: string; attempt: number; startedAt: number }>();
   const attemptsByTool = new Map<string, number>();
   const activeReasoning = new Map<number, { reasoningId: string; startedAt: number }>();
+  const emittedBulkProposals = new Set<string>();
   let reasoningSequence = 0;
 
   for await (const event of response.stream ?? []) {
@@ -387,6 +395,7 @@ async function* invokeHarnessStream(
         if (eventId && categoryId) {
           yield {
             type: 'proposal',
+            kind: 'recategorize',
             eventId,
             categoryId,
             message: `Confirma recategorizar ${eventId} a ${categoryId}.`,
@@ -438,6 +447,28 @@ async function* invokeHarnessStream(
             ? undefined
             : toolResultByIndex.get(toolResultIndex);
           if (result) result.payload = payload;
+          const active = result ? activeTools.get(result.toolUseId) : undefined;
+          if (active?.name === 'preview_bulk_edit' && typeof payload.operationId === 'string'
+            && !emittedBulkProposals.has(payload.operationId)) {
+            emittedBulkProposals.add(payload.operationId);
+            yield {
+              type: 'proposal',
+              kind: 'bulk_edit',
+              operationId: payload.operationId,
+              movementCount: Number(payload.movementCount ?? 0),
+              amountMinor: Number(payload.amountMinor ?? 0),
+              expiresAt: String(payload.expiresAt ?? ''),
+              fromDay: String(payload.fromDay ?? ''),
+              toDay: String(payload.toDay ?? ''),
+              change: payload.change && typeof payload.change === 'object'
+                ? payload.change as Record<string, unknown>
+                : {},
+              sample: Array.isArray(payload.sample)
+                ? payload.sample as { id: string; merchantRaw: string; amountMinor: number }[]
+                : [],
+              message: `Confirma aplicar la edición a ${Number(payload.movementCount ?? 0)} movimientos.`,
+            };
+          }
           yield* citationsFromPayload(payload);
         } else if (typeof block.text === 'string') {
           const parsed = tryParseJsonObject(block.text);
@@ -446,6 +477,28 @@ async function* invokeHarnessStream(
               ? undefined
               : toolResultByIndex.get(toolResultIndex);
             if (result) result.payload = parsed;
+            const active = result ? activeTools.get(result.toolUseId) : undefined;
+            if (active?.name === 'preview_bulk_edit' && typeof parsed.operationId === 'string'
+              && !emittedBulkProposals.has(parsed.operationId)) {
+              emittedBulkProposals.add(parsed.operationId);
+              yield {
+                type: 'proposal',
+                kind: 'bulk_edit',
+                operationId: parsed.operationId,
+                movementCount: Number(parsed.movementCount ?? 0),
+                amountMinor: Number(parsed.amountMinor ?? 0),
+                expiresAt: String(parsed.expiresAt ?? ''),
+                fromDay: String(parsed.fromDay ?? ''),
+                toDay: String(parsed.toDay ?? ''),
+                change: parsed.change && typeof parsed.change === 'object'
+                  ? parsed.change as Record<string, unknown>
+                  : {},
+                sample: Array.isArray(parsed.sample)
+                  ? parsed.sample as { id: string; merchantRaw: string; amountMinor: number }[]
+                  : [],
+                message: `Confirma aplicar la edición a ${Number(parsed.movementCount ?? 0)} movimientos.`,
+              };
+            }
             yield* citationsFromPayload(parsed);
           }
         }

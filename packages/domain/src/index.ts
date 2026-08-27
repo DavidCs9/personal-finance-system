@@ -64,6 +64,8 @@ export interface ObservedPurchase {
   readonly merchantRaw: string;
   /** Spend category id from the catalog; null/absent = Sin categoría. */
   readonly categoryId?: string | null;
+  /** Context labels; they never change financial calculations. */
+  readonly tags?: readonly string[];
   readonly msi?: MsiPlan;
   /** For transfers, the recipient shown in the bank confirmation. */
   readonly counterparty?: string;
@@ -232,6 +234,15 @@ export {
   type MerchantCategoryRule,
   type SpendCategory,
 } from "./categories.js";
+
+export {
+  MAX_EVENT_TAG_LENGTH,
+  MAX_EVENT_TAGS,
+  InvalidEventTagError,
+  applyEventTagChange,
+  normalizeEventTag,
+  normalizeEventTags,
+} from "./tags.js";
 
 export {
   aggregateSpendByCategory,

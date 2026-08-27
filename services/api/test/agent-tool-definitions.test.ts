@@ -21,4 +21,12 @@ describe('AgentCore finance tool definitions', () => {
     expect(tool?.inputSchema.properties).toHaveProperty('fromDay');
     expect(tool?.inputSchema.properties).toHaveProperty('toDay');
   });
+
+  it('exposes a preview-only bulk edit tool with inclusive dates and tags', () => {
+    const tool = TOOL_DEFINITIONS.find((definition) => definition.name === 'preview_bulk_edit');
+    expect(tool).toBeDefined();
+    expect(tool?.inputSchema.required).toEqual(['fromDay', 'toDay']);
+    expect(tool?.inputSchema.properties).toHaveProperty('addTags');
+    expect(tool?.inputSchema.properties).toHaveProperty('removeTags');
+  });
 });
