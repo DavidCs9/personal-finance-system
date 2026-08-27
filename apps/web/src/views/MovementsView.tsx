@@ -103,44 +103,44 @@ export function MovementsView({
         >
           Añadir
         </button>
+        <div className="movement-toolbar" aria-label="Filtros de movimientos">
+          <label className="movement-search">
+            <span>Buscar</span>
+            <span className="movement-search-field">
+              <input
+                type="search"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Comercio, categoría o tag"
+                autoComplete="off"
+                spellCheck="false"
+              />
+              {searchTerm && (
+                <button type="button" aria-label="Limpiar búsqueda" onClick={() => setSearchTerm("")}>
+                  ×
+                </button>
+              )}
+            </span>
+          </label>
+          <label className="sort-control">
+            <span>Tag</span>
+            <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
+              <option value="">Todos</option>
+              {availableTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+            </select>
+          </label>
+          <label className="sort-control">
+            <span>Ordenar</span>
+            <select
+              value={sort}
+              onChange={(event) => onSortChange(event.target.value as "recent" | "largest")}
+            >
+              <option value="recent">Más recientes</option>
+              <option value="largest">Mayor gasto</option>
+            </select>
+          </label>
+        </div>
       </header>
-      <div className="movement-toolbar" aria-label="Filtros de movimientos">
-        <label className="movement-search">
-          <span>Buscar</span>
-          <span className="movement-search-field">
-            <input
-              type="search"
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Comercio, categoría o tag"
-              autoComplete="off"
-              spellCheck="false"
-            />
-            {searchTerm && (
-              <button type="button" aria-label="Limpiar búsqueda" onClick={() => setSearchTerm("")}>
-                ×
-              </button>
-            )}
-          </span>
-        </label>
-        <label className="sort-control">
-          <span>Tag</span>
-          <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
-            <option value="">Todos</option>
-            {availableTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
-          </select>
-        </label>
-        <label className="sort-control">
-          <span>Ordenar</span>
-          <select
-            value={sort}
-            onChange={(event) => onSortChange(event.target.value as "recent" | "largest")}
-          >
-            <option value="recent">Más recientes</option>
-            <option value="largest">Mayor gasto</option>
-          </select>
-        </label>
-      </div>
       {captureOpen && (
         <CaptureActionsSheet
           onClose={() => setCaptureOpen(false)}
