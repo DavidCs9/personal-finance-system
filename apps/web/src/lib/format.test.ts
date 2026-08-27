@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { movementAmountMinor, statusLabel, visibleMovementEvents } from './format';
+import {
+  eventDateLabel,
+  eventRecencyKey,
+  longEventDateLabel,
+  movementAmountMinor,
+  statusLabel,
+  visibleMovementEvents,
+} from './format';
 import type { PurchaseEvent } from '../types';
 
 const event = (overrides: Partial<PurchaseEvent> = {}): PurchaseEvent => ({
@@ -21,6 +28,52 @@ const event = (overrides: Partial<PurchaseEvent> = {}): PurchaseEvent => ({
 describe('movementAmountMinor', () => {
   it('shows Mi parte as the movement amount', () => {
     expect(movementAmountMinor(event({ personalAmountMinor: 250_00 }), '2026-08')).toBe(250_00);
+  });
+});
+
+describe('movement date formatting', () => {
+  it('uses the system registration time for date-only bank evidence', () => {
+    const movement = event({
+      occurredAt: '2026-08-19T12:00:00.000Z',
+      receivedAt: '2026-08-19T23:41:00.000Z',
+      ingestedAt: '2026-08-19T23:42:15.000Z',
+    });
+
+    expect(eventDateLabel(movement)).toBe('19 ago, 5:42 p.m.');
+    expect(longEventDateLabel(movement)).toBe('19 de agosto de 2026, 5:42 p.m.');
+  });
+
+  it('keeps a precise bank time when one exists', () => {
+    const movement = event({
+      occurredAt: '2026-08-19T22:05:00.000Z',
+      ingestedAt: '2026-08-19T23:42:15.000Z',
+    });
+
+    expect(eventDateLabel(movement)).toBe('19 ago, 4:05 p.m.');
+  });
+
+  it('falls back completely to the system registration timestamp without bank date evidence', () => {
+    const movement = event({
+      occurredAt: undefined,
+      receivedAt: '2026-08-20T00:01:00.000Z',
+      ingestedAt: '2026-08-20T00:02:15.000Z',
+    });
+
+    expect(eventDateLabel(movement)).toBe('19 ago, 6:02 p.m.');
+  });
+
+  it('sorts same-day date-only evidence by its registration time', () => {
+    const earlier = event({
+      occurredAt: '2026-08-19T12:00:00.000Z',
+      ingestedAt: '2026-08-19T20:00:00.000Z',
+    });
+    const later = event({
+      id: 'event-2',
+      occurredAt: '2026-08-19T12:00:00.000Z',
+      ingestedAt: '2026-08-19T23:00:00.000Z',
+    });
+
+    expect(eventRecencyKey(later) > eventRecencyKey(earlier)).toBe(true);
   });
 });
 
