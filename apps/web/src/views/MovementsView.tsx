@@ -131,7 +131,9 @@ export function MovementsView({
         {sorted.map((event) => (
           <button className="movement-row" key={event.id} onClick={() => onOpen(event)}>
             <span className={`movement-icon ${event.status}`} aria-hidden="true">
-              {event.status === "needs_review" ? "!" : event.merchantRaw.slice(0, 1)}
+              {event.status === "needs_review" || event.status === "pending_foreign"
+                ? "!"
+                : event.merchantRaw.slice(0, 1)}
             </span>
             <span className="movement-main">
               <strong>

@@ -37,6 +37,7 @@ export const statusLabel: Record<ReviewStatus, string> = {
   needs_review: "Por confirmar",
   rejected: "Rechazado",
   deferred_msi: "Diferido a MSI",
+  pending_foreign: "Esperando cargo MXN",
 };
 
 export const money = (amountMinor: number) => formatMxnWhole(amountMinor);

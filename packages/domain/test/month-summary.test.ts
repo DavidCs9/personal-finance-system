@@ -52,6 +52,23 @@ describe('computeMonthSummary', () => {
     expect(summary.remainingMinor).toBe(10_000_00);
   });
 
+  it('keeps a pending foreign authorization out of spend until the MXN charge is posted', () => {
+    const summary = computeMonthSummary({
+      events: [
+        { amountMinor: 19_28, status: 'pending_foreign', receivedAt: '2026-08-22T21:30:00Z' },
+        { amountMinor: 326_96, status: 'accepted', receivedAt: '2026-08-22T22:00:00Z' },
+      ],
+      month: '2026-08',
+      incomeMinor: 10_000_00,
+      incomeConfigured: true,
+      upcomingPaymentsMinor: 0,
+      now,
+    });
+
+    expect(summary.spentMinor).toBe(326_96);
+    expect(summary.uncertainMinor).toBe(0);
+  });
+
   it('uses Mi parte for shared non-MSI purchases and uncertainty', () => {
     const summary = computeMonthSummary({
       events: [

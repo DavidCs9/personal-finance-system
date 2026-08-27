@@ -3,9 +3,9 @@ import { msiLabel } from "./msi.js";
 
 export const FINANCE_TIME_ZONE = "America/Chihuahua";
 
-/** Rejected and Amex auto-MSI deferred purchases do not inflate Has gastado. */
+/** Rejected, deferred MSI, and foreign authorizations awaiting the posted MXN charge do not inflate Has gastado. */
 export const countsTowardMonthSpend = (status: string): boolean =>
-  status !== "rejected" && status !== "deferred_msi";
+  status !== "rejected" && status !== "deferred_msi" && status !== "pending_foreign";
 
 export interface MonthSpendEvent {
   readonly id?: string;
@@ -132,7 +132,7 @@ const installmentAmountFor = (
   status: MsiInstallment["status"],
 ): number =>
   events.reduce((sum, event) => {
-    if (event.status === "rejected" || event.status === "deferred_msi" || !event.msi) return sum;
+    if (!countsTowardMonthSpend(event.status) || !event.msi) return sum;
     // Incomplete stubs must not pollute committed totals.
     if (status === "committed" && event.msi.needsScheduleCompletion) return sum;
     return (
@@ -149,7 +149,7 @@ export const listMonthMsiRows = (
 ): readonly MonthMsiRow[] => {
   const rows: MonthMsiRow[] = [];
   for (const event of events) {
-    if (event.status === "rejected" || event.status === "deferred_msi" || !event.msi) continue;
+    if (!countsTowardMonthSpend(event.status) || !event.msi) continue;
     const schedule = [...event.msi.installments].sort((left, right) => left.index - right.index);
     const startMonth = schedule[0]?.month;
     const endMonth = schedule[schedule.length - 1]?.month;

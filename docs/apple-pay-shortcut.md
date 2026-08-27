@@ -31,6 +31,7 @@ En el iPhone:
 5. Agrega **Generate UUID** y asígnalo a la variable `RequestId`.
 6. Agrega una acción **Text** para cada propiedad. Inserta `Shortcut Input`, toca la variable y selecciona la propiedad indicada:
    - `AmountRaw`: `Amount`
+   - `CurrencyRaw`: dentro de `Amount`, selecciona `Currency` / `Currency Code` (el nombre depende de la versión de iOS). El texto final debe ser `MXN` o `USD`.
    - `MerchantRaw`: `Merchant`
    - `CardRaw`: `Card or Pass`
    - `NameRaw`: `Name`
@@ -51,11 +52,11 @@ En el iPhone:
   "nameRaw": "<NameRaw>",
   "occurredAt": "<OccurredAt>",
   "institution": "santander_mx",
-  "currency": "MXN"
+  "currency": "<CurrencyRaw>"
 }
 ```
 
-La conversión previa a texto es intencional. `Amount` es un objeto especial de tipo `Currency Amount`, y algunas versiones de iOS lo serializan como cero cuando se introduce directamente en un diccionario JSON.
+La conversión previa a texto es intencional. `Amount` es un objeto especial de tipo `Currency Amount`, y algunas versiones de iOS lo serializan como cero cuando se introduce directamente en un diccionario JSON. **No dejes `currency` fija en `MXN`**: una compra en Estados Unidos llegaría con el numeral correcto pero etiquetado como pesos.
 
 Una captura aceptada (no duplicada) dispara el mismo Web Push de movimiento nuevo que el correo, si **Avisos de Olbia** está activo.
 
@@ -77,7 +78,9 @@ Una observación nueva devuelve `201`. Repetir el mismo `Idempotency-Key` devuel
 
 Cada fuente tiene una reclamación idempotente propia. DynamoDB guarda en una sola transacción la reclamación, la observación inmutable y la creación o vinculación del evento.
 
-Apple Pay y email se vinculan automáticamente sólo cuando existe un único candidato con la misma institución, tipo, moneda, importe, comercio normalizado y una diferencia máxima de 30 minutos. Si hay varios candidatos, no se infiere una coincidencia: se crea otro evento para revisión posterior.
+Para compras nacionales, Apple Pay y email se vinculan automáticamente sólo cuando existe un único candidato con la misma institución, tipo, moneda, importe, comercio normalizado y una diferencia máxima de 30 minutos.
+
+Para una compra en USD, la captura Apple Pay queda visible como **Esperando cargo MXN** y no suma en **Has gastado**. Cuando llega el correo Santander, el sistema busca una única autorización USD plausible de fecha cercana y comercio compatible, conserva las dos observaciones y promueve el evento existente al importe bruto posteado en MXN. La tolerancia de fecha cubre el desfase horario de un viaje. No consulta una tasa de cambio ni estima el gasto. Si hay varios candidatos, no infiere una coincidencia.
 
 Repeticiones de la misma fuente con comercio e importe idénticos dentro de dos minutos se consideran reintentos defensivos incluso si iOS generó un UUID nuevo.
 

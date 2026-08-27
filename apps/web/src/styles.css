@@ -580,6 +580,7 @@ html.private-mode .hero-amount .amt {
 .movement-icon { display: grid; place-items: center; width: 37px; height: 37px; border: 1px solid #d5cec4; border-radius: 11px; color: #4b4641; background: #f0ebe3; font: 600 14px "Fraunces", serif; }
 .movement-icon.needs_review { color: #714714; background: #f4e6cc; border-color: #e1c892; }
 .movement-icon.deferred_msi { color: #4a5560; background: #e8ecef; border-color: #c9d1d7; }
+.movement-icon.pending_foreign { color: #714714; background: #f4e6cc; border-color: #e1c892; }
 .movement-icon.rejected { color: #8c302a; background: #f4dfdc; border-color: #e5bbb5; }
 .movement-main, .movement-value { display: grid; min-width: 0; gap: 4px; }
 .movement-main strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -588,6 +589,7 @@ html.private-mode .hero-amount .amt {
 .movement-value strong { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .movement-value small.needs_review { color: #895818; }
 .movement-value small.deferred_msi { color: #5a6570; }
+.movement-value small.pending_foreign { color: #895818; }
 .movement-value small.rejected { color: var(--red); }
 .empty-state { min-height: 240px; display: grid; place-content: center; justify-items: center; padding: 28px; color: var(--muted); text-align: center; }
 .empty-state > span { font: 600 38px "Fraunces", serif; }
@@ -1011,6 +1013,7 @@ html.private-mode .hero-amount .amt {
 .status.accepted { color: #2d614c; background: #dfede5; }
 .status.needs_review { color: #815313; background: #f3e5c8; }
 .status.deferred_msi { color: #4a5560; background: #e8ecef; }
+.status.pending_foreign { color: #815313; background: #f3e5c8; }
 .status.rejected { color: #9a332c; background: #f4dedb; }
 .detail-subtitle { margin: 4px 0 20px; color: var(--muted); font-size: 11px; }
 .warning { display: flex; align-items: flex-start; gap: 10px; border: 1px solid #dfc38e; border-radius: 12px; background: #f8ecd5; padding: 13px; }
@@ -1018,6 +1021,7 @@ html.private-mode .hero-amount .amt {
 .warning div { min-width: 0; }
 .warning strong { font-size: 11px; }
 .warning p { margin: 3px 0 0; color: #735a32; font-size: 10px; line-height: 1.4; }
+.warning.foreign-pending { margin-bottom: 18px; }
 .warning button { align-self: center; border: 1px solid #ae8246; border-radius: 8px; color: #674616; background: #fff8e9; padding: 7px 9px; font-size: 9px; font-weight: 700; }
 .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 17px 20px; margin: 22px 0; padding: 21px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .facts dt { color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }

@@ -85,6 +85,7 @@ Assume at least 95% of usage is mobile.
 - On statement import, when an MSI row includes `n/N` (and total when available), creating the plan — including Amex “MESES EN AUTOMÁTICO” labels — is preferred over discarding the cuota.
 - Projection paces discretionary (non-MSI) spend only, then adds spent MSI cuotas and pending commitments.
 - Purchases needing review remain in totals, with the uncertain amount disclosed.
+- Foreign Apple Pay authorizations use `pending_foreign`: show the original USD amount in Movimientos as “Esperando cargo MXN”, exclude it from Has gastado, and promote the same event to the posted MXN gross when the Santander email arrives. Never estimate an FX conversion for the monthly summary.
 - Rejected purchases do not count toward spending.
 - Rejected purchases remain persisted with their revisions for audit, but stay hidden from normal user-facing movement lists and detail flows.
 - A shared non-MSI purchase may have an optional **Mi parte** amount between zero and the observed gross amount. The observed bank amount remains immutable evidence and is always used for statement reconciliation; Resumen, Movimientos, categories, projections, assistant answers, and balance pushes use **Mi parte** when present.

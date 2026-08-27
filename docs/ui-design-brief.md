@@ -12,6 +12,7 @@ Las reglas operativas que deben seguir futuras implementaciones del frontend est
 2. **A este ritmo** — gasto total proyectado al cierre; el ritmo diario usa gasto discrecional (no MSI) y suma cuotas/compromisos pendientes.
 3. **Te quedan** — disponible después de gasto realizado y dinero comprometido (bills + cuotas MSI aún no reconciliadas).
 4. **Incluye por confirmar** — incertidumbre del parser expuesta dentro del total.
+   Las autorizaciones Apple Pay en moneda extranjera permanecen fuera del total como **Esperando cargo MXN**; el evento entra a **Has gastado** únicamente cuando Santander entrega el importe bruto posteado en pesos. Olbia no estima el tipo de cambio.
 5. **Meses sin intereses** — en **Resumen**, sección “Planes con fin”: cuotas del mes con total fijo, inicio y última cuota (`Merchant · cuota i/N · total · rango`). Detalle operativo en [`msi.md`](msi.md).
 6. **Gastos fijos** — servicios y suscripciones indefinidos (renta, iCloud, etc.), sin fecha de fin. Las cuotas MSI no se mezclan aquí.
 7. **Fechas de corte** — en **Resumen**, calendario del mes con día de corte y día de pago de hasta tres tarjetas. Son recordatorios de ciclo; no restan de “Te quedan” ni se mezclan con gastos fijos.
@@ -49,7 +50,7 @@ Patrimonio no mezcla el gasto del mes ni “Te quedan”. Detalle en [`patrimoni
 La experiencia se diseña primero para móvil (95% del uso esperado):
 
 - **Resumen** — estado mensual, proyección, Planes con fin (MSI), gastos fijos y fechas de corte/pago de tarjetas.
-- **Movimientos** — lista ordenable de evidencia/compras (sin duplicar el bloque de planes MSI), con categoría (badge) editable en el detalle.
+- **Movimientos** — lista ordenable de evidencia/compras (sin duplicar el bloque de planes MSI), con categoría (badge) editable en el detalle. Una autorización extranjera muestra su importe original en USD y el estado **Esperando cargo MXN** hasta reconciliarse con el correo bancario.
 - **Patrimonio** — neto, activos, deudas de tarjeta, historial y holdings; el selector de mes permanece usable para cambiar periodo sin salir de la tab (el patrimonio sigue siendo el estado actual, no un corte mensual).
 
 **Asistente** — no es una cuarta tab. Se abre como **sheet global** desde un icono del topbar (disponible en las tres destinaciones). Consultas en lenguaje natural sobre el mes (y patrimonio de solo lectura); citas a movimientos/cifras; el hilo vive solo mientras el sheet está abierto, pero el asistente conserva contexto conversacional útil entre sesiones. Las memorias son visibles y borrables dentro del sheet, y nunca cambian el ledger ni los cálculos financieros. Detalle técnico en [`ai-assistant.md`](ai-assistant.md).

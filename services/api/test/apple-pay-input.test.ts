@@ -35,6 +35,59 @@ describe('Apple Pay capture input', () => {
     });
   });
 
+  it('preserves a foreign authorization as USD', () => {
+    expect(parseApplePayCapture(JSON.stringify({
+      requestId: 'capture_usd_1234',
+      amountRaw: '$19.28',
+      merchantRaw: 'Target',
+      cardRaw: 'Santander LikeU',
+      occurredAt: '2026-08-22T14:30:00-07:00',
+      institution: 'santander_mx',
+      currency: 'usd',
+    }), 'capture_usd_1234')).toMatchObject({
+      amountMinor: 1928,
+      currency: 'USD',
+      occurredAt: '2026-08-22T21:30:00.000Z',
+    });
+  });
+
+  it('uses an explicit USD signal in AmountRaw even when an older Shortcut still declares MXN', () => {
+    expect(parseApplePayCapture(JSON.stringify({
+      requestId: 'capture_usd_signal',
+      amountRaw: 'USD 19.28',
+      merchantRaw: 'Target',
+      cardRaw: 'Santander LikeU',
+      occurredAt: '2026-08-22T14:30:00-07:00',
+      institution: 'santander_mx',
+      currency: 'MXN',
+    }), 'capture_usd_signal')).toMatchObject({ amountMinor: 1928, currency: 'USD' });
+  });
+
+  it('rejects an unsupported or missing currency instead of assuming MXN', () => {
+    const payload = {
+      requestId: 'capture_12345678',
+      amountRaw: '$19.28',
+      merchantRaw: 'Target',
+      cardRaw: 'Santander LikeU',
+      occurredAt: '2026-08-22T14:30:00-07:00',
+      institution: 'santander_mx',
+    };
+    expect(() => parseApplePayCapture(JSON.stringify(payload), payload.requestId)).toThrow('currency must be MXN or USD');
+  });
+
+  it('rejects unsupported currency codes', () => {
+    const payload = {
+      requestId: 'capture_12345678',
+      amountRaw: '€19.28',
+      merchantRaw: 'Cafe',
+      cardRaw: 'Santander LikeU',
+      occurredAt: '2026-08-22T14:30:00-07:00',
+      institution: 'santander_mx',
+      currency: 'EUR',
+    };
+    expect(() => parseApplePayCapture(JSON.stringify(payload), payload.requestId)).toThrow('currency must be MXN or USD');
+  });
+
   it('requires the body request ID to match the idempotency header', () => {
     expect(() => parseApplePayCapture(JSON.stringify({
       requestId: 'capture_12345678',
