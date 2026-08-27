@@ -550,7 +550,8 @@ html.private-mode .hero-amount .amt {
 .sort-control { display: grid; gap: 4px; }
 .sort-control span { color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .sort-control select { max-width: 126px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: #fbf8f2; padding: 8px 24px 8px 8px; font-size: 10px; }
-.movement-actions { display: flex; align-items: end; gap: 8px; }
+.movement-toolbar { width: min(270px, 100%); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin: -8px 0 14px auto; }
+.movement-toolbar .sort-control select { width: 100%; max-width: none; }
 .import-button { min-height: 34px; white-space: nowrap; }
 .capture-actions-lead { margin: -4px 0 16px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .capture-actions-list { display: grid; gap: 8px; padding-bottom: 6px; }
@@ -585,6 +586,13 @@ html.private-mode .hero-amount .amt {
 .movement-main, .movement-value { display: grid; min-width: 0; gap: 4px; }
 .movement-main strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .movement-main small, .movement-value small { color: var(--muted); font-size: 9px; }
+.movement-context { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; min-height: 15px; }
+.movement-context .category-badge { flex: 0 0 auto; margin-left: 0; }
+.movement-context .msi-badge { flex: 0 0 auto; margin-left: 0; }
+.movement-tagline { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; min-height: 10px; }
+.movement-tag { flex: 0 0 auto; max-width: 78px; overflow: hidden; font-weight: 650; letter-spacing: .015em; text-overflow: ellipsis; white-space: nowrap; }
+.movement-tag, .movement-tag-more { color: #74695f; font-size: 8px; line-height: 1.2; }
+.movement-tag-more { flex: 0 0 auto; color: var(--muted); font-weight: 700; }
 .movement-value { justify-items: end; }
 .movement-value strong { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .movement-value small.needs_review { color: #895818; }
@@ -784,7 +792,6 @@ html.private-mode .hero-amount .amt {
 .checkbox-row span { min-width: 0; }
 .msi-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid #d7cfc4; border-radius: 999px; font-size: 10px; letter-spacing: .04em; color: var(--ink-soft); }
 .category-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid #e7e1d8; border-radius: 4px; font-size: 10px; letter-spacing: .03em; color: var(--ink-soft); font-weight: 500; }
-.tag-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid #cfc6ba; border-radius: 4px; font-size: 10px; letter-spacing: .02em; color: #5f554b; background: #f5f0e8; font-weight: 550; }
 
 .assistant-sheet { display: grid; gap: 14px; }
 .assistant-month-chip { margin: 0; font-size: 13px; color: var(--ink-soft); }
@@ -1112,7 +1119,7 @@ html.private-mode .hero-amount .amt {
 
 @media (max-width: 520px) {
   .movements-heading { align-items: flex-start; }
-  .movement-actions { display: grid; justify-items: end; }
+  .movement-toolbar { width: 100%; margin-top: -4px; }
 }
 
 @media (min-width: 980px) {

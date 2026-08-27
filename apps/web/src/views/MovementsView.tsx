@@ -75,33 +75,33 @@ export function MovementsView({
             {tagFilter ? `${filteredEvents.length} de ${visibleEvents.length}` : visibleEvents.length} registros · <Amt>{money(spentMinor)}</Amt>
           </p>
         </div>
-        <div className="movement-actions">
-          <button
-            type="button"
-            className="secondary-button import-button"
-            onClick={() => setCaptureOpen(true)}
-          >
-            Añadir
-          </button>
-          <label className="sort-control">
-            <span>Tag</span>
-            <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
-              <option value="">Todos</option>
-              {availableTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
-            </select>
-          </label>
-          <label className="sort-control">
-            <span>Ordenar</span>
-            <select
-              value={sort}
-              onChange={(event) => onSortChange(event.target.value as "recent" | "largest")}
-            >
-              <option value="recent">Más recientes</option>
-              <option value="largest">Mayor gasto</option>
-            </select>
-          </label>
-        </div>
+        <button
+          type="button"
+          className="secondary-button import-button"
+          onClick={() => setCaptureOpen(true)}
+        >
+          Añadir
+        </button>
       </header>
+      <div className="movement-toolbar" aria-label="Filtros de movimientos">
+        <label className="sort-control">
+          <span>Tag</span>
+          <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
+            <option value="">Todos</option>
+            {availableTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+          </select>
+        </label>
+        <label className="sort-control">
+          <span>Ordenar</span>
+          <select
+            value={sort}
+            onChange={(event) => onSortChange(event.target.value as "recent" | "largest")}
+          >
+            <option value="recent">Más recientes</option>
+            <option value="largest">Mayor gasto</option>
+          </select>
+        </label>
+      </div>
       {captureOpen && (
         <CaptureActionsSheet
           onClose={() => setCaptureOpen(false)}
@@ -149,8 +149,12 @@ export function MovementsView({
                 : event.merchantRaw.slice(0, 1)}
             </span>
             <span className="movement-main">
-              <strong>
-                {event.merchantRaw}
+              <strong>{event.merchantRaw}</strong>
+              <small>
+                {institutionLabel(event.institution)} · {eventDateLabel(event)}
+                {event.msi?.needsScheduleCompletion ? " · sin plan" : ""}
+              </small>
+              <span className="movement-context">
                 {event.msi ? (
                   <span className="msi-badge">
                     {(() => {
@@ -161,20 +165,20 @@ export function MovementsView({
                     })()}
                   </span>
                 ) : null}
-                {event.personalAmountMinor !== undefined ? (
-                  <span className="category-badge">Compartido</span>
-                ) : null}
                 <span className="category-badge">
                   {event.categoryId ?? "Sin categoría"}
                 </span>
-                {(event.tags ?? []).map((tag) => (
-                  <span className="tag-badge" key={tag}>{tag}</span>
-                ))}
-              </strong>
-              <small>
-                {institutionLabel(event.institution)} · {eventDateLabel(event)}
-                {event.msi?.needsScheduleCompletion ? " · sin plan" : ""}
-              </small>
+              </span>
+              {(event.tags ?? []).length > 0 && (
+                <span className="movement-tagline" aria-label={`Tags: ${(event.tags ?? []).join(", ")}`}>
+                  {(event.tags ?? []).slice(0, 1).map((tag) => (
+                    <span className="movement-tag" key={tag}>#{tag}</span>
+                  ))}
+                  {(event.tags ?? []).length > 1 && (
+                    <span className="movement-tag-more">+{(event.tags ?? []).length - 1}</span>
+                  )}
+                </span>
+              )}
             </span>
             <span className="movement-value">
               <strong>
