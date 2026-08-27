@@ -550,8 +550,17 @@ html.private-mode .hero-amount .amt {
 .sort-control { display: grid; gap: 4px; }
 .sort-control span { color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .sort-control select { max-width: 126px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: #fbf8f2; padding: 8px 24px 8px 8px; font-size: 10px; }
-.movement-toolbar { width: min(270px, 100%); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin: -8px 0 14px auto; }
+.movement-toolbar { width: min(320px, 100%); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin: -8px 0 14px auto; }
 .movement-toolbar .sort-control select { width: 100%; max-width: none; }
+.movement-search { grid-column: 1 / -1; display: grid; gap: 4px; }
+.movement-search > span:first-child { color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.movement-search-field { position: relative; display: block; }
+.movement-search input { width: 100%; min-height: 38px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: #fbf8f2; padding: 9px 38px 9px 11px; font-size: 11px; outline: none; }
+.movement-search input::placeholder { color: #9b9186; }
+.movement-search input:focus { border-color: #a99e92; box-shadow: 0 0 0 2px #ded6cc73; }
+.movement-search input::-webkit-search-cancel-button { display: none; }
+.movement-search-field button { position: absolute; top: 50%; right: 4px; display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 8px; color: var(--muted); background: transparent; padding: 0; font-size: 18px; line-height: 1; transform: translateY(-50%); }
+.movement-search-field button:hover { color: var(--ink); background: #eee8df; }
 .import-button { min-height: 34px; white-space: nowrap; }
 .capture-actions-lead { margin: -4px 0 16px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .capture-actions-list { display: grid; gap: 8px; padding-bottom: 6px; }

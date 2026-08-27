@@ -15,6 +15,12 @@ import { CaptureActionsSheet } from "../sheets/CaptureActionsSheet";
 import { RecoveryReviewSheet } from "../sheets/RecoveryReviewSheet";
 import type { IngestionException, PurchaseEvent } from "../types";
 
+const normalizeSearchText = (value: string): string => value
+  .normalize("NFD")
+  .replace(/\p{M}/gu, "")
+  .toLocaleLowerCase("es")
+  .trim();
+
 export function MovementsView({
   events,
   month,
@@ -52,13 +58,28 @@ export function MovementsView({
 }) {
   const [activeException, setActiveException] = useState<IngestionException>();
   const [captureOpen, setCaptureOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const visibleEvents = visibleMovementEvents(events);
   const availableTags = [...new Set(visibleEvents.flatMap((event) => event.tags ?? []))]
     .sort((left, right) => left.localeCompare(right, "es"));
-  const filteredEvents = tagFilter
-    ? visibleEvents.filter((event) => event.tags?.includes(tagFilter))
-    : visibleEvents;
+  const searchNeedle = normalizeSearchText(searchTerm);
+  const filteredEvents = visibleEvents.filter((event) => {
+    if (tagFilter && !event.tags?.includes(tagFilter)) return false;
+    if (!searchNeedle) return true;
+    const searchable = normalizeSearchText([
+      event.merchantRaw,
+      event.accountName,
+      institutionLabel(event.institution),
+      event.categoryId ?? "Sin categoría",
+      ...(event.tags ?? []),
+      statusLabel[event.status],
+      eventDateLabel(event),
+      movementMoney(event, month),
+    ].join(" "));
+    return searchable.includes(searchNeedle);
+  });
+  const filtersActive = Boolean(tagFilter || searchNeedle);
   const sorted = [...filteredEvents].sort((a, b) =>
     sort === "largest"
       ? movementAmountMinor(b, month) - movementAmountMinor(a, month)
@@ -72,7 +93,7 @@ export function MovementsView({
           <p className="eyebrow">TRAZABILIDAD</p>
           <h1>Movimientos</h1>
           <p>
-            {tagFilter ? `${filteredEvents.length} de ${visibleEvents.length}` : visibleEvents.length} registros · <Amt>{money(spentMinor)}</Amt>
+            {filtersActive ? `${filteredEvents.length} de ${visibleEvents.length}` : visibleEvents.length} registros · <Amt>{money(spentMinor)}</Amt>
           </p>
         </div>
         <button
@@ -84,6 +105,24 @@ export function MovementsView({
         </button>
       </header>
       <div className="movement-toolbar" aria-label="Filtros de movimientos">
+        <label className="movement-search">
+          <span>Buscar</span>
+          <span className="movement-search-field">
+            <input
+              type="search"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Comercio, categoría o tag"
+              autoComplete="off"
+              spellCheck="false"
+            />
+            {searchTerm && (
+              <button type="button" aria-label="Limpiar búsqueda" onClick={() => setSearchTerm("")}>
+                ×
+              </button>
+            )}
+          </span>
+        </label>
         <label className="sort-control">
           <span>Tag</span>
           <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
@@ -196,8 +235,24 @@ export function MovementsView({
         {!loading && sorted.length === 0 && (
           <div className="empty-state">
             <span>—</span>
-            <h2>No hay movimientos</h2>
-            <p>Cuando llegue una alerta bancaria, aparecerá aquí.</p>
+            <h2>{filtersActive ? "Sin resultados" : "No hay movimientos"}</h2>
+            <p>
+              {filtersActive
+                ? "Prueba otro comercio, categoría o tag."
+                : "Cuando llegue una alerta bancaria, aparecerá aquí."}
+            </p>
+            {filtersActive && (
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => {
+                  setSearchTerm("");
+                  setTagFilter("");
+                }}
+              >
+                Limpiar filtros
+              </button>
+            )}
           </div>
         )}
         {loading && (
