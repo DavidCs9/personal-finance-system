@@ -83,4 +83,21 @@ describe('ledger API Powertools router', () => {
     expect(result.statusCode).toBe(400);
     expect(JSON.parse(String(result.body)).message).toMatch(/nu_cajita_emergencia/);
   });
+
+  it('validates a bulk-edit preview before reading movements', async () => {
+    const result = await handler(
+      {
+        ...httpEvent('POST', '/bulk-edits/preview'),
+        body: JSON.stringify({
+          selection: { fromDay: '2026-08-25', toDay: '2026-08-21' },
+          change: { addTags: ['viaje:vegas'] },
+        }),
+      },
+      context,
+    );
+    expect(result.statusCode).toBe(400);
+    expect(JSON.parse(String(result.body))).toEqual({
+      message: 'fromDay no puede ser posterior a toDay.',
+    });
+  });
 });

@@ -40,6 +40,7 @@ export function EventSheet({
     ((event.msi?.cuotaMinor ?? defaultCuotaMinor(event.amount.amountMinor, event.msi?.months ?? 3)) / 100).toFixed(2),
   );
   const [categoryId, setCategoryId] = useState(event.categoryId ?? "");
+  const [tags, setTags] = useState((event.tags ?? []).join(", "));
   const [personalAmount, setPersonalAmount] = useState(
     event.personalAmountMinor === undefined ? "" : (event.personalAmountMinor / 100).toFixed(2),
   );
@@ -58,10 +59,11 @@ export function EventSheet({
       ).toFixed(2),
     );
     setCategoryId(event.categoryId ?? "");
+    setTags((event.tags ?? []).join(", "));
     setPersonalAmount(
       event.personalAmountMinor === undefined ? "" : (event.personalAmountMinor / 100).toFixed(2),
     );
-  }, [event.id, event.msi, event.amount.amountMinor, event.categoryId, event.personalAmountMinor]);
+  }, [event.id, event.msi, event.amount.amountMinor, event.categoryId, event.tags, event.personalAmountMinor]);
 
   useEffect(() => {
     if (demoMode) {
@@ -194,6 +196,19 @@ export function EventSheet({
       setCategoryId(updated.categoryId ?? "");
     },
     onError: (err) => setError(err instanceof Error ? err.message : "No se pudo guardar la categoría."),
+  });
+
+  const tagsMutation = useMutation({
+    mutationFn: async () => {
+      const next = tags.split(",").map((tag) => tag.trim()).filter(Boolean);
+      if (demoMode) return { ...event, tags: next };
+      return ledgerApi.setEventTags(event.id, next, idToken);
+    },
+    onSuccess: (updated) => {
+      updateCache(updated);
+      setTags((updated.tags ?? []).join(", "));
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "No se pudieron guardar los tags."),
   });
 
   const personalAmountMutation = useMutation({
@@ -452,6 +467,34 @@ export function EventSheet({
           </Field>
           <button className="primary-button" type="submit" disabled={categoryMutation.isPending}>
             {categoryMutation.isPending ? "Guardando…" : "Guardar categoría"}
+          </button>
+        </form>
+
+        <form
+          className="sheet-form"
+          onSubmit={(formEvent) => {
+            formEvent.preventDefault();
+            tagsMutation.mutate();
+          }}
+        >
+          <div className="detail-section-heading">
+            <div>
+              <p className="eyebrow">TAGS</p>
+              <h3>Contexto del movimiento</h3>
+            </div>
+          </div>
+          <Field label="Tags separados por coma">
+            <input
+              value={tags}
+              onChange={(change) => setTags(change.target.value)}
+              placeholder="viaje:vegas, ciudad:cdmx"
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </Field>
+          <p>No cambian los cálculos ni la categoría.</p>
+          <button className="primary-button" type="submit" disabled={tagsMutation.isPending}>
+            {tagsMutation.isPending ? "Guardando…" : "Guardar tags"}
           </button>
         </form>
 

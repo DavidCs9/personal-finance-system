@@ -198,6 +198,19 @@ describe('spending ranges', () => {
     expect(result.movements.map((movement) => movement.id)).toEqual(['uncategorized']);
   });
 
+  it('filters by an exact tag and returns tags with matching movements', () => {
+    const result = spendingRangeFromEvents([
+      event('vegas', 100_00, '2026-08-15T12:00:00.000Z', { tags: ['viaje:vegas', 'trabajo'] }),
+      event('cdmx', 200_00, '2026-08-15T13:00:00.000Z', { tags: ['viaje:cdmx'] }),
+      event('untagged', 300_00, '2026-08-15T14:00:00.000Z'),
+    ], { range: 'yesterday', tag: 'viaje:vegas' }, now);
+
+    expect(result.totalSpentMinor).toBe(100_00);
+    expect(result.movements).toEqual([
+      expect.objectContaining({ id: 'vegas', tags: ['viaje:vegas', 'trabajo'] }),
+    ]);
+  });
+
   it('rejects ambiguous, invalid, reversed, and unbounded custom ranges', () => {
     expect(() => resolveSpendingRange({ month: '2026-08', range: 'yesterday' }, now))
       .toThrow('Usa month o range, no ambos.');

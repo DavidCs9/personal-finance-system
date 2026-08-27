@@ -125,6 +125,7 @@ export class PersonalFinanceV1Stack extends Stack {
       encryption: dynamodb.TableEncryption.CUSTOMER_MANAGED,
       encryptionKey,
       stream: dynamodb.StreamViewType.NEW_IMAGE,
+      timeToLiveAttribute: 'expiresAt',
       pointInTimeRecoverySpecification: {
         pointInTimeRecoveryEnabled: true,
         recoveryPeriodInDays: 35,
@@ -441,7 +442,16 @@ export class PersonalFinanceV1Stack extends Stack {
         AGENT_OWNER: agentOwnerSub.valueAsString,
       },
     });
-    metadataTable.grantReadWriteData(agentToolsFunction);
+    metadataTable.grantReadData(agentToolsFunction);
+    agentToolsFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['dynamodb:PutItem'],
+      resources: [metadataTable.tableArn],
+      conditions: {
+        'ForAllValues:StringLike': {
+          'dynamodb:LeadingKeys': ['BULK_EDIT#*'],
+        },
+      },
+    }));
 
     const gatewayRole = new iam.Role(this, 'AgentCoreGatewayRole', {
       roleName: 'personal-finance-v1-agentcore-gateway',

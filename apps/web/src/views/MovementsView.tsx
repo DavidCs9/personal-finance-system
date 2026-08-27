@@ -52,8 +52,14 @@ export function MovementsView({
 }) {
   const [activeException, setActiveException] = useState<IngestionException>();
   const [captureOpen, setCaptureOpen] = useState(false);
+  const [tagFilter, setTagFilter] = useState("");
   const visibleEvents = visibleMovementEvents(events);
-  const sorted = [...visibleEvents].sort((a, b) =>
+  const availableTags = [...new Set(visibleEvents.flatMap((event) => event.tags ?? []))]
+    .sort((left, right) => left.localeCompare(right, "es"));
+  const filteredEvents = tagFilter
+    ? visibleEvents.filter((event) => event.tags?.includes(tagFilter))
+    : visibleEvents;
+  const sorted = [...filteredEvents].sort((a, b) =>
     sort === "largest"
       ? movementAmountMinor(b, month) - movementAmountMinor(a, month)
       : eventRecencyKey(b).localeCompare(eventRecencyKey(a)),
@@ -66,7 +72,7 @@ export function MovementsView({
           <p className="eyebrow">TRAZABILIDAD</p>
           <h1>Movimientos</h1>
           <p>
-            {visibleEvents.length} registros · <Amt>{money(spentMinor)}</Amt>
+            {tagFilter ? `${filteredEvents.length} de ${visibleEvents.length}` : visibleEvents.length} registros · <Amt>{money(spentMinor)}</Amt>
           </p>
         </div>
         <div className="movement-actions">
@@ -77,6 +83,13 @@ export function MovementsView({
           >
             Añadir
           </button>
+          <label className="sort-control">
+            <span>Tag</span>
+            <select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
+              <option value="">Todos</option>
+              {availableTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+            </select>
+          </label>
           <label className="sort-control">
             <span>Ordenar</span>
             <select
@@ -154,6 +167,9 @@ export function MovementsView({
                 <span className="category-badge">
                   {event.categoryId ?? "Sin categoría"}
                 </span>
+                {(event.tags ?? []).map((tag) => (
+                  <span className="tag-badge" key={tag}>{tag}</span>
+                ))}
               </strong>
               <small>
                 {institutionLabel(event.institution)} · {eventDateLabel(event)}

@@ -47,6 +47,7 @@ const toCategorized = (events: readonly Record<string, unknown>[]): CategorizedS
       receivedAt: String(event.receivedAt ?? new Date(0).toISOString()),
       merchantRaw: String(event.merchantRaw ?? ''),
       categoryId: (event.categoryId as string | null | undefined) ?? null,
+      tags: Array.isArray(event.tags) ? event.tags.map(String) : [],
       msi: event.msi as CategorizedSpendEvent['msi'],
     };
   });

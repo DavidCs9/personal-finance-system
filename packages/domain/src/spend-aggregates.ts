@@ -9,6 +9,7 @@ export interface CategorizedSpendEvent extends MonthSpendEvent {
   readonly id: string;
   readonly merchantRaw: string;
   readonly categoryId?: string | null;
+  readonly tags?: readonly string[];
 }
 
 export interface SpendBucket {

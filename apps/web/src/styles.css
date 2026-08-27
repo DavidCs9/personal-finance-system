@@ -784,6 +784,7 @@ html.private-mode .hero-amount .amt {
 .checkbox-row span { min-width: 0; }
 .msi-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid #d7cfc4; border-radius: 999px; font-size: 10px; letter-spacing: .04em; color: var(--ink-soft); }
 .category-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid #e7e1d8; border-radius: 4px; font-size: 10px; letter-spacing: .03em; color: var(--ink-soft); font-weight: 500; }
+.tag-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid #cfc6ba; border-radius: 4px; font-size: 10px; letter-spacing: .02em; color: #5f554b; background: #f5f0e8; font-weight: 550; }
 
 .assistant-sheet { display: grid; gap: 14px; }
 .assistant-month-chip { margin: 0; font-size: 13px; color: var(--ink-soft); }
@@ -945,6 +946,7 @@ html.private-mode .hero-amount .amt {
 .assistant-tool-status { color: var(--ink-soft) !important; font-size: 11px; }
 .assistant-tool-problem { color: #87493f !important; }
 .assistant-proposal { margin-top: 10px; display: grid; gap: 8px; }
+.assistant-proposal small { color: var(--ink-soft); font-size: 11px; line-height: 1.4; }
 .assistant-composer { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .assistant-composer input { width: 100%; border: 1px solid #d7cfc4; border-radius: 10px; padding: 12px 14px; background: #fff; color: var(--ink); }
 .assistant-composer button { border: 0; border-radius: 10px; padding: 12px 16px; background: #1f1a17; color: #f7f1e8; }

@@ -175,6 +175,7 @@ export const toPublicEvent = (
     personalAmountMinor: payload.personalAmountMinor,
     merchantRaw: payload.merchantRaw,
     categoryId: (payload.categoryId as string | null | undefined) ?? null,
+    tags: Array.isArray(payload.tags) ? payload.tags : [],
     billingPeriod: payload.billingPeriod,
     paymentMethodLastFour: payload.paymentMethodLastFour,
     occurredAt: payload.occurredAt,

@@ -1,0 +1,139 @@
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+
+process.env.METADATA_TABLE_NAME ??= 'test-metadata-table';
+process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-raw-bucket';
+
+let database: typeof import('../src/http/clients.js').database;
+let parseBulkEditInput: typeof import('../src/events/bulk-edits.js').parseBulkEditInput;
+let previewBulkEdit: typeof import('../src/events/bulk-edits.js').previewBulkEdit;
+let applyBulkEdit: typeof import('../src/events/bulk-edits.js').applyBulkEdit;
+let undoBulkEdit: typeof import('../src/events/bulk-edits.js').undoBulkEdit;
+
+beforeAll(async () => {
+  ({ database } = await import('../src/http/clients.js'));
+  ({ parseBulkEditInput, previewBulkEdit, applyBulkEdit, undoBulkEdit } =
+    await import('../src/events/bulk-edits.js'));
+});
+
+afterEach(() => vi.restoreAllMocks());
+
+const input = () => parseBulkEditInput({
+  selection: { fromDay: '2026-08-21', toDay: '2026-08-25', statuses: ['accepted'] },
+  change: { addTags: ['Viaje:Végas'] },
+});
+
+const eventItem = (id: string, merchantRaw: string, amountMinor: number, status = 'accepted') => ({
+  PK: `EVENT#${id}`,
+  SK: 'EVENT',
+  payload: {
+    id,
+    merchantRaw,
+    status,
+    amount: { amountMinor, currency: 'MXN' },
+    occurredAt: '2026-08-22T12:00:00.000Z',
+    receivedAt: '2026-08-22T12:00:01.000Z',
+    tags: id === 'event-2' ? ['ciudad:cdmx'] : undefined,
+  },
+});
+
+describe('bulk edits', () => {
+  it('normalizes and validates the requested change', () => {
+    expect(input()).toEqual({
+      selection: { fromDay: '2026-08-21', toDay: '2026-08-25', statuses: ['accepted'] },
+      change: { addTags: ['viaje:vegas'] },
+    });
+    expect(() => parseBulkEditInput({
+      selection: { fromDay: '2026-08-25', toDay: '2026-08-21' },
+      change: { addTags: ['viaje:vegas'] },
+    })).toThrow(/posterior/);
+    expect(() => parseBulkEditInput({
+      selection: { fromDay: '2026-08-21', toDay: '2026-08-25', statuses: ['rejected'] },
+      change: { addTags: ['viaje:vegas'] },
+    })).toThrow(/accepted/);
+  });
+
+  it('freezes accepted movement ids and amount in an owner-scoped preview', async () => {
+    let saved: Record<string, unknown> | undefined;
+    vi.spyOn(database as any, 'send').mockImplementation(async (command: any) => {
+      if (command.constructor.name === 'QueryCommand') {
+        return { Items: [
+          eventItem('event-1', 'Panda Express', 30_694),
+          eventItem('event-2', 'Shell', 22_513),
+          eventItem('rejected', 'Declined', 99_999, 'rejected'),
+        ] };
+      }
+      if (command.constructor.name === 'PutCommand') {
+        saved = command.input.Item;
+        return {};
+      }
+      throw new Error(`Unexpected ${command.constructor.name}`);
+    });
+
+    const result = await previewBulkEdit('owner-1', input(), new Date('2026-08-26T00:00:00.000Z'));
+    expect(result).toMatchObject({
+      movementCount: 2,
+      amountMinor: 53_207,
+      change: { addTags: ['viaje:vegas'] },
+    });
+    expect(saved).toMatchObject({
+      PK: 'BULK_EDIT#owner-1',
+      entityType: 'bulk_edit_operation',
+      payload: {
+        owner: 'owner-1',
+        status: 'pending',
+        events: [
+          { id: 'event-1', previousTags: [], nextTags: ['viaje:vegas'] },
+          { id: 'event-2', previousTags: ['ciudad:cdmx'], nextTags: ['ciudad:cdmx', 'viaje:vegas'] },
+        ],
+      },
+    });
+  });
+
+  it('applies and undoes the frozen snapshot transactionally', async () => {
+    let operation: Record<string, any> | undefined;
+    vi.spyOn(database as any, 'send').mockImplementation(async (command: any) => {
+      if (command.constructor.name === 'QueryCommand') {
+        return { Items: [eventItem('event-1', 'Panda Express', 30_694)] };
+      }
+      if (command.constructor.name === 'PutCommand') {
+        operation = command.input.Item.payload;
+        return {};
+      }
+      throw new Error(`Unexpected ${command.constructor.name}`);
+    });
+    const preview = await previewBulkEdit('owner-1', input(), new Date('2026-08-26T00:00:00.000Z'));
+    expect(operation).toBeDefined();
+
+    const transactions: any[] = [];
+    vi.restoreAllMocks();
+    vi.spyOn(database as any, 'send').mockImplementation(async (command: any) => {
+      if (command.constructor.name === 'GetCommand') return { Item: { payload: operation } };
+      if (command.constructor.name === 'TransactWriteCommand') {
+        transactions.push(command.input);
+        return {};
+      }
+      throw new Error(`Unexpected ${command.constructor.name}`);
+    });
+    const applied = await applyBulkEdit(
+      'owner-1', preview.operationId, 'owner-1', new Date('2026-08-26T00:01:00.000Z'),
+    );
+    expect(applied.status).toBe('applied');
+    expect((database.send as any).mock.calls.find(([command]: any[]) =>
+      command.constructor.name === 'GetCommand')[0].input.ConsistentRead).toBe(true);
+    expect(transactions[0].TransactItems).toHaveLength(3);
+    expect(transactions[0].TransactItems[0].Update).toMatchObject({
+      Key: { PK: 'EVENT#event-1', SK: 'EVENT' },
+      ExpressionAttributeValues: { ':fromTags': [], ':toTags': ['viaje:vegas'] },
+    });
+
+    operation = { ...operation, status: 'applied', appliedAt: '2026-08-26T00:01:00.000Z' };
+    const undone = await undoBulkEdit(
+      'owner-1', preview.operationId, 'owner-1', new Date('2026-08-26T00:02:00.000Z'),
+    );
+    expect(undone.status).toBe('undone');
+    expect(transactions[1].TransactItems[0].Update.ExpressionAttributeValues).toMatchObject({
+      ':fromTags': ['viaje:vegas'],
+      ':toTags': [],
+    });
+  });
+});

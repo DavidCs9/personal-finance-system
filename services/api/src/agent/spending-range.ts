@@ -29,6 +29,7 @@ export interface SpendingRangeQuery {
   readonly fromDay?: string;
   readonly toDay?: string;
   readonly categoryId?: string;
+  readonly tag?: string;
   readonly limit?: number;
 }
 
@@ -154,6 +155,7 @@ type SpendingMovement = {
   readonly id: string;
   readonly merchantRaw: string;
   readonly categoryId: string | null;
+  readonly tags: readonly string[];
   readonly amountMinor: number;
   readonly status: string;
   readonly month: string;
@@ -168,6 +170,9 @@ const categoryMatches = (event: CategorizedSpendEvent, categoryId: string | unde
   if (categoryId === '_uncategorized') return !event.categoryId;
   return event.categoryId === categoryId;
 };
+
+const tagMatches = (event: CategorizedSpendEvent, tag: string | undefined): boolean =>
+  !tag || event.tags?.includes(tag) === true;
 
 const eventDay = (event: CategorizedSpendEvent): string =>
   dayKeyInZone(new Date(event.occurredAt ?? event.receivedAt), FINANCE_TIME_ZONE);
@@ -201,7 +206,9 @@ export const spendingRangeFromEvents = (
   let excludedMonthOnlyMovementCount = 0;
 
   for (const event of events) {
-    if (!countsTowardMonthSpend(event.status) || !categoryMatches(event, query.categoryId)) continue;
+    if (!countsTowardMonthSpend(event.status)
+      || !categoryMatches(event, query.categoryId)
+      || !tagMatches(event, query.tag)) continue;
 
     if (!event.msi) {
       const occurredOn = eventDay(event);
@@ -210,6 +217,7 @@ export const spendingRangeFromEvents = (
         id: event.id,
         merchantRaw: event.merchantRaw,
         categoryId: event.categoryId ?? null,
+        tags: event.tags ?? [],
         amountMinor: personalSpendAmountMinor(event),
         status: event.status,
         month: occurredOn.slice(0, 7),
@@ -235,6 +243,7 @@ export const spendingRangeFromEvents = (
         id: event.id,
         merchantRaw: event.merchantRaw,
         categoryId: event.categoryId ?? null,
+        tags: event.tags ?? [],
         amountMinor: installment.amountMinor,
         status: event.status,
         month: installment.month,
