@@ -1329,6 +1329,7 @@ export class PersonalFinanceV1Stack extends Stack {
       'POST /categories/ensure-defaults',
       'GET /categories/rules',
       'POST /categories/rules',
+      'GET /analytics',
       'GET /agent/month-snapshot',
       'GET /agent/spend-by-category',
       'GET /agent/spend-by-merchant',

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SPEND_CATEGORIES,
   aggregateSpendByCategory,
+  aggregateSpendByTag,
+  compareSpendBuckets,
   normalizeMerchantKey,
   resolveCategoryId,
   spendAmountForMonth,
@@ -134,5 +136,69 @@ describe('aggregateSpendByCategory', () => {
     expect(result.totalSpentMinor).toBe(150_00);
     expect(result.uncategorizedMinor).toBe(50_00);
     expect(result.buckets.find((bucket) => bucket.key === 'restaurantes')?.amountMinor).toBe(100_00);
+  });
+
+  it('compares the current month against equivalent elapsed days', () => {
+    const categories = new Map([['restaurantes', 'Restaurantes']]);
+    const current = aggregateSpendByCategory([
+      {
+        id: 'current', amountMinor: 250_00, status: 'accepted', receivedAt: '2026-08-12T18:00:00Z',
+        merchantRaw: 'Cafe', categoryId: 'restaurantes',
+      },
+    ], '2026-08', categories);
+    const prior = aggregateSpendByCategory([
+      {
+        id: 'early', amountMinor: 100_00, status: 'accepted', receivedAt: '2026-07-05T18:00:00Z',
+        merchantRaw: 'Cafe', categoryId: 'restaurantes',
+      },
+      {
+        id: 'late', amountMinor: 500_00, status: 'accepted', receivedAt: '2026-07-20T18:00:00Z',
+        merchantRaw: 'Dinner', categoryId: 'restaurantes',
+      },
+    ], '2026-07', categories, { throughDay: 12 });
+
+    expect(prior.totalSpentMinor).toBe(100_00);
+    expect(compareSpendBuckets(current.buckets, prior.buckets)[0]).toMatchObject({
+      key: 'restaurantes', amountMinor: 250_00, againstAmountMinor: 100_00, deltaMinor: 150_00,
+      againstEventIds: ['early'],
+    });
+  });
+
+  it('does not invent a day for legacy month-only MSI in a partial comparison', () => {
+    const legacy = {
+      id: 'legacy-msi',
+      amountMinor: 900_00,
+      status: 'accepted',
+      receivedAt: '2026-06-01T12:00:00Z',
+      merchantRaw: 'Store',
+      categoryId: 'shopping',
+      msi: {
+        months: 3,
+        principalMinor: 900_00,
+        cuotaMinor: 300_00,
+        installments: [
+          { index: 1, month: '2026-07', amountMinor: 300_00, status: 'spent' as const },
+        ],
+      },
+    };
+
+    expect(spendAmountForMonth(legacy, '2026-07', { throughDay: 12 })).toBe(0);
+  });
+});
+
+describe('aggregateSpendByTag', () => {
+  it('treats tags as overlapping lenses without inflating the month total', () => {
+    const result = aggregateSpendByTag([
+      {
+        id: 'trip', amountMinor: 300_00, status: 'accepted', receivedAt: '2026-08-08T18:00:00Z',
+        merchantRaw: 'Hotel', categoryId: 'viajes', tags: ['viaje:cdmx', 'trabajo'],
+      },
+    ], '2026-08');
+
+    expect(result.totalSpentMinor).toBe(300_00);
+    expect(result.buckets).toEqual([
+      expect.objectContaining({ key: 'viaje:cdmx', amountMinor: 300_00, eventIds: ['trip'] }),
+      expect.objectContaining({ key: 'trabajo', amountMinor: 300_00, eventIds: ['trip'] }),
+    ]);
   });
 });

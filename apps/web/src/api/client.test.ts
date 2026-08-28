@@ -158,6 +158,37 @@ describe("assistant conversation history API", () => {
   });
 });
 
+describe("spending analytics API", () => {
+  it("loads the selected month from the authenticated analytics route", async () => {
+    const idToken = token(Date.now() + 10 * 60 * 1000, "user");
+    ledgerApi.saveSession({ idToken, refreshToken: "refresh-token" });
+    const response = {
+      month: "2026-08",
+      comparison: {
+        againstMonth: "2026-07",
+        throughDay: 12,
+        amountMinor: 100_00,
+        againstAmountMinor: 80_00,
+        deltaMinor: 20_00,
+        excludedMonthOnlyMinor: 0,
+      },
+      categories: [],
+      tags: [],
+      merchants: [],
+      confidence: {
+        uncategorizedMinor: 0,
+        uncategorizedEventCount: 0,
+        uncertainMinor: 0,
+        uncertainEventIds: [],
+      },
+    };
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(response));
+
+    await expect(ledgerApi.analytics("2026-08", idToken)).resolves.toEqual(response);
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe("https://api.example.test/analytics?month=2026-08");
+  });
+});
+
 describe("streamAgentChat REST SSE", () => {
   it("posts to the REST SSE endpoint and fans out chunks in order", async () => {
     const idToken = token(Date.now() + 10 * 60 * 1000, "user");

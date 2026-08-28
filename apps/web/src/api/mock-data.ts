@@ -1,4 +1,21 @@
-import { buildMsiSchedule, computeMonthSummary, monthKeyInZone, type MonthSummary } from "@finance/domain";
+import {
+  DEFAULT_SPEND_CATEGORIES,
+  aggregateSpendByCategory,
+  aggregateSpendByMerchant,
+  aggregateSpendByTag,
+  buildMsiSchedule,
+  compareSpendBuckets,
+  computeMonthSummary,
+  dayInZone,
+  daysInCalendarMonth,
+  monthKeyInZone,
+  monthOnlySpendAmountForMonth,
+  previousCalendarMonth,
+  uncertainAmountForMonth,
+  type CategorizedSpendEvent,
+  type MonthSummary,
+  type SpendingAnalytics,
+} from "@finance/domain";
 import type { MonthlyPlan } from "../monthly-plan";
 import type { EventFeed, IngestionException, PurchaseEvent } from "../types";
 
@@ -53,7 +70,8 @@ export const mockEvents: readonly PurchaseEvent[] = [
     amount: { amountMinor: 48500, currency: "MXN" },
     personalAmountMinor: 16200,
     merchantRaw: "CAFÉ DEL PARQUE CDMX",
-    tags: ["viaje:cdmx"],
+    categoryId: "restaurantes",
+    tags: ["trabajo", "viaje:cdmx"],
     occurredAt: "2026-07-12T13:38:00Z",
     receivedAt: "2026-07-12T13:42:00Z",
     ingestedAt: "2026-07-12T13:42:09Z",
@@ -74,6 +92,7 @@ export const mockEvents: readonly PurchaseEvent[] = [
     accountName: "Tarjeta viajes • 8192",
     amount: { amountMinor: 124900, currency: "MXN" },
     merchantRaw: "RESERVA SERVICIOS ONLINE",
+    categoryId: "viajes",
     occurredAt: "2026-07-12T09:15:00Z",
     receivedAt: "2026-07-12T09:17:00Z",
     ingestedAt: "2026-07-12T09:17:14Z",
@@ -105,6 +124,7 @@ export const mockEvents: readonly PurchaseEvent[] = [
     accountName: "Tarjeta personal • 1234",
     amount: { amountMinor: 79900, currency: "MXN" },
     merchantRaw: "LIBRERÍA CENTRAL 017",
+    categoryId: "shopping",
     occurredAt: "2026-07-11T20:10:00Z",
     receivedAt: "2026-07-11T20:13:00Z",
     ingestedAt: "2026-07-11T20:13:05Z",
@@ -125,6 +145,7 @@ export const mockEvents: readonly PurchaseEvent[] = [
     accountName: "Nu • 4421",
     amount: { amountMinor: 35600, currency: "MXN" },
     merchantRaw: "SUPERAMA POLANCO",
+    categoryId: "supermercado",
     occurredAt: "2026-07-09T18:22:00Z",
     receivedAt: "2026-07-09T18:24:00Z",
     ingestedAt: "2026-07-09T18:24:08Z",
@@ -145,6 +166,7 @@ export const mockEvents: readonly PurchaseEvent[] = [
     accountName: "Tarjeta personal • 1234",
     amount: { amountMinor: 18750, currency: "MXN" },
     merchantRaw: "UBER TRIP HELP.UBER.COM",
+    categoryId: "transporte",
     tags: ["viaje:cdmx"],
     occurredAt: "2026-07-08T07:41:00Z",
     receivedAt: "2026-07-08T07:43:00Z",
@@ -166,6 +188,7 @@ export const mockEvents: readonly PurchaseEvent[] = [
     accountName: "Tarjeta viajes • 8192",
     amount: { amountMinor: 98000, currency: "MXN" },
     merchantRaw: "SPORT CITY REFORMA",
+    categoryId: "deportes",
     occurredAt: "2026-07-05T16:05:00Z",
     receivedAt: "2026-07-05T16:07:00Z",
     ingestedAt: "2026-07-05T16:07:04Z",
@@ -186,6 +209,8 @@ export const mockEvents: readonly PurchaseEvent[] = [
     accountName: "Tarjeta personal • 1234",
     amount: { amountMinor: 41200, currency: "MXN" },
     merchantRaw: "AWS EMEA",
+    categoryId: "suscripciones",
+    tags: ["trabajo"],
     occurredAt: "2026-07-03T11:12:00Z",
     receivedAt: "2026-07-03T11:14:00Z",
     ingestedAt: "2026-07-03T11:14:06Z",
@@ -206,6 +231,7 @@ export const mockEvents: readonly PurchaseEvent[] = [
     accountName: "Tarjeta personal • 1007",
     amount: { amountMinor: 674900, currency: "MXN" },
     merchantRaw: "MESES EN AUTOMÁTICO NACIONAL",
+    categoryId: "transferencias",
     occurredAt: "2026-06-06T12:00:00Z",
     receivedAt: "2026-06-06T12:05:00Z",
     ingestedAt: "2026-06-06T12:05:10Z",
@@ -233,6 +259,7 @@ export const mockEvents: readonly PurchaseEvent[] = [
     accountName: "Tarjeta viajes • 8192",
     amount: { amountMinor: 1198800, currency: "MXN" },
     merchantRaw: "APPLE STORE SANTA FE",
+    categoryId: "shopping",
     occurredAt: "2026-05-18T19:30:00Z",
     receivedAt: "2026-05-18T19:32:00Z",
     ingestedAt: "2026-05-18T19:32:12Z",
@@ -307,6 +334,63 @@ export function mockMonthSummaryFor(month: string, plan: MonthlyPlan, now: Date)
     upcomingPaymentsMinor: plan.upcomingPayments.reduce((sum, payment) => sum + payment.amountMinor, 0),
     now,
   });
+}
+
+const mockCategorizedEvents = (): CategorizedSpendEvent[] => mockEvents.map((event) => ({
+  id: event.id,
+  amountMinor: event.amount.amountMinor,
+  personalAmountMinor: event.personalAmountMinor,
+  status: event.status,
+  occurredAt: event.occurredAt,
+  receivedAt: event.receivedAt,
+  merchantRaw: event.merchantRaw,
+  categoryId: event.categoryId,
+  tags: event.tags,
+  msi: event.msi,
+}));
+
+/** Demo-only stand-in for GET /analytics. */
+export function mockAnalyticsFor(month: string, now: Date): SpendingAnalytics {
+  const againstMonth = previousCalendarMonth(month) ?? month;
+  const events = mockCategorizedEvents();
+  const names = new Map(DEFAULT_SPEND_CATEGORIES.map((category) => [category.id, category.name]));
+  const current = aggregateSpendByCategory(events, month, names);
+  const throughDay = month === monthKeyInZone(now)
+    ? Math.min(dayInZone(now), daysInCalendarMonth(againstMonth))
+    : undefined;
+  const against = aggregateSpendByCategory(
+    events,
+    againstMonth,
+    names,
+    throughDay === undefined ? undefined : { throughDay },
+  );
+  const tags = aggregateSpendByTag(events, month);
+  const merchants = aggregateSpendByMerchant(events, month, { limit: 10 });
+  const excludedMonthOnlyMinor = throughDay === undefined
+    ? 0
+    : events.reduce((sum, event) => sum + monthOnlySpendAmountForMonth(event, againstMonth), 0);
+  return {
+    month,
+    comparison: {
+      againstMonth,
+      ...(throughDay === undefined ? {} : { throughDay }),
+      amountMinor: current.totalSpentMinor,
+      againstAmountMinor: against.totalSpentMinor,
+      deltaMinor: current.totalSpentMinor - against.totalSpentMinor,
+      excludedMonthOnlyMinor,
+    },
+    categories: compareSpendBuckets(current.buckets, against.buckets),
+    tags: tags.buckets,
+    merchants: merchants.buckets,
+    confidence: {
+      uncategorizedMinor: current.uncategorizedMinor,
+      uncategorizedEventCount: current.uncategorizedEventCount,
+      uncertainMinor: current.uncertainMinor,
+      uncertainEventIds: events
+        .filter((event) => uncertainAmountForMonth(event, month) > 0)
+        .map((event) => event.id),
+    },
+  };
 }
 
 /** @deprecated Prefer `mockFeedForMonth`; kept for callers that need the full July-shaped feed. */

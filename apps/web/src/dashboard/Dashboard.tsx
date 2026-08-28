@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ledgerApi } from "../api/client";
-import { mockExceptionRawEmail, mockExceptions, mockFeedForMonth, mockMonthSummaryFor } from "../api/mock-data";
+import { mockAnalyticsFor, mockExceptionRawEmail, mockExceptions, mockFeedForMonth, mockMonthSummaryFor } from "../api/mock-data";
 import { AppShell } from "../layout/AppShell";
 import { eventDate, monthKey } from "../lib/format";
 import { usePrivateMode } from "../lib/private-mode";
-import { eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, monthlySummaryQueryKey, monthlySummaryQueryRoot, cardsQueryKey, wealthQueryKey } from "../lib/query-keys";
+import { analyticsQueryKey, analyticsQueryRoot, eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, monthlySummaryQueryKey, monthlySummaryQueryRoot, cardsQueryKey, wealthQueryKey } from "../lib/query-keys";
 import type { Tab } from "../lib/tabs";
 import {
   demoPlans,
@@ -32,6 +32,7 @@ import type { EventFeed, PurchaseEvent } from "../types";
 import { MovementsView } from "../views/MovementsView";
 import { SummaryView } from "../views/SummaryView";
 import { WealthView } from "../views/WealthView";
+import { AnalyticsView } from "../views/AnalyticsView";
 import { demoWealthOverview } from "../wealth-demo";
 import type { WealthOverview, WealthAccountView, WealthHistoryPoint, WealthLiabilityView } from "../wealth";
 import { withWealthTotals } from "../wealth";
@@ -61,6 +62,11 @@ export function Dashboard({
   const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [movementSort, setMovementSort] = useState<"recent" | "largest">("recent");
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [movementEvidenceFilter, setMovementEvidenceFilter] = useState<{
+    readonly label: string;
+    readonly eventIds: readonly string[];
+  }>();
   const [importOpen, setImportOpen] = useState(false);
   const [amexImportOpen, setAmexImportOpen] = useState(false);
   const [santanderStatementOpen, setSantanderStatementOpen] = useState(false);
@@ -95,6 +101,13 @@ export function Dashboard({
       demoMode
         ? Promise.resolve(mockMonthSummaryFor(selectedMonth, planFor(demoPlans, selectedMonth), now))
         : ledgerApi.monthlySummary(selectedMonth, idToken),
+  });
+  const analyticsQuery = useQuery({
+    queryKey: analyticsQueryKey(selectedMonth),
+    queryFn: () =>
+      demoMode
+        ? Promise.resolve(mockAnalyticsFor(selectedMonth, now))
+        : ledgerApi.analytics(selectedMonth, idToken),
   });
   const cardsQuery = useQuery({
     queryKey: cardsQueryKey,
@@ -279,6 +292,7 @@ export function Dashboard({
     void queryClient.invalidateQueries({ queryKey: exceptionsQueryKey });
     void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
     void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+    void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
     void queryClient.invalidateQueries({ queryKey: cardsQueryKey });
     void queryClient.invalidateQueries({ queryKey: wealthQueryKey });
   };
@@ -326,7 +340,6 @@ export function Dashboard({
       ? Promise.resolve(mockExceptionRawEmail(exceptionId))
       : ledgerApi.rawException(exceptionId, idToken);
 
-  const monthEvents = events;
   const summaryEvents = useMemo(
     () => [...events, ...msiRelated],
     [events, msiRelated],
@@ -366,7 +379,16 @@ export function Dashboard({
   };
 
   const reviewLargest = () => {
+    setMovementEvidenceFilter(undefined);
     setMovementSort("largest");
+    setTab("movements");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const openAnalyticsMovements = (label: string, eventIds: readonly string[], month = selectedMonth) => {
+    if (month !== selectedMonth) setSelectedMonth(month);
+    setMovementEvidenceFilter({ label, eventIds });
+    setAnalyticsOpen(false);
     setTab("movements");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -377,11 +399,14 @@ export function Dashboard({
         tab={tab}
         onTabChange={setTab}
         month={selectedMonth}
-        onMonthChange={setSelectedMonth}
+        onMonthChange={(month) => {
+          setSelectedMonth(month);
+          setMovementEvidenceFilter(undefined);
+        }}
         syncing={tab === "wealth" ? wealthQuery.isFetching : eventsQuery.isFetching}
         refreshing={tab === "wealth"
           ? wealthQuery.isFetching
-          : eventsQuery.isFetching || monthlyPlanQuery.isFetching || monthlySummaryQuery.isFetching || cardsQuery.isFetching}
+          : eventsQuery.isFetching || monthlyPlanQuery.isFetching || monthlySummaryQuery.isFetching || analyticsQuery.isFetching || cardsQuery.isFetching}
         onRefresh={refresh}
         privateMode={privateMode}
         onTogglePrivateMode={togglePrivateMode}
@@ -397,7 +422,20 @@ export function Dashboard({
         }
         error={tab === "wealth" ? undefined : error}
       >
-        {tab === "summary" ? (
+        {tab === "summary" && analyticsOpen ? (
+          <AnalyticsView
+            analytics={analyticsQuery.data}
+            loading={analyticsQuery.isPending}
+            loadError={analyticsQuery.error instanceof Error
+              ? analyticsQuery.error.message
+              : analyticsQuery.error ? "No se pudo cargar el análisis." : undefined}
+            onRetry={() => {
+              void analyticsQuery.refetch();
+            }}
+            onBack={() => setAnalyticsOpen(false)}
+            onDrillDown={openAnalyticsMovements}
+          />
+        ) : tab === "summary" ? (
           <SummaryView
             month={selectedMonth}
             plan={plan}
@@ -426,6 +464,19 @@ export function Dashboard({
             onEditPayment={(payment) => setEditingPayment(payment)}
             onOpenMsiEvent={openMsiEvent}
             onReviewLargest={reviewLargest}
+            analytics={analyticsQuery.data}
+            analyticsLoading={analyticsQuery.isPending}
+            analyticsLoadError={analyticsQuery.error instanceof Error
+              ? analyticsQuery.error.message
+              : analyticsQuery.error ? "No se pudo cargar el análisis." : undefined}
+            onRetryAnalytics={() => {
+              void analyticsQuery.refetch();
+            }}
+            onOpenAnalytics={() => {
+              setAnalyticsOpen(true);
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+            onOpenAnalyticsMovements={openAnalyticsMovements}
             cards={cards}
             cardsLoading={cardsLoading}
             cardsLoadError={cardsLoadError}
@@ -495,7 +546,7 @@ export function Dashboard({
           />
         ) : (
           <MovementsView
-            events={monthEvents}
+            events={summaryEvents}
             month={selectedMonth}
             spentMinor={spentMinor}
             loading={loading}
@@ -510,6 +561,8 @@ export function Dashboard({
             onImportAmex={() => setAmexImportOpen(true)}
             onImportSantanderStatement={() => setSantanderStatementOpen(true)}
             onRegisterCharge={() => setManualOpen(true)}
+            evidenceFilter={movementEvidenceFilter}
+            onClearEvidenceFilter={() => setMovementEvidenceFilter(undefined)}
           />
         )}
       </AppShell>
@@ -605,7 +658,12 @@ export function Dashboard({
           idToken={idToken}
           demoMode={demoMode}
           onClose={() => setActiveEvent(undefined)}
-          onVerified={setActiveEvent}
+          onVerified={(event) => {
+            setActiveEvent(event);
+            void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
+          }}
         />
       )}
       {assistantOpen && (
@@ -617,6 +675,7 @@ export function Dashboard({
           onMutated={() => {
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
           }}
         />
       )}
@@ -628,6 +687,7 @@ export function Dashboard({
             setImportOpen(false);
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
           }}
         />
       )}
@@ -640,6 +700,7 @@ export function Dashboard({
             setAmexImportOpen(false);
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
           }}
         />
       )}
@@ -652,6 +713,7 @@ export function Dashboard({
             setSantanderStatementOpen(false);
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
           }}
         />
       )}
@@ -669,6 +731,7 @@ export function Dashboard({
               msiRelated: current?.msiRelated ?? [],
             }));
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
             setActiveEvent(created);
             setTab("movements");
           }}

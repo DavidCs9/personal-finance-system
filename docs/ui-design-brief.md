@@ -16,6 +16,7 @@ Las reglas operativas que deben seguir futuras implementaciones del frontend est
 5. **Meses sin intereses** — en **Resumen**, sección “Planes con fin”: cuotas del mes con total fijo, inicio y última cuota (`Merchant · cuota i/N · total · rango`). Detalle operativo en [`msi.md`](msi.md).
 6. **Gastos fijos** — servicios y suscripciones indefinidos (renta, iCloud, etc.), sin fecha de fin. Las cuotas MSI no se mezclan aquí.
 7. **Fechas de corte** — en **Resumen**, calendario del mes con día de corte y día de pago de hasta tres tarjetas. Son recordatorios de ciclo; no restan de “Te quedan” ni se mezclan con gastos fijos.
+8. **En qué se fue** — entrada compacta al análisis de categorías, comercios y contextos después de la jerarquía operativa anterior; no es una cuarta tab. Detalle en [`analytics.md`](analytics.md).
 
 El ingreso mensual (liquidez) se deriva de los XML de CFDI nómina subidos (`FechaPago` → mes). El chip **Liquidez** muestra esa cifra; tocar abre **Nómina del mes** (liquidez + compensación = liquidez + aportaciones al fondo SAT `004`, con estimado de 2ª quincena cuando aplica). Cada nómina abre un desglose centrado en liquidez, fondo, ISR e IMSS; las líneas SAT quedan colapsadas. Con una sola nómina ordinaria en el mes actual, Resumen estima la 2ª quincena. Sin XML del mes actual, la liquidez puede ser provisional a partir de ordinarias previas. Resumen (% gastado, Te quedan) usa solo liquidez, nunca compensación.
 
