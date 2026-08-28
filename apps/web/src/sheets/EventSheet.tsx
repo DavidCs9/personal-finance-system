@@ -70,6 +70,7 @@ export function EventSheet({
       setCategories([
         { id: "restaurantes", name: "Restaurantes" },
         { id: "transporte", name: "Transporte" },
+        { id: "deportes", name: "Deportes" },
         { id: "otros", name: "Otros" },
       ]);
       return;

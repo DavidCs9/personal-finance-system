@@ -96,6 +96,15 @@ describe('REST API Gateway chat event helpers', () => {
       { operationId: 'operation-3', kind: 'category_edit', action: 'applied' },
       { operationId: 'operation-4', kind: 'category_edit', action: 'applied' },
     ]);
+    expect(mutationsFromToolResult('apply_tag_edits', {
+      operations: [
+        { operationId: 'operation-5', movementCount: 1, amountMinor: 10_000, fromDay: '2026-08-21', toDay: '2026-08-21', change: { addTags: ['viaje:vegas'] } },
+        { operationId: 'operation-6', movementCount: 2, amountMinor: 20_000, fromDay: '2026-08-25', toDay: '2026-08-25', change: { removeTags: ['trabajo'] } },
+      ],
+    })).toMatchObject([
+      { operationId: 'operation-5', kind: 'tag_edit', action: 'applied' },
+      { operationId: 'operation-6', kind: 'tag_edit', action: 'applied' },
+    ]);
   });
 
   it('rejects any Cognito user other than the configured ledger owner', () => {

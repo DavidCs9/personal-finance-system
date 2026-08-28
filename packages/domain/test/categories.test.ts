@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_SPEND_CATEGORIES,
   aggregateSpendByCategory,
   normalizeMerchantKey,
   resolveCategoryId,
@@ -58,6 +59,17 @@ describe('suggestCategoryIdFromMerchant', () => {
     expect(suggestCategoryIdFromMerchant('REST SANTI MARISCOS')).toBe('restaurantes');
     expect(suggestCategoryIdFromMerchant('OXXO HDAS DE VALLE CUF')).toBe('supermercado');
     expect(suggestCategoryIdFromMerchant('ALSUPER SANTA FE ALSUPE CHIHUAHUA, CHIH')).toBe('supermercado');
+  });
+
+  it('keeps sport venues out of entertainment and health', () => {
+    expect(suggestCategoryIdFromMerchant('PADEL HOUSE CHIHUAHUA')).toBe('deportes');
+    expect(suggestCategoryIdFromMerchant('ANYTIME FITNESS')).toBe('deportes');
+  });
+});
+
+describe('DEFAULT_SPEND_CATEGORIES', () => {
+  it('includes Deportes in the fixed V1 catalog', () => {
+    expect(DEFAULT_SPEND_CATEGORIES).toContainEqual({ id: 'deportes', name: 'Deportes', sortOrder: 75 });
   });
 });
 

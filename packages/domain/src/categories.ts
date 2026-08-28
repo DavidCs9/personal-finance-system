@@ -26,6 +26,7 @@ export const DEFAULT_SPEND_CATEGORIES: readonly SpendCategory[] = [
   { id: "servicios", name: "Servicios", sortOrder: 50 },
   { id: "suscripciones", name: "Suscripciones", sortOrder: 60 },
   { id: "shopping", name: "Shopping", sortOrder: 70 },
+  { id: "deportes", name: "Deportes", sortOrder: 75 },
   { id: "entretenimiento", name: "Entretenimiento", sortOrder: 80 },
   { id: "salud", name: "Salud", sortOrder: 90 },
   { id: "viajes", name: "Viajes", sortOrder: 100 },
@@ -85,8 +86,12 @@ export const suggestCategoryIdFromMerchant = (merchantRaw: string): string | und
       "restaurantes",
     ],
     [
-      /\b(farmacia|farm simi|far guad|f ahorro|botica|hospital|doctor|dental|laboratorio|anytime fitness)/,
+      /\b(farmacia|farm simi|far guad|f ahorro|botica|hospital|doctor|dental|laboratorio)/,
       "salud",
+    ],
+    [
+      /\b(anytime fitness|fitness|gimnasio|gym|padel|playtomic|zona futbol|club campestre)/,
+      "deportes",
     ],
     [
       /\b(walmart|wal mart|soriana|chedraui|heb|costco|sam s|abarrotes|la comer|alsuper|fresh market|supercenter|gomart|carnic|carnes)|oxxo/,
@@ -102,7 +107,7 @@ export const suggestCategoryIdFromMerchant = (merchantRaw: string): string | und
       /\b(amazon|liverpool|palacio|zara|shein|mercado libre|mercadolibre|mango|veja|office max|fashion|liquor depot|japi party|globale|crzyoga|mugu studio|zap flex)/,
       "shopping",
     ],
-    [/\b(cinepolis|cinemex|steam|playstation|xbox|draftea|zona futbol|padel|playtomic|go fast|ctro cultural|club campestre)/, "entretenimiento"],
+    [/\b(cinepolis|cinemex|steam|playstation|xbox|draftea|go fast|ctro cultural)/, "entretenimiento"],
     [/\b(spei|transfer|traspaso|meses en automatico|amex msi auto|servicio de facturacion|redencion)/, "transferencias"],
     [/\b(unicef|world wildlife|world wild life|polar bear|donativo|wildlife|gobierno del estado)/, "otros"],
   ];
