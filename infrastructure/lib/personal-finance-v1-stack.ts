@@ -1278,7 +1278,11 @@ export class PersonalFinanceV1Stack extends Stack {
       userPool.userPoolProviderUrl,
       { jwtAudience: [userPoolClient.userPoolClientId] },
     );
-    const apiIntegration = new HttpLambdaIntegration('ApiLambdaIntegration', apiFunction);
+    // The API Lambda serves many routes. One API-scoped invoke permission avoids
+    // exhausting Lambda's 20 KB resource-policy limit with one statement per route.
+    const apiIntegration = new HttpLambdaIntegration('ApiLambdaIntegration', apiFunction, {
+      scopePermissionToRoute: false,
+    });
     const applePayCaptureIntegration = new HttpLambdaIntegration('ApplePayCaptureIntegration', applePayCaptureFunction);
     const agentChatIntegration = new HttpLambdaIntegration('AgentChatBufferedIntegration', agentChatBufferedFunction);
     for (const route of [
