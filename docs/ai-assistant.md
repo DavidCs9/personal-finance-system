@@ -36,7 +36,7 @@ SPA (JWT Cognito)
 - Harness, Memory y el Gateway de Web Search corren en `us-east-1`, requerido por el conector. El Gateway financiero existente, su Lambda y DynamoDB permanecen juntos en `us-east-2`; el Harness conecta ambos Gateways.
 - Code interpreter: **apagado**.
 - Memoria de conversación: AgentCore Memory conserva eventos crudos por conversación durante 365 días y hechos/preferencias durables por separado, todo aislado por Cognito `sub`. Reutilizar el mismo `sessionId` restaura el contexto del Harness. Las estrategias personalizadas de largo plazo rechazan inferencias del asistente, cálculos intermedios, saldos actuales, unidades no confirmadas y fechas inferidas; una corrección posterior del usuario reemplaza el valor anterior. Las conversaciones recientes y las memorias durables se pueden revisar y borrar por separado desde el sheet. Ninguna memoria escribe ni modifica el ledger, Resumen, proyecciones o Patrimonio.
-- CDK provisiona el Gateway de mutaciones, su target Lambda y su Policy Engine con recursos nativos de CloudFormation. El policy engine opera en `ENFORCE`, niega por defecto y sólo permite las tres acciones al rol IAM del Harness. El custom resource `OlbiaAgentCore` reconcilia Harness, Memory, finanzas y Web Search, e incorpora el ARN del Gateway de mutaciones.
+- CDK provisiona el Gateway de mutaciones, su target Lambda y su Policy Engine con recursos nativos de CloudFormation. El policy engine opera en `ENFORCE`, niega por defecto y sólo permite las seis acciones al rol IAM del Harness. El custom resource `OlbiaAgentCore` reconcilia Harness, Memory, finanzas y Web Search, e incorpora el ARN del Gateway de mutaciones.
 
 ## Prompt Management (runtime, sin deploy)
 
@@ -87,10 +87,12 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 | `wealth_snapshot` | Neto / activos / deudas (solo lectura) |
 | `investment_history` | Historial DDB de cuenta o posición Bitso/IBKR por día, rango o all-time; distingue cambio de valor de rendimiento cuando cambió la cantidad |
 | `WebSearch` | Búsqueda web administrada por AWS; conserva citas y enlaces en la respuesta |
-| `propose_recategorize` | Propone cambio individual; la UI confirma (`set_category` + regla) |
 | `preview_tag_edit` | Congela los movimientos `accepted` exactos para un cambio de tags; debe preceder inmediatamente a apply |
 | `apply_tag_edit` | Aplica en el mismo turno el snapshot congelado; la instrucción explícita del chat ya es la autorización |
 | `undo_tag_edit` | Restaura el estado anterior cuando el usuario lo pide en el chat |
+| `preview_category_edit` | Congela los movimientos `accepted` exactos para un cambio de categoría por rango; debe preceder inmediatamente a apply |
+| `apply_category_edit` | Aplica en el mismo turno el snapshot congelado; la instrucción explícita del chat ya es la autorización |
+| `undo_category_edit` | Restaura la categoría anterior cuando el usuario lo pide en el chat |
 
 ## Categorías
 
@@ -110,18 +112,18 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 - El cliente (`streamAgentChat`) aplica cada evento en orden y pinta tokens y actividad de tools conforme llegan.
 - La UI muestra un indicador compacto de razonamiento y su duración. El proxy nunca envía texto ni firmas privadas del bloque de razonamiento al browser.
 - La actividad se inserta dentro de la burbuja del asistente como una nota de trabajo compacta: cada llamada conserva nombre, estado, intento y duración. Al tocar una línea se abre su resumen legible; no se exponen inputs ni payloads crudos.
-- Un fallo de tool queda visible como dato no disponible. El agente puede seguir con una respuesta parcial. `preview_tag_edit` sólo persiste una operación owner-scoped con TTL. `apply_tag_edit` y `undo_tag_edit` están aisladas en otro Gateway/Lambda y protegidas por Cedar, IAM de mínimo privilegio, revisiones e idempotencia; no existen endpoints públicos `/bulk-edits`.
+- Un fallo de tool queda visible como dato no disponible. El agente puede seguir con una respuesta parcial. Cada preview de mutación persiste sólo una operación owner-scoped con TTL. Apply y undo de tags o categorías están aislados en otro Gateway/Lambda y protegidos por Cedar, IAM de mínimo privilegio, revisiones e idempotencia; no existen endpoints públicos `/bulk-edits`.
 
-## Tags y mutaciones desde chat
+## Tags, categorías y mutaciones desde chat
 
 - `tags` es una lista normalizada de contexto (`viaje:vegas`, `ciudad:cdmx`) independiente de `categoryId`.
 - El mismo movimiento puede tener varios tags; no afectan Resumen, proyecciones, MSI, conciliación ni Patrimonio.
-- Una petición explícita del usuario para agregar o quitar tags es la autorización del lote. No se solicita una segunda confirmación en la UI.
-- `preview_tag_edit` acepta un rango inclusivo y sólo movimientos `accepted`; rechazados quedan fuera. El agente la llama directamente, sin un `list_movements` previo, y llama `apply_tag_edit` con el `operationId` en el mismo turno.
-- El backend congela IDs, valores previos, conteo e importe antes de escribir. Cada evento recibe una revisión con el mismo `operationId`, `source=assistant_chat_tag_edit` y el dueño configurado como actor.
+- Una petición explícita del usuario para agregar o quitar tags, o cambiar una categoría por rango, es la autorización del lote. No se solicita una segunda confirmación en la UI.
+- `preview_tag_edit` y `preview_category_edit` aceptan un rango inclusivo y sólo movimientos `accepted`; rechazados quedan fuera. El agente las llama directamente, sin un `list_movements` previo, y llama su apply correspondiente con el `operationId` en el mismo turno.
+- El backend congela IDs, valores previos, conteo e importe antes de escribir. Cada evento recibe una revisión con el mismo `operationId`, `source=assistant_chat_tag_edit` o `source=assistant_chat_category_edit` y el dueño configurado como actor.
 - La UI recibe un evento SSE `mutation`, refresca el ledger y muestra un recibo factual sin botones de confirmación. Undo se solicita por chat y usa la misma operación congelada.
 - Si el evento cambió después del preview, DynamoDB cancela la transacción y exige generar uno nuevo.
-- El Gateway directo sólo expone tags. Las categorías siguen usando `propose_recategorize` y confirmación en la UI; nunca entran en estas tools ni crean reglas por rango.
+- El Gateway directo expone contracts separados para tags y categorías. La tool de categorías sólo acepta `categoryId`, nunca tags ni reglas de comercio; una edición por rango no crea ni actualiza reglas de comercio.
 - La Lambda de chat compara el Cognito `sub` con `AgentOwnerSub` antes de invocar el Harness. La Lambda de mutación usa ese mismo owner fijo y nunca acepta un owner del modelo.
 - Errores: 1–2 reintentos silenciosos en harness; luego mensaje corto + `requestId`.
 

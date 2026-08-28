@@ -13,10 +13,11 @@ const MAX_BULK_EVENTS = 49;
 const PREVIEW_TTL_SECONDS = 15 * 60;
 
 type BulkEditAudit = {
-  readonly source: 'assistant_confirmed_bulk' | 'assistant_chat_tag_edit';
+  readonly source: 'assistant_confirmed_bulk' | 'assistant_chat_tag_edit' | 'assistant_chat_category_edit';
   readonly applyReason: string;
   readonly undoReason: string;
   readonly tagsOnly?: boolean;
+  readonly categoriesOnly?: boolean;
 };
 
 const confirmedBulkAudit: BulkEditAudit = {
@@ -30,6 +31,13 @@ const assistantTagAudit: BulkEditAudit = {
   applyReason: 'Tags aplicados desde el chat del asistente.',
   undoReason: 'Tags restaurados desde el chat del asistente.',
   tagsOnly: true,
+};
+
+const assistantCategoryAudit: BulkEditAudit = {
+  source: 'assistant_chat_category_edit',
+  applyReason: 'Categoría aplicada desde el chat del asistente.',
+  undoReason: 'Categoría restaurada desde el chat del asistente.',
+  categoriesOnly: true,
 };
 
 export class InvalidBulkEditError extends Error {}
@@ -309,9 +317,10 @@ const revisionPut = (
   const nextTags = direction === 'apply' ? snapshot.nextTags : snapshot.previousTags;
   const previousCategoryId = direction === 'apply' ? snapshot.previousCategoryId : snapshot.nextCategoryId;
   const nextCategoryId = direction === 'apply' ? snapshot.nextCategoryId : snapshot.previousCategoryId;
-  const changes: Record<string, { previous: unknown; next: unknown }> = {
-    tags: { previous: previousTags, next: nextTags },
-  };
+  const changes: Record<string, { previous: unknown; next: unknown }> = {};
+  if (JSON.stringify(previousTags) !== JSON.stringify(nextTags)) {
+    changes.tags = { previous: previousTags, next: nextTags };
+  }
   if (previousCategoryId !== nextCategoryId) {
     changes.categoryId = { previous: previousCategoryId, next: nextCategoryId };
   }
@@ -348,6 +357,12 @@ const transactOperation = async (
   const operation = await getOperation(owner, operationId);
   if (audit.tagsOnly && Object.prototype.hasOwnProperty.call(operation.change, 'categoryId')) {
     throw new InvalidBulkEditError('La tool del asistente sólo puede modificar tags.');
+  }
+  if (audit.categoriesOnly && (
+    Object.prototype.hasOwnProperty.call(operation.change, 'addTags')
+    || Object.prototype.hasOwnProperty.call(operation.change, 'removeTags')
+  )) {
+    throw new InvalidBulkEditError('La tool del asistente sólo puede modificar categorías.');
   }
   if (direction === 'apply' && operation.status === 'applied') return publicPreview(operation);
   if (direction === 'undo' && operation.status === 'undone') return publicPreview(operation);
@@ -426,4 +441,30 @@ export const undoAgentTagEdit = (
   'undo',
   now,
   assistantTagAudit,
+);
+
+export const applyAgentCategoryEdit = (
+  owner: string,
+  operationId: string,
+  now?: Date,
+): Promise<BulkEditPreview> => transactOperation(
+  owner,
+  operationId,
+  owner,
+  'apply',
+  now,
+  assistantCategoryAudit,
+);
+
+export const undoAgentCategoryEdit = (
+  owner: string,
+  operationId: string,
+  now?: Date,
+): Promise<BulkEditPreview> => transactOperation(
+  owner,
+  operationId,
+  owner,
+  'undo',
+  now,
+  assistantCategoryAudit,
 );

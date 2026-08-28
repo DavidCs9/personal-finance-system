@@ -7,6 +7,9 @@ describe('AgentCore tag mutation target schema', () => {
       'preview_tag_edit',
       'apply_tag_edit',
       'undo_tag_edit',
+      'preview_category_edit',
+      'apply_category_edit',
+      'undo_category_edit',
     ]);
     expect(cloudFormationTagMutationTools[0]).toMatchObject({
       Name: 'preview_tag_edit',
@@ -21,5 +24,12 @@ describe('AgentCore tag mutation target schema', () => {
     });
     expect(cloudFormationTagMutationTools[0]).not.toHaveProperty('name');
     expect(cloudFormationTagMutationTools[0]).not.toHaveProperty('inputSchema');
+    expect(cloudFormationTagMutationTools[3]).toMatchObject({
+      Name: 'preview_category_edit',
+      InputSchema: {
+        Required: ['fromDay', 'toDay', 'categoryId'],
+        Properties: { categoryId: { Type: 'string' } },
+      },
+    });
   });
 });

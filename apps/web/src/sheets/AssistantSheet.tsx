@@ -22,7 +22,9 @@ const assistantMonthLabel = (month: string): string => new Intl.DateTimeFormat("
   timeZone: "UTC",
 }).format(new Date(`${month}-01T00:00:00Z`));
 
-const tagChangeLabel = (change: Extract<AgentChatEvent, { type: "mutation" }>["change"]): string => {
+const mutationChangeLabel = (mutation: Extract<AgentChatEvent, { type: "mutation" }>): string => {
+  if (mutation.kind === "category_edit") return `Categoría ${mutation.change.categoryId ?? "sin categoría"}`;
+  const { change } = mutation;
   const parts = [
     ...(change.addTags?.length ? [`Agregar ${change.addTags.join(", ")}`] : []),
     ...(change.removeTags?.length ? [`Quitar ${change.removeTags.join(", ")}`] : []),
@@ -61,7 +63,6 @@ type ChatMessage = {
   readonly text?: string;
   readonly parts?: readonly AssistantPart[];
   readonly citations?: readonly { readonly kind: string; readonly id?: string; readonly label: string }[];
-  readonly proposal?: { readonly kind: "recategorize"; readonly eventId: string; readonly categoryId: string; readonly message: string };
   readonly mutation?: Extract<AgentChatEvent, { type: "mutation" }>;
   readonly requestId?: string;
 };
@@ -276,7 +277,6 @@ export function AssistantSheet({
 
     const parts: AssistantPart[] = [];
     const citations: { kind: string; id?: string; label: string }[] = [];
-    let proposal: ChatMessage["proposal"];
     let mutation: ChatMessage["mutation"];
     let latestRequestId: string | undefined;
     const receivedMutations = new Set<string>();
@@ -288,7 +288,6 @@ export function AssistantSheet({
           role: "assistant",
           parts: [...parts],
           citations: [...citations],
-          proposal,
           mutation,
           requestId: latestRequestId,
         };
@@ -406,15 +405,6 @@ export function AssistantSheet({
             citations.push({ kind: event.kind, id: event.id, label: event.label });
             publish();
           }
-          if (event.type === "proposal") {
-            proposal = {
-              kind: "recategorize",
-              eventId: event.eventId,
-              categoryId: event.categoryId,
-              message: event.message,
-            };
-            publish();
-          }
           if (event.type === "mutation") {
             mutation = event;
             const mutationKey = `${event.action}:${event.operationId}`;
@@ -476,27 +466,6 @@ export function AssistantSheet({
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
     void send(draft);
-  };
-
-  const confirmProposal = async (proposal: NonNullable<ChatMessage["proposal"]>) => {
-    if (demoMode) return;
-    setBusy(true);
-    try {
-      await ledgerApi.setEventCategory(
-        proposal.eventId,
-        { categoryId: proposal.categoryId, updateRule: true },
-        idToken,
-      );
-      setMessages((current) => [
-        ...current,
-        { role: "assistant", parts: [{ kind: "text", text: `Listo: categoría ${proposal.categoryId} confirmada.` }] },
-      ]);
-      onMutated();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo confirmar el cambio.");
-    } finally {
-      setBusy(false);
-    }
   };
 
   if (memoriesOpen) {
@@ -597,26 +566,15 @@ export function AssistantSheet({
                   ))}
                 </div>
               )}
-              {message.proposal && (
-                <div className="assistant-proposal">
-                  <p>{message.proposal.message}</p>
-                  <button
-                    type="button"
-                    className="primary-button"
-                    disabled={busy}
-                    onClick={() => void confirmProposal(message.proposal!)}
-                  >
-                    Confirmar categoría
-                  </button>
-                </div>
-              )}
               {message.mutation && (
                 <div className="assistant-proposal">
                   <p>
-                    {message.mutation.action === "applied" ? "Etiquetas actualizadas" : "Edición deshecha"}
+                    {message.mutation.action === "applied"
+                      ? message.mutation.kind === "category_edit" ? "Categoría actualizada" : "Etiquetas actualizadas"
+                      : "Edición deshecha"}
                     {" · "}{message.mutation.movementCount} movimientos · <Amt>{money(message.mutation.amountMinor)}</Amt>
                   </p>
-                  <small>{message.mutation.fromDay}–{message.mutation.toDay} · {tagChangeLabel(message.mutation.change)}</small>
+                  <small>{message.mutation.fromDay}–{message.mutation.toDay} · {mutationChangeLabel(message.mutation)}</small>
                   <small>Puedes pedir “deshaz ese cambio” en el chat.</small>
                 </div>
               )}
@@ -940,7 +898,9 @@ function ToolIcon({ name }: { readonly name: string }) {
       return <svg {...props}><path d="M4 8h13m0 0-3-3m3 3-3 3M20 16H7m0 0 3-3m-3 3 3 3" /></svg>;
     case "wealth_snapshot":
       return <svg {...props}><path d="M3 5h18M12 5v15M7 9l-3 5h6L7 9Zm10 0-3 5h6l-3-5ZM8 20h8" /></svg>;
-    case "propose_recategorize":
+    case "preview_category_edit":
+    case "apply_category_edit":
+    case "undo_category_edit":
       return <svg {...props}><path d="m5 18 1-4L16.5 3.5a2.1 2.1 0 0 1 3 3L9 17l-4 1Z" /><path d="m14.5 5.5 4 4" /></svg>;
     default:
       return <svg {...props}><circle cx="10.5" cy="10.5" r="5.5" /><path d="m15 15 4 4" /></svg>;

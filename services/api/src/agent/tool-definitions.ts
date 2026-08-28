@@ -136,20 +136,6 @@ export const TOOL_DEFINITIONS = [
       },
     },
   },
-  {
-    name: 'propose_recategorize',
-    description:
-      'Propone recategorizar un movimiento. No aplica el cambio; la UI debe confirmar.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        eventId: { type: 'string' },
-        categoryId: { type: 'string' },
-        merchantRaw: { type: 'string' },
-      },
-      required: ['eventId', 'categoryId'],
-    },
-  },
 ] as const;
 
 export type AgentToolName = (typeof TOOL_DEFINITIONS)[number]['name'];

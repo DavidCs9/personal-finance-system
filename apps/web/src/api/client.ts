@@ -657,8 +657,7 @@ export type AgentChatEvent =
   | { readonly type: "tool_complete"; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly summary?: string; readonly material: boolean }
   | { readonly type: "tool_failed"; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly message: string }
   | { readonly type: "citation"; readonly kind: string; readonly id?: string; readonly label: string }
-  | { readonly type: "proposal"; readonly kind: "recategorize"; readonly eventId: string; readonly categoryId: string; readonly message: string }
-  | { readonly type: "mutation"; readonly kind: "tag_edit"; readonly action: "applied" | "undone"; readonly operationId: string; readonly movementCount: number; readonly amountMinor: number; readonly fromDay: string; readonly toDay: string; readonly change: { readonly addTags?: readonly string[]; readonly removeTags?: readonly string[] } }
+  | { readonly type: "mutation"; readonly kind: "tag_edit" | "category_edit"; readonly action: "applied" | "undone"; readonly operationId: string; readonly movementCount: number; readonly amountMinor: number; readonly fromDay: string; readonly toDay: string; readonly change: { readonly addTags?: readonly string[]; readonly removeTags?: readonly string[]; readonly categoryId?: string | null } }
   | { readonly type: "done"; readonly requestId: string; readonly sessionId: string }
   | { readonly type: "error"; readonly message: string; readonly requestId: string };
 
