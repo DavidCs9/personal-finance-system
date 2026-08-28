@@ -1,7 +1,10 @@
 import {
+  applyAgentCategoryEdits,
   applyAgentCategoryEdit,
   applyAgentTagEdit,
+  parseAgentCategoryEditInput,
   parseBulkEditInput,
+  previewAgentCategoryEdit,
   previewBulkEdit,
   undoAgentCategoryEdit,
   undoAgentTagEdit,
@@ -17,6 +20,11 @@ const operationIdFrom = (input: Record<string, unknown>): string => {
   const operationId = typeof input.operationId === 'string' ? input.operationId.trim() : '';
   if (!operationId) throw new Error('operationId es obligatorio.');
   return operationId;
+};
+
+const operationIdsFrom = (input: Record<string, unknown>): readonly string[] => {
+  if (!Array.isArray(input.operationIds)) throw new Error('operationIds es obligatorio.');
+  return input.operationIds.map((operationId) => typeof operationId === 'string' ? operationId : '');
 };
 
 export const runTagMutationTool = async (
@@ -42,18 +50,13 @@ export const runTagMutationTool = async (
     case 'undo_tag_edit':
       return undoAgentTagEdit(owner, operationIdFrom(input));
     case 'preview_category_edit':
-      return previewBulkEdit(owner, parseBulkEditInput({
-        selection: {
-          fromDay: input.fromDay,
-          toDay: input.toDay,
-          statuses: ['accepted'],
-        },
-        change: { categoryId: input.categoryId },
-      }));
+      return previewAgentCategoryEdit(owner, parseAgentCategoryEditInput(input));
     case 'apply_category_edit':
       return applyAgentCategoryEdit(owner, operationIdFrom(input));
     case 'undo_category_edit':
       return undoAgentCategoryEdit(owner, operationIdFrom(input));
+    case 'apply_category_edits':
+      return applyAgentCategoryEdits(owner, operationIdsFrom(input));
     default:
       throw new Error(`Tool de mutación desconocida: ${name}`);
   }

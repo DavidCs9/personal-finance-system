@@ -179,6 +179,7 @@ const toolLabel = (name: string): string => {
     case 'undo_tag_edit': return 'Restaurando los tags';
     case 'preview_category_edit': return 'Preparando las categorías';
     case 'apply_category_edit': return 'Aplicando las categorías';
+    case 'apply_category_edits': return 'Aplicando el lote de categorías';
     case 'undo_category_edit': return 'Restaurando las categorías';
     default: return 'Consultando datos';
   }
@@ -290,6 +291,7 @@ export const summarizeToolResult = (
       };
     case 'apply_tag_edit':
     case 'apply_category_edit':
+    case 'apply_category_edits':
       return {
         summary: `Actualicé ${Number(payload.movementCount ?? 0)} movimientos.`,
         material: true,
@@ -317,17 +319,16 @@ const tryParseJsonObject = (raw: string): Record<string, unknown> | undefined =>
   return undefined;
 };
 
-export const mutationFromToolResult = (
-  toolName: string | undefined,
+const mutationFromPreview = (
+  kind: 'tag_edit' | 'category_edit',
+  action: 'applied' | 'undone',
   payload: Record<string, unknown>,
 ): Extract<AgentSseEvent, { readonly type: 'mutation' }> | undefined => {
-  if ((toolName !== 'apply_tag_edit' && toolName !== 'undo_tag_edit'
-    && toolName !== 'apply_category_edit' && toolName !== 'undo_category_edit')
-    || typeof payload.operationId !== 'string') return undefined;
+  if (typeof payload.operationId !== 'string') return undefined;
   return {
     type: 'mutation',
-    kind: toolName.includes('category') ? 'category_edit' : 'tag_edit',
-    action: toolName === 'apply_tag_edit' || toolName === 'apply_category_edit' ? 'applied' : 'undone',
+    kind,
+    action,
     operationId: payload.operationId,
     movementCount: Number(payload.movementCount ?? 0),
     amountMinor: Number(payload.amountMinor ?? 0),
@@ -338,6 +339,37 @@ export const mutationFromToolResult = (
       : {},
   };
 };
+
+export const mutationsFromToolResult = (
+  toolName: string | undefined,
+  payload: Record<string, unknown>,
+): readonly Extract<AgentSseEvent, { readonly type: 'mutation' }>[] => {
+  if (toolName === 'apply_category_edits' && Array.isArray(payload.operations)) {
+    const mutations: Extract<AgentSseEvent, { readonly type: 'mutation' }>[] = [];
+    for (const operation of payload.operations) {
+      if (!operation || typeof operation !== 'object') continue;
+      const mutation = mutationFromPreview('category_edit', 'applied', operation as Record<string, unknown>);
+      if (mutation) mutations.push(mutation);
+    }
+    return mutations;
+  }
+  const mutation = toolName === 'apply_tag_edit'
+    ? mutationFromPreview('tag_edit', 'applied', payload)
+    : toolName === 'undo_tag_edit'
+      ? mutationFromPreview('tag_edit', 'undone', payload)
+      : toolName === 'apply_category_edit'
+        ? mutationFromPreview('category_edit', 'applied', payload)
+        : toolName === 'undo_category_edit'
+          ? mutationFromPreview('category_edit', 'undone', payload)
+          : undefined;
+  if (mutation) return [mutation];
+  return [];
+};
+
+export const mutationFromToolResult = (
+  toolName: string | undefined,
+  payload: Record<string, unknown>,
+): Extract<AgentSseEvent, { readonly type: 'mutation' }> | undefined => mutationsFromToolResult(toolName, payload)[0];
 
 async function* invokeHarnessStream(
   owner: string,
@@ -488,8 +520,7 @@ async function* invokeHarnessStream(
             : toolResultByIndex.get(toolResultIndex);
           if (result) result.payload = payload;
           const active = result ? activeTools.get(result.toolUseId) : undefined;
-          const mutation = mutationFromToolResult(active?.name, payload);
-          if (mutation) {
+          for (const mutation of mutationsFromToolResult(active?.name, payload)) {
             const key = `${mutation.action}:${mutation.operationId}`;
             if (!emittedMutations.has(key)) {
               emittedMutations.add(key);
@@ -505,8 +536,7 @@ async function* invokeHarnessStream(
               : toolResultByIndex.get(toolResultIndex);
             if (result) result.payload = parsed;
             const active = result ? activeTools.get(result.toolUseId) : undefined;
-            const mutation = mutationFromToolResult(active?.name, parsed);
-            if (mutation) {
+            for (const mutation of mutationsFromToolResult(active?.name, parsed)) {
               const key = `${mutation.action}:${mutation.operationId}`;
               if (!emittedMutations.has(key)) {
                 emittedMutations.add(key);

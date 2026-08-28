@@ -589,7 +589,7 @@ export class PersonalFinanceV1Stack extends Stack {
       type: 'AWS::BedrockAgentCore::Policy',
       properties: {
         Name: 'OlbiaTagMutationPermit',
-        Description: 'Only the Olbia harness role can call the six tag and category mutation tools.',
+        Description: 'Only the Olbia harness role can call the seven tag and category mutation tools.',
         PolicyEngineId: tagMutationPolicyEngine.getAtt('PolicyEngineId'),
         EnforcementMode: 'ACTIVE',
         ValidationMode: 'FAIL_ON_ANY_FINDINGS',
@@ -604,7 +604,8 @@ export class PersonalFinanceV1Stack extends Stack {
               '    AgentCore::Action::"olbia-tag-mutations___undo_tag_edit",\n',
               '    AgentCore::Action::"olbia-tag-mutations___preview_category_edit",\n',
               '    AgentCore::Action::"olbia-tag-mutations___apply_category_edit",\n',
-              '    AgentCore::Action::"olbia-tag-mutations___undo_category_edit"\n',
+              '    AgentCore::Action::"olbia-tag-mutations___undo_category_edit",\n',
+              '    AgentCore::Action::"olbia-tag-mutations___apply_category_edits"\n',
               '  ],\n  resource == AgentCore::Gateway::"',
               tagMutationGateway.getAtt('GatewayArn').toString(),
               '"\n);',
