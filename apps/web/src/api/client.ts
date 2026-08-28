@@ -62,6 +62,21 @@ export interface AssistantMemory {
   readonly createdAt: string;
 }
 
+export interface AssistantThread {
+  readonly id: string;
+  readonly title: string;
+  readonly firstMonth: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface AssistantThreadMessage {
+  readonly id: string;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  readonly createdAt: string;
+}
+
 declare global {
   interface Window { __LEDGER_CONFIG__?: LedgerRuntimeConfig; }
 }
@@ -217,6 +232,28 @@ export const ledgerApi = {
   },
   async deleteAssistantMemory(memoryId: string, idToken: string): Promise<void> {
     await request(`/agent/memories/${encodeURIComponent(memoryId)}`, idToken, { method: "DELETE" });
+  },
+  async listAssistantThreads(idToken: string): Promise<{
+    readonly threads: readonly AssistantThread[];
+    readonly activeThreadId?: string;
+  }> {
+    return request("/agent/threads", idToken);
+  },
+  async getAssistantThread(threadId: string, idToken: string): Promise<{
+    readonly thread: AssistantThread;
+    readonly messages: readonly AssistantThreadMessage[];
+  }> {
+    return request(`/agent/threads/${encodeURIComponent(threadId)}`, idToken);
+  },
+  async setActiveAssistantThread(threadId: string | undefined, idToken: string): Promise<void> {
+    await request("/agent/threads/active", idToken, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threadId: threadId ?? null }),
+    });
+  },
+  async deleteAssistantThread(threadId: string, idToken: string): Promise<void> {
+    await request(`/agent/threads/${encodeURIComponent(threadId)}`, idToken, { method: "DELETE" });
   },
   async listExceptions(idToken: string): Promise<{ exceptions: readonly IngestionException[] }> {
     return request<{ exceptions: readonly IngestionException[] }>("/exceptions", idToken);

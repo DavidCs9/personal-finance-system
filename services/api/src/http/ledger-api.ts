@@ -70,6 +70,13 @@ import {
 } from '../agent/aggregates.js';
 import { deleteAssistantMemory, listAssistantMemories } from '../agent/memory.js';
 import {
+  activateOwnerAssistantThread,
+  deleteOwnerAssistantThread,
+  getOwnerAssistantThread,
+  listOwnerAssistantThreads,
+} from '../agent/thread-runtime.js';
+import { InvalidAssistantThreadError, parseActiveAssistantThreadInput } from '../agent/threads.js';
+import {
   deletePushSubscription,
   InvalidPushSubscriptionError,
   listOwnerPushSubscriptions,
@@ -106,6 +113,7 @@ const clientErrors = [
   InvalidCategoryError,
   InvalidAgentQueryError,
   InvalidEventTagError,
+  InvalidAssistantThreadError,
 ] as const;
 
 app.errorHandler([...clientErrors], async (error) =>
@@ -182,6 +190,26 @@ app.get('/agent/memories', async ({ event }) =>
 
 app.delete('/agent/memories/:memoryId', async ({ event, params }) => {
   await deleteAssistantMemory(ownerOf(asHttpEvent(event)), params.memoryId);
+  return json(HttpStatusCodes.OK, { deleted: true });
+});
+
+app.get('/agent/threads', async ({ event }) =>
+  json(HttpStatusCodes.OK, await listOwnerAssistantThreads(ownerOf(asHttpEvent(event)))),
+);
+
+app.put('/agent/threads/active', async ({ event }) => {
+  const owner = ownerOf(asHttpEvent(event));
+  const threadId = parseActiveAssistantThreadInput(requestBody(asHttpEvent(event)));
+  await activateOwnerAssistantThread(owner, threadId);
+  return json(HttpStatusCodes.OK, { activeThreadId: threadId ?? null });
+});
+
+app.get('/agent/threads/:threadId', async ({ event, params }) =>
+  json(HttpStatusCodes.OK, await getOwnerAssistantThread(ownerOf(asHttpEvent(event)), params.threadId)),
+);
+
+app.delete('/agent/threads/:threadId', async ({ event, params }) => {
+  await deleteOwnerAssistantThread(ownerOf(asHttpEvent(event)), params.threadId);
   return json(HttpStatusCodes.OK, { deleted: true });
 });
 

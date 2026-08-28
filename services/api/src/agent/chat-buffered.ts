@@ -8,6 +8,7 @@ import {
   readBody,
   resolveOwner,
 } from './chat-core.js';
+import { prepareAssistantThread } from './thread-runtime.js';
 
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   const requestId = event.requestContext.requestId || randomUUID();
@@ -25,6 +26,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const owner = await resolveOwner(event);
     assertConfiguredAgentOwner(owner);
     const body = parseChatBody(readBody(event));
+    await prepareAssistantThread(owner, body.sessionId, body.message, body.month);
     const events = await collectAgentChat(owner, body.month, body.message, body.sessionId, requestId);
     return {
       statusCode: 200,

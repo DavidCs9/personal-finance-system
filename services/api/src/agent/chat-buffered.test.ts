@@ -18,7 +18,12 @@ vi.mock('./chat-core.js', () => ({
   ]),
 }));
 
+vi.mock('./thread-runtime.js', () => ({
+  prepareAssistantThread: vi.fn(async () => ({ id: '11111111-1111-1111-1111-111111111111' })),
+}));
+
 import { assertConfiguredAgentOwner, collectAgentChat, resolveOwner } from './chat-core.js';
+import { prepareAssistantThread } from './thread-runtime.js';
 import { handler } from './chat-buffered.js';
 
 const baseEvent = (): APIGatewayProxyEventV2 => ({
@@ -71,6 +76,12 @@ describe('agent chat buffered handler', () => {
     expect(collectAgentChat).toHaveBeenCalledOnce();
     expect(resolveOwner).toHaveBeenCalledOnce();
     expect(assertConfiguredAgentOwner).toHaveBeenCalledWith('owner-sub');
+    expect(prepareAssistantThread).toHaveBeenCalledWith(
+      'owner-sub',
+      '11111111-1111-1111-1111-111111111111',
+      'hola',
+      '2026-08',
+    );
   });
 
   it('rejects non-POST', async () => {

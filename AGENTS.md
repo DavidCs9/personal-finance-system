@@ -20,7 +20,7 @@ Prefer the native capability when it provides the required behavior, reliability
 ## AWS local access
 
 - Use `aws login` credentials for interactive local AWS access. Verify the active identity with `aws sts get-caller-identity` immediately before any production operation.
-- Never replace an expired or broken login session with permanent access keys. If automatic refresh fails, request confirmation and run `aws login` again.
+- When AWS authentication is needed for an in-scope task, or the user explicitly asks to log in, infer authorization and run `aws login` without requesting separate confirmation unless the user explicitly says not to. Never replace an expired or broken login session with permanent access keys.
 - Keep production data changes auditable: use an already-deployed application/API capability when one exists. Do not write directly to DynamoDB to bypass domain mutations, revision history, validation, or authentication.
 
 ## Production deployment

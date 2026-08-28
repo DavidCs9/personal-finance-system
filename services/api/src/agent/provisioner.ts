@@ -160,6 +160,7 @@ const isNotFound = (error: unknown): boolean => {
 
 const VERIFIED_FACTS_STRATEGY = 'OlbiaVerifiedFacts';
 const VERIFIED_PREFERENCES_STRATEGY = 'OlbiaVerifiedPreferences';
+const CONVERSATION_EVENT_RETENTION_DAYS = 365;
 
 const verifiedMemoryStrategies = (modelId: string) => ([
   {
@@ -286,10 +287,15 @@ const reconcileVerifiedMemory = async (input: {
     );
     memory = ready.memory;
     if (!memory) throw new Error('Memory active after strategy add without details.');
-  } else if (memory.memoryExecutionRoleArn !== input.executionRoleArn) {
+  }
+  if (
+    memory.memoryExecutionRoleArn !== input.executionRoleArn
+    || memory.eventExpiryDuration !== CONVERSATION_EVENT_RETENTION_DAYS
+  ) {
     await control.send(new UpdateMemoryCommand({
       memoryId: input.memoryId,
       memoryExecutionRoleArn: input.executionRoleArn,
+      eventExpiryDuration: CONVERSATION_EVENT_RETENTION_DAYS,
     }));
     const ready = await waitUntil(
       'memory-role-update',
@@ -297,7 +303,12 @@ const reconcileVerifiedMemory = async (input: {
         const current = await control.send(new GetMemoryCommand({ memoryId: input.memoryId }));
         return {
           status: current.memory?.status === 'ACTIVE'
-            ? (current.memory.memoryExecutionRoleArn === input.executionRoleArn ? 'ACTIVE' : 'UPDATING_ROLE')
+            ? (
+              current.memory.memoryExecutionRoleArn === input.executionRoleArn
+              && current.memory.eventExpiryDuration === CONVERSATION_EVENT_RETENTION_DAYS
+                ? 'ACTIVE'
+                : 'UPDATING_MEMORY'
+            )
             : current.memory?.status,
           memory: current.memory,
         };
@@ -398,8 +409,8 @@ const ensureMemory = async (input: {
   const created = await control.send(new CreateMemoryCommand({
     name: input.name,
     description: 'Durable, user-scoped conversational memory for the Olbia assistant.',
-    // Raw events are short-lived; extracted long-term facts persist until the user deletes them.
-    eventExpiryDuration: 30,
+    // A year keeps useful conversations resumable without duplicating provider-managed transcripts.
+    eventExpiryDuration: CONVERSATION_EVENT_RETENTION_DAYS,
     memoryExecutionRoleArn: input.executionRoleArn,
     memoryStrategies: verifiedMemoryStrategies(input.modelId),
   }));

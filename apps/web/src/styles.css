@@ -84,6 +84,10 @@ html.private-mode .amt {
   user-select: none;
   transition: filter .15s ease;
 }
+html.private-mode .private-sensitive {
+  filter: blur(7px);
+  user-select: none;
+}
 html.private-mode .hero-amount .amt {
   /* Large hero type needs denser cover than filter blur alone. */
   color: transparent;
@@ -91,7 +95,8 @@ html.private-mode .hero-amount .amt {
   filter: none;
 }
 @media (prefers-reduced-motion: reduce) {
-  html.private-mode .amt { transition: none; }
+  html.private-mode .amt,
+  html.private-mode .private-sensitive { transition: none; }
 }
 
 .desktop-tabs { display: none; }
@@ -803,9 +808,17 @@ html.private-mode .hero-amount .amt {
 .category-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid #e7e1d8; border-radius: 4px; font-size: 10px; letter-spacing: .03em; color: var(--ink-soft); font-weight: 500; }
 
 .assistant-sheet { display: grid; gap: 14px; }
+.assistant-context-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .assistant-month-chip { margin: 0; font-size: 13px; color: var(--ink-soft); }
-.assistant-memory-link { justify-self: start; border: 0; padding: 0; background: transparent; color: var(--ink-soft); font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+.assistant-nav-links { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.assistant-memory-link { min-height: 36px; border: 0; padding: 5px 0; background: transparent; color: var(--ink-soft); font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
 .assistant-memory-link:hover { color: var(--ink); }
+.assistant-new-thread { min-height: 40px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); color: var(--ink-soft); padding: 8px 11px; font-size: 11px; font-weight: 700; }
+.assistant-new-thread:disabled { opacity: .55; }
+.assistant-history-state { margin: 28px 0; color: var(--muted); font-size: 13px; text-align: center; }
+.assistant-history-error { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid #e9b6ae; border-radius: 10px; background: #f9e4e0; padding: 10px 12px; color: var(--red-dark); }
+.assistant-history-error p { margin: 0; font-size: 12px; line-height: 1.4; }
+.assistant-history-error .text-button { min-height: 40px; color: var(--red-dark); font-weight: 700; }
 .assistant-memories-sheet {
   display: flex;
   flex-direction: column;
@@ -863,6 +876,15 @@ html.private-mode .hero-amount .amt {
 .assistant-memories-error { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; border: 1px solid #e9b6ae; border-radius: 10px; color: var(--red-dark); background: #f9e4e0; padding: 9px 10px 9px 13px; }
 .assistant-memories-error p { margin: 0; font-size: 12px; line-height: 1.4; }
 .assistant-memories-error .text-button { flex: 0 0 auto; min-height: 40px; color: var(--red-dark); font-weight: 700; }
+.assistant-threads-intro { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 14px; margin-bottom: 17px; }
+.assistant-threads-intro p { margin: 0; color: var(--ink-soft); font-size: 13px; line-height: 1.5; }
+.assistant-threads-intro .secondary-button { min-height: 44px; white-space: nowrap; }
+.assistant-threads-list li { gap: 10px; }
+.assistant-threads-list li.active { border-color: #8e8376; }
+.assistant-thread-open { display: grid; gap: 6px; width: 100%; border: 0; background: transparent; padding: 0; color: var(--ink); text-align: left; }
+.assistant-thread-open > span { overflow: hidden; font: 600 15px/1.35 "Fraunces", serif; text-overflow: ellipsis; white-space: nowrap; }
+.assistant-thread-open > small { color: var(--muted); font-size: 11px; line-height: 1.35; }
+.assistant-thread-open:disabled { opacity: .55; }
 .assistant-examples { display: grid; gap: 8px; }
 .assistant-examples > p { margin: 0; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); }
 .assistant-example { text-align: left; border: 1px solid #e7e1d8; background: #f8f4ed; color: var(--ink); padding: 12px 14px; border-radius: 10px; }
