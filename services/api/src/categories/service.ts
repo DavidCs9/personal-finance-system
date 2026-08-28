@@ -25,13 +25,15 @@ export const listCategories = async (): Promise<readonly SpendCategory[]> => {
     ExpressionAttributeValues: { ':pk': CATALOG_PK, ':sk': 'CAT#' },
   }));
   const items = (result.Items ?? []) as CatalogItem[];
-  if (items.length === 0) return DEFAULT_SPEND_CATEGORIES;
-  return items
-    .map((item) => ({
+  const categories = new Map(DEFAULT_SPEND_CATEGORIES.map((category) => [category.id, category]));
+  for (const item of items) {
+    categories.set(item.id, {
       id: item.id,
       name: item.name,
       sortOrder: item.sortOrder,
-    }))
+    });
+  }
+  return [...categories.values()]
     .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name, 'es'));
 };
 

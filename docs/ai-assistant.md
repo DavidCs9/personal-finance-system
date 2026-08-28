@@ -98,7 +98,7 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 
 ## Categorías
 
-- Catálogo fijo V1 + mapa comercio→categoría en DynamoDB (`CATEGORY_CATALOG`, `CATEGORY_RULES`).
+- Catálogo fijo V1 (incluye `Deportes`) + mapa comercio→categoría en DynamoDB (`CATEGORY_CATALOG`, `CATEGORY_RULES`).
 - `categoryId` en el payload del evento; `null`/ausente = Sin categoría.
 - Seed: `infrastructure/scripts/propose-category-seed.ts` (aprobar con `--apply`).
 - Backfill: `infrastructure/scripts/backfill-event-categories.ts`.
