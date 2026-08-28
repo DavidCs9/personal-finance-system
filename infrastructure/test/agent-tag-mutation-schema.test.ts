@@ -10,6 +10,7 @@ describe('AgentCore tag mutation target schema', () => {
       'preview_category_edit',
       'apply_category_edit',
       'undo_category_edit',
+      'apply_category_edits',
     ]);
     expect(cloudFormationTagMutationTools[0]).toMatchObject({
       Name: 'preview_tag_edit',
@@ -27,8 +28,12 @@ describe('AgentCore tag mutation target schema', () => {
     expect(cloudFormationTagMutationTools[3]).toMatchObject({
       Name: 'preview_category_edit',
       InputSchema: {
-        Required: ['fromDay', 'toDay', 'categoryId'],
-        Properties: { categoryId: { Type: 'string' } },
+        Required: ['categoryId'],
+        Properties: {
+          categoryId: { Type: 'string' },
+          eventIds: { Type: 'array', Items: { Type: 'string' } },
+          onlyUncategorized: { Type: 'boolean' },
+        },
       },
     });
   });

@@ -63,7 +63,7 @@ type ChatMessage = {
   readonly text?: string;
   readonly parts?: readonly AssistantPart[];
   readonly citations?: readonly { readonly kind: string; readonly id?: string; readonly label: string }[];
-  readonly mutation?: Extract<AgentChatEvent, { type: "mutation" }>;
+  readonly mutations?: readonly Extract<AgentChatEvent, { type: "mutation" }>[];
   readonly requestId?: string;
 };
 
@@ -277,7 +277,7 @@ export function AssistantSheet({
 
     const parts: AssistantPart[] = [];
     const citations: { kind: string; id?: string; label: string }[] = [];
-    let mutation: ChatMessage["mutation"];
+    const mutations: Extract<AgentChatEvent, { type: "mutation" }>[] = [];
     let latestRequestId: string | undefined;
     const receivedMutations = new Set<string>();
 
@@ -288,7 +288,7 @@ export function AssistantSheet({
           role: "assistant",
           parts: [...parts],
           citations: [...citations],
-          mutation,
+          mutations: [...mutations],
           requestId: latestRequestId,
         };
         return next;
@@ -406,10 +406,10 @@ export function AssistantSheet({
             publish();
           }
           if (event.type === "mutation") {
-            mutation = event;
             const mutationKey = `${event.action}:${event.operationId}`;
             if (!receivedMutations.has(mutationKey)) {
               receivedMutations.add(mutationKey);
+              mutations.push(event);
               onMutated();
             }
             publish();
@@ -566,18 +566,18 @@ export function AssistantSheet({
                   ))}
                 </div>
               )}
-              {message.mutation && (
-                <div className="assistant-proposal">
+              {message.mutations?.map((mutation) => (
+                <div key={`${mutation.action}-${mutation.operationId}`} className="assistant-proposal">
                   <p>
-                    {message.mutation.action === "applied"
-                      ? message.mutation.kind === "category_edit" ? "Categoría actualizada" : "Etiquetas actualizadas"
+                    {mutation.action === "applied"
+                      ? mutation.kind === "category_edit" ? "Categoría actualizada" : "Etiquetas actualizadas"
                       : "Edición deshecha"}
-                    {" · "}{message.mutation.movementCount} movimientos · <Amt>{money(message.mutation.amountMinor)}</Amt>
+                    {" · "}{mutation.movementCount} movimientos · <Amt>{money(mutation.amountMinor)}</Amt>
                   </p>
-                  <small>{message.mutation.fromDay}–{message.mutation.toDay} · {mutationChangeLabel(message.mutation)}</small>
+                  <small>{mutation.fromDay}–{mutation.toDay} · {mutationChangeLabel(mutation)}</small>
                   <small>Puedes pedir “deshaz ese cambio” en el chat.</small>
                 </div>
-              )}
+              ))}
             </div>
           ))}
         </div>

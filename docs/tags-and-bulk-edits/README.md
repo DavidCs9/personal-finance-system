@@ -12,7 +12,7 @@ Ejemplos:
 - “Agrega `ciudad:cdmx` del 13 al 21”.
 - “Deshaz ese cambio”.
 
-Una instrucción explícita para agregar o quitar tags, o para cambiar una categoría por rango, autoriza el lote completo. El agente no decide autónomamente escribir: ejecuta únicamente una petición que el usuario acaba de expresar.
+Una instrucción explícita para agregar o quitar tags, o para cambiar una categoría, autoriza el lote completo. El agente no decide autónomamente escribir: ejecuta únicamente una petición que el usuario acaba de expresar.
 
 ## Categorías y tags
 
@@ -20,14 +20,14 @@ Una instrucción explícita para agregar o quitar tags, o para cambiar una categ
 - Los tags describen el contexto y pueden solaparse.
 - Un movimiento conserva una categoría y hasta 20 tags normalizados.
 - Los tags no cambian Has gastado, Te quedan, proyecciones, MSI, conciliación ni Patrimonio.
-- La ruta directa del agente tiene contratos separados para tags y categorías. Una edición de categoría por rango nunca crea ni actualiza una regla de comercio.
+- La ruta directa del agente tiene contratos separados para tags y categorías. Una edición de categoría nunca crea ni actualiza una regla de comercio.
 
 ## Secuencia de una edición
 
-1. El usuario pide explícitamente agregar o quitar tags, o cambiar una categoría, e indica un rango.
-2. El Harness llama `preview_tag_edit` o `preview_category_edit` directamente, sin consultar primero `list_movements`.
-3. El backend selecciona sólo movimientos `accepted`, congela los IDs exactos y sus valores previos, y persiste una operación con TTL.
-4. El Harness llama inmediatamente a su apply correspondiente con `operationId` en el mismo turno. No existe confirmación adicional en la UI.
+1. El usuario pide explícitamente agregar o quitar tags, o cambiar una categoría.
+2. Para categorías, el Harness obtiene los `eventIds` concretos con `list_movements`, o usa un rango con `merchantRaw` exacto, `sourceCategoryId` o `onlyUncategorized=true`; un rango de fechas solo se rechaza.
+3. `preview_category_edit` es un `dryRun`: devuelve la lista completa `affected`, selecciona sólo movimientos `accepted`, congela IDs y valores previos, y persiste una operación con TTL.
+4. El Harness llama inmediatamente a su apply con uno o varios `operationId` en el mismo turno. No existe confirmación adicional en la UI.
 5. Una transacción condicionada actualiza los movimientos, crea una revisión por movimiento y marca la operación como aplicada.
 6. El chat emite un evento SSE `mutation`; la UI refresca el ledger y muestra conteo, importe, rango y tags cambiados.
 7. Si el usuario pide deshacer, la tool undo correspondiente restaura el snapshot mediante otra transacción condicionada.
@@ -59,23 +59,24 @@ Apply y undo son idempotentes. Un retry devuelve el estado ya alcanzado sin dupl
 
 ## Tools y límites de seguridad
 
-El Harness dispone de seis tools en un Gateway de mutaciones separado:
+El Harness dispone de siete tools en un Gateway de mutaciones separado:
 
 | Tool | Contrato |
 |------|----------|
 | `preview_tag_edit` | Congela una operación tags-only para movimientos `accepted` dentro del rango |
 | `apply_tag_edit` | Aplica exactamente el `operationId` generado por preview |
 | `undo_tag_edit` | Deshace exactamente una operación aplicada |
-| `preview_category_edit` | Congela una operación category-only para movimientos `accepted` dentro del rango |
+| `preview_category_edit` | Dry run category-only por `eventId`/`eventIds` exactos o rango con filtro explícito; devuelve todo `affected` |
 | `apply_category_edit` | Aplica exactamente el `operationId` generado por preview |
 | `undo_category_edit` | Deshace exactamente una operación aplicada |
+| `apply_category_edits` | Aplica atómicamente 1–12 operaciones category-only sin eventos solapados |
 
 La arquitectura mantiene varias defensas independientes:
 
 - El chat Cognito sólo invoca el Harness si `claims.sub` coincide con `AgentOwnerSub`.
 - La Lambda de mutación usa `AGENT_OWNER`; ninguna tool acepta un owner del modelo o del browser.
 - El Gateway usa `AWS_IAM` y un Policy Engine nativo en modo `ENFORCE`.
-- Cedar niega por defecto y sólo permite esas seis acciones al rol exacto del Harness.
+- Cedar niega por defecto y sólo permite esas siete acciones al rol exacto del Harness.
 - La Lambda de lectura no tiene permisos de escritura.
 - La Lambda de mutación sólo lee la tabla y escribe claves `BULK_EDIT#<owner>` o `EVENT#*` mediante `PutItem`/`UpdateItem`.
 - No existe una tool genérica de DynamoDB ni endpoints públicos `/bulk-edits`.
@@ -95,7 +96,7 @@ El recibo indica que el cambio puede deshacerse por chat. Modo privado también 
 
 - Una petición explícita de tags o categorías ejecuta preview y apply en el mismo turno sin confirmación adicional.
 - El preview congela el conjunto exacto antes de cualquier escritura.
-- Sólo se modifican movimientos `accepted` dentro del rango inclusivo.
+- Sólo se modifican movimientos `accepted`; las categorías usan IDs exactos o un rango inclusivo con filtro explícito y enseñan todos los afectados antes de apply.
 - Reintentar apply o undo no duplica revisiones ni invierte dos veces.
 - El solapamiento de rangos conserva varios tags en un movimiento.
 - Un conflicto posterior al preview cancela el lote entero.

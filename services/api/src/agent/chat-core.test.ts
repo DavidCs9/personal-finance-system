@@ -5,6 +5,7 @@ import {
   agentChatErrorStatus,
   assertConfiguredAgentOwner,
   mutationFromToolResult,
+  mutationsFromToolResult,
   readBody,
   requiresTravelPlanRecalculation,
   requestIdOf,
@@ -86,6 +87,15 @@ describe('REST API Gateway chat event helpers', () => {
       toDay: '2026-08-25',
       change: { categoryId: 'food' },
     })).toMatchObject({ kind: 'category_edit', action: 'applied', change: { categoryId: 'food' } });
+    expect(mutationsFromToolResult('apply_category_edits', {
+      operations: [
+        { operationId: 'operation-3', movementCount: 1, amountMinor: 10_000, fromDay: '2026-08-21', toDay: '2026-08-21', change: { categoryId: 'food' } },
+        { operationId: 'operation-4', movementCount: 2, amountMinor: 20_000, fromDay: '2026-08-25', toDay: '2026-08-25', change: { categoryId: 'food' } },
+      ],
+    })).toMatchObject([
+      { operationId: 'operation-3', kind: 'category_edit', action: 'applied' },
+      { operationId: 'operation-4', kind: 'category_edit', action: 'applied' },
+    ]);
   });
 
   it('rejects any Cognito user other than the configured ledger owner', () => {

@@ -12,11 +12,12 @@ let applyAgentTagEdit: typeof import('../src/events/bulk-edits.js').applyAgentTa
 let undoAgentTagEdit: typeof import('../src/events/bulk-edits.js').undoAgentTagEdit;
 let applyAgentCategoryEdit: typeof import('../src/events/bulk-edits.js').applyAgentCategoryEdit;
 let undoAgentCategoryEdit: typeof import('../src/events/bulk-edits.js').undoAgentCategoryEdit;
+let applyAgentCategoryEdits: typeof import('../src/events/bulk-edits.js').applyAgentCategoryEdits;
 
 beforeAll(async () => {
   ({ database } = await import('../src/http/clients.js'));
   ({ parseBulkEditInput, previewBulkEdit, applyBulkEdit, undoBulkEdit, applyAgentTagEdit, undoAgentTagEdit,
-    applyAgentCategoryEdit, undoAgentCategoryEdit } =
+    applyAgentCategoryEdit, undoAgentCategoryEdit, applyAgentCategoryEdits } =
     await import('../src/events/bulk-edits.js'));
 });
 
@@ -76,9 +77,14 @@ describe('bulk edits', () => {
 
     const result = await previewBulkEdit('owner-1', input(), new Date('2026-08-26T00:00:00.000Z'));
     expect(result).toMatchObject({
+      dryRun: true,
       movementCount: 2,
       amountMinor: 53_207,
       change: { addTags: ['viaje:vegas'] },
+      affected: [
+        { id: 'event-1', merchantRaw: 'Panda Express' },
+        { id: 'event-2', merchantRaw: 'Shell' },
+      ],
     });
     expect(saved).toMatchObject({
       PK: 'BULK_EDIT#owner-1',
@@ -242,5 +248,54 @@ describe('bulk edits', () => {
     await expect(applyAgentCategoryEdit(
       'owner-1', 'tag-operation', new Date('2026-08-26T00:03:00.000Z'),
     )).rejects.toThrow(/sólo puede modificar categorías/);
+  });
+
+  it('applies multiple category previews atomically when they fit one DynamoDB transaction', async () => {
+    const operation = (operationId: string, id: string) => ({
+      operationId,
+      owner: 'owner-1',
+      status: 'pending',
+      createdAt: '2026-08-26T00:00:00.000Z',
+      expiresAt: Math.floor(new Date('2026-08-26T00:15:00.000Z').getTime() / 1000),
+      selection: { fromDay: '2026-08-21', toDay: '2026-08-25', statuses: ['accepted'], eventIds: [id] },
+      change: { categoryId: 'food' },
+      events: [{
+        id, merchantRaw: 'Panda Express', occurredAt: '2026-08-22T12:00:00.000Z', status: 'accepted', amountMinor: 30_694,
+        previousTags: [], nextTags: [], previousCategoryId: null, nextCategoryId: 'food',
+      }],
+      amountMinor: 30_694,
+    });
+    const first = operation('operation-1', 'event-1');
+    const second = operation('operation-2', 'event-2');
+    const transactions: any[] = [];
+    vi.spyOn(database as any, 'send').mockImplementation(async (command: any) => {
+      if (command.constructor.name === 'GetCommand') {
+        return { Item: { payload: command.input.Key.SK === 'OP#operation-1' ? first : second } };
+      }
+      if (command.constructor.name === 'TransactWriteCommand') {
+        transactions.push(command.input);
+        return {};
+      }
+      throw new Error(`Unexpected ${command.constructor.name}`);
+    });
+
+    const result = await applyAgentCategoryEdits(
+      'owner-1', ['operation-1', 'operation-2'], new Date('2026-08-26T00:01:00.000Z'),
+    );
+    expect(result).toMatchObject({ operationCount: 2, movementCount: 2, amountMinor: 61_388 });
+    expect(transactions).toHaveLength(1);
+    expect(transactions[0].TransactItems).toHaveLength(6);
+    expect(transactions[0].TransactItems[1].Put.Item.payload).toMatchObject({
+      source: 'assistant_chat_category_edit', operationId: 'operation-1',
+    });
+    expect(transactions[0].TransactItems[4].Put.Item.payload).toMatchObject({
+      source: 'assistant_chat_category_edit', operationId: 'operation-2',
+    });
+
+    second.events[0].id = 'event-1';
+    await expect(applyAgentCategoryEdits(
+      'owner-1', ['operation-1', 'operation-2'], new Date('2026-08-26T00:02:00.000Z'),
+    )).rejects.toThrow(/solapan/);
+    expect(transactions).toHaveLength(1);
   });
 });

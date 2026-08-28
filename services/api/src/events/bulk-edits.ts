@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { GetCommand, PutCommand, QueryCommand, TransactWriteCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
+import { createHash, randomUUID } from 'node:crypto';
+import { BatchGetCommand, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
 import {
   applyEventTagChange,
   isValidCategoryId,
@@ -10,6 +10,7 @@ import { database, tableName } from '../http/clients.js';
 import { localDate } from './queries.js';
 
 const MAX_BULK_EVENTS = 49;
+const MAX_CATEGORY_BATCH_OPERATIONS = 12;
 const PREVIEW_TTL_SECONDS = 15 * 60;
 
 type BulkEditAudit = {
@@ -52,6 +53,10 @@ export type BulkEditSelection = {
   readonly fromDay: string;
   readonly toDay: string;
   readonly statuses?: readonly string[];
+  readonly eventIds?: readonly string[];
+  readonly merchantRaw?: string;
+  readonly sourceCategoryId?: string;
+  readonly onlyUncategorized?: boolean;
 };
 
 type BulkEditSnapshot = {
@@ -81,6 +86,7 @@ export type BulkEditOperation = {
 };
 
 export type BulkEditPreview = {
+  readonly dryRun: true;
   readonly operationId: string;
   readonly status: BulkEditOperation['status'];
   readonly expiresAt: string;
@@ -89,7 +95,15 @@ export type BulkEditPreview = {
   readonly movementCount: number;
   readonly amountMinor: number;
   readonly change: BulkEditChange;
+  readonly affected: readonly Pick<BulkEditSnapshot, 'id' | 'merchantRaw' | 'occurredAt' | 'amountMinor'>[];
   readonly sample: readonly Pick<BulkEditSnapshot, 'id' | 'merchantRaw' | 'occurredAt' | 'amountMinor'>[];
+};
+
+export type AgentCategoryBatchApplyResult = {
+  readonly operationCount: number;
+  readonly movementCount: number;
+  readonly amountMinor: number;
+  readonly operations: readonly BulkEditPreview[];
 };
 
 const dayPattern = /^\d{4}-\d{2}-\d{2}$/;
@@ -178,7 +192,27 @@ const queryRangeEvents = async (selection: BulkEditSelection): Promise<readonly 
   return items;
 };
 
+const queryEventsById = async (eventIds: readonly string[]): Promise<readonly Record<string, unknown>[]> => {
+  const result = await database.send(new BatchGetCommand({
+    RequestItems: {
+      [tableName]: {
+        Keys: eventIds.map((id) => ({ PK: `EVENT#${id}`, SK: 'EVENT' })),
+        ConsistentRead: true,
+      },
+    },
+  }));
+  if (result.UnprocessedKeys && Object.keys(result.UnprocessedKeys).length > 0) {
+    throw new InvalidBulkEditError('No se pudieron leer todos los movimientos seleccionados. Reintenta el preview.');
+  }
+  return (result.Responses?.[tableName] ?? []) as Record<string, unknown>[];
+};
+
+const publicAffectedEvents = (events: readonly BulkEditSnapshot[]) => events.map(({
+  id, merchantRaw, occurredAt, amountMinor,
+}) => ({ id, merchantRaw, occurredAt, amountMinor }));
+
 const publicPreview = (operation: BulkEditOperation): BulkEditPreview => ({
+  dryRun: true,
   operationId: operation.operationId,
   status: operation.status,
   expiresAt: new Date(operation.expiresAt * 1000).toISOString(),
@@ -187,10 +221,46 @@ const publicPreview = (operation: BulkEditOperation): BulkEditPreview => ({
   movementCount: operation.events.length,
   amountMinor: operation.amountMinor,
   change: operation.change,
-  sample: operation.events.slice(0, 8).map(({ id, merchantRaw, occurredAt, amountMinor }) => ({
-    id, merchantRaw, occurredAt, amountMinor,
-  })),
+  affected: publicAffectedEvents(operation.events),
+  sample: publicAffectedEvents(operation.events.slice(0, 8)),
 });
+
+const createPreviewOperation = async (
+  owner: string,
+  selection: BulkEditSelection & { readonly statuses: readonly ['accepted'] },
+  change: BulkEditChange,
+  events: readonly BulkEditSnapshot[],
+  now: Date,
+): Promise<BulkEditPreview> => {
+  if (events.length === 0) throw new InvalidBulkEditError('No hay movimientos elegibles para este cambio.');
+  if (events.length > MAX_BULK_EVENTS) {
+    throw new InvalidBulkEditError(`El cambio afecta ${events.length} movimientos; el máximo es ${MAX_BULK_EVENTS}.`);
+  }
+  const operationId = randomUUID();
+  const operation: BulkEditOperation = {
+    operationId,
+    owner,
+    status: 'pending',
+    createdAt: now.toISOString(),
+    expiresAt: Math.floor(now.getTime() / 1000) + PREVIEW_TTL_SECONDS,
+    selection,
+    change,
+    events,
+    amountMinor: events.reduce((sum, event) => sum + event.amountMinor, 0),
+  };
+  await database.send(new PutCommand({
+    TableName: tableName,
+    Item: {
+      PK: `BULK_EDIT#${owner}`,
+      SK: `OP#${operationId}`,
+      entityType: 'bulk_edit_operation',
+      expiresAt: operation.expiresAt,
+      payload: operation,
+    },
+    ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
+  }));
+  return publicPreview(operation);
+};
 
 export const previewBulkEdit = async (
   owner: string,
@@ -229,34 +299,165 @@ export const previewBulkEdit = async (
       nextCategoryId,
     });
   }
-  if (events.length === 0) throw new InvalidBulkEditError('No hay movimientos elegibles para este cambio.');
-  if (events.length > MAX_BULK_EVENTS) {
-    throw new InvalidBulkEditError(`El cambio afecta ${events.length} movimientos; el máximo es ${MAX_BULK_EVENTS}.`);
+  return createPreviewOperation(owner, input.selection, input.change, events, now);
+};
+
+type AgentCategoryEditInput = {
+  readonly categoryId: string;
+  readonly eventIds?: readonly string[];
+  readonly fromDay?: string;
+  readonly toDay?: string;
+  readonly merchantRaw?: string;
+  readonly sourceCategoryId?: string;
+  readonly onlyUncategorized: boolean;
+};
+
+const merchantKey = (value: string): string => value
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .trim()
+  .replace(/\s+/g, ' ')
+  .toLowerCase();
+
+const parseEventIds = (value: unknown): readonly string[] | undefined => {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_BULK_EVENTS) {
+    throw new InvalidBulkEditError(`eventIds debe contener entre 1 y ${MAX_BULK_EVENTS} IDs.`);
   }
-  const operationId = randomUUID();
-  const operation: BulkEditOperation = {
-    operationId,
-    owner,
-    status: 'pending',
-    createdAt: now.toISOString(),
-    expiresAt: Math.floor(now.getTime() / 1000) + PREVIEW_TTL_SECONDS,
-    selection: input.selection,
-    change: input.change,
-    events,
-    amountMinor: events.reduce((sum, event) => sum + event.amountMinor, 0),
+  const eventIds = value.map((id) => typeof id === 'string' ? id.trim() : '');
+  if (eventIds.some((id) => !id) || new Set(eventIds).size !== eventIds.length) {
+    throw new InvalidBulkEditError('eventIds debe contener IDs únicos y no vacíos.');
+  }
+  return eventIds;
+};
+
+export const parseAgentCategoryEditInput = (raw: unknown): AgentCategoryEditInput => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new InvalidBulkEditError('El body debe ser un objeto.');
+  }
+  const body = raw as Record<string, unknown>;
+  const categoryId = typeof body.categoryId === 'string' ? body.categoryId : '';
+  if (!isValidCategoryId(categoryId)) throw new InvalidBulkEditError('categoryId es inválida.');
+  if (body.eventId !== undefined && body.eventIds !== undefined) {
+    throw new InvalidBulkEditError('Envía eventId o eventIds, no ambos.');
+  }
+  const eventIds = body.eventId === undefined
+    ? parseEventIds(body.eventIds)
+    : parseEventIds([body.eventId]);
+  const hasFromDay = body.fromDay !== undefined;
+  const hasToDay = body.toDay !== undefined;
+  if (hasFromDay !== hasToDay) {
+    throw new InvalidBulkEditError('fromDay y toDay deben enviarse juntos.');
+  }
+  const fromDay = typeof body.fromDay === 'string' ? body.fromDay : undefined;
+  const toDay = typeof body.toDay === 'string' ? body.toDay : undefined;
+  if (fromDay && toDay) {
+    assertDay(fromDay, 'fromDay');
+    assertDay(toDay, 'toDay');
+    if (fromDay > toDay) throw new InvalidBulkEditError('fromDay no puede ser posterior a toDay.');
+    monthsBetween(fromDay, toDay);
+  }
+  const merchantRaw = typeof body.merchantRaw === 'string' ? body.merchantRaw.trim() : undefined;
+  if (body.merchantRaw !== undefined && !merchantRaw) {
+    throw new InvalidBulkEditError('merchantRaw no puede estar vacío.');
+  }
+  const sourceCategoryId = typeof body.sourceCategoryId === 'string' ? body.sourceCategoryId : undefined;
+  if (sourceCategoryId && !isValidCategoryId(sourceCategoryId)) {
+    throw new InvalidBulkEditError('sourceCategoryId es inválida.');
+  }
+  if (body.sourceCategoryId !== undefined && !sourceCategoryId) {
+    throw new InvalidBulkEditError('sourceCategoryId debe ser una categoría válida.');
+  }
+  if (body.onlyUncategorized !== undefined && typeof body.onlyUncategorized !== 'boolean') {
+    throw new InvalidBulkEditError('onlyUncategorized debe ser booleano.');
+  }
+  const onlyUncategorized = body.onlyUncategorized === true;
+  if (sourceCategoryId && onlyUncategorized) {
+    throw new InvalidBulkEditError('sourceCategoryId y onlyUncategorized no se pueden combinar.');
+  }
+  if (!eventIds && (!fromDay || !toDay || (!merchantRaw && !sourceCategoryId && !onlyUncategorized))) {
+    throw new InvalidBulkEditError('Las categorías requieren eventIds exactos o un rango con merchantRaw, sourceCategoryId u onlyUncategorized; nunca sólo fechas.');
+  }
+  return {
+    categoryId,
+    ...(eventIds ? { eventIds } : {}),
+    ...(fromDay ? { fromDay } : {}),
+    ...(toDay ? { toDay } : {}),
+    ...(merchantRaw ? { merchantRaw } : {}),
+    ...(sourceCategoryId ? { sourceCategoryId } : {}),
+    onlyUncategorized,
   };
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: {
-      PK: `BULK_EDIT#${owner}`,
-      SK: `OP#${operationId}`,
-      entityType: 'bulk_edit_operation',
-      expiresAt: operation.expiresAt,
-      payload: operation,
-    },
-    ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
-  }));
-  return publicPreview(operation);
+};
+
+export const previewAgentCategoryEdit = async (
+  owner: string,
+  input: AgentCategoryEditInput,
+  now = new Date(),
+): Promise<BulkEditPreview> => {
+  const rows = input.eventIds
+    ? await queryEventsById(input.eventIds)
+    : await queryRangeEvents({ fromDay: input.fromDay!, toDay: input.toDay!, statuses: ['accepted'] });
+  const rowsById = new Map<string, Record<string, unknown>>();
+  for (const row of rows) {
+    const id = typeof (row.payload as Record<string, unknown> | undefined)?.id === 'string'
+      ? String((row.payload as Record<string, unknown>).id)
+      : '';
+    if (id) rowsById.set(id, row);
+  }
+  if (input.eventIds && input.eventIds.some((id) => !rowsById.has(id))) {
+    throw new InvalidBulkEditError('Uno o más eventIds ya no existen. Vuelve a consultar los movimientos antes de aplicar.');
+  }
+  const candidateRows = input.eventIds ? input.eventIds.map((id) => rowsById.get(id)!) : rows;
+  const events: BulkEditSnapshot[] = [];
+  const selectedDays: string[] = [];
+  for (const row of candidateRows) {
+    const payload = row.payload as Record<string, unknown> | undefined;
+    const id = typeof payload?.id === 'string' ? payload.id : '';
+    const day = payload ? localDate(payload.occurredAt ?? payload.receivedAt) : undefined;
+    const previousCategoryId = typeof payload?.categoryId === 'string' ? payload.categoryId : null;
+    const matches = Boolean(payload && payload.status === 'accepted' && id && day)
+      && (!input.fromDay || (day! >= input.fromDay && day! <= input.toDay!))
+      && (!input.merchantRaw || merchantKey(String(payload!.merchantRaw ?? '')) === merchantKey(input.merchantRaw))
+      && (!input.sourceCategoryId || previousCategoryId === input.sourceCategoryId)
+      && (!input.onlyUncategorized || previousCategoryId === null);
+    if (!matches) {
+      if (input.eventIds) {
+        throw new InvalidBulkEditError(`El movimiento ${id || 'seleccionado'} no coincide con los filtros de categoría o ya no es accepted.`);
+      }
+      continue;
+    }
+    selectedDays.push(day!);
+    if (previousCategoryId === input.categoryId) continue;
+    const previousTags = normalizeEventTags(Array.isArray(payload!.tags) ? payload!.tags.map(String) : []);
+    const amount = payload!.amount as { amountMinor?: unknown } | undefined;
+    events.push({
+      id,
+      merchantRaw: String(payload!.merchantRaw ?? ''),
+      occurredAt: typeof payload!.occurredAt === 'string'
+        ? payload!.occurredAt
+        : typeof payload!.receivedAt === 'string' ? payload!.receivedAt : undefined,
+      status: 'accepted',
+      amountMinor: typeof payload!.personalAmountMinor === 'number'
+        ? payload!.personalAmountMinor
+        : Number(amount?.amountMinor ?? 0),
+      previousTags,
+      nextTags: previousTags,
+      previousCategoryId,
+      nextCategoryId: input.categoryId,
+    });
+  }
+  const fromDay = input.fromDay ?? selectedDays.slice().sort()[0];
+  const toDay = input.toDay ?? selectedDays.slice().sort().at(-1);
+  if (!fromDay || !toDay) throw new InvalidBulkEditError('No hay movimientos elegibles para este cambio.');
+  return createPreviewOperation(owner, {
+    fromDay,
+    toDay,
+    statuses: ['accepted'],
+    ...(input.eventIds ? { eventIds: input.eventIds } : {}),
+    ...(input.merchantRaw ? { merchantRaw: input.merchantRaw } : {}),
+    ...(input.sourceCategoryId ? { sourceCategoryId: input.sourceCategoryId } : {}),
+    ...(input.onlyUncategorized ? { onlyUncategorized: true } : {}),
+  }, { categoryId: input.categoryId }, events, now);
 };
 
 const getOperation = async (owner: string, operationId: string): Promise<BulkEditOperation> => {
@@ -468,3 +669,81 @@ export const undoAgentCategoryEdit = (
   now,
   assistantCategoryAudit,
 );
+
+export const applyAgentCategoryEdits = async (
+  owner: string,
+  operationIds: readonly string[],
+  now = new Date(),
+): Promise<AgentCategoryBatchApplyResult> => {
+  const ids = operationIds.map((operationId) => operationId.trim());
+  if (ids.length === 0 || ids.length > MAX_CATEGORY_BATCH_OPERATIONS
+    || ids.some((operationId) => !operationId) || new Set(ids).size !== ids.length) {
+    throw new InvalidBulkEditError(`operationIds debe contener entre 1 y ${MAX_CATEGORY_BATCH_OPERATIONS} IDs únicos.`);
+  }
+  const operations = await Promise.all(ids.map((operationId) => getOperation(owner, operationId)));
+  for (const operation of operations) {
+    if (Object.prototype.hasOwnProperty.call(operation.change, 'addTags')
+      || Object.prototype.hasOwnProperty.call(operation.change, 'removeTags')) {
+      throw new InvalidBulkEditError('El apply por lote sólo puede modificar categorías.');
+    }
+  }
+  if (operations.every((operation) => operation.status === 'applied')) {
+    const previews = operations.map(publicPreview);
+    return {
+      operationCount: previews.length,
+      movementCount: previews.reduce((sum, preview) => sum + preview.movementCount, 0),
+      amountMinor: previews.reduce((sum, preview) => sum + preview.amountMinor, 0),
+      operations: previews,
+    };
+  }
+  if (operations.some((operation) => operation.status !== 'pending')) {
+    throw new InvalidBulkEditError('Las operaciones del lote deben estar todas pendientes o todas aplicadas.');
+  }
+  if (operations.some((operation) => operation.expiresAt <= Math.floor(now.getTime() / 1000))) {
+    throw new InvalidBulkEditError('Una propuesta del lote expiró. Genera previews nuevos.');
+  }
+  const affectedEventIds = operations.flatMap((operation) => operation.events.map((event) => event.id));
+  if (new Set(affectedEventIds).size !== affectedEventIds.length) {
+    throw new InvalidBulkEditError('Las operaciones del lote se solapan en uno o más movimientos. Genera previews sin movimientos repetidos.');
+  }
+  const actionCount = operations.reduce((sum, operation) => sum + (operation.events.length * 2) + 1, 0);
+  if (actionCount > 100) {
+    throw new InvalidBulkEditError('El lote excede 100 acciones de DynamoDB. Divídelo en grupos más pequeños.');
+  }
+  const at = now.toISOString();
+  const transactItems: NonNullable<TransactWriteCommandInput['TransactItems']> = operations.flatMap((operation) => [
+    ...operation.events.flatMap((event) => [
+      { Update: eventUpdate(event, 'apply') },
+      { Put: revisionPut(event, operation, 'apply', owner, at, assistantCategoryAudit) },
+    ]),
+    { Update: {
+      TableName: tableName,
+      Key: { PK: `BULK_EDIT#${owner}`, SK: `OP#${operation.operationId}` },
+      UpdateExpression: 'SET #payload.#status = :nextStatus, #payload.#timestamp = :at REMOVE #ttl',
+      ConditionExpression: '#payload.#status = :expectedStatus',
+      ExpressionAttributeNames: {
+        '#payload': 'payload', '#status': 'status', '#timestamp': 'appliedAt', '#ttl': 'expiresAt',
+      },
+      ExpressionAttributeValues: { ':expectedStatus': 'pending', ':nextStatus': 'applied', ':at': at },
+    } },
+  ]);
+  try {
+    await database.send(new TransactWriteCommand({
+      TransactItems: transactItems,
+      ClientRequestToken: createHash('sha256').update(`apply-category:${ids.join(':')}`).digest('hex').slice(0, 36),
+    }));
+  } catch (error) {
+    const name = error && typeof error === 'object' && 'name' in error ? String(error.name) : '';
+    if (name === 'TransactionCanceledException') {
+      throw new InvalidBulkEditError('Los movimientos cambiaron después del preview. Genera un lote nuevo.');
+    }
+    throw error;
+  }
+  const previews = operations.map((operation) => publicPreview({ ...operation, status: 'applied', appliedAt: at }));
+  return {
+    operationCount: previews.length,
+    movementCount: previews.reduce((sum, preview) => sum + preview.movementCount, 0),
+    amountMinor: previews.reduce((sum, preview) => sum + preview.amountMinor, 0),
+    operations: previews,
+  };
+};

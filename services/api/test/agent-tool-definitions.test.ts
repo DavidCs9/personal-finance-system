@@ -30,9 +30,10 @@ describe('AgentCore finance tool definitions', () => {
     expect(TOOL_DEFINITIONS.map(({ name }) => name)).not.toContain('preview_category_edit');
     expect(TOOL_DEFINITIONS.map(({ name }) => name)).not.toContain('apply_category_edit');
     expect(TOOL_DEFINITIONS.map(({ name }) => name)).not.toContain('undo_category_edit');
+    expect(TOOL_DEFINITIONS.map(({ name }) => name)).not.toContain('apply_category_edits');
   });
 
-  it('exposes separate tag and category preview/apply/undo contracts on the mutation gateway', () => {
+  it('exposes precise category selectors and batch apply on the mutation gateway', () => {
     expect(TAG_MUTATION_TOOL_DEFINITIONS.map(({ name }) => name)).toEqual([
       'preview_tag_edit',
       'apply_tag_edit',
@@ -40,6 +41,7 @@ describe('AgentCore finance tool definitions', () => {
       'preview_category_edit',
       'apply_category_edit',
       'undo_category_edit',
+      'apply_category_edits',
     ]);
     const preview = TAG_MUTATION_TOOL_DEFINITIONS[0];
     expect(preview.inputSchema.required).toEqual(['fromDay', 'toDay']);
@@ -48,8 +50,13 @@ describe('AgentCore finance tool definitions', () => {
     expect(preview.inputSchema.properties).not.toHaveProperty('categoryId');
     expect(preview.description).toContain('inmediatamente en el mismo turno');
     const categoryPreview = TAG_MUTATION_TOOL_DEFINITIONS[3];
-    expect(categoryPreview.inputSchema.required).toEqual(['fromDay', 'toDay', 'categoryId']);
+    expect(categoryPreview.inputSchema.required).toEqual(['categoryId']);
     expect(categoryPreview.inputSchema.properties).toHaveProperty('categoryId');
+    expect(categoryPreview.inputSchema.properties).toHaveProperty('eventIds');
+    expect(categoryPreview.inputSchema.properties).toHaveProperty('merchantRaw');
+    expect(categoryPreview.inputSchema.properties).toHaveProperty('sourceCategoryId');
+    expect(categoryPreview.inputSchema.properties).toHaveProperty('onlyUncategorized');
     expect(categoryPreview.inputSchema.properties).not.toHaveProperty('addTags');
+    expect(categoryPreview.description).toContain('Nunca llames esta tool con sólo fechas');
   });
 });
