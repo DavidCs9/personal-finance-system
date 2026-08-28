@@ -97,7 +97,7 @@ export const saveAssistantThread = async (
     Key: threadKey(input.owner, input.sessionId),
     UpdateExpression: [
       'SET entityType = :entityType',
-      'owner = :owner',
+      '#owner = :owner',
       'sessionId = :sessionId',
       'title = if_not_exists(title, :title)',
       'firstMonth = if_not_exists(firstMonth, :month)',
@@ -105,6 +105,9 @@ export const saveAssistantThread = async (
       'updatedAt = :now',
       'expiresAt = :expiresAt',
     ].join(', '),
+    ExpressionAttributeNames: {
+      '#owner': 'owner',
+    },
     ExpressionAttributeValues: {
       ':entityType': 'assistant_thread',
       ':owner': input.owner,

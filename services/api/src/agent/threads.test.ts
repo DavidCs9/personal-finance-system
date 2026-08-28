@@ -141,6 +141,9 @@ describe('assistant thread persistence', () => {
       ':title': '¿Cómo cierro el mes?',
       ':expiresAt': 1819368000,
     });
+    expect(update.input).toMatchObject({
+      ExpressionAttributeNames: { '#owner': 'owner' },
+    });
     expect(JSON.stringify(update.input)).not.toContain('transcript');
   });
 
