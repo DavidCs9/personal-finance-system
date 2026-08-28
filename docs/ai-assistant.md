@@ -36,7 +36,7 @@ SPA (JWT Cognito)
 - Harness, Memory y el Gateway de Web Search corren en `us-east-1`, requerido por el conector. El Gateway financiero existente, su Lambda y DynamoDB permanecen juntos en `us-east-2`; el Harness conecta ambos Gateways.
 - Code interpreter: **apagado**.
 - Memoria de conversación: AgentCore Memory conserva eventos crudos por conversación durante 365 días y hechos/preferencias durables por separado, todo aislado por Cognito `sub`. Reutilizar el mismo `sessionId` restaura el contexto del Harness. Las estrategias personalizadas de largo plazo rechazan inferencias del asistente, cálculos intermedios, saldos actuales, unidades no confirmadas y fechas inferidas; una corrección posterior del usuario reemplaza el valor anterior. Las conversaciones recientes y las memorias durables se pueden revisar y borrar por separado desde el sheet. Ninguna memoria escribe ni modifica el ledger, Resumen, proyecciones o Patrimonio.
-- CDK provisiona el Gateway de mutaciones, su target Lambda y su Policy Engine con recursos nativos de CloudFormation. El policy engine opera en `ENFORCE`, niega por defecto y sólo permite las siete acciones al rol IAM del Harness. El custom resource `OlbiaAgentCore` reconcilia Harness, Memory, finanzas y Web Search, e incorpora el ARN del Gateway de mutaciones.
+- CDK provisiona el Gateway de mutaciones, su target Lambda y su Policy Engine con recursos nativos de CloudFormation. El policy engine opera en `ENFORCE`, niega por defecto y sólo permite las ocho acciones al rol IAM del Harness. El custom resource `OlbiaAgentCore` reconcilia Harness, Memory, finanzas y Web Search, e incorpora el ARN del Gateway de mutaciones.
 
 ## Prompt Management (runtime, sin deploy)
 
@@ -87,9 +87,10 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 | `wealth_snapshot` | Neto / activos / deudas (solo lectura) |
 | `investment_history` | Historial DDB de cuenta o posición Bitso/IBKR por día, rango o all-time; distingue cambio de valor de rendimiento cuando cambió la cantidad |
 | `WebSearch` | Búsqueda web administrada por AWS; conserva citas y enlaces en la respuesta |
-| `preview_tag_edit` | Congela los movimientos `accepted` exactos para un cambio de tags; debe preceder inmediatamente a apply |
+| `preview_tag_edit` | Dry run que congela movimientos `accepted` por IDs exactos o por rango con filtro explícito, y devuelve la lista completa `affected`; debe preceder inmediatamente a apply |
 | `apply_tag_edit` | Aplica en el mismo turno el snapshot congelado; la instrucción explícita del chat ya es la autorización |
 | `undo_tag_edit` | Restaura el estado anterior cuando el usuario lo pide en el chat |
+| `apply_tag_edits` | Aplica atómicamente varios previews tags-only sin rondas separadas |
 | `preview_category_edit` | Dry run que congela movimientos `accepted` por IDs exactos o por rango con filtro explícito, y devuelve la lista completa `affected`; debe preceder inmediatamente a apply |
 | `apply_category_edit` | Aplica en el mismo turno el snapshot congelado; la instrucción explícita del chat ya es la autorización |
 | `undo_category_edit` | Restaura la categoría anterior cuando el usuario lo pide en el chat |
@@ -120,8 +121,8 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 - `tags` es una lista normalizada de contexto (`viaje:vegas`, `ciudad:cdmx`) independiente de `categoryId`.
 - El mismo movimiento puede tener varios tags; no afectan Resumen, proyecciones, MSI, conciliación ni Patrimonio.
 - Una petición explícita del usuario para agregar o quitar tags, o cambiar una categoría, es la autorización del lote. No se solicita una segunda confirmación en la UI.
-- `preview_tag_edit` acepta un rango inclusivo. `preview_category_edit` exige `eventId`/`eventIds` exactos —obtenidos con `list_movements`— o un rango inclusivo con `merchantRaw`, `sourceCategoryId` u `onlyUncategorized=true`; rechaza fechas solas. Ambos sólo consideran movimientos `accepted`; rechazados quedan fuera.
-- El preview de categorías es un `dryRun` y entrega todos los movimientos `affected`, no una muestra limitada. El agente revisa ese alcance y llama `apply_category_edit` o `apply_category_edits` con los `operationId` correspondientes en el mismo turno.
+- `preview_tag_edit` y `preview_category_edit` exigen `eventId`/`eventIds` exactos —obtenidos con `list_movements`— o un rango inclusivo con selector explícito. Tags acepta `merchantRaw`, `sourceTags` u `onlyUntagged=true`; categorías acepta `merchantRaw`, `sourceCategoryId` u `onlyUncategorized=true`. Ambas rechazan fechas solas y sólo consideran movimientos `accepted`; rechazados quedan fuera.
+- Ambos previews son `dryRun` y entregan todos los movimientos `affected`, no una muestra limitada. El agente revisa ese alcance y llama `apply_tag_edit`/`apply_tag_edits` o `apply_category_edit`/`apply_category_edits` con los `operationId` correspondientes en el mismo turno.
 - El backend congela IDs, valores previos, conteo e importe antes de escribir. Cada evento recibe una revisión con el mismo `operationId`, `source=assistant_chat_tag_edit` o `source=assistant_chat_category_edit` y el dueño configurado como actor.
 - La UI recibe un evento SSE `mutation` por cada operación aplicada, refresca el ledger y muestra recibos factuales sin botones de confirmación. Undo se solicita por chat y usa la misma operación congelada.
 - Si el evento cambió después del preview, DynamoDB cancela la transacción y exige generar uno nuevo.

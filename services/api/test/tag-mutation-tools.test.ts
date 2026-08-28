@@ -14,11 +14,11 @@ beforeAll(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('tag and category mutation Gateway tools', () => {
-  it('creates an owner-scoped, tags-only frozen operation directly from the chat range', async () => {
+  it('creates an owner-scoped, tags-only frozen operation from an exact movement ID', async () => {
     let saved: Record<string, unknown> | undefined;
     vi.spyOn(database as any, 'send').mockImplementation(async (command: any) => {
-      if (command.constructor.name === 'QueryCommand') {
-        return { Items: [{
+      if (command.constructor.name === 'BatchGetCommand') {
+        return { Responses: { 'test-metadata-table': [{
           PK: 'EVENT#event-1',
           SK: 'EVENT',
           payload: {
@@ -28,7 +28,7 @@ describe('tag and category mutation Gateway tools', () => {
             amount: { amountMinor: 30_694, currency: 'MXN' },
             occurredAt: '2026-08-22T12:00:00.000Z',
           },
-        }] };
+        }] } };
       }
       if (command.constructor.name === 'PutCommand') {
         saved = command.input.Item;
@@ -38,25 +38,75 @@ describe('tag and category mutation Gateway tools', () => {
     });
 
     const result = await runTagMutationTool('owner-1', 'preview_tag_edit', {
-      fromDay: '2026-08-21',
-      toDay: '2026-08-25',
+      eventId: 'event-1',
       addTags: ['Viaje:Végas'],
-      categoryId: 'food',
     });
 
     expect(result).toMatchObject({
+      dryRun: true,
       movementCount: 1,
       change: { addTags: ['viaje:vegas'] },
     });
     expect(result).not.toHaveProperty('change.categoryId');
     expect(saved).toMatchObject({
       PK: 'BULK_EDIT#owner-1',
-      payload: { owner: 'owner-1', change: { addTags: ['viaje:vegas'] } },
+      payload: {
+        owner: 'owner-1',
+        selection: { eventIds: ['event-1'] },
+        change: { addTags: ['viaje:vegas'] },
+      },
     });
+  });
+
+  it('requires a precise tag selector and honours merchant/source tag filters', async () => {
+    await expect(runTagMutationTool('owner-1', 'preview_tag_edit', {
+      fromDay: '2026-08-21', toDay: '2026-08-25', addTags: ['viaje:vegas'],
+    })).rejects.toThrow(/nunca sólo fechas/);
+
+    let saved: Record<string, unknown> | undefined;
+    vi.spyOn(database as any, 'send').mockImplementation(async (command: any) => {
+      if (command.constructor.name === 'QueryCommand') {
+        return { Items: [
+          {
+            PK: 'EVENT#event-1', SK: 'EVENT', payload: {
+              id: 'event-1', merchantRaw: 'UBER   EATS', status: 'accepted', tags: ['viaje:vegas'],
+              amount: { amountMinor: 30_694 }, occurredAt: '2026-08-22T12:00:00.000Z',
+            },
+          },
+          {
+            PK: 'EVENT#event-2', SK: 'EVENT', payload: {
+              id: 'event-2', merchantRaw: 'Uber Eats', status: 'accepted', tags: ['trabajo'],
+              amount: { amountMinor: 10_000 }, occurredAt: '2026-08-22T12:00:00.000Z',
+            },
+          },
+          {
+            PK: 'EVENT#event-3', SK: 'EVENT', payload: {
+              id: 'event-3', merchantRaw: 'Padel House', status: 'accepted', tags: ['viaje:vegas'],
+              amount: { amountMinor: 8_000 }, occurredAt: '2026-08-22T12:00:00.000Z',
+            },
+          },
+        ] };
+      }
+      if (command.constructor.name === 'PutCommand') {
+        saved = command.input.Item;
+        return {};
+      }
+      throw new Error(`Unexpected ${command.constructor.name}`);
+    });
+
+    const result = await runTagMutationTool('owner-1', 'preview_tag_edit', {
+      fromDay: '2026-08-21', toDay: '2026-08-25', addTags: ['ciudad:cdmx'],
+      merchantRaw: 'uber eats', sourceTags: ['Viaje:Végas'],
+    });
+    expect(result).toMatchObject({ affected: [{ id: 'event-1' }], movementCount: 1 });
+    expect(saved).toMatchObject({ payload: { selection: {
+      merchantRaw: 'uber eats', sourceTags: ['viaje:vegas'],
+    } } });
   });
 
   it('requires a real preview operation id for apply and undo', async () => {
     await expect(runTagMutationTool('owner-1', 'apply_tag_edit', {})).rejects.toThrow(/operationId/);
+    await expect(runTagMutationTool('owner-1', 'apply_tag_edits', {})).rejects.toThrow(/operationIds/);
     await expect(runTagMutationTool('owner-1', 'undo_tag_edit', { operationId: ' ' })).rejects.toThrow(/operationId/);
     await expect(runTagMutationTool('owner-1', 'apply_category_edit', {})).rejects.toThrow(/operationId/);
     await expect(runTagMutationTool('owner-1', 'undo_category_edit', { operationId: ' ' })).rejects.toThrow(/operationId/);

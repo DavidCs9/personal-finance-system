@@ -25,8 +25,8 @@ Una instrucción explícita para agregar o quitar tags, o para cambiar una categ
 ## Secuencia de una edición
 
 1. El usuario pide explícitamente agregar o quitar tags, o cambiar una categoría.
-2. Para categorías, el Harness obtiene los `eventIds` concretos con `list_movements`, o usa un rango con `merchantRaw` exacto, `sourceCategoryId` o `onlyUncategorized=true`; un rango de fechas solo se rechaza.
-3. `preview_category_edit` es un `dryRun`: devuelve la lista completa `affected`, selecciona sólo movimientos `accepted`, congela IDs y valores previos, y persiste una operación con TTL.
+2. Para tags y categorías, el Harness obtiene los `eventIds` concretos con `list_movements`, o usa un rango con selector explícito. Tags acepta `merchantRaw` exacto, `sourceTags` u `onlyUntagged=true`; categorías acepta `merchantRaw` exacto, `sourceCategoryId` u `onlyUncategorized=true`. Un rango de fechas solo se rechaza.
+3. `preview_tag_edit` y `preview_category_edit` son `dryRun`: devuelven la lista completa `affected`, seleccionan sólo movimientos `accepted`, congelan IDs y valores previos, y persisten una operación con TTL.
 4. El Harness llama inmediatamente a su apply con uno o varios `operationId` en el mismo turno. No existe confirmación adicional en la UI.
 5. Una transacción condicionada actualiza los movimientos, crea una revisión por movimiento y marca la operación como aplicada.
 6. El chat emite un evento SSE `mutation`; la UI refresca el ledger y muestra conteo, importe, rango y tags cambiados.
@@ -59,13 +59,14 @@ Apply y undo son idempotentes. Un retry devuelve el estado ya alcanzado sin dupl
 
 ## Tools y límites de seguridad
 
-El Harness dispone de siete tools en un Gateway de mutaciones separado:
+El Harness dispone de ocho tools en un Gateway de mutaciones separado:
 
 | Tool | Contrato |
 |------|----------|
-| `preview_tag_edit` | Congela una operación tags-only para movimientos `accepted` dentro del rango |
+| `preview_tag_edit` | Dry run tags-only por `eventId`/`eventIds` exactos o rango con filtro explícito; devuelve todo `affected` |
 | `apply_tag_edit` | Aplica exactamente el `operationId` generado por preview |
 | `undo_tag_edit` | Deshace exactamente una operación aplicada |
+| `apply_tag_edits` | Aplica atómicamente 1–12 operaciones tags-only sin eventos solapados |
 | `preview_category_edit` | Dry run category-only por `eventId`/`eventIds` exactos o rango con filtro explícito; devuelve todo `affected` |
 | `apply_category_edit` | Aplica exactamente el `operationId` generado por preview |
 | `undo_category_edit` | Deshace exactamente una operación aplicada |
@@ -76,7 +77,7 @@ La arquitectura mantiene varias defensas independientes:
 - El chat Cognito sólo invoca el Harness si `claims.sub` coincide con `AgentOwnerSub`.
 - La Lambda de mutación usa `AGENT_OWNER`; ninguna tool acepta un owner del modelo o del browser.
 - El Gateway usa `AWS_IAM` y un Policy Engine nativo en modo `ENFORCE`.
-- Cedar niega por defecto y sólo permite esas siete acciones al rol exacto del Harness.
+- Cedar niega por defecto y sólo permite esas ocho acciones al rol exacto del Harness.
 - La Lambda de lectura no tiene permisos de escritura.
 - La Lambda de mutación sólo lee la tabla y escribe claves `BULK_EDIT#<owner>` o `EVENT#*` mediante `PutItem`/`UpdateItem`.
 - No existe una tool genérica de DynamoDB ni endpoints públicos `/bulk-edits`.
@@ -96,7 +97,7 @@ El recibo indica que el cambio puede deshacerse por chat. Modo privado también 
 
 - Una petición explícita de tags o categorías ejecuta preview y apply en el mismo turno sin confirmación adicional.
 - El preview congela el conjunto exacto antes de cualquier escritura.
-- Sólo se modifican movimientos `accepted`; las categorías usan IDs exactos o un rango inclusivo con filtro explícito y enseñan todos los afectados antes de apply.
+- Sólo se modifican movimientos `accepted`; tags y categorías usan IDs exactos o un rango inclusivo con filtro explícito y enseñan todos los afectados antes de apply.
 - Reintentar apply o undo no duplica revisiones ni invierte dos veces.
 - El solapamiento de rangos conserva varios tags en un movimiento.
 - Un conflicto posterior al preview cancela el lote entero.

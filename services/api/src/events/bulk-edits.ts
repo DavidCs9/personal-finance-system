@@ -11,6 +11,7 @@ import { localDate } from './queries.js';
 
 const MAX_BULK_EVENTS = 49;
 const MAX_CATEGORY_BATCH_OPERATIONS = 12;
+const MAX_TAG_BATCH_OPERATIONS = 12;
 const PREVIEW_TTL_SECONDS = 15 * 60;
 
 type BulkEditAudit = {
@@ -57,6 +58,8 @@ export type BulkEditSelection = {
   readonly merchantRaw?: string;
   readonly sourceCategoryId?: string;
   readonly onlyUncategorized?: boolean;
+  readonly sourceTags?: readonly string[];
+  readonly onlyUntagged?: boolean;
 };
 
 type BulkEditSnapshot = {
@@ -100,6 +103,13 @@ export type BulkEditPreview = {
 };
 
 export type AgentCategoryBatchApplyResult = {
+  readonly operationCount: number;
+  readonly movementCount: number;
+  readonly amountMinor: number;
+  readonly operations: readonly BulkEditPreview[];
+};
+
+export type AgentTagBatchApplyResult = {
   readonly operationCount: number;
   readonly movementCount: number;
   readonly amountMinor: number;
@@ -329,6 +339,149 @@ const parseEventIds = (value: unknown): readonly string[] | undefined => {
     throw new InvalidBulkEditError('eventIds debe contener IDs únicos y no vacíos.');
   }
   return eventIds;
+};
+
+type AgentTagEditInput = {
+  readonly change: BulkEditChange;
+  readonly eventIds?: readonly string[];
+  readonly fromDay?: string;
+  readonly toDay?: string;
+  readonly merchantRaw?: string;
+  readonly sourceTags?: readonly string[];
+  readonly onlyUntagged: boolean;
+};
+
+export const parseAgentTagEditInput = (raw: unknown): AgentTagEditInput => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new InvalidBulkEditError('El body debe ser un objeto.');
+  }
+  const body = raw as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(body, 'categoryId')) {
+    throw new InvalidBulkEditError('La tool de tags no acepta categoryId.');
+  }
+  if (body.eventId !== undefined && body.eventIds !== undefined) {
+    throw new InvalidBulkEditError('Envía eventId o eventIds, no ambos.');
+  }
+  const eventIds = body.eventId === undefined
+    ? parseEventIds(body.eventIds)
+    : parseEventIds([body.eventId]);
+  const hasFromDay = body.fromDay !== undefined;
+  const hasToDay = body.toDay !== undefined;
+  if (hasFromDay !== hasToDay) {
+    throw new InvalidBulkEditError('fromDay y toDay deben enviarse juntos.');
+  }
+  const fromDay = typeof body.fromDay === 'string' ? body.fromDay : undefined;
+  const toDay = typeof body.toDay === 'string' ? body.toDay : undefined;
+  if (fromDay && toDay) {
+    assertDay(fromDay, 'fromDay');
+    assertDay(toDay, 'toDay');
+    if (fromDay > toDay) throw new InvalidBulkEditError('fromDay no puede ser posterior a toDay.');
+    monthsBetween(fromDay, toDay);
+  }
+  const merchantRaw = typeof body.merchantRaw === 'string' ? body.merchantRaw.trim() : undefined;
+  if (body.merchantRaw !== undefined && !merchantRaw) {
+    throw new InvalidBulkEditError('merchantRaw no puede estar vacío.');
+  }
+  const sourceTags = body.sourceTags === undefined
+    ? undefined
+    : normalizeEventTags(Array.isArray(body.sourceTags) ? body.sourceTags : []);
+  if (body.sourceTags !== undefined && (!sourceTags || sourceTags.length === 0)) {
+    throw new InvalidBulkEditError('sourceTags debe contener al menos un tag válido.');
+  }
+  if (body.onlyUntagged !== undefined && typeof body.onlyUntagged !== 'boolean') {
+    throw new InvalidBulkEditError('onlyUntagged debe ser booleano.');
+  }
+  const onlyUntagged = body.onlyUntagged === true;
+  if (sourceTags && onlyUntagged) {
+    throw new InvalidBulkEditError('sourceTags y onlyUntagged no se pueden combinar.');
+  }
+  if (!eventIds && (!fromDay || !toDay || (!merchantRaw && !sourceTags && !onlyUntagged))) {
+    throw new InvalidBulkEditError('Los tags requieren eventIds exactos o un rango con merchantRaw, sourceTags u onlyUntagged; nunca sólo fechas.');
+  }
+  const change = parseChange({
+    ...(Array.isArray(body.addTags) ? { addTags: body.addTags } : {}),
+    ...(Array.isArray(body.removeTags) ? { removeTags: body.removeTags } : {}),
+  });
+  return {
+    change,
+    ...(eventIds ? { eventIds } : {}),
+    ...(fromDay ? { fromDay } : {}),
+    ...(toDay ? { toDay } : {}),
+    ...(merchantRaw ? { merchantRaw } : {}),
+    ...(sourceTags ? { sourceTags } : {}),
+    onlyUntagged,
+  };
+};
+
+export const previewAgentTagEdit = async (
+  owner: string,
+  input: AgentTagEditInput,
+  now = new Date(),
+): Promise<BulkEditPreview> => {
+  const rows = input.eventIds
+    ? await queryEventsById(input.eventIds)
+    : await queryRangeEvents({ fromDay: input.fromDay!, toDay: input.toDay!, statuses: ['accepted'] });
+  const rowsById = new Map<string, Record<string, unknown>>();
+  for (const row of rows) {
+    const id = typeof (row.payload as Record<string, unknown> | undefined)?.id === 'string'
+      ? String((row.payload as Record<string, unknown>).id)
+      : '';
+    if (id) rowsById.set(id, row);
+  }
+  if (input.eventIds && input.eventIds.some((id) => !rowsById.has(id))) {
+    throw new InvalidBulkEditError('Uno o más eventIds ya no existen. Vuelve a consultar los movimientos antes de aplicar.');
+  }
+  const candidateRows = input.eventIds ? input.eventIds.map((id) => rowsById.get(id)!) : rows;
+  const events: BulkEditSnapshot[] = [];
+  const selectedDays: string[] = [];
+  for (const row of candidateRows) {
+    const payload = row.payload as Record<string, unknown> | undefined;
+    const id = typeof payload?.id === 'string' ? payload.id : '';
+    const day = payload ? localDate(payload.occurredAt ?? payload.receivedAt) : undefined;
+    const previousTags = normalizeEventTags(Array.isArray(payload?.tags) ? payload.tags.map(String) : []);
+    const matches = Boolean(payload && payload.status === 'accepted' && id && day)
+      && (!input.fromDay || (day! >= input.fromDay && day! <= input.toDay!))
+      && (!input.merchantRaw || merchantKey(String(payload!.merchantRaw ?? '')) === merchantKey(input.merchantRaw))
+      && (!input.sourceTags || input.sourceTags.every((tag) => previousTags.includes(tag)))
+      && (!input.onlyUntagged || previousTags.length === 0);
+    if (!matches) {
+      if (input.eventIds) {
+        throw new InvalidBulkEditError(`El movimiento ${id || 'seleccionado'} no coincide con los filtros de tags o ya no es accepted.`);
+      }
+      continue;
+    }
+    selectedDays.push(day!);
+    const nextTags = applyEventTagChange(previousTags, input.change);
+    if (JSON.stringify(previousTags) === JSON.stringify(nextTags)) continue;
+    const amount = payload!.amount as { amountMinor?: unknown } | undefined;
+    events.push({
+      id,
+      merchantRaw: String(payload!.merchantRaw ?? ''),
+      occurredAt: typeof payload!.occurredAt === 'string'
+        ? payload!.occurredAt
+        : typeof payload!.receivedAt === 'string' ? payload!.receivedAt : undefined,
+      status: 'accepted',
+      amountMinor: typeof payload!.personalAmountMinor === 'number'
+        ? payload!.personalAmountMinor
+        : Number(amount?.amountMinor ?? 0),
+      previousTags,
+      nextTags,
+      previousCategoryId: typeof payload!.categoryId === 'string' ? payload!.categoryId : null,
+      nextCategoryId: typeof payload!.categoryId === 'string' ? payload!.categoryId : null,
+    });
+  }
+  const fromDay = input.fromDay ?? selectedDays.slice().sort()[0];
+  const toDay = input.toDay ?? selectedDays.slice().sort().at(-1);
+  if (!fromDay || !toDay) throw new InvalidBulkEditError('No hay movimientos elegibles para este cambio.');
+  return createPreviewOperation(owner, {
+    fromDay,
+    toDay,
+    statuses: ['accepted'],
+    ...(input.eventIds ? { eventIds: input.eventIds } : {}),
+    ...(input.merchantRaw ? { merchantRaw: input.merchantRaw } : {}),
+    ...(input.sourceTags ? { sourceTags: input.sourceTags } : {}),
+    ...(input.onlyUntagged ? { onlyUntagged: true } : {}),
+  }, input.change, events, now);
 };
 
 export const parseAgentCategoryEditInput = (raw: unknown): AgentCategoryEditInput => {
@@ -643,6 +796,83 @@ export const undoAgentTagEdit = (
   now,
   assistantTagAudit,
 );
+
+export const applyAgentTagEdits = async (
+  owner: string,
+  operationIds: readonly string[],
+  now = new Date(),
+): Promise<AgentTagBatchApplyResult> => {
+  const ids = operationIds.map((operationId) => operationId.trim());
+  if (ids.length === 0 || ids.length > MAX_TAG_BATCH_OPERATIONS
+    || ids.some((operationId) => !operationId) || new Set(ids).size !== ids.length) {
+    throw new InvalidBulkEditError(`operationIds debe contener entre 1 y ${MAX_TAG_BATCH_OPERATIONS} IDs únicos.`);
+  }
+  const operations = await Promise.all(ids.map((operationId) => getOperation(owner, operationId)));
+  for (const operation of operations) {
+    if (Object.prototype.hasOwnProperty.call(operation.change, 'categoryId')) {
+      throw new InvalidBulkEditError('El apply por lote sólo puede modificar tags.');
+    }
+  }
+  if (operations.every((operation) => operation.status === 'applied')) {
+    const previews = operations.map(publicPreview);
+    return {
+      operationCount: previews.length,
+      movementCount: previews.reduce((sum, preview) => sum + preview.movementCount, 0),
+      amountMinor: previews.reduce((sum, preview) => sum + preview.amountMinor, 0),
+      operations: previews,
+    };
+  }
+  if (operations.some((operation) => operation.status !== 'pending')) {
+    throw new InvalidBulkEditError('Las operaciones del lote deben estar todas pendientes o todas aplicadas.');
+  }
+  if (operations.some((operation) => operation.expiresAt <= Math.floor(now.getTime() / 1000))) {
+    throw new InvalidBulkEditError('Una propuesta del lote expiró. Genera previews nuevos.');
+  }
+  const affectedEventIds = operations.flatMap((operation) => operation.events.map((event) => event.id));
+  if (new Set(affectedEventIds).size !== affectedEventIds.length) {
+    throw new InvalidBulkEditError('Las operaciones del lote se solapan en uno o más movimientos. Genera previews sin movimientos repetidos.');
+  }
+  const actionCount = operations.reduce((sum, operation) => sum + (operation.events.length * 2) + 1, 0);
+  if (actionCount > 100) {
+    throw new InvalidBulkEditError('El lote excede 100 acciones de DynamoDB. Divídelo en grupos más pequeños.');
+  }
+  const at = now.toISOString();
+  const transactItems: NonNullable<TransactWriteCommandInput['TransactItems']> = operations.flatMap((operation) => [
+    ...operation.events.flatMap((event) => [
+      { Update: eventUpdate(event, 'apply') },
+      { Put: revisionPut(event, operation, 'apply', owner, at, assistantTagAudit) },
+    ]),
+    { Update: {
+      TableName: tableName,
+      Key: { PK: `BULK_EDIT#${owner}`, SK: `OP#${operation.operationId}` },
+      UpdateExpression: 'SET #payload.#status = :nextStatus, #payload.#timestamp = :at REMOVE #ttl',
+      ConditionExpression: '#payload.#status = :expectedStatus',
+      ExpressionAttributeNames: {
+        '#payload': 'payload', '#status': 'status', '#timestamp': 'appliedAt', '#ttl': 'expiresAt',
+      },
+      ExpressionAttributeValues: { ':expectedStatus': 'pending', ':nextStatus': 'applied', ':at': at },
+    } },
+  ]);
+  try {
+    await database.send(new TransactWriteCommand({
+      TransactItems: transactItems,
+      ClientRequestToken: createHash('sha256').update(`apply-tag:${ids.join(':')}`).digest('hex').slice(0, 36),
+    }));
+  } catch (error) {
+    const name = error && typeof error === 'object' && 'name' in error ? String(error.name) : '';
+    if (name === 'TransactionCanceledException') {
+      throw new InvalidBulkEditError('Los movimientos cambiaron después del preview. Genera un lote nuevo.');
+    }
+    throw error;
+  }
+  const previews = operations.map((operation) => publicPreview({ ...operation, status: 'applied', appliedAt: at }));
+  return {
+    operationCount: previews.length,
+    movementCount: previews.reduce((sum, preview) => sum + preview.movementCount, 0),
+    amountMinor: previews.reduce((sum, preview) => sum + preview.amountMinor, 0),
+    operations: previews,
+  };
+};
 
 export const applyAgentCategoryEdit = (
   owner: string,

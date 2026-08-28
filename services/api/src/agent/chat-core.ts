@@ -176,6 +176,7 @@ const toolLabel = (name: string): string => {
     case 'investment_history': return 'Revisando historial de inversiones';
     case 'preview_tag_edit': return 'Preparando los tags';
     case 'apply_tag_edit': return 'Aplicando los tags';
+    case 'apply_tag_edits': return 'Aplicando el lote de tags';
     case 'undo_tag_edit': return 'Restaurando los tags';
     case 'preview_category_edit': return 'Preparando las categorías';
     case 'apply_category_edit': return 'Aplicando las categorías';
@@ -290,6 +291,7 @@ export const summarizeToolResult = (
         material: false,
       };
     case 'apply_tag_edit':
+    case 'apply_tag_edits':
     case 'apply_category_edit':
     case 'apply_category_edits':
       return {
@@ -344,11 +346,12 @@ export const mutationsFromToolResult = (
   toolName: string | undefined,
   payload: Record<string, unknown>,
 ): readonly Extract<AgentSseEvent, { readonly type: 'mutation' }>[] => {
-  if (toolName === 'apply_category_edits' && Array.isArray(payload.operations)) {
+  if ((toolName === 'apply_tag_edits' || toolName === 'apply_category_edits') && Array.isArray(payload.operations)) {
     const mutations: Extract<AgentSseEvent, { readonly type: 'mutation' }>[] = [];
+    const kind = toolName === 'apply_tag_edits' ? 'tag_edit' : 'category_edit';
     for (const operation of payload.operations) {
       if (!operation || typeof operation !== 'object') continue;
-      const mutation = mutationFromPreview('category_edit', 'applied', operation as Record<string, unknown>);
+      const mutation = mutationFromPreview(kind, 'applied', operation as Record<string, unknown>);
       if (mutation) mutations.push(mutation);
     }
     return mutations;
