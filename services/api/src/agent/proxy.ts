@@ -12,6 +12,7 @@ import {
   resolveOwner,
   runAgentChat,
 } from './chat-core.js';
+import { prepareAssistantThread } from './thread-runtime.js';
 
 /** Lambda runtime global for response streaming (not an npm module). */
 type LambdaRuntime = {
@@ -87,6 +88,7 @@ const streamHandler = async (
     const owner = await resolveOwner(event);
     assertConfiguredAgentOwner(owner);
     const body = parseChatBody(readBody(event));
+    await prepareAssistantThread(owner, body.sessionId, body.message, body.month);
     const httpStream = lambdaRuntime.HttpResponseStream.from(responseStream, {
       statusCode: 200,
       headers: {

@@ -60,7 +60,6 @@ export function Dashboard({
   const [editingCard, setEditingCard] = useState<CardCycle | null | undefined>();
   const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
   const [assistantOpen, setAssistantOpen] = useState(false);
-  const [assistantMonthEpoch, setAssistantMonthEpoch] = useState(0);
   const [movementSort, setMovementSort] = useState<"recent" | "largest">("recent");
   const [importOpen, setImportOpen] = useState(false);
   const [amexImportOpen, setAmexImportOpen] = useState(false);
@@ -378,10 +377,7 @@ export function Dashboard({
         tab={tab}
         onTabChange={setTab}
         month={selectedMonth}
-        onMonthChange={(month) => {
-          setSelectedMonth(month);
-          setAssistantMonthEpoch((value) => value + 1);
-        }}
+        onMonthChange={setSelectedMonth}
         syncing={tab === "wealth" ? wealthQuery.isFetching : eventsQuery.isFetching}
         refreshing={tab === "wealth"
           ? wealthQuery.isFetching
@@ -618,7 +614,6 @@ export function Dashboard({
           idToken={idToken}
           demoMode={demoMode}
           onClose={() => setAssistantOpen(false)}
-          onMonthChanged={assistantMonthEpoch}
           onMutated={() => {
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });

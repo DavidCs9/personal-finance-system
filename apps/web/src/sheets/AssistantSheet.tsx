@@ -1,5 +1,10 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { ledgerApi, type AgentChatEvent, type AssistantMemory } from "../api/client";
+import {
+  ledgerApi,
+  type AgentChatEvent,
+  type AssistantMemory,
+  type AssistantThread,
+} from "../api/client";
 import { Amt } from "../components/Amt";
 import { Sheet } from "../components/Sheet";
 import { AssistantMarkdown } from "../lib/assistant-markdown";
@@ -10,6 +15,12 @@ const EXAMPLES = [
   "¿Cómo cierro el mes a este ritmo?",
   "¿Cuánto tengo neto?",
 ] as const;
+
+const assistantMonthLabel = (month: string): string => new Intl.DateTimeFormat("es-MX", {
+  month: "long",
+  year: "numeric",
+  timeZone: "UTC",
+}).format(new Date(`${month}-01T00:00:00Z`));
 
 const tagChangeLabel = (change: Extract<AgentChatEvent, { type: "mutation" }>["change"]): string => {
   const parts = [
@@ -60,15 +71,12 @@ export function AssistantSheet({
   idToken,
   demoMode,
   onClose,
-  onMonthChanged,
   onMutated,
 }: {
   month: string;
   idToken: string;
   demoMode: boolean;
   onClose(): void;
-  /** Bumps when parent month changes so the sheet clears. */
-  onMonthChanged: number;
   onMutated(): void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -82,14 +90,58 @@ export function AssistantSheet({
   const [memoriesLoading, setMemoriesLoading] = useState(false);
   const [memoriesError, setMemoriesError] = useState<string>();
   const [deletingMemoryId, setDeletingMemoryId] = useState<string>();
+  const [threads, setThreads] = useState<readonly AssistantThread[]>([]);
+  const [threadsOpen, setThreadsOpen] = useState(false);
+  const [threadsLoading, setThreadsLoading] = useState(!demoMode);
+  const [threadsError, setThreadsError] = useState<string>();
+  const [deletingThreadId, setDeletingThreadId] = useState<string>();
+
+  const openThread = useCallback(async (threadId: string, activate = true) => {
+    if (demoMode) return;
+    setThreadsLoading(true);
+    setThreadsError(undefined);
+    try {
+      const result = await ledgerApi.getAssistantThread(threadId, idToken);
+      setMessages(result.messages.map((message): ChatMessage => message.role === "assistant"
+        ? { role: "assistant", parts: [{ kind: "text", text: message.text }] }
+        : { role: "user", text: message.text }));
+      setSessionId(result.thread.id);
+      setThreads((current) => current.some((thread) => thread.id === result.thread.id)
+        ? current.map((thread) => thread.id === result.thread.id ? result.thread : thread)
+        : [result.thread, ...current]);
+      if (activate) await ledgerApi.setActiveAssistantThread(result.thread.id, idToken);
+      setThreadsOpen(false);
+      setError(undefined);
+      setRequestId(undefined);
+    } catch (err) {
+      setThreadsError(err instanceof Error ? err.message : "No pude abrir la conversación.");
+      throw err;
+    } finally {
+      setThreadsLoading(false);
+    }
+  }, [demoMode, idToken]);
+
+  const loadThreads = useCallback(async () => {
+    if (demoMode) {
+      setThreadsLoading(false);
+      return;
+    }
+    setThreadsLoading(true);
+    setThreadsError(undefined);
+    try {
+      const result = await ledgerApi.listAssistantThreads(idToken);
+      setThreads(result.threads);
+      if (result.activeThreadId) await openThread(result.activeThreadId, false);
+    } catch (err) {
+      setThreadsError(err instanceof Error ? err.message : "No pude cargar tus conversaciones.");
+    } finally {
+      setThreadsLoading(false);
+    }
+  }, [demoMode, idToken, openThread]);
 
   useEffect(() => {
-    setMessages([]);
-    setDraft("");
-    setError(undefined);
-    setRequestId(undefined);
-    setSessionId(undefined);
-  }, [onMonthChanged, month]);
+    void loadThreads();
+  }, [loadThreads]);
 
   const loadMemories = useCallback(async () => {
     if (demoMode) return;
@@ -121,6 +173,43 @@ export function AssistantSheet({
       throw err;
     } finally {
       setDeletingMemoryId(undefined);
+    }
+  };
+
+  const startNewConversation = async () => {
+    if (busy) return;
+    setMessages([]);
+    setDraft("");
+    setError(undefined);
+    setRequestId(undefined);
+    setSessionId(undefined);
+    setThreadsOpen(false);
+    if (!demoMode) {
+      try {
+        await ledgerApi.setActiveAssistantThread(undefined, idToken);
+      } catch (err) {
+        setThreadsError(err instanceof Error ? err.message : "No pude iniciar una conversación nueva.");
+      }
+    }
+  };
+
+  const deleteThread = async (threadId: string) => {
+    if (demoMode) return;
+    setDeletingThreadId(threadId);
+    setThreadsError(undefined);
+    try {
+      await ledgerApi.deleteAssistantThread(threadId, idToken);
+      setThreads((current) => current.filter((thread) => thread.id !== threadId));
+      if (sessionId === threadId) {
+        setMessages([]);
+        setSessionId(undefined);
+        setRequestId(undefined);
+      }
+    } catch (err) {
+      setThreadsError(err instanceof Error ? err.message : "No se pudo borrar la conversación.");
+      throw err;
+    } finally {
+      setDeletingThreadId(undefined);
     }
   };
 
@@ -351,6 +440,26 @@ export function AssistantSheet({
         },
       );
       setSessionId(nextSession);
+      if (nextSession) {
+        const now = new Date().toISOString();
+        const normalizedTitle = message.replace(/\s+/g, " ");
+        const title = normalizedTitle.length <= 72
+          ? normalizedTitle
+          : `${normalizedTitle.slice(0, 69).trimEnd()}…`;
+        setThreads((current) => {
+          const existing = current.find((thread) => thread.id === nextSession);
+          const updated: AssistantThread = existing
+            ? { ...existing, updatedAt: now }
+            : {
+                id: nextSession,
+                title,
+                firstMonth: month,
+                createdAt: now,
+                updatedAt: now,
+              };
+          return [updated, ...current.filter((thread) => thread.id !== nextSession)].slice(0, 20);
+        });
+      }
       if (parts.length === 0) parts.push({ kind: "text", text: "Listo." });
       publish();
     } catch (err) {
@@ -404,14 +513,52 @@ export function AssistantSheet({
     );
   }
 
+  if (threadsOpen) {
+    return (
+      <AssistantThreadsSheet
+        threads={threads}
+        activeThreadId={sessionId}
+        loading={threadsLoading}
+        error={threadsError}
+        deletingThreadId={deletingThreadId}
+        onClose={() => setThreadsOpen(false)}
+        onRetry={loadThreads}
+        onOpen={openThread}
+        onDelete={deleteThread}
+        onNew={startNewConversation}
+      />
+    );
+  }
+
   return (
-    <Sheet eyebrow="ASISTENTE" title={`Pregunta · ${month}`} onClose={onClose}>
+    <Sheet eyebrow="ASISTENTE" title="Conversación" onClose={onClose}>
       <div className="assistant-sheet">
-        <p className="assistant-month-chip">Mes activo: {month}</p>
-        <button type="button" className="assistant-memory-link" onClick={() => setMemoriesOpen(true)}>
-          Gestionar memoria
-        </button>
-        {messages.length === 0 && (
+        <div className="assistant-context-row">
+          <p className="assistant-month-chip">Contexto: {assistantMonthLabel(month)}</p>
+          {messages.length > 0 && (
+            <button type="button" className="assistant-new-thread" onClick={() => void startNewConversation()} disabled={busy}>
+              Nueva conversación
+            </button>
+          )}
+        </div>
+        <div className="assistant-nav-links">
+          <button type="button" className="assistant-memory-link" onClick={() => setThreadsOpen(true)}>
+            Conversaciones{threads.length > 0 ? ` · ${threads.length}` : ""}
+          </button>
+          <button type="button" className="assistant-memory-link" onClick={() => setMemoriesOpen(true)}>
+            Gestionar memoria
+          </button>
+        </div>
+        {threadsLoading && messages.length === 0 && (
+          <p className="assistant-history-state" role="status">Recuperando conversación…</p>
+        )}
+        {threadsError && messages.length === 0 && !threadsLoading && (
+          <div className="assistant-history-error" role="alert">
+            <p>{threadsError}</p>
+            <button type="button" className="text-button" onClick={() => void loadThreads()}>Reintentar</button>
+          </div>
+        )}
+        {messages.length === 0 && !threadsLoading && (
           <div className="assistant-examples">
             <p>Ejemplos</p>
             {EXAMPLES.map((example) => (
@@ -423,7 +570,7 @@ export function AssistantSheet({
         )}
         <div className="assistant-thread">
           {messages.map((message, index) => (
-            <div key={`${message.role}-${index}`} className={`assistant-bubble ${message.role}`}>
+            <div key={`${message.role}-${index}`} className={`assistant-bubble private-sensitive ${message.role}`}>
               {message.role === "assistant" ? (
                 message.parts && message.parts.length > 0 ? (
                   message.parts.map((part, partIndex) => {
@@ -510,6 +657,133 @@ export function AssistantSheet({
   );
 }
 
+const threadDate = (value: string): string => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "short", year: "numeric" }).format(date);
+};
+
+function AssistantThreadsSheet({
+  threads,
+  activeThreadId,
+  loading,
+  error,
+  deletingThreadId,
+  onClose,
+  onRetry,
+  onOpen,
+  onDelete,
+  onNew,
+}: {
+  readonly threads: readonly AssistantThread[];
+  readonly activeThreadId?: string;
+  readonly loading: boolean;
+  readonly error?: string;
+  readonly deletingThreadId?: string;
+  onClose(): void;
+  onRetry(): Promise<void>;
+  onOpen(threadId: string): Promise<void>;
+  onDelete(threadId: string): Promise<void>;
+  onNew(): Promise<void>;
+}) {
+  const [pendingDeleteId, setPendingDeleteId] = useState<string>();
+
+  return (
+    <Sheet
+      eyebrow="ASISTENTE"
+      title="Conversaciones"
+      onClose={onClose}
+      className="assistant-memories-sheet assistant-threads-sheet"
+      closeLabel="Volver al chat"
+      closeIcon="←"
+    >
+      <div className="assistant-memories">
+        <div className="assistant-threads-intro">
+          <p>Retoma una conversación o empieza otra sin perder las anteriores.</p>
+          <button type="button" className="secondary-button" onClick={() => void onNew()}>
+            Nueva conversación
+          </button>
+        </div>
+        {error && (
+          <div className="assistant-memories-error" role="alert">
+            <p>{error}</p>
+            <button type="button" className="text-button" onClick={() => void onRetry()} disabled={loading}>
+              Reintentar
+            </button>
+          </div>
+        )}
+        {loading && threads.length === 0 ? (
+          <p className="assistant-memories-state" role="status">Cargando conversaciones…</p>
+        ) : threads.length === 0 && !error ? (
+          <div className="assistant-memories-empty">
+            <strong>Aún no hay conversaciones.</strong>
+            <p>La primera aparecerá aquí después de que Olbia responda.</p>
+          </div>
+        ) : (
+          <ul className="assistant-memories-list assistant-threads-list">
+            {threads.map((thread) => (
+              <li
+                key={thread.id}
+                className={[
+                  thread.id === activeThreadId ? "active" : "",
+                  pendingDeleteId === thread.id ? "confirming" : "",
+                ].filter(Boolean).join(" ") || undefined}
+              >
+                <button
+                  type="button"
+                  className="assistant-thread-open"
+                  onClick={() => void onOpen(thread.id).catch(() => undefined)}
+                  disabled={loading || deletingThreadId === thread.id}
+                >
+                  <span className="private-sensitive">{thread.title}</span>
+                  <small>
+                    {thread.id === activeThreadId ? "Actual · " : ""}
+                    {/^\d{4}-\d{2}$/.test(thread.firstMonth) ? `${thread.firstMonth} · ` : ""}
+                    {threadDate(thread.updatedAt)}
+                  </small>
+                </button>
+                {pendingDeleteId === thread.id ? (
+                  <div className="assistant-memory-confirm">
+                    <span>Se borrará esta conversación y no podrás retomarla.</span>
+                    <div>
+                      <button
+                        type="button"
+                        className="assistant-memory-cancel"
+                        onClick={() => setPendingDeleteId(undefined)}
+                        disabled={deletingThreadId === thread.id}
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        className="assistant-memory-delete confirm"
+                        onClick={() => void onDelete(thread.id)
+                          .then(() => setPendingDeleteId(undefined))
+                          .catch(() => undefined)}
+                        disabled={deletingThreadId === thread.id}
+                      >
+                        {deletingThreadId === thread.id ? "Borrando…" : "Confirmar borrar"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="assistant-memory-delete"
+                    onClick={() => setPendingDeleteId(thread.id)}
+                  >
+                    Borrar
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Sheet>
+  );
+}
+
 function AssistantMemoriesSheet({
   memories,
   loading,
@@ -561,7 +835,7 @@ function AssistantMemoriesSheet({
           <ul className="assistant-memories-list">
             {memories.map((memory) => (
               <li key={memory.id} className={pendingDeleteId === memory.id ? "confirming" : undefined}>
-                <p>{memory.text}</p>
+                <p className="private-sensitive">{memory.text}</p>
                 {pendingDeleteId === memory.id ? (
                   <div className="assistant-memory-confirm">
                     <span>Esta acción no se puede deshacer.</span>

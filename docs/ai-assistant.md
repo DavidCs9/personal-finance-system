@@ -35,7 +35,7 @@ SPA (JWT Cognito)
 - Las tools viven detrás de **Gateway**: un target Lambda de solo lectura para finanzas, un Gateway separado para mutaciones de tags y el [conector administrado Web Search Tool](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-connector-web-search-tool.html) para información pública con citas.
 - Harness, Memory y el Gateway de Web Search corren en `us-east-1`, requerido por el conector. El Gateway financiero existente, su Lambda y DynamoDB permanecen juntos en `us-east-2`; el Harness conecta ambos Gateways.
 - Code interpreter: **apagado**.
-- Memoria de conversación: AgentCore Memory conserva entre sesiones solo hechos durables y preferencias estables que el usuario expresó explícitamente, aislados por Cognito `sub`. Las estrategias personalizadas rechazan inferencias del asistente, cálculos intermedios, saldos actuales, unidades no confirmadas y fechas inferidas; una corrección posterior del usuario reemplaza el valor anterior. El Harness recupera únicamente hechos y preferencias relevantes (no resúmenes de sesión). Las memorias durables se pueden revisar y borrar desde el sheet. Nunca escribe ni modifica el ledger, Resumen, proyecciones o Patrimonio.
+- Memoria de conversación: AgentCore Memory conserva eventos crudos por conversación durante 365 días y hechos/preferencias durables por separado, todo aislado por Cognito `sub`. Reutilizar el mismo `sessionId` restaura el contexto del Harness. Las estrategias personalizadas de largo plazo rechazan inferencias del asistente, cálculos intermedios, saldos actuales, unidades no confirmadas y fechas inferidas; una corrección posterior del usuario reemplaza el valor anterior. Las conversaciones recientes y las memorias durables se pueden revisar y borrar por separado desde el sheet. Ninguna memoria escribe ni modifica el ledger, Resumen, proyecciones o Patrimonio.
 - CDK provisiona el Gateway de mutaciones, su target Lambda y su Policy Engine con recursos nativos de CloudFormation. El policy engine opera en `ENFORCE`, niega por defecto y sólo permite las tres acciones al rol IAM del Harness. El custom resource `OlbiaAgentCore` reconcilia Harness, Memory, finanzas y Web Search, e incorpora el ARN del Gateway de mutaciones.
 
 ## Prompt Management (runtime, sin deploy)
@@ -103,6 +103,10 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 
 - Ledger API: JWT Cognito vía authorizer de API Gateway HTTP API. Chat: authorizer Cognito de API Gateway REST.
 - `POST /agent/chat` body: `{ message, month, sessionId? }` → `text/event-stream`; cada evento `data:` usa los shapes `token`, `reasoning_start`, `reasoning_complete`, `tool_start`, `tool_complete`, `tool_failed`, `citation`, `proposal`, `mutation`, `done`, `error`.
+- El backend crea o actualiza un índice mínimo owner-scoped en `MetadataTable` (`sessionId`, título derivado de la primera pregunta, primer mes, timestamps y puntero activo). El transcript y el contexto siguen siendo propiedad de AgentCore Memory; DynamoDB no los duplica.
+- `GET /agent/threads` lista hasta 20 conversaciones recientes y devuelve `activeThreadId`; también descubre y backfillea sesiones nativas aún vigentes que preceden al índice.
+- `GET /agent/threads/{threadId}` reconstruye mensajes visibles con `ListEvents`; `PUT /agent/threads/active` selecciona o limpia el hilo activo y `DELETE /agent/threads/{threadId}` elimina sus eventos crudos y su índice.
+- Cerrar el sheet, recargar o cambiar de mes no limpia el hilo. El mes seleccionado se manda como contexto del turno nuevo. La actividad de razonamiento y las duraciones de tools son sólo del stream en vivo y no se recrean como actividad actual al restaurar.
 - El cliente (`streamAgentChat`) aplica cada evento en orden y pinta tokens y actividad de tools conforme llegan.
 - La UI muestra un indicador compacto de razonamiento y su duración. El proxy nunca envía texto ni firmas privadas del bloque de razonamiento al browser.
 - La actividad se inserta dentro de la burbuja del asistente como una nota de trabajo compacta: cada llamada conserva nombre, estado, intento y duración. Al tocar una línea se abre su resumen legible; no se exponen inputs ni payloads crudos.
@@ -129,5 +133,4 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 ## Fuera de este ship
 - IBKR en vivo desde el agente (sigue siendo sync → `wealth_snapshot`).
 - Code interpreter.
-- Historial de chat durable en UI.
 - Subcategorías.

@@ -138,6 +138,26 @@ describe("iOS web app session recovery", () => {
   });
 });
 
+describe("assistant conversation history API", () => {
+  it("loads threads and explicitly clears the active conversation", async () => {
+    const idToken = token(Date.now() + 10 * 60 * 1000, "user");
+    ledgerApi.saveSession({ idToken, refreshToken: "refresh-token" });
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse({ threads: [], activeThreadId: undefined }))
+      .mockResolvedValueOnce(jsonResponse({ activeThreadId: null }));
+
+    await expect(ledgerApi.listAssistantThreads(idToken)).resolves.toEqual({ threads: [] });
+    await expect(ledgerApi.setActiveAssistantThread(undefined, idToken)).resolves.toBeUndefined();
+
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe("https://api.example.test/agent/threads");
+    expect(vi.mocked(fetch).mock.calls[1]?.[0]).toBe("https://api.example.test/agent/threads/active");
+    expect(vi.mocked(fetch).mock.calls[1]?.[1]).toMatchObject({
+      method: "PUT",
+      body: JSON.stringify({ threadId: null }),
+    });
+  });
+});
+
 describe("streamAgentChat REST SSE", () => {
   it("posts to the REST SSE endpoint and fans out chunks in order", async () => {
     const idToken = token(Date.now() + 10 * 60 * 1000, "user");

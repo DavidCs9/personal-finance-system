@@ -831,7 +831,13 @@ export class PersonalFinanceV1Stack extends Stack {
     apiFunction.addEnvironment('AGENT_MEMORY_ID', agentMemoryId);
     apiFunction.addEnvironment('AGENTCORE_REGION', agentCoreRegion);
     apiFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['bedrock-agentcore:ListMemoryRecords', 'bedrock-agentcore:DeleteMemoryRecord'],
+      actions: [
+        'bedrock-agentcore:ListMemoryRecords',
+        'bedrock-agentcore:DeleteMemoryRecord',
+        'bedrock-agentcore:ListSessions',
+        'bedrock-agentcore:ListEvents',
+        'bedrock-agentcore:DeleteEvent',
+      ],
       resources: [`arn:aws:bedrock-agentcore:${agentCoreRegion}:${this.account}:memory/*`],
     }));
 
@@ -863,6 +869,7 @@ export class PersonalFinanceV1Stack extends Stack {
       ],
       resources: ['*'],
     }));
+    metadataTable.grantReadWriteData(agentProxyFunction);
     agentProxyFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock:GetPrompt'],
       resources: [
@@ -950,6 +957,7 @@ export class PersonalFinanceV1Stack extends Stack {
       ],
       resources: ['*'],
     }));
+    metadataTable.grantReadWriteData(agentChatBufferedFunction);
     agentChatBufferedFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock:GetPrompt'],
       resources: [
@@ -1320,6 +1328,10 @@ export class PersonalFinanceV1Stack extends Stack {
       'GET /agent/wealth-snapshot',
       'GET /agent/memories',
       'DELETE /agent/memories/{memoryId}',
+      'GET /agent/threads',
+      'GET /agent/threads/{threadId}',
+      'PUT /agent/threads/active',
+      'DELETE /agent/threads/{threadId}',
       'POST /agent/propose-recategorize',
       'POST /agent/chat',
     ]) {
