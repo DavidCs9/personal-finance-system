@@ -150,22 +150,6 @@ export const TOOL_DEFINITIONS = [
       required: ['eventId', 'categoryId'],
     },
   },
-  {
-    name: 'preview_bulk_edit',
-    description:
-      'Prepara una edición masiva auditable por rango inclusivo. Sólo movimientos accepted. Crea un preview que la UI debe confirmar; no aplica el cambio.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        fromDay: { type: 'string', description: 'Inicio inclusivo YYYY-MM-DD.' },
-        toDay: { type: 'string', description: 'Fin inclusivo YYYY-MM-DD.' },
-        addTags: { type: 'array', items: { type: 'string' } },
-        removeTags: { type: 'array', items: { type: 'string' } },
-        categoryId: { type: 'string' },
-      },
-      required: ['fromDay', 'toDay'],
-    },
-  },
 ] as const;
 
 export type AgentToolName = (typeof TOOL_DEFINITIONS)[number]['name'];

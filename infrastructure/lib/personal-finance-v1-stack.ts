@@ -29,6 +29,28 @@ import { LambdaInvoke } from 'aws-cdk-lib/aws-scheduler-targets';
 import type { IConstruct } from 'constructs';
 import { Construct } from 'constructs';
 import * as path from 'node:path';
+import { TAG_MUTATION_TOOL_DEFINITIONS } from '@finance/api/agent-tag-mutation-tool-definitions';
+
+export const cloudFormationSchema = (schema: Record<string, unknown>): Record<string, unknown> => ({
+  Type: schema.type,
+  ...(typeof schema.description === 'string' ? { Description: schema.description } : {}),
+  ...(schema.items && typeof schema.items === 'object'
+    ? { Items: cloudFormationSchema(schema.items as Record<string, unknown>) }
+    : {}),
+  ...(schema.properties && typeof schema.properties === 'object'
+    ? {
+        Properties: Object.fromEntries(Object.entries(schema.properties as Record<string, unknown>)
+          .map(([name, property]) => [name, cloudFormationSchema(property as Record<string, unknown>)])),
+      }
+    : {}),
+  ...(Array.isArray(schema.required) ? { Required: schema.required } : {}),
+});
+
+export const cloudFormationTagMutationTools = TAG_MUTATION_TOOL_DEFINITIONS.map((tool) => ({
+  Name: tool.name,
+  Description: tool.description,
+  InputSchema: cloudFormationSchema(tool.inputSchema as unknown as Record<string, unknown>),
+}));
 
 export class PersonalFinanceV1Stack extends Stack {
   public constructor(scope: Construct, id: string, props?: StackProps) {
@@ -443,12 +465,31 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     metadataTable.grantReadData(agentToolsFunction);
-    agentToolsFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['dynamodb:PutItem'],
+
+    const agentTagMutationFunction = new NodejsFunction(this, 'AgentTagMutationFunction', {
+      ...lambdaDefaults,
+      functionName: 'personal-finance-v1-agent-tag-mutations',
+      logGroup: this.createLogGroup('AgentTagMutationLogGroup', 'personal-finance-v1-agent-tag-mutations'),
+      entry: path.join(__dirname, '..', 'lambda', 'agent-tag-mutations.ts'),
+      handler: 'handler',
+      description: 'Policy-controlled AgentCore Gateway target for audited tag mutations.',
+      timeout: Duration.seconds(29),
+      memorySize: 512,
+      environment: {
+        ...dataStorageEnvironment,
+        AGENT_OWNER: agentOwnerSub.valueAsString,
+      },
+    });
+    metadataTable.grantReadData(agentTagMutationFunction);
+    agentTagMutationFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'],
       resources: [metadataTable.tableArn],
       conditions: {
         'ForAllValues:StringLike': {
-          'dynamodb:LeadingKeys': ['BULK_EDIT#*'],
+          'dynamodb:LeadingKeys': [
+            cdk.Fn.join('', ['BULK_EDIT#', agentOwnerSub.valueAsString]),
+            'EVENT#*',
+          ],
         },
       },
     }));
@@ -472,6 +513,104 @@ export class PersonalFinanceV1Stack extends Stack {
       sourceAccount: this.account,
       sourceArn: `arn:aws:bedrock-agentcore:${this.region}:${this.account}:gateway/*`,
     });
+
+    const tagMutationPolicyEngine = new cdk.CfnResource(this, 'TagMutationPolicyEngine', {
+      type: 'AWS::BedrockAgentCore::PolicyEngine',
+      properties: {
+        Name: 'OlbiaTagMutationPolicy',
+        Description: 'Default-deny Cedar policies for Olbia tag mutation tools.',
+        Tags: Object.entries(tags).map(([Key, Value]) => ({ Key, Value })),
+      },
+    });
+    const tagMutationGateway = new cdk.CfnResource(this, 'TagMutationGateway', {
+      type: 'AWS::BedrockAgentCore::Gateway',
+      properties: {
+        Name: 'OlbiaTagMutationGateway',
+        Description: 'IAM-authenticated gateway isolated to audited tag mutations.',
+        RoleArn: gatewayRole.roleArn,
+        ProtocolType: 'MCP',
+        AuthorizerType: 'AWS_IAM',
+        PolicyEngineConfiguration: {
+          Arn: tagMutationPolicyEngine.getAtt('PolicyEngineArn'),
+          Mode: 'ENFORCE',
+        },
+        Tags: tags,
+      },
+    });
+    const tagMutationGatewayRuntimePolicy = new iam.Policy(this, 'TagMutationGatewayRuntimePolicy', {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ['lambda:InvokeFunction'],
+          resources: [agentTagMutationFunction.functionArn],
+        }),
+        new iam.PolicyStatement({
+          actions: ['bedrock-agentcore:GetPolicyEngine'],
+          resources: [tagMutationPolicyEngine.getAtt('PolicyEngineArn').toString()],
+        }),
+        new iam.PolicyStatement({
+          actions: ['bedrock-agentcore:AuthorizeAction', 'bedrock-agentcore:PartiallyAuthorizeActions'],
+          resources: [
+            tagMutationPolicyEngine.getAtt('PolicyEngineArn').toString(),
+            `arn:aws:bedrock-agentcore:${this.region}:${this.account}:gateway/*`,
+          ],
+        }),
+      ],
+    });
+    gatewayRole.attachInlinePolicy(tagMutationGatewayRuntimePolicy);
+    tagMutationGateway.node.addDependency(tagMutationGatewayRuntimePolicy);
+
+    const tagMutationLambdaPermission = new lambda.CfnPermission(this, 'AllowTagMutationGatewayInvoke', {
+      action: 'lambda:InvokeFunction',
+      functionName: agentTagMutationFunction.functionArn,
+      principal: 'bedrock-agentcore.amazonaws.com',
+      sourceAccount: this.account,
+      sourceArn: tagMutationGateway.getAtt('GatewayArn').toString(),
+    });
+    const tagMutationTarget = new cdk.CfnResource(this, 'TagMutationGatewayTarget', {
+      type: 'AWS::BedrockAgentCore::GatewayTarget',
+      properties: {
+        GatewayIdentifier: tagMutationGateway.ref,
+        Name: 'olbia-tag-mutations',
+        Description: 'Preview, apply, and undo tag-only ledger edits.',
+        CredentialProviderConfigurations: [{ CredentialProviderType: 'GATEWAY_IAM_ROLE' }],
+        TargetConfiguration: {
+          Mcp: {
+            Lambda: {
+              LambdaArn: agentTagMutationFunction.functionArn,
+              ToolSchema: { InlinePayload: cloudFormationTagMutationTools },
+            },
+          },
+        },
+      },
+    });
+    tagMutationTarget.node.addDependency(tagMutationLambdaPermission);
+
+    const tagMutationPermit = new cdk.CfnResource(this, 'TagMutationPermit', {
+      type: 'AWS::BedrockAgentCore::Policy',
+      properties: {
+        Name: 'OlbiaTagMutationPermit',
+        Description: 'Only the Olbia harness role can call the three tag mutation tools.',
+        PolicyEngineId: tagMutationPolicyEngine.getAtt('PolicyEngineId'),
+        EnforcementMode: 'ACTIVE',
+        ValidationMode: 'FAIL_ON_ANY_FINDINGS',
+        Definition: {
+          Cedar: {
+            Statement: cdk.Fn.join('', [
+              'permit(\n  principal == AgentCore::IamEntity::"arn:aws:sts::',
+              this.account,
+              ':assumed-role/personal-finance-v1-agentcore-harness",\n  action in [\n',
+              '    AgentCore::Action::"olbia-tag-mutations___preview_tag_edit",\n',
+              '    AgentCore::Action::"olbia-tag-mutations___apply_tag_edit",\n',
+              '    AgentCore::Action::"olbia-tag-mutations___undo_tag_edit"\n',
+              '  ],\n  resource == AgentCore::Gateway::"',
+              tagMutationGateway.getAtt('GatewayArn').toString(),
+              '"\n);',
+            ]),
+          },
+        },
+      },
+    });
+    tagMutationPermit.node.addDependency(tagMutationTarget);
 
     const harnessExecutionRole = new iam.Role(this, 'AgentCoreHarnessExecutionRole', {
       roleName: 'personal-finance-v1-agentcore-harness',
@@ -674,6 +813,7 @@ export class PersonalFinanceV1Stack extends Stack {
         MemoryModelId: 'us.amazon.nova-lite-v1:0',
         GatewayRoleArn: gatewayRole.roleArn,
         ToolsLambdaArn: agentToolsFunction.functionArn,
+        MutationGatewayArn: tagMutationGateway.getAtt('GatewayArn'),
         // Reconcile AgentCore resources when the provisioner lifecycle logic changes.
         ProvisionerVersion: agentcoreProvisionerFunction.currentVersion.version,
         // Force replace when tools Lambda changes identity.
@@ -683,6 +823,7 @@ export class PersonalFinanceV1Stack extends Stack {
     // Memory validates model access during UpdateMemory, so reconciliation must
     // wait until the role's separately managed IAM policy is fully attached.
     agentcoreResources.node.addDependency(memoryModelPolicy);
+    agentcoreResources.node.addDependency(tagMutationPermit);
     const harnessArn = agentcoreResources.getAttString('HarnessArn');
     const agentMemoryId = agentcoreResources.getAttString('MemoryId');
 
@@ -711,6 +852,7 @@ export class PersonalFinanceV1Stack extends Stack {
         SYSTEM_PROMPT_CACHE_TTL_MS: '30000',
         COGNITO_USER_POOL_ID: userPool.userPoolId,
         COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+        AGENT_OWNER: agentOwnerSub.valueAsString,
         WEB_APP_URL: webAppUrl,
       },
     });
@@ -798,6 +940,7 @@ export class PersonalFinanceV1Stack extends Stack {
         SYSTEM_PROMPT_CACHE_TTL_MS: '30000',
         COGNITO_USER_POOL_ID: userPool.userPoolId,
         COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+        AGENT_OWNER: agentOwnerSub.valueAsString,
       },
     });
     agentChatBufferedFunction.addToRolePolicy(new iam.PolicyStatement({
@@ -823,6 +966,9 @@ export class PersonalFinanceV1Stack extends Stack {
     new cdk.CfnOutput(this, 'AgentCoreHarnessArn', { value: harnessArn });
     new cdk.CfnOutput(this, 'AgentCoreGatewayArn', {
       value: agentcoreResources.getAttString('GatewayArn'),
+    });
+    new cdk.CfnOutput(this, 'AgentCoreTagMutationGatewayArn', {
+      value: tagMutationGateway.getAtt('GatewayArn').toString(),
     });
     new cdk.CfnOutput(this, 'AgentChatUrl', {
       value: `${agentChatApi.url}agent/chat`,

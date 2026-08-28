@@ -17,6 +17,8 @@ SPA (JWT Cognito)
         → AgentCore Gateway (MCP, AWS_IAM)
           → Lambda agent-tools (AGENT_OWNER) → DynamoDB + computeMonthSummary
           → AWS-managed Web Search Tool → resultados con citas
+        → AgentCore Gateway de mutaciones (MCP, AWS_IAM + Policy ENFORCE)
+          → Lambda agent-tag-mutations (AGENT_OWNER) → DynamoDB TransactWrite
 
 SPA (JWT Cognito)
   → API Gateway HTTP API  ← resto del ledger
@@ -30,11 +32,11 @@ SPA (JWT Cognito)
 - CORS pertenece a este REST API y a las respuestas de la Lambda proxy. El origen permitido es el dominio web de Olbia; las respuestas de autorización 4xx/5xx también incluyen CORS.
 - El loop del agente lo corre **Harness** (no un Converse manual en la Lambda).
 - Claude Sonnet 4.6 usa adaptive thinking con esfuerzo `medium`. La Lambda lo pasa por `additionalParams.additionalModelRequestFields`, no configura `temperature` para este modelo y reserva al menos 4096 tokens totales para razonamiento y respuesta.
-- Las tools viven detrás de **Gateway**: un target Lambda para finanzas y el [conector administrado Web Search Tool](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-connector-web-search-tool.html) para información pública con citas.
+- Las tools viven detrás de **Gateway**: un target Lambda de solo lectura para finanzas, un Gateway separado para mutaciones de tags y el [conector administrado Web Search Tool](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-connector-web-search-tool.html) para información pública con citas.
 - Harness, Memory y el Gateway de Web Search corren en `us-east-1`, requerido por el conector. El Gateway financiero existente, su Lambda y DynamoDB permanecen juntos en `us-east-2`; el Harness conecta ambos Gateways.
 - Code interpreter: **apagado**.
 - Memoria de conversación: AgentCore Memory conserva entre sesiones solo hechos durables y preferencias estables que el usuario expresó explícitamente, aislados por Cognito `sub`. Las estrategias personalizadas rechazan inferencias del asistente, cálculos intermedios, saldos actuales, unidades no confirmadas y fechas inferidas; una corrección posterior del usuario reemplaza el valor anterior. El Harness recupera únicamente hechos y preferencias relevantes (no resúmenes de sesión). Las memorias durables se pueden revisar y borrar desde el sheet. Nunca escribe ni modifica el ledger, Resumen, proyecciones o Patrimonio.
-- CDK provisiona Gateway + Target + Harness vía custom resource (`OlbiaAgentCore`) y inyecta `HARNESS_ARN` en las Lambdas de chat.
+- CDK provisiona el Gateway de mutaciones, su target Lambda y su Policy Engine con recursos nativos de CloudFormation. El policy engine opera en `ENFORCE`, niega por defecto y sólo permite las tres acciones al rol IAM del Harness. El custom resource `OlbiaAgentCore` reconcilia Harness, Memory, finanzas y Web Search, e incorpora el ARN del Gateway de mutaciones.
 
 ## Prompt Management (runtime, sin deploy)
 
@@ -86,7 +88,9 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 | `investment_history` | Historial DDB de cuenta o posición Bitso/IBKR por día, rango o all-time; distingue cambio de valor de rendimiento cuando cambió la cantidad |
 | `WebSearch` | Búsqueda web administrada por AWS; conserva citas y enlaces en la respuesta |
 | `propose_recategorize` | Propone cambio individual; la UI confirma (`set_category` + regla) |
-| `preview_bulk_edit` | Congela movimientos `accepted` por rango y prepara tags/categoría; la UI confirma apply/undo por la API Cognito |
+| `preview_tag_edit` | Congela los movimientos `accepted` exactos para un cambio de tags; debe preceder inmediatamente a apply |
+| `apply_tag_edit` | Aplica en el mismo turno el snapshot congelado; la instrucción explícita del chat ya es la autorización |
+| `undo_tag_edit` | Restaura el estado anterior cuando el usuario lo pide en el chat |
 
 ## Categorías
 
@@ -98,21 +102,23 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 ## Auth y chat
 
 - Ledger API: JWT Cognito vía authorizer de API Gateway HTTP API. Chat: authorizer Cognito de API Gateway REST.
-- `POST /agent/chat` body: `{ message, month, sessionId? }` → `text/event-stream`; cada evento `data:` usa los shapes `token`, `reasoning_start`, `reasoning_complete`, `tool_start`, `tool_complete`, `tool_failed`, `citation`, `proposal`, `done`, `error`.
+- `POST /agent/chat` body: `{ message, month, sessionId? }` → `text/event-stream`; cada evento `data:` usa los shapes `token`, `reasoning_start`, `reasoning_complete`, `tool_start`, `tool_complete`, `tool_failed`, `citation`, `proposal`, `mutation`, `done`, `error`.
 - El cliente (`streamAgentChat`) aplica cada evento en orden y pinta tokens y actividad de tools conforme llegan.
 - La UI muestra un indicador compacto de razonamiento y su duración. El proxy nunca envía texto ni firmas privadas del bloque de razonamiento al browser.
 - La actividad se inserta dentro de la burbuja del asistente como una nota de trabajo compacta: cada llamada conserva nombre, estado, intento y duración. Al tocar una línea se abre su resumen legible; no se exponen inputs ni payloads crudos.
-- Un fallo de tool queda visible como dato no disponible. El agente puede seguir con una respuesta parcial. `preview_bulk_edit` sólo persiste una propuesta owner-scoped con TTL; apply/undo no son tools del modelo y se ejecutan por la API Cognito con revisiones e idempotencia.
+- Un fallo de tool queda visible como dato no disponible. El agente puede seguir con una respuesta parcial. `preview_tag_edit` sólo persiste una operación owner-scoped con TTL. `apply_tag_edit` y `undo_tag_edit` están aisladas en otro Gateway/Lambda y protegidas por Cedar, IAM de mínimo privilegio, revisiones e idempotencia; no existen endpoints públicos `/bulk-edits`.
 
-## Tags y mutaciones confirmadas
+## Tags y mutaciones desde chat
 
 - `tags` es una lista normalizada de contexto (`viaje:vegas`, `ciudad:cdmx`) independiente de `categoryId`.
 - El mismo movimiento puede tener varios tags; no afectan Resumen, proyecciones, MSI, conciliación ni Patrimonio.
-- La tool de preview acepta un rango inclusivo y sólo movimientos `accepted`; rechazados quedan fuera.
-- El backend congela IDs, valores previos, conteo e importe. La UI muestra el preview y una sola confirmación aplica el lote.
-- Apply y undo pasan por endpoints JWT del ledger, no por Gateway. Cada evento recibe una revisión con el mismo `operationId`.
+- Una petición explícita del usuario para agregar o quitar tags es la autorización del lote. No se solicita una segunda confirmación en la UI.
+- `preview_tag_edit` acepta un rango inclusivo y sólo movimientos `accepted`; rechazados quedan fuera. El agente la llama directamente, sin un `list_movements` previo, y llama `apply_tag_edit` con el `operationId` en el mismo turno.
+- El backend congela IDs, valores previos, conteo e importe antes de escribir. Cada evento recibe una revisión con el mismo `operationId`, `source=assistant_chat_tag_edit` y el dueño configurado como actor.
+- La UI recibe un evento SSE `mutation`, refresca el ledger y muestra un recibo factual sin botones de confirmación. Undo se solicita por chat y usa la misma operación congelada.
 - Si el evento cambió después del preview, DynamoDB cancela la transacción y exige generar uno nuevo.
-- Una categoría aplicada por rango nunca crea ni actualiza una regla comercio→categoría.
+- El Gateway directo sólo expone tags. Las categorías siguen usando `propose_recategorize` y confirmación en la UI; nunca entran en estas tools ni crean reglas por rango.
+- La Lambda de chat compara el Cognito `sub` con `AgentOwnerSub` antes de invocar el Harness. La Lambda de mutación usa ese mismo owner fijo y nunca acepta un owner del modelo.
 - Errores: 1–2 reintentos silenciosos en harness; luego mensaje corto + `requestId`.
 
 ## Observabilidad y costo

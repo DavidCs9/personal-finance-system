@@ -43,6 +43,7 @@ interface ProviderEvent {
     readonly HarnessExecutionRoleArn?: string;
     readonly GatewayRoleArn?: string;
     readonly ToolsLambdaArn?: string;
+    readonly MutationGatewayArn?: string;
     readonly MemoryName?: string;
     readonly MemoryExecutionRoleArn?: string;
     readonly MemoryModelId?: string;
@@ -619,7 +620,11 @@ const ensureWebSearchTarget = async (input: {
   return created.targetId!;
 };
 
-const harnessTools = (financeGatewayArn: string, webGatewayArn: string) => ([
+const harnessTools = (
+  financeGatewayArn: string,
+  webGatewayArn: string,
+  mutationGatewayArn: string,
+) => ([
   {
     type: 'agentcore_gateway' as const,
     name: 'olbia-finance',
@@ -640,6 +645,16 @@ const harnessTools = (financeGatewayArn: string, webGatewayArn: string) => ([
       },
     },
   },
+  {
+    type: 'agentcore_gateway' as const,
+    name: 'olbia-tag-mutations',
+    config: {
+      agentCoreGateway: {
+        gatewayArn: mutationGatewayArn,
+        outboundAuth: { awsIam: {} },
+      },
+    },
+  },
 ]);
 
 const harnessModel = (prompt: RuntimePrompt) => ({
@@ -656,6 +671,7 @@ const ensureHarness = async (input: {
   readonly executionRoleArn: string;
   readonly financeGatewayArn: string;
   readonly webGatewayArn: string;
+  readonly mutationGatewayArn: string;
   readonly prompt: RuntimePrompt;
   readonly memoryArn: string;
   readonly factsStrategyId: string;
@@ -672,7 +688,7 @@ const ensureHarness = async (input: {
         harnessId: existingId,
         model,
         systemPrompt,
-        tools: harnessTools(input.financeGatewayArn, input.webGatewayArn),
+        tools: harnessTools(input.financeGatewayArn, input.webGatewayArn, input.mutationGatewayArn),
         memory: { optionalValue: { agentCoreMemoryConfiguration: {
           arn: input.memoryArn,
           messagesCount: 12,
@@ -730,7 +746,7 @@ const ensureHarness = async (input: {
     executionRoleArn: input.executionRoleArn,
     model,
     systemPrompt,
-    tools: harnessTools(input.financeGatewayArn, input.webGatewayArn),
+    tools: harnessTools(input.financeGatewayArn, input.webGatewayArn, input.mutationGatewayArn),
     memory: { agentCoreMemoryConfiguration: {
       arn: input.memoryArn,
       messagesCount: 12,
@@ -802,11 +818,12 @@ export const handler = async (event: ProviderEvent): Promise<{
   const harnessRole = props.HarnessExecutionRoleArn ?? '';
   const gatewayRole = props.GatewayRoleArn ?? '';
   const toolsLambdaArn = props.ToolsLambdaArn ?? '';
+  const mutationGatewayArn = props.MutationGatewayArn ?? '';
   const memoryName = props.MemoryName ?? 'OlbiaFinanceMemory';
   const memoryRole = props.MemoryExecutionRoleArn ?? '';
   const memoryModelId = props.MemoryModelId ?? '';
-  if (!harnessRole || !gatewayRole || !toolsLambdaArn || !memoryRole || !memoryModelId) {
-    throw new Error('HarnessExecutionRoleArn, GatewayRoleArn, ToolsLambdaArn, MemoryExecutionRoleArn, and MemoryModelId are required.');
+  if (!harnessRole || !gatewayRole || !toolsLambdaArn || !mutationGatewayArn || !memoryRole || !memoryModelId) {
+    throw new Error('HarnessExecutionRoleArn, GatewayRoleArn, ToolsLambdaArn, MutationGatewayArn, MemoryExecutionRoleArn, and MemoryModelId are required.');
   }
 
   const physicalId = event.PhysicalResourceId ?? `olbia-agentcore-${harnessName}`;
@@ -916,6 +933,7 @@ export const handler = async (event: ProviderEvent): Promise<{
     executionRoleArn: harnessRole,
     financeGatewayArn: financeGateway.gatewayArn,
     webGatewayArn: webGateway.gatewayArn,
+    mutationGatewayArn,
     prompt,
     memoryArn: memory.memoryArn,
     factsStrategyId: memory.factsStrategyId,

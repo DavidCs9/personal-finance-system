@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 
 vi.mock('./chat-core.js', () => ({
+  agentChatErrorStatus: vi.fn((error: unknown) =>
+    error instanceof Error && /principal/i.test(error.message) ? 401 : 400),
+  assertConfiguredAgentOwner: vi.fn(),
   resolveOwner: vi.fn(async () => 'owner-sub'),
   parseChatBody: vi.fn(() => ({
     message: 'hola',
@@ -15,7 +18,7 @@ vi.mock('./chat-core.js', () => ({
   ]),
 }));
 
-import { collectAgentChat, resolveOwner } from './chat-core.js';
+import { assertConfiguredAgentOwner, collectAgentChat, resolveOwner } from './chat-core.js';
 import { handler } from './chat-buffered.js';
 
 const baseEvent = (): APIGatewayProxyEventV2 => ({
@@ -67,6 +70,7 @@ describe('agent chat buffered handler', () => {
     ]);
     expect(collectAgentChat).toHaveBeenCalledOnce();
     expect(resolveOwner).toHaveBeenCalledOnce();
+    expect(assertConfiguredAgentOwner).toHaveBeenCalledWith('owner-sub');
   });
 
   it('rejects non-POST', async () => {

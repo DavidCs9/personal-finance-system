@@ -2,12 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   buildHarnessModelConfig,
   buildHarnessSystemPrompt,
+  agentChatErrorStatus,
+  assertConfiguredAgentOwner,
+  mutationFromToolResult,
   readBody,
   requiresTravelPlanRecalculation,
   requestIdOf,
   requestMethod,
   resolveOwner,
   summarizeToolResult,
+  toolNameFromHarness,
   type AgentChatGatewayEvent,
 } from './chat-core.js';
 
@@ -42,9 +46,54 @@ describe('REST API Gateway chat event helpers', () => {
       eventId: 'private-event-id',
       categoryId: 'food',
     })).toEqual({ summary: 'Propuesta de categoría preparada.', material: false });
-    expect(summarizeToolResult('preview_bulk_edit', {
+    expect(summarizeToolResult('preview_tag_edit', {
       movementCount: 18,
-    })).toEqual({ summary: 'Preparé 18 movimientos para confirmar.', material: false });
+    })).toEqual({ summary: 'Preparé 18 movimientos.', material: false });
+    expect(summarizeToolResult('apply_tag_edit', {
+      movementCount: 18,
+    })).toEqual({ summary: 'Actualicé 18 movimientos.', material: true });
+  });
+
+  it('normalizes target-qualified Harness tool names before lifecycle handling', () => {
+    expect(toolNameFromHarness('olbia-tag-mutations___apply_tag_edit')).toBe('apply_tag_edit');
+    expect(toolNameFromHarness('month_snapshot')).toBe('month_snapshot');
+  });
+
+  it('maps successful tag mutations to a factual SSE receipt', () => {
+    expect(mutationFromToolResult('apply_tag_edit', {
+      operationId: 'operation-1',
+      movementCount: 18,
+      amountMinor: 923_214,
+      fromDay: '2026-08-21',
+      toDay: '2026-08-25',
+      change: { addTags: ['viaje:vegas'] },
+    })).toEqual({
+      type: 'mutation',
+      kind: 'tag_edit',
+      action: 'applied',
+      operationId: 'operation-1',
+      movementCount: 18,
+      amountMinor: 923_214,
+      fromDay: '2026-08-21',
+      toDay: '2026-08-25',
+      change: { addTags: ['viaje:vegas'] },
+    });
+    expect(mutationFromToolResult('preview_tag_edit', { operationId: 'operation-1' })).toBeUndefined();
+  });
+
+  it('rejects any Cognito user other than the configured ledger owner', () => {
+    try {
+      process.env.AGENT_OWNER = 'owner-1';
+      expect(() => assertConfiguredAgentOwner('owner-1')).not.toThrow();
+      try {
+        assertConfiguredAgentOwner('owner-2');
+        throw new Error('Expected owner guard to throw.');
+      } catch (error) {
+        expect(agentChatErrorStatus(error)).toBe(403);
+      }
+    } finally {
+      delete process.env.AGENT_OWNER;
+    }
   });
 });
 

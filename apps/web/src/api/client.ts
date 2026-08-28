@@ -62,27 +62,6 @@ export interface AssistantMemory {
   readonly createdAt: string;
 }
 
-export interface BulkEditPreview {
-  readonly operationId: string;
-  readonly status: "pending" | "applied" | "undone";
-  readonly expiresAt: string;
-  readonly fromDay: string;
-  readonly toDay: string;
-  readonly movementCount: number;
-  readonly amountMinor: number;
-  readonly change: {
-    readonly addTags?: readonly string[];
-    readonly removeTags?: readonly string[];
-    readonly categoryId?: string | null;
-  };
-  readonly sample: readonly {
-    readonly id: string;
-    readonly merchantRaw: string;
-    readonly occurredAt?: string;
-    readonly amountMinor: number;
-  }[];
-}
-
 declare global {
   interface Window { __LEDGER_CONFIG__?: LedgerRuntimeConfig; }
 }
@@ -543,16 +522,6 @@ export const ledgerApi = {
       body: JSON.stringify({ action: "set_tags", tags }),
     });
   },
-  async applyBulkEdit(operationId: string, idToken: string): Promise<BulkEditPreview> {
-    return request<BulkEditPreview>(`/bulk-edits/${encodeURIComponent(operationId)}/apply`, idToken, {
-      method: "POST",
-    });
-  },
-  async undoBulkEdit(operationId: string, idToken: string): Promise<BulkEditPreview> {
-    return request<BulkEditPreview>(`/bulk-edits/${encodeURIComponent(operationId)}/undo`, idToken, {
-      method: "POST",
-    });
-  },
   async streamAgentChat(
     input: { readonly message: string; readonly month: string; readonly sessionId?: string },
     idToken: string,
@@ -652,7 +621,7 @@ export type AgentChatEvent =
   | { readonly type: "tool_failed"; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly message: string }
   | { readonly type: "citation"; readonly kind: string; readonly id?: string; readonly label: string }
   | { readonly type: "proposal"; readonly kind: "recategorize"; readonly eventId: string; readonly categoryId: string; readonly message: string }
-  | { readonly type: "proposal"; readonly kind: "bulk_edit"; readonly operationId: string; readonly movementCount: number; readonly amountMinor: number; readonly expiresAt: string; readonly fromDay: string; readonly toDay: string; readonly change: BulkEditPreview["change"]; readonly sample: BulkEditPreview["sample"]; readonly message: string }
+  | { readonly type: "mutation"; readonly kind: "tag_edit"; readonly action: "applied" | "undone"; readonly operationId: string; readonly movementCount: number; readonly amountMinor: number; readonly fromDay: string; readonly toDay: string; readonly change: { readonly addTags?: readonly string[]; readonly removeTags?: readonly string[] } }
   | { readonly type: "done"; readonly requestId: string; readonly sessionId: string }
   | { readonly type: "error"; readonly message: string; readonly requestId: string };
 
