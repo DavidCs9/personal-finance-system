@@ -20,7 +20,7 @@ Do not collapse patrimonio into Resumen. Do not let patrimonio analytics compete
 5. Meses sin intereses — dedicated “Planes con fin” section on **Resumen** for this month’s MSI cuotas (fixed total, start and end).
 6. Gastos fijos — indefinite recurring services/subscriptions, kept separate from MSI.
 7. Fechas de corte — month calendar on **Resumen** for up to three cards’ cut-off and payment days. Cycle reminders only; they do not affect remaining money.
-8. Supporting detail and evidence.
+8. Supporting detail and evidence. The compact **En qué se fue** analytics entry follows MSI, fixed expenses, and card cycles; it opens a deeper view without becoming a fourth tab.
 
 ### Patrimonio hierarchy
 

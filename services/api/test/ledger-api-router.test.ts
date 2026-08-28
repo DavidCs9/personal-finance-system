@@ -72,6 +72,14 @@ describe('ledger API Powertools router', () => {
     });
   });
 
+  it('returns 400 when GET /analytics is missing its month', async () => {
+    const result = await handler(httpEvent('GET', '/analytics'), context);
+    expect(result.statusCode).toBe(400);
+    expect(JSON.parse(String(result.body))).toEqual({
+      message: 'Query parameter month (YYYY-MM) is required.',
+    });
+  });
+
   it('returns 400 when posting a snapshot to a non-Cajita account', async () => {
     const result = await handler(
       {

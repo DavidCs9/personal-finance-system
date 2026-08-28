@@ -37,6 +37,8 @@ export function MovementsView({
   onImportAmex,
   onImportSantanderStatement,
   onRegisterCharge,
+  evidenceFilter,
+  onClearEvidenceFilter,
 }: {
   events: readonly PurchaseEvent[];
   /** Selected calendar month (YYYY-MM); MSI rows show that month's cuota. */
@@ -55,6 +57,8 @@ export function MovementsView({
   onImportAmex(): void;
   onImportSantanderStatement(): void;
   onRegisterCharge(): void;
+  evidenceFilter?: { readonly label: string; readonly eventIds: readonly string[] };
+  onClearEvidenceFilter(): void;
 }) {
   const [activeException, setActiveException] = useState<IngestionException>();
   const [captureOpen, setCaptureOpen] = useState(false);
@@ -65,6 +69,7 @@ export function MovementsView({
     .sort((left, right) => left.localeCompare(right, "es"));
   const searchNeedle = normalizeSearchText(searchTerm);
   const filteredEvents = visibleEvents.filter((event) => {
+    if (evidenceFilter && !evidenceFilter.eventIds.includes(event.id)) return false;
     if (tagFilter && !event.tags?.includes(tagFilter)) return false;
     if (!searchNeedle) return true;
     const searchable = normalizeSearchText([
@@ -79,7 +84,7 @@ export function MovementsView({
     ].join(" "));
     return searchable.includes(searchNeedle);
   });
-  const filtersActive = Boolean(tagFilter || searchNeedle);
+  const filtersActive = Boolean(evidenceFilter || tagFilter || searchNeedle);
   const sorted = [...filteredEvents].sort((a, b) =>
     sort === "largest"
       ? movementAmountMinor(b, month) - movementAmountMinor(a, month)
@@ -140,6 +145,12 @@ export function MovementsView({
             </select>
           </label>
         </div>
+        {evidenceFilter ? (
+          <div className="movement-evidence-filter">
+            <span>Viendo evidencia de <strong>{evidenceFilter.label}</strong></span>
+            <button type="button" onClick={onClearEvidenceFilter}>Ver todos</button>
+          </div>
+        ) : null}
       </header>
       {captureOpen && (
         <CaptureActionsSheet
@@ -248,6 +259,7 @@ export function MovementsView({
                 onClick={() => {
                   setSearchTerm("");
                   setTagFilter("");
+                  onClearEvidenceFilter();
                 }}
               >
                 Limpiar filtros

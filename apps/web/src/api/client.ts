@@ -14,7 +14,7 @@ import type {
 import type { MonthlyPlan } from "../monthly-plan";
 import type { CardCycle } from "../card-cycle";
 import type { CardLiabilitySnapshot, WealthOverview } from "../wealth";
-import { CAJITA_ACCOUNT_ID, type MonthSummary, type WealthSnapshot } from "@finance/domain";
+import { CAJITA_ACCOUNT_ID, type MonthSummary, type SpendingAnalytics, type WealthSnapshot } from "@finance/domain";
 
 interface LedgerRuntimeConfig {
   readonly apiBaseUrl: string;
@@ -334,6 +334,9 @@ export const ledgerApi = {
   },
   async monthlySummary(month: string, idToken: string): Promise<MonthSummary> {
     return request<MonthSummary>(`/months/${encodeURIComponent(month)}/summary`, idToken);
+  },
+  async analytics(month: string, idToken: string): Promise<SpendingAnalytics> {
+    return request<SpendingAnalytics>(`/analytics?month=${encodeURIComponent(month)}`, idToken);
   },
   async saveMonthlyPlan(month: string, plan: MonthlyPlan, idToken: string): Promise<MonthlyPlan> {
     return request<MonthlyPlan>(`/months/${encodeURIComponent(month)}`, idToken, {

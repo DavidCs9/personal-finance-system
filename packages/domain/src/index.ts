@@ -247,9 +247,15 @@ export {
 export {
   aggregateSpendByCategory,
   aggregateSpendByMerchant,
+  aggregateSpendByTag,
+  compareSpendBuckets,
+  monthOnlySpendAmountForMonth,
   spendAmountForMonth,
   uncertainAmountForMonth,
   type CategorizedSpendEvent,
+  type SpendAggregateOptions,
   type SpendAggregateResult,
   type SpendBucket,
+  type SpendComparisonBucket,
+  type SpendingAnalytics,
 } from "./spend-aggregates.js";

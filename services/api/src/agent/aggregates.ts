@@ -9,9 +9,9 @@ import {
   type WealthAccountId,
 } from '@finance/domain';
 import { getMonthlyPlan } from '../months/service.js';
-import { listEventsForMonth, listEventsForMonths } from '../events/queries.js';
 import { getWealthOverview, listWealthSnapshotsForAccount } from '../wealth/service.js';
 import { listCategories } from '../categories/service.js';
+import { loadCategorizedMonthEvents, loadCategorizedMonthsEvents } from '../analytics/events.js';
 import { isValidMonth } from '../months/monthly-plan.js';
 import {
   investmentHistoryFromSnapshots,
@@ -35,23 +35,6 @@ const investmentAccountId = (value: unknown): WealthAccountId => {
   throw new InvalidAgentQueryError('La cuenta debe ser Bitso o IBKR.');
 };
 
-const toCategorized = (events: readonly Record<string, unknown>[]): CategorizedSpendEvent[] =>
-  events.map((event) => {
-    const amount = event.amount as { amountMinor?: number } | undefined;
-    return {
-      id: String(event.id),
-      amountMinor: Number(amount?.amountMinor ?? 0),
-      personalAmountMinor: typeof event.personalAmountMinor === 'number' ? event.personalAmountMinor : undefined,
-      status: String(event.status ?? 'accepted'),
-      occurredAt: typeof event.occurredAt === 'string' ? event.occurredAt : undefined,
-      receivedAt: String(event.receivedAt ?? new Date(0).toISOString()),
-      merchantRaw: String(event.merchantRaw ?? ''),
-      categoryId: (event.categoryId as string | null | undefined) ?? null,
-      tags: Array.isArray(event.tags) ? event.tags.map(String) : [],
-      msi: event.msi as CategorizedSpendEvent['msi'],
-    };
-  });
-
 const categoryNameMap = async (): Promise<Map<string, string>> => {
   const categories = await listCategories();
   return new Map(categories.map((category) => [category.id, category.name]));
@@ -59,29 +42,11 @@ const categoryNameMap = async (): Promise<Map<string, string>> => {
 
 const loadMonthEvents = async (month: string): Promise<CategorizedSpendEvent[]> => {
   if (!isValidMonth(month)) throw new InvalidAgentQueryError('Mes inválido (YYYY-MM).');
-  const feed = await listEventsForMonth(month);
-  const events = [
-    ...((feed.events as readonly Record<string, unknown>[]) ?? []),
-    ...((feed.msiRelated as readonly Record<string, unknown>[]) ?? []),
-  ];
-  const byId = new Map<string, Record<string, unknown>>();
-  for (const event of events) {
-    if (typeof event.id === 'string') byId.set(event.id, event);
-  }
-  return toCategorized([...byId.values()]);
+  return loadCategorizedMonthEvents(month);
 };
 
 const loadRangeEvents = async (months: readonly string[]): Promise<CategorizedSpendEvent[]> => {
-  const feed = await listEventsForMonths(months);
-  const events = [
-    ...((feed.events as readonly Record<string, unknown>[]) ?? []),
-    ...((feed.msiRelated as readonly Record<string, unknown>[]) ?? []),
-  ];
-  const byId = new Map<string, Record<string, unknown>>();
-  for (const event of events) {
-    if (typeof event.id === 'string') byId.set(event.id, event);
-  }
-  return toCategorized([...byId.values()]);
+  return loadCategorizedMonthsEvents(months);
 };
 
 export const monthSnapshot = async (

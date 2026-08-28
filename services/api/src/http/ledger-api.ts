@@ -86,6 +86,7 @@ import {
 import { database, tableName } from './clients.js';
 import { errorMessage, principal, requestBody } from './response.js';
 import { InvalidEventTagError, isValidCategoryId, type SpendCategory } from '@finance/domain';
+import { getSpendingAnalytics } from '../analytics/service.js';
 const app = new Router();
 
 const json = (statusCode: number, body: unknown) => ({
@@ -430,6 +431,14 @@ app.put('/categories', async ({ event }) => {
 app.get('/categories/rules', async () =>
   json(HttpStatusCodes.OK, { rules: await listMerchantRules() }),
 );
+
+app.get('/analytics', async ({ event }) => {
+  const month = asHttpEvent(event).queryStringParameters?.month;
+  if (!month || !isValidMonth(month)) {
+    throw new InvalidAgentQueryError('Query parameter month (YYYY-MM) is required.');
+  }
+  return json(HttpStatusCodes.OK, await getSpendingAnalytics(month));
+});
 
 app.post('/categories/rules', async ({ event }) => {
   const body = JSON.parse(requestBody(asHttpEvent(event)) || '{}') as {

@@ -1,4 +1,4 @@
-import type { MonthMsiRow } from "@finance/domain";
+import type { MonthMsiRow, SpendingAnalytics } from "@finance/domain";
 import { money, monthDate } from "../lib/format";
 import type { MonthlyPlan, Payslip, PlannedPayment } from "../monthly-plan";
 import type { CardCycle } from "../card-cycle";
@@ -6,6 +6,7 @@ import { Amt } from "../components/Amt";
 import { CardCycleSection } from "../components/CardCycleSection";
 import { MsiMonthSection } from "../components/MsiMonthSection";
 import { PushPreference } from "../components/PushPreference";
+import { AnalyticsPreview } from "../components/AnalyticsPreview";
 
 export interface SummaryViewProps {
   readonly month: string;
@@ -32,6 +33,12 @@ export interface SummaryViewProps {
   readonly onEditPayment: (payment: PlannedPayment) => void;
   readonly onOpenMsiEvent: (eventId: string) => void;
   readonly onReviewLargest: () => void;
+  readonly analytics?: SpendingAnalytics;
+  readonly analyticsLoading: boolean;
+  readonly analyticsLoadError?: string;
+  readonly onRetryAnalytics: () => void;
+  readonly onOpenAnalytics: () => void;
+  readonly onOpenAnalyticsMovements: (label: string, eventIds: readonly string[]) => void;
   readonly cards: readonly CardCycle[];
   readonly cardsLoading: boolean;
   readonly cardsLoadError?: string;
@@ -328,6 +335,17 @@ export function SummaryView(props: SummaryViewProps) {
             onRetry={props.onRetryCards}
             onAdd={props.onAddCard}
             onEdit={props.onEditCard}
+          />
+        )}
+
+        {!props.loading && !props.loadError && hasIncome && (
+          <AnalyticsPreview
+            analytics={props.analytics}
+            loading={props.analyticsLoading}
+            loadError={props.analyticsLoadError}
+            onRetry={props.onRetryAnalytics}
+            onOpen={props.onOpenAnalytics}
+            onDrillDown={props.onOpenAnalyticsMovements}
           />
         )}
 
