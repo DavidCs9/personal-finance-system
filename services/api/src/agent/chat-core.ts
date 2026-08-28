@@ -30,8 +30,7 @@ export type AgentSseEvent =
   | { readonly type: 'tool_complete'; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly summary?: string; readonly material: boolean }
   | { readonly type: 'tool_failed'; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly message: string }
   | { readonly type: 'citation'; readonly kind: string; readonly id?: string; readonly label: string }
-  | { readonly type: 'proposal'; readonly kind: 'recategorize'; readonly eventId: string; readonly categoryId: string; readonly message: string }
-  | { readonly type: 'mutation'; readonly kind: 'tag_edit'; readonly action: 'applied' | 'undone'; readonly operationId: string; readonly movementCount: number; readonly amountMinor: number; readonly fromDay: string; readonly toDay: string; readonly change: Record<string, unknown> }
+  | { readonly type: 'mutation'; readonly kind: 'tag_edit' | 'category_edit'; readonly action: 'applied' | 'undone'; readonly operationId: string; readonly movementCount: number; readonly amountMinor: number; readonly fromDay: string; readonly toDay: string; readonly change: Record<string, unknown> }
   | { readonly type: 'done'; readonly requestId: string; readonly sessionId: string }
   | { readonly type: 'error'; readonly message: string; readonly requestId: string };
 
@@ -175,10 +174,12 @@ const toolLabel = (name: string): string => {
     case 'compare_months': return 'Comparando meses';
     case 'wealth_snapshot': return 'Revisando patrimonio';
     case 'investment_history': return 'Revisando historial de inversiones';
-    case 'propose_recategorize': return 'Preparando una categoría';
     case 'preview_tag_edit': return 'Preparando los tags';
     case 'apply_tag_edit': return 'Aplicando los tags';
     case 'undo_tag_edit': return 'Restaurando los tags';
+    case 'preview_category_edit': return 'Preparando las categorías';
+    case 'apply_category_edit': return 'Aplicando las categorías';
+    case 'undo_category_edit': return 'Restaurando las categorías';
     default: return 'Consultando datos';
   }
 };
@@ -281,19 +282,20 @@ export const summarizeToolResult = (
         summary: `Revisé el historial de ${String(payload.symbol ?? payload.accountId ?? 'la inversión')}.`,
         material: true,
       };
-    case 'propose_recategorize':
-      return { summary: 'Propuesta de categoría preparada.', material: false };
     case 'preview_tag_edit':
+    case 'preview_category_edit':
       return {
         summary: `Preparé ${Number(payload.movementCount ?? 0)} movimientos.`,
         material: false,
       };
     case 'apply_tag_edit':
+    case 'apply_category_edit':
       return {
         summary: `Actualicé ${Number(payload.movementCount ?? 0)} movimientos.`,
         material: true,
       };
     case 'undo_tag_edit':
+    case 'undo_category_edit':
       return {
         summary: `Restauré ${Number(payload.movementCount ?? 0)} movimientos.`,
         material: true,
@@ -319,12 +321,13 @@ export const mutationFromToolResult = (
   toolName: string | undefined,
   payload: Record<string, unknown>,
 ): Extract<AgentSseEvent, { readonly type: 'mutation' }> | undefined => {
-  if ((toolName !== 'apply_tag_edit' && toolName !== 'undo_tag_edit')
+  if ((toolName !== 'apply_tag_edit' && toolName !== 'undo_tag_edit'
+    && toolName !== 'apply_category_edit' && toolName !== 'undo_category_edit')
     || typeof payload.operationId !== 'string') return undefined;
   return {
     type: 'mutation',
-    kind: 'tag_edit',
-    action: toolName === 'apply_tag_edit' ? 'applied' : 'undone',
+    kind: toolName.includes('category') ? 'category_edit' : 'tag_edit',
+    action: toolName === 'apply_tag_edit' || toolName === 'apply_category_edit' ? 'applied' : 'undone',
     operationId: payload.operationId,
     movementCount: Number(payload.movementCount ?? 0),
     amountMinor: Number(payload.amountMinor ?? 0),
@@ -439,21 +442,6 @@ async function* invokeHarnessStream(
         activeReasoning.delete(event.contentBlockStop.contentBlockIndex);
       }
 
-      const finished = toolUseByIndex.get(event.contentBlockStop.contentBlockIndex);
-      if (finished?.name === 'propose_recategorize') {
-        const input = tryParseJsonObject(finished.inputJson);
-        const eventId = typeof input?.eventId === 'string' ? input.eventId : '';
-        const categoryId = typeof input?.categoryId === 'string' ? input.categoryId : '';
-        if (eventId && categoryId) {
-          yield {
-            type: 'proposal',
-            kind: 'recategorize',
-            eventId,
-            categoryId,
-            message: `Confirma recategorizar ${eventId} a ${categoryId}.`,
-          };
-        }
-      }
       toolUseByIndex.delete(event.contentBlockStop.contentBlockIndex);
 
       const result = toolResultByIndex.get(event.contentBlockStop.contentBlockIndex);

@@ -27,13 +27,19 @@ describe('AgentCore finance tool definitions', () => {
     expect(TOOL_DEFINITIONS.map(({ name }) => name)).not.toContain('preview_tag_edit');
     expect(TOOL_DEFINITIONS.map(({ name }) => name)).not.toContain('apply_tag_edit');
     expect(TOOL_DEFINITIONS.map(({ name }) => name)).not.toContain('undo_tag_edit');
+    expect(TOOL_DEFINITIONS.map(({ name }) => name)).not.toContain('preview_category_edit');
+    expect(TOOL_DEFINITIONS.map(({ name }) => name)).not.toContain('apply_category_edit');
+    expect(TOOL_DEFINITIONS.map(({ name }) => name)).not.toContain('undo_category_edit');
   });
 
-  it('exposes a tags-only preview/apply/undo contract on the mutation gateway', () => {
+  it('exposes separate tag and category preview/apply/undo contracts on the mutation gateway', () => {
     expect(TAG_MUTATION_TOOL_DEFINITIONS.map(({ name }) => name)).toEqual([
       'preview_tag_edit',
       'apply_tag_edit',
       'undo_tag_edit',
+      'preview_category_edit',
+      'apply_category_edit',
+      'undo_category_edit',
     ]);
     const preview = TAG_MUTATION_TOOL_DEFINITIONS[0];
     expect(preview.inputSchema.required).toEqual(['fromDay', 'toDay']);
@@ -41,5 +47,9 @@ describe('AgentCore finance tool definitions', () => {
     expect(preview.inputSchema.properties).toHaveProperty('removeTags');
     expect(preview.inputSchema.properties).not.toHaveProperty('categoryId');
     expect(preview.description).toContain('inmediatamente en el mismo turno');
+    const categoryPreview = TAG_MUTATION_TOOL_DEFINITIONS[3];
+    expect(categoryPreview.inputSchema.required).toEqual(['fromDay', 'toDay', 'categoryId']);
+    expect(categoryPreview.inputSchema.properties).toHaveProperty('categoryId');
+    expect(categoryPreview.inputSchema.properties).not.toHaveProperty('addTags');
   });
 });

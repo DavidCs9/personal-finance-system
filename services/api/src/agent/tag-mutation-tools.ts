@@ -1,7 +1,9 @@
 import {
+  applyAgentCategoryEdit,
   applyAgentTagEdit,
   parseBulkEditInput,
   previewBulkEdit,
+  undoAgentCategoryEdit,
   undoAgentTagEdit,
 } from '../events/bulk-edits.js';
 import {
@@ -39,6 +41,19 @@ export const runTagMutationTool = async (
       return applyAgentTagEdit(owner, operationIdFrom(input));
     case 'undo_tag_edit':
       return undoAgentTagEdit(owner, operationIdFrom(input));
+    case 'preview_category_edit':
+      return previewBulkEdit(owner, parseBulkEditInput({
+        selection: {
+          fromDay: input.fromDay,
+          toDay: input.toDay,
+          statuses: ['accepted'],
+        },
+        change: { categoryId: input.categoryId },
+      }));
+    case 'apply_category_edit':
+      return applyAgentCategoryEdit(owner, operationIdFrom(input));
+    case 'undo_category_edit':
+      return undoAgentCategoryEdit(owner, operationIdFrom(input));
     default:
       throw new Error(`Tool de mutación desconocida: ${name}`);
   }

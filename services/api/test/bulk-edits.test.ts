@@ -10,10 +10,13 @@ let applyBulkEdit: typeof import('../src/events/bulk-edits.js').applyBulkEdit;
 let undoBulkEdit: typeof import('../src/events/bulk-edits.js').undoBulkEdit;
 let applyAgentTagEdit: typeof import('../src/events/bulk-edits.js').applyAgentTagEdit;
 let undoAgentTagEdit: typeof import('../src/events/bulk-edits.js').undoAgentTagEdit;
+let applyAgentCategoryEdit: typeof import('../src/events/bulk-edits.js').applyAgentCategoryEdit;
+let undoAgentCategoryEdit: typeof import('../src/events/bulk-edits.js').undoAgentCategoryEdit;
 
 beforeAll(async () => {
   ({ database } = await import('../src/http/clients.js'));
-  ({ parseBulkEditInput, previewBulkEdit, applyBulkEdit, undoBulkEdit, applyAgentTagEdit, undoAgentTagEdit } =
+  ({ parseBulkEditInput, previewBulkEdit, applyBulkEdit, undoBulkEdit, applyAgentTagEdit, undoAgentTagEdit,
+    applyAgentCategoryEdit, undoAgentCategoryEdit } =
     await import('../src/events/bulk-edits.js'));
 });
 
@@ -139,7 +142,7 @@ describe('bulk edits', () => {
     });
   });
 
-  it('audits direct chat tag edits and keeps categories outside that path', async () => {
+  it('audits direct chat tag edits and keeps category operations outside that contract', async () => {
     const tagOperation = {
       operationId: 'tag-operation',
       owner: 'owner-1',
@@ -188,5 +191,56 @@ describe('bulk edits', () => {
     await expect(applyAgentTagEdit(
       'owner-1', 'category-operation', new Date('2026-08-26T00:03:00.000Z'),
     )).rejects.toThrow(/sólo puede modificar tags/);
+  });
+
+  it('audits direct chat category edits without changing tags or merchant rules', async () => {
+    const categoryOperation = {
+      operationId: 'category-operation',
+      owner: 'owner-1',
+      status: 'pending',
+      createdAt: '2026-08-26T00:00:00.000Z',
+      expiresAt: Math.floor(new Date('2026-08-26T00:15:00.000Z').getTime() / 1000),
+      selection: { fromDay: '2026-08-21', toDay: '2026-08-25', statuses: ['accepted'] },
+      change: { categoryId: 'food' },
+      events: [{
+        id: 'event-1', merchantRaw: 'Panda Express', occurredAt: '2026-08-22T12:00:00.000Z',
+        status: 'accepted', amountMinor: 30_694, previousTags: ['viaje:vegas'], nextTags: ['viaje:vegas'],
+        previousCategoryId: 'other', nextCategoryId: 'food',
+      }],
+      amountMinor: 30_694,
+    };
+    const transactions: any[] = [];
+    let currentOperation: Record<string, unknown> = categoryOperation;
+    vi.spyOn(database as any, 'send').mockImplementation(async (command: any) => {
+      if (command.constructor.name === 'GetCommand') return { Item: { payload: currentOperation } };
+      if (command.constructor.name === 'TransactWriteCommand') {
+        transactions.push(command.input);
+        return {};
+      }
+      throw new Error(`Unexpected ${command.constructor.name}`);
+    });
+
+    await applyAgentCategoryEdit('owner-1', 'category-operation', new Date('2026-08-26T00:01:00.000Z'));
+    expect(transactions[0].TransactItems[0].Update.ExpressionAttributeValues).toMatchObject({
+      ':fromTags': ['viaje:vegas'], ':toTags': ['viaje:vegas'], ':fromCategory': 'other', ':toCategory': 'food',
+    });
+    expect(transactions[0].TransactItems[1].Put.Item.payload).toMatchObject({
+      source: 'assistant_chat_category_edit',
+      reason: 'Categoría aplicada desde el chat del asistente.',
+      changes: { categoryId: { previous: 'other', next: 'food' } },
+    });
+    expect(transactions[0].TransactItems[1].Put.Item.payload.changes).not.toHaveProperty('tags');
+
+    currentOperation = { ...categoryOperation, status: 'applied', appliedAt: '2026-08-26T00:01:00.000Z' };
+    await undoAgentCategoryEdit('owner-1', 'category-operation', new Date('2026-08-26T00:02:00.000Z'));
+    expect(transactions[1].TransactItems[1].Put.Item.payload).toMatchObject({
+      source: 'assistant_chat_category_edit',
+      reason: 'Categoría restaurada desde el chat del asistente.',
+    });
+
+    currentOperation = { ...categoryOperation, operationId: 'tag-operation', change: { addTags: ['viaje:vegas'] } };
+    await expect(applyAgentCategoryEdit(
+      'owner-1', 'tag-operation', new Date('2026-08-26T00:03:00.000Z'),
+    )).rejects.toThrow(/sólo puede modificar categorías/);
   });
 });

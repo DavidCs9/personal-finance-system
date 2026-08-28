@@ -4,7 +4,6 @@ import {
   listMovementsForAgent,
   monthSnapshot,
   planMonthScenario,
-  proposeRecategorize,
   spendByCategory,
   spendByMerchant,
   wealthSnapshotForAgent,
@@ -50,12 +49,6 @@ export const runAgentTool = async (
       return wealthSnapshotForAgent(owner);
     case 'investment_history':
       return investmentHistory(owner, input);
-    case 'propose_recategorize':
-      return proposeRecategorize({
-        eventId: String(input.eventId),
-        categoryId: String(input.categoryId),
-        merchantRaw: typeof input.merchantRaw === 'string' ? input.merchantRaw : undefined,
-      });
     default:
       throw new Error(`Tool desconocida: ${name}`);
   }

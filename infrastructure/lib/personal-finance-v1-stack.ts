@@ -472,7 +472,7 @@ export class PersonalFinanceV1Stack extends Stack {
       logGroup: this.createLogGroup('AgentTagMutationLogGroup', 'personal-finance-v1-agent-tag-mutations'),
       entry: path.join(__dirname, '..', 'lambda', 'agent-tag-mutations.ts'),
       handler: 'handler',
-      description: 'Policy-controlled AgentCore Gateway target for audited tag mutations.',
+      description: 'Policy-controlled AgentCore Gateway target for audited tag and category mutations.',
       timeout: Duration.seconds(29),
       memorySize: 512,
       environment: {
@@ -518,7 +518,7 @@ export class PersonalFinanceV1Stack extends Stack {
       type: 'AWS::BedrockAgentCore::PolicyEngine',
       properties: {
         Name: 'OlbiaTagMutationPolicy',
-        Description: 'Default-deny Cedar policies for Olbia tag mutation tools.',
+        Description: 'Default-deny Cedar policies for Olbia tag and category mutation tools.',
         Tags: Object.entries(tags).map(([Key, Value]) => ({ Key, Value })),
       },
     });
@@ -526,7 +526,7 @@ export class PersonalFinanceV1Stack extends Stack {
       type: 'AWS::BedrockAgentCore::Gateway',
       properties: {
         Name: 'OlbiaTagMutationGateway',
-        Description: 'IAM-authenticated gateway isolated to audited tag mutations.',
+        Description: 'IAM-authenticated gateway isolated to audited tag and category mutations.',
         RoleArn: gatewayRole.roleArn,
         ProtocolType: 'MCP',
         AuthorizerType: 'AWS_IAM',
@@ -589,7 +589,7 @@ export class PersonalFinanceV1Stack extends Stack {
       type: 'AWS::BedrockAgentCore::Policy',
       properties: {
         Name: 'OlbiaTagMutationPermit',
-        Description: 'Only the Olbia harness role can call the three tag mutation tools.',
+        Description: 'Only the Olbia harness role can call the six tag and category mutation tools.',
         PolicyEngineId: tagMutationPolicyEngine.getAtt('PolicyEngineId'),
         EnforcementMode: 'ACTIVE',
         ValidationMode: 'FAIL_ON_ANY_FINDINGS',
@@ -601,7 +601,10 @@ export class PersonalFinanceV1Stack extends Stack {
               ':assumed-role/personal-finance-v1-agentcore-harness",\n  action in [\n',
               '    AgentCore::Action::"olbia-tag-mutations___preview_tag_edit",\n',
               '    AgentCore::Action::"olbia-tag-mutations___apply_tag_edit",\n',
-              '    AgentCore::Action::"olbia-tag-mutations___undo_tag_edit"\n',
+              '    AgentCore::Action::"olbia-tag-mutations___undo_tag_edit",\n',
+              '    AgentCore::Action::"olbia-tag-mutations___preview_category_edit",\n',
+              '    AgentCore::Action::"olbia-tag-mutations___apply_category_edit",\n',
+              '    AgentCore::Action::"olbia-tag-mutations___undo_category_edit"\n',
               '  ],\n  resource == AgentCore::Gateway::"',
               tagMutationGateway.getAtt('GatewayArn').toString(),
               '"\n);',

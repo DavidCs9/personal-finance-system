@@ -42,10 +42,9 @@ describe('REST API Gateway chat event helpers', () => {
     expect(summarizeToolResult('list_movements', {
       movements: [{ merchantRaw: 'Mercado' }, { merchantRaw: 'Farmacia' }],
     })).toEqual({ summary: 'Revisé 2 movimientos.', material: true });
-    expect(summarizeToolResult('propose_recategorize', {
-      eventId: 'private-event-id',
-      categoryId: 'food',
-    })).toEqual({ summary: 'Propuesta de categoría preparada.', material: false });
+    expect(summarizeToolResult('preview_category_edit', {
+      movementCount: 18,
+    })).toEqual({ summary: 'Preparé 18 movimientos.', material: false });
     expect(summarizeToolResult('preview_tag_edit', {
       movementCount: 18,
     })).toEqual({ summary: 'Preparé 18 movimientos.', material: false });
@@ -79,6 +78,14 @@ describe('REST API Gateway chat event helpers', () => {
       change: { addTags: ['viaje:vegas'] },
     });
     expect(mutationFromToolResult('preview_tag_edit', { operationId: 'operation-1' })).toBeUndefined();
+    expect(mutationFromToolResult('apply_category_edit', {
+      operationId: 'operation-2',
+      movementCount: 3,
+      amountMinor: 20_000,
+      fromDay: '2026-08-21',
+      toDay: '2026-08-25',
+      change: { categoryId: 'food' },
+    })).toMatchObject({ kind: 'category_edit', action: 'applied', change: { categoryId: 'food' } });
   });
 
   it('rejects any Cognito user other than the configured ledger owner', () => {
