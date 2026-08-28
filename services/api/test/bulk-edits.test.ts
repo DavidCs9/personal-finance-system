@@ -8,10 +8,12 @@ let parseBulkEditInput: typeof import('../src/events/bulk-edits.js').parseBulkEd
 let previewBulkEdit: typeof import('../src/events/bulk-edits.js').previewBulkEdit;
 let applyBulkEdit: typeof import('../src/events/bulk-edits.js').applyBulkEdit;
 let undoBulkEdit: typeof import('../src/events/bulk-edits.js').undoBulkEdit;
+let applyAgentTagEdit: typeof import('../src/events/bulk-edits.js').applyAgentTagEdit;
+let undoAgentTagEdit: typeof import('../src/events/bulk-edits.js').undoAgentTagEdit;
 
 beforeAll(async () => {
   ({ database } = await import('../src/http/clients.js'));
-  ({ parseBulkEditInput, previewBulkEdit, applyBulkEdit, undoBulkEdit } =
+  ({ parseBulkEditInput, previewBulkEdit, applyBulkEdit, undoBulkEdit, applyAgentTagEdit, undoAgentTagEdit } =
     await import('../src/events/bulk-edits.js'));
 });
 
@@ -135,5 +137,56 @@ describe('bulk edits', () => {
       ':fromTags': ['viaje:vegas'],
       ':toTags': [],
     });
+  });
+
+  it('audits direct chat tag edits and keeps categories outside that path', async () => {
+    const tagOperation = {
+      operationId: 'tag-operation',
+      owner: 'owner-1',
+      status: 'pending',
+      createdAt: '2026-08-26T00:00:00.000Z',
+      expiresAt: Math.floor(new Date('2026-08-26T00:15:00.000Z').getTime() / 1000),
+      selection: { fromDay: '2026-08-21', toDay: '2026-08-25', statuses: ['accepted'] },
+      change: { addTags: ['viaje:vegas'] },
+      events: [{
+        id: 'event-1', merchantRaw: 'Panda Express', occurredAt: '2026-08-22T12:00:00.000Z',
+        status: 'accepted', amountMinor: 30_694, previousTags: [], nextTags: ['viaje:vegas'],
+        previousCategoryId: null, nextCategoryId: null,
+      }],
+      amountMinor: 30_694,
+    };
+    const transactions: any[] = [];
+    let currentOperation: Record<string, unknown> = tagOperation;
+    vi.spyOn(database as any, 'send').mockImplementation(async (command: any) => {
+      if (command.constructor.name === 'GetCommand') return { Item: { payload: currentOperation } };
+      if (command.constructor.name === 'TransactWriteCommand') {
+        transactions.push(command.input);
+        return {};
+      }
+      throw new Error(`Unexpected ${command.constructor.name}`);
+    });
+
+    await applyAgentTagEdit('owner-1', 'tag-operation', new Date('2026-08-26T00:01:00.000Z'));
+    expect(transactions[0].TransactItems[1].Put.Item.payload).toMatchObject({
+      changedBy: 'owner-1',
+      source: 'assistant_chat_tag_edit',
+      reason: 'Tags aplicados desde el chat del asistente.',
+    });
+
+    currentOperation = { ...tagOperation, status: 'applied', appliedAt: '2026-08-26T00:01:00.000Z' };
+    await undoAgentTagEdit('owner-1', 'tag-operation', new Date('2026-08-26T00:02:00.000Z'));
+    expect(transactions[1].TransactItems[1].Put.Item.payload).toMatchObject({
+      source: 'assistant_chat_tag_edit',
+      reason: 'Tags restaurados desde el chat del asistente.',
+    });
+
+    currentOperation = {
+      ...tagOperation,
+      operationId: 'category-operation',
+      change: { categoryId: 'food' },
+    };
+    await expect(applyAgentTagEdit(
+      'owner-1', 'category-operation', new Date('2026-08-26T00:03:00.000Z'),
+    )).rejects.toThrow(/sólo puede modificar tags/);
   });
 });

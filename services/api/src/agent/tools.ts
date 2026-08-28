@@ -11,7 +11,6 @@ import {
 } from './aggregates.js';
 import { TOOL_DEFINITIONS, type AgentToolName } from './tool-definitions.js';
 import type { SpendingRange } from './spending-range.js';
-import { parseBulkEditInput, previewBulkEdit } from '../events/bulk-edits.js';
 
 export { TOOL_DEFINITIONS, type AgentToolName };
 
@@ -57,19 +56,6 @@ export const runAgentTool = async (
         categoryId: String(input.categoryId),
         merchantRaw: typeof input.merchantRaw === 'string' ? input.merchantRaw : undefined,
       });
-    case 'preview_bulk_edit':
-      return previewBulkEdit(owner, parseBulkEditInput({
-        selection: {
-          fromDay: input.fromDay,
-          toDay: input.toDay,
-          statuses: ['accepted'],
-        },
-        change: {
-          ...(Array.isArray(input.addTags) ? { addTags: input.addTags } : {}),
-          ...(Array.isArray(input.removeTags) ? { removeTags: input.removeTags } : {}),
-          ...(Object.prototype.hasOwnProperty.call(input, 'categoryId') ? { categoryId: input.categoryId } : {}),
-        },
-      }));
     default:
       throw new Error(`Tool desconocida: ${name}`);
   }

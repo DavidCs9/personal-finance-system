@@ -2,6 +2,8 @@ import type { Context } from 'aws-lambda';
 import { Writable } from 'node:stream';
 import {
   formatSse,
+  agentChatErrorStatus,
+  assertConfiguredAgentOwner,
   type AgentChatGatewayEvent,
   parseChatBody,
   readBody,
@@ -83,6 +85,7 @@ const streamHandler = async (
 
   try {
     const owner = await resolveOwner(event);
+    assertConfiguredAgentOwner(owner);
     const body = parseChatBody(readBody(event));
     const httpStream = lambdaRuntime.HttpResponseStream.from(responseStream, {
       statusCode: 200,
@@ -105,7 +108,7 @@ const streamHandler = async (
     httpStream.end();
   } catch (error) {
     const message = error instanceof Error ? error.message : 'No pude consultar tus datos.';
-    const statusCode = /principal|Bearer|JWT|Unauthorized|token/i.test(message) ? 401 : 400;
+    const statusCode = agentChatErrorStatus(error);
     writeJsonError(responseStream, statusCode, message, requestId);
   }
 };

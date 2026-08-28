@@ -12,6 +12,26 @@ import { localDate } from './queries.js';
 const MAX_BULK_EVENTS = 49;
 const PREVIEW_TTL_SECONDS = 15 * 60;
 
+type BulkEditAudit = {
+  readonly source: 'assistant_confirmed_bulk' | 'assistant_chat_tag_edit';
+  readonly applyReason: string;
+  readonly undoReason: string;
+  readonly tagsOnly?: boolean;
+};
+
+const confirmedBulkAudit: BulkEditAudit = {
+  source: 'assistant_confirmed_bulk',
+  applyReason: 'Edición masiva confirmada.',
+  undoReason: 'Edición masiva deshecha.',
+};
+
+const assistantTagAudit: BulkEditAudit = {
+  source: 'assistant_chat_tag_edit',
+  applyReason: 'Tags aplicados desde el chat del asistente.',
+  undoReason: 'Tags restaurados desde el chat del asistente.',
+  tagsOnly: true,
+};
+
 export class InvalidBulkEditError extends Error {}
 
 export type BulkEditChange = {
@@ -283,6 +303,7 @@ const revisionPut = (
   direction: 'apply' | 'undo',
   changedBy: string,
   at: string,
+  audit: BulkEditAudit,
 ): NonNullable<NonNullable<TransactWriteCommandInput['TransactItems']>[number]['Put']> => {
   const previousTags = direction === 'apply' ? snapshot.previousTags : snapshot.nextTags;
   const nextTags = direction === 'apply' ? snapshot.nextTags : snapshot.previousTags;
@@ -307,8 +328,8 @@ const revisionPut = (
         operationId: operation.operationId,
         createdAt: at,
         changedBy,
-        source: 'assistant_confirmed_bulk',
-        reason: direction === 'apply' ? 'Edición masiva confirmada.' : 'Edición masiva deshecha.',
+        source: audit.source,
+        reason: direction === 'apply' ? audit.applyReason : audit.undoReason,
         changes,
       },
     },
@@ -322,8 +343,12 @@ const transactOperation = async (
   changedBy: string,
   direction: 'apply' | 'undo',
   now = new Date(),
+  audit = confirmedBulkAudit,
 ): Promise<BulkEditPreview> => {
   const operation = await getOperation(owner, operationId);
+  if (audit.tagsOnly && Object.prototype.hasOwnProperty.call(operation.change, 'categoryId')) {
+    throw new InvalidBulkEditError('La tool del asistente sólo puede modificar tags.');
+  }
   if (direction === 'apply' && operation.status === 'applied') return publicPreview(operation);
   if (direction === 'undo' && operation.status === 'undone') return publicPreview(operation);
   const expectedStatus = direction === 'apply' ? 'pending' : 'applied';
@@ -336,7 +361,7 @@ const transactOperation = async (
   const at = now.toISOString();
   const transactItems: NonNullable<TransactWriteCommandInput['TransactItems']> = operation.events.flatMap((event) => [
     { Update: eventUpdate(event, direction) },
-    { Put: revisionPut(event, operation, direction, changedBy, at) },
+    { Put: revisionPut(event, operation, direction, changedBy, at, audit) },
   ]);
   transactItems.push({ Update: {
     TableName: tableName,
@@ -376,3 +401,29 @@ export const undoBulkEdit = (
   changedBy: string,
   now?: Date,
 ): Promise<BulkEditPreview> => transactOperation(owner, operationId, changedBy, 'undo', now);
+
+export const applyAgentTagEdit = (
+  owner: string,
+  operationId: string,
+  now?: Date,
+): Promise<BulkEditPreview> => transactOperation(
+  owner,
+  operationId,
+  owner,
+  'apply',
+  now,
+  assistantTagAudit,
+);
+
+export const undoAgentTagEdit = (
+  owner: string,
+  operationId: string,
+  now?: Date,
+): Promise<BulkEditPreview> => transactOperation(
+  owner,
+  operationId,
+  owner,
+  'undo',
+  now,
+  assistantTagAudit,
+);

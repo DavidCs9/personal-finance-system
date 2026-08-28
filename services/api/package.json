@@ -14,6 +14,8 @@
     "./agent-proxy": "./src/agent/proxy.ts",
     "./agent-chat-buffered": "./src/agent/chat-buffered.ts",
     "./agent-tools": "./src/agent/tools-handler.ts",
+    "./agent-tag-mutations": "./src/agent/tag-mutation-tools-handler.ts",
+    "./agent-tag-mutation-tool-definitions": "./src/agent/tag-mutation-tool-definitions.ts",
     "./agentcore-provisioner": "./src/agent/provisioner.ts"
   },
   "scripts": {

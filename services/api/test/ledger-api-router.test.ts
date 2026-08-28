@@ -84,7 +84,7 @@ describe('ledger API Powertools router', () => {
     expect(JSON.parse(String(result.body)).message).toMatch(/nu_cajita_emergencia/);
   });
 
-  it('validates a bulk-edit preview before reading movements', async () => {
+  it('does not expose the internal agent bulk-edit service as a public route', async () => {
     const result = await handler(
       {
         ...httpEvent('POST', '/bulk-edits/preview'),
@@ -95,9 +95,7 @@ describe('ledger API Powertools router', () => {
       },
       context,
     );
-    expect(result.statusCode).toBe(400);
-    expect(JSON.parse(String(result.body))).toEqual({
-      message: 'fromDay no puede ser posterior a toDay.',
-    });
+    expect(result.statusCode).toBe(404);
+    expect(JSON.parse(String(result.body))).toEqual({ message: 'Route not found.' });
   });
 });

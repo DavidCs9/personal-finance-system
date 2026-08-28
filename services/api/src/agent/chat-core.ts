@@ -31,7 +31,7 @@ export type AgentSseEvent =
   | { readonly type: 'tool_failed'; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly message: string }
   | { readonly type: 'citation'; readonly kind: string; readonly id?: string; readonly label: string }
   | { readonly type: 'proposal'; readonly kind: 'recategorize'; readonly eventId: string; readonly categoryId: string; readonly message: string }
-  | { readonly type: 'proposal'; readonly kind: 'bulk_edit'; readonly operationId: string; readonly movementCount: number; readonly amountMinor: number; readonly expiresAt: string; readonly fromDay: string; readonly toDay: string; readonly change: Record<string, unknown>; readonly sample: readonly { readonly id: string; readonly merchantRaw: string; readonly amountMinor: number }[]; readonly message: string }
+  | { readonly type: 'mutation'; readonly kind: 'tag_edit'; readonly action: 'applied' | 'undone'; readonly operationId: string; readonly movementCount: number; readonly amountMinor: number; readonly fromDay: string; readonly toDay: string; readonly change: Record<string, unknown> }
   | { readonly type: 'done'; readonly requestId: string; readonly sessionId: string }
   | { readonly type: 'error'; readonly message: string; readonly requestId: string };
 
@@ -114,6 +114,22 @@ export const resolveOwner = async (event: AgentChatGatewayEvent): Promise<string
   return claims.sub;
 };
 
+export class AgentOwnerForbiddenError extends Error {}
+
+export const assertConfiguredAgentOwner = (owner: string): void => {
+  const configuredOwner = process.env.AGENT_OWNER?.trim();
+  if (!configuredOwner) throw new Error('AGENT_OWNER is not configured on the agent proxy.');
+  if (owner !== configuredOwner) {
+    throw new AgentOwnerForbiddenError('Este usuario no está autorizado para usar el asistente financiero.');
+  }
+};
+
+export const agentChatErrorStatus = (error: unknown): number => {
+  if (error instanceof AgentOwnerForbiddenError) return 403;
+  const message = error instanceof Error ? error.message : String(error);
+  return /principal|Bearer|JWT|Unauthorized|token/i.test(message) ? 401 : 400;
+};
+
 export const requestMethod = (event: AgentChatGatewayEvent): string =>
   (event.requestContext.http?.method ?? event.httpMethod ?? '').toUpperCase();
 
@@ -146,6 +162,9 @@ const citationsFromPayload = (data: Record<string, unknown>): AgentSseEvent[] =>
   return out;
 };
 
+export const toolNameFromHarness = (name: string): string =>
+  name.includes('___') ? name.split('___').slice(1).join('___') : name;
+
 const toolLabel = (name: string): string => {
   switch (name) {
     case 'month_snapshot': return 'Revisando el resumen del mes';
@@ -157,7 +176,9 @@ const toolLabel = (name: string): string => {
     case 'wealth_snapshot': return 'Revisando patrimonio';
     case 'investment_history': return 'Revisando historial de inversiones';
     case 'propose_recategorize': return 'Preparando una categoría';
-    case 'preview_bulk_edit': return 'Preparando la edición masiva';
+    case 'preview_tag_edit': return 'Preparando los tags';
+    case 'apply_tag_edit': return 'Aplicando los tags';
+    case 'undo_tag_edit': return 'Restaurando los tags';
     default: return 'Consultando datos';
   }
 };
@@ -262,10 +283,20 @@ export const summarizeToolResult = (
       };
     case 'propose_recategorize':
       return { summary: 'Propuesta de categoría preparada.', material: false };
-    case 'preview_bulk_edit':
+    case 'preview_tag_edit':
       return {
-        summary: `Preparé ${Number(payload.movementCount ?? 0)} movimientos para confirmar.`,
+        summary: `Preparé ${Number(payload.movementCount ?? 0)} movimientos.`,
         material: false,
+      };
+    case 'apply_tag_edit':
+      return {
+        summary: `Actualicé ${Number(payload.movementCount ?? 0)} movimientos.`,
+        material: true,
+      };
+    case 'undo_tag_edit':
+      return {
+        summary: `Restauré ${Number(payload.movementCount ?? 0)} movimientos.`,
+        material: true,
       };
     default:
       return { material: false };
@@ -282,6 +313,27 @@ const tryParseJsonObject = (raw: string): Record<string, unknown> | undefined =>
     // ignore partial JSON while streaming
   }
   return undefined;
+};
+
+export const mutationFromToolResult = (
+  toolName: string | undefined,
+  payload: Record<string, unknown>,
+): Extract<AgentSseEvent, { readonly type: 'mutation' }> | undefined => {
+  if ((toolName !== 'apply_tag_edit' && toolName !== 'undo_tag_edit')
+    || typeof payload.operationId !== 'string') return undefined;
+  return {
+    type: 'mutation',
+    kind: 'tag_edit',
+    action: toolName === 'apply_tag_edit' ? 'applied' : 'undone',
+    operationId: payload.operationId,
+    movementCount: Number(payload.movementCount ?? 0),
+    amountMinor: Number(payload.amountMinor ?? 0),
+    fromDay: String(payload.fromDay ?? ''),
+    toDay: String(payload.toDay ?? ''),
+    change: payload.change && typeof payload.change === 'object'
+      ? payload.change as Record<string, unknown>
+      : {},
+  };
 };
 
 async function* invokeHarnessStream(
@@ -320,7 +372,7 @@ async function* invokeHarnessStream(
   const activeTools = new Map<string, { name: string; label: string; attempt: number; startedAt: number }>();
   const attemptsByTool = new Map<string, number>();
   const activeReasoning = new Map<number, { reasoningId: string; startedAt: number }>();
-  const emittedBulkProposals = new Set<string>();
+  const emittedMutations = new Set<string>();
   let reasoningSequence = 0;
 
   for await (const event of response.stream ?? []) {
@@ -347,7 +399,7 @@ async function* invokeHarnessStream(
     const startToolUse = event.contentBlockStart?.start?.toolUse;
     if (startToolUse && event.contentBlockStart?.contentBlockIndex !== undefined) {
       const toolUseId = startToolUse.toolUseId ?? `tool-${event.contentBlockStart.contentBlockIndex}`;
-      const name = startToolUse.name ?? 'unknown';
+      const name = toolNameFromHarness(startToolUse.name ?? 'unknown');
       const attempt = (attemptsByTool.get(name) ?? 0) + 1;
       const label = toolLabel(name);
       attemptsByTool.set(name, attempt);
@@ -448,26 +500,13 @@ async function* invokeHarnessStream(
             : toolResultByIndex.get(toolResultIndex);
           if (result) result.payload = payload;
           const active = result ? activeTools.get(result.toolUseId) : undefined;
-          if (active?.name === 'preview_bulk_edit' && typeof payload.operationId === 'string'
-            && !emittedBulkProposals.has(payload.operationId)) {
-            emittedBulkProposals.add(payload.operationId);
-            yield {
-              type: 'proposal',
-              kind: 'bulk_edit',
-              operationId: payload.operationId,
-              movementCount: Number(payload.movementCount ?? 0),
-              amountMinor: Number(payload.amountMinor ?? 0),
-              expiresAt: String(payload.expiresAt ?? ''),
-              fromDay: String(payload.fromDay ?? ''),
-              toDay: String(payload.toDay ?? ''),
-              change: payload.change && typeof payload.change === 'object'
-                ? payload.change as Record<string, unknown>
-                : {},
-              sample: Array.isArray(payload.sample)
-                ? payload.sample as { id: string; merchantRaw: string; amountMinor: number }[]
-                : [],
-              message: `Confirma aplicar la edición a ${Number(payload.movementCount ?? 0)} movimientos.`,
-            };
+          const mutation = mutationFromToolResult(active?.name, payload);
+          if (mutation) {
+            const key = `${mutation.action}:${mutation.operationId}`;
+            if (!emittedMutations.has(key)) {
+              emittedMutations.add(key);
+              yield mutation;
+            }
           }
           yield* citationsFromPayload(payload);
         } else if (typeof block.text === 'string') {
@@ -478,26 +517,13 @@ async function* invokeHarnessStream(
               : toolResultByIndex.get(toolResultIndex);
             if (result) result.payload = parsed;
             const active = result ? activeTools.get(result.toolUseId) : undefined;
-            if (active?.name === 'preview_bulk_edit' && typeof parsed.operationId === 'string'
-              && !emittedBulkProposals.has(parsed.operationId)) {
-              emittedBulkProposals.add(parsed.operationId);
-              yield {
-                type: 'proposal',
-                kind: 'bulk_edit',
-                operationId: parsed.operationId,
-                movementCount: Number(parsed.movementCount ?? 0),
-                amountMinor: Number(parsed.amountMinor ?? 0),
-                expiresAt: String(parsed.expiresAt ?? ''),
-                fromDay: String(parsed.fromDay ?? ''),
-                toDay: String(parsed.toDay ?? ''),
-                change: parsed.change && typeof parsed.change === 'object'
-                  ? parsed.change as Record<string, unknown>
-                  : {},
-                sample: Array.isArray(parsed.sample)
-                  ? parsed.sample as { id: string; merchantRaw: string; amountMinor: number }[]
-                  : [],
-                message: `Confirma aplicar la edición a ${Number(parsed.movementCount ?? 0)} movimientos.`,
-              };
+            const mutation = mutationFromToolResult(active?.name, parsed);
+            if (mutation) {
+              const key = `${mutation.action}:${mutation.operationId}`;
+              if (!emittedMutations.has(key)) {
+                emittedMutations.add(key);
+                yield mutation;
+              }
             }
             yield* citationsFromPayload(parsed);
           }

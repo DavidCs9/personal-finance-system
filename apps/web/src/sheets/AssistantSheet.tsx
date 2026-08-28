@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { ledgerApi, type AgentChatEvent, type AssistantMemory, type BulkEditPreview } from "../api/client";
+import { ledgerApi, type AgentChatEvent, type AssistantMemory } from "../api/client";
 import { Amt } from "../components/Amt";
 import { Sheet } from "../components/Sheet";
 import { AssistantMarkdown } from "../lib/assistant-markdown";
@@ -11,15 +11,12 @@ const EXAMPLES = [
   "¿Cuánto tengo neto?",
 ] as const;
 
-const bulkChangeLabel = (change: BulkEditPreview["change"]): string => {
+const tagChangeLabel = (change: Extract<AgentChatEvent, { type: "mutation" }>["change"]): string => {
   const parts = [
     ...(change.addTags?.length ? [`Agregar ${change.addTags.join(", ")}`] : []),
     ...(change.removeTags?.length ? [`Quitar ${change.removeTags.join(", ")}`] : []),
-    ...(Object.prototype.hasOwnProperty.call(change, "categoryId")
-      ? [`Categoría ${change.categoryId ?? "Sin categoría"}`]
-      : []),
   ];
-  return parts.join(" · ") || "Edición masiva";
+  return parts.join(" · ") || "Etiquetas sin cambios";
 };
 
 type ToolActivity = {
@@ -53,10 +50,8 @@ type ChatMessage = {
   readonly text?: string;
   readonly parts?: readonly AssistantPart[];
   readonly citations?: readonly { readonly kind: string; readonly id?: string; readonly label: string }[];
-  readonly proposal?:
-    | { readonly kind: "recategorize"; readonly eventId: string; readonly categoryId: string; readonly message: string }
-    | ({ readonly kind: "bulk_edit"; readonly message: string } & Pick<BulkEditPreview, "operationId" | "movementCount" | "amountMinor" | "expiresAt" | "fromDay" | "toDay" | "change" | "sample">);
-  readonly bulkResult?: BulkEditPreview;
+  readonly proposal?: { readonly kind: "recategorize"; readonly eventId: string; readonly categoryId: string; readonly message: string };
+  readonly mutation?: Extract<AgentChatEvent, { type: "mutation" }>;
   readonly requestId?: string;
 };
 
@@ -193,7 +188,9 @@ export function AssistantSheet({
     const parts: AssistantPart[] = [];
     const citations: { kind: string; id?: string; label: string }[] = [];
     let proposal: ChatMessage["proposal"];
+    let mutation: ChatMessage["mutation"];
     let latestRequestId: string | undefined;
+    const receivedMutations = new Set<string>();
 
     const publish = () => {
       setMessages((current) => {
@@ -203,6 +200,7 @@ export function AssistantSheet({
           parts: [...parts],
           citations: [...citations],
           proposal,
+          mutation,
           requestId: latestRequestId,
         };
         return next;
@@ -320,25 +318,21 @@ export function AssistantSheet({
             publish();
           }
           if (event.type === "proposal") {
-            proposal = event.kind === "bulk_edit"
-              ? {
-                  kind: "bulk_edit",
-                  operationId: event.operationId,
-                  movementCount: event.movementCount,
-                  amountMinor: event.amountMinor,
-                  expiresAt: event.expiresAt,
-                  fromDay: event.fromDay,
-                  toDay: event.toDay,
-                  change: event.change,
-                  sample: event.sample,
-                  message: event.message,
-                }
-              : {
-                  kind: "recategorize",
-                  eventId: event.eventId,
-                  categoryId: event.categoryId,
-                  message: event.message,
-                };
+            proposal = {
+              kind: "recategorize",
+              eventId: event.eventId,
+              categoryId: event.categoryId,
+              message: event.message,
+            };
+            publish();
+          }
+          if (event.type === "mutation") {
+            mutation = event;
+            const mutationKey = `${event.action}:${event.operationId}`;
+            if (!receivedMutations.has(mutationKey)) {
+              receivedMutations.add(mutationKey);
+              onMutated();
+            }
             publish();
           }
           if (event.type === "done") {
@@ -379,56 +373,18 @@ export function AssistantSheet({
     if (demoMode) return;
     setBusy(true);
     try {
-      if (proposal.kind === "bulk_edit") {
-        const result = await ledgerApi.applyBulkEdit(proposal.operationId, idToken);
-        setMessages((current) => [
-          ...current.map((message) => message.proposal?.kind === "bulk_edit"
-            && message.proposal.operationId === proposal.operationId
-            ? { ...message, proposal: undefined }
-            : message),
-          {
-            role: "assistant",
-            parts: [{ kind: "text", text: `Listo: actualicé ${result.movementCount} movimientos.` }],
-            bulkResult: result,
-          },
-        ]);
-      } else {
-        await ledgerApi.setEventCategory(
-          proposal.eventId,
-          { categoryId: proposal.categoryId, updateRule: true },
-          idToken,
-        );
-        setMessages((current) => [
-          ...current,
-          { role: "assistant", parts: [{ kind: "text", text: `Listo: categoría ${proposal.categoryId} confirmada.` }] },
-        ]);
-      }
+      await ledgerApi.setEventCategory(
+        proposal.eventId,
+        { categoryId: proposal.categoryId, updateRule: true },
+        idToken,
+      );
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", parts: [{ kind: "text", text: `Listo: categoría ${proposal.categoryId} confirmada.` }] },
+      ]);
       onMutated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo confirmar el cambio.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const undoBulkResult = async (result: BulkEditPreview) => {
-    if (demoMode) return;
-    setBusy(true);
-    setError(undefined);
-    try {
-      const undone = await ledgerApi.undoBulkEdit(result.operationId, idToken);
-      setMessages((current) => current.map((message) =>
-        message.bulkResult?.operationId === undone.operationId
-          ? {
-              ...message,
-              parts: [{ kind: "text", text: `Deshecho: restauré ${undone.movementCount} movimientos.` }],
-              bulkResult: undone,
-            }
-          : message
-      ));
-      onMutated();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo deshacer el cambio.");
     } finally {
       setBusy(false);
     }
@@ -496,48 +452,25 @@ export function AssistantSheet({
               )}
               {message.proposal && (
                 <div className="assistant-proposal">
-                  <p>
-                    {message.proposal.message}
-                    {message.proposal.kind === "bulk_edit" && (
-                      <> · <Amt>{money(message.proposal.amountMinor)}</Amt></>
-                    )}
-                  </p>
-                  {message.proposal.kind === "bulk_edit" && (
-                    <>
-                      <small>
-                        {message.proposal.fromDay}–{message.proposal.toDay} · {bulkChangeLabel(message.proposal.change)}
-                      </small>
-                      {message.proposal.sample.length > 0 && (
-                        <small>
-                          {message.proposal.sample.slice(0, 4).map((item) => item.merchantRaw).join(" · ")}
-                          {message.proposal.movementCount > 4 ? ` · y ${message.proposal.movementCount - 4} más` : ""}
-                        </small>
-                      )}
-                    </>
-                  )}
+                  <p>{message.proposal.message}</p>
                   <button
                     type="button"
                     className="primary-button"
                     disabled={busy}
                     onClick={() => void confirmProposal(message.proposal!)}
                   >
-                    {message.proposal.kind === "bulk_edit" ? "Confirmar edición" : "Confirmar categoría"}
+                    Confirmar categoría
                   </button>
                 </div>
               )}
-              {message.bulkResult?.status === "applied" && (
+              {message.mutation && (
                 <div className="assistant-proposal">
                   <p>
-                    {message.bulkResult.movementCount} movimientos · <Amt>{money(message.bulkResult.amountMinor)}</Amt>
+                    {message.mutation.action === "applied" ? "Etiquetas actualizadas" : "Edición deshecha"}
+                    {" · "}{message.mutation.movementCount} movimientos · <Amt>{money(message.mutation.amountMinor)}</Amt>
                   </p>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={busy}
-                    onClick={() => void undoBulkResult(message.bulkResult!)}
-                  >
-                    Deshacer edición
-                  </button>
+                  <small>{message.mutation.fromDay}–{message.mutation.toDay} · {tagChangeLabel(message.mutation.change)}</small>
+                  <small>Puedes pedir “deshaz ese cambio” en el chat.</small>
                 </div>
               )}
             </div>

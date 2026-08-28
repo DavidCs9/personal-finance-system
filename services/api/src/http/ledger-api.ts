@@ -13,13 +13,6 @@ import {
   toPublicCard,
 } from '../cards/cards.js';
 import { InvalidManualEntryError } from '../events/manual-entry-input.js';
-import {
-  applyBulkEdit,
-  InvalidBulkEditError,
-  parseBulkEditInput,
-  previewBulkEdit,
-  undoBulkEdit,
-} from '../events/bulk-edits.js';
 import { createManualEvent } from '../events/manual-entry.js';
 import { getEventDetail, listEventsForMonth, readRawEmail } from '../events/queries.js';
 import { InvalidMsiError, patchEvent } from '../events/mutations.js';
@@ -112,7 +105,6 @@ const clientErrors = [
   InvalidWealthSnapshotError,
   InvalidCategoryError,
   InvalidAgentQueryError,
-  InvalidBulkEditError,
   InvalidEventTagError,
 ] as const;
 
@@ -252,22 +244,6 @@ app.patch('/events/:eventId', async ({ event, params }) => {
   return updated
     ? json(HttpStatusCodes.OK, updated)
     : json(HttpStatusCodes.NOT_FOUND, { message: 'Event not found.' });
-});
-
-app.post('/bulk-edits/preview', async ({ event }) => {
-  const gatewayEvent = asHttpEvent(event);
-  const input = parseBulkEditInput(JSON.parse(requestBody(gatewayEvent) || '{}'));
-  return json(HttpStatusCodes.CREATED, await previewBulkEdit(ownerOf(gatewayEvent), input));
-});
-
-app.post('/bulk-edits/:operationId/apply', async ({ event, params }) => {
-  const owner = ownerOf(asHttpEvent(event));
-  return json(HttpStatusCodes.OK, await applyBulkEdit(owner, params.operationId, owner));
-});
-
-app.post('/bulk-edits/:operationId/undo', async ({ event, params }) => {
-  const owner = ownerOf(asHttpEvent(event));
-  return json(HttpStatusCodes.OK, await undoBulkEdit(owner, params.operationId, owner));
 });
 
 app.get('/exceptions', async () =>
