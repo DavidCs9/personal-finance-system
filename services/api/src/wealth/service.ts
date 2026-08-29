@@ -22,6 +22,7 @@ import {
   type WealthSnapshotSource,
 } from '@finance/domain';
 import { isValidCardId, listCards } from '../cards/cards.js';
+import type { CardRecord } from '../cards/cards.js';
 import { database, rawSourceBucketName, s3, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
 import { listPayslipsForYear } from '../imports/cfdi-nomina-flow.js';
@@ -38,6 +39,34 @@ import {
 
 const evidenceObjectKey = (kind: 'manual' | 'api', owner: string, sha256: string): string =>
   kind === 'manual' ? `wealth-manual/${owner}/${sha256}.json` : `wealth-api/${owner}/${sha256}.json`;
+
+export interface WealthBalanceAccount {
+  readonly id: WealthAccountId;
+  readonly name: string;
+  readonly institution: string;
+  readonly role: string;
+  readonly sync: string;
+  readonly connected: boolean;
+  readonly latestSnapshot: WealthSnapshot | null;
+}
+
+export interface WealthBalanceLiability {
+  readonly cardId: string;
+  readonly name: string;
+  readonly institution?: string;
+  readonly latestSnapshot: CardLiabilitySnapshot | null;
+}
+
+export interface WealthBalanceOverview {
+  readonly currency: 'MXN';
+  readonly asOfDay: string;
+  readonly totalMxnMinor: number;
+  readonly assetsMxnMinor: number;
+  readonly liabilitiesMxnMinor: number;
+  readonly netMxnMinor: number;
+  readonly accounts: readonly WealthBalanceAccount[];
+  readonly liabilities: readonly WealthBalanceLiability[];
+}
 
 const toPublicSnapshot = (item: Record<string, unknown>): WealthSnapshot | undefined => {
   const accountId = item.accountId;
@@ -242,11 +271,10 @@ const latestLiabilityByCard = (
 
 const derivedFondoSnapshot = (
   totalMxnMinor: number,
-  now: Date,
+  day: string,
+  capturedAt: string,
 ): WealthSnapshot | undefined => {
   if (totalMxnMinor <= 0) return undefined;
-  const capturedAt = now.toISOString();
-  const day = dayKeyInZone(now, FINANCE_TIME_ZONE);
   return {
     accountId: FONDO_AHORRO_ACCOUNT_ID,
     day,
@@ -256,6 +284,75 @@ const derivedFondoSnapshot = (
     totalMxnMinor,
     holdings: [fondoAhorroHolding(totalMxnMinor)],
   };
+};
+
+const wealthBalanceOverview = (input: {
+  readonly snapshots: readonly WealthSnapshot[];
+  readonly liabilitySnapshots: readonly CardLiabilitySnapshot[];
+  readonly cards: readonly CardRecord[];
+  readonly fondoTotalMinor: number;
+  readonly asOfDay: string;
+  readonly capturedAt: string;
+}): WealthBalanceOverview => {
+  const eligibleSnapshots = input.snapshots.filter((snapshot) => snapshot.day <= input.asOfDay);
+  const eligibleLiabilities = input.liabilitySnapshots.filter((snapshot) => snapshot.day <= input.asOfDay);
+  const latest = new Map(latestByAccount(eligibleSnapshots));
+  const fondoSnapshot = derivedFondoSnapshot(input.fondoTotalMinor, input.asOfDay, input.capturedAt);
+  if (fondoSnapshot) latest.set(FONDO_AHORRO_ACCOUNT_ID, fondoSnapshot);
+
+  const accounts: readonly WealthBalanceAccount[] = seededWealthAccounts().map((account) => {
+    const snapshot = latest.get(account.id) ?? null;
+    return { ...account, connected: Boolean(snapshot), latestSnapshot: snapshot };
+  });
+  const assetsMxnMinor = accounts.reduce(
+    (sum, account) => sum + (account.latestSnapshot?.totalMxnMinor ?? 0),
+    0,
+  );
+  const latestLiabilities = latestLiabilityByCard(eligibleLiabilities);
+  const liabilities: readonly WealthBalanceLiability[] = input.cards.map((card) => ({
+    cardId: card.id,
+    name: card.name,
+    ...(card.institution ? { institution: card.institution } : {}),
+    latestSnapshot: latestLiabilities.get(card.id) ?? null,
+  }));
+  const liabilitiesMxnMinor = liabilities.reduce(
+    (sum, liability) => sum + (liability.latestSnapshot?.totalMxnMinor ?? 0),
+    0,
+  );
+  return {
+    currency: 'MXN',
+    asOfDay: input.asOfDay,
+    totalMxnMinor: assetsMxnMinor,
+    assetsMxnMinor,
+    liabilitiesMxnMinor,
+    netMxnMinor: netWorthMxnMinor(assetsMxnMinor, liabilitiesMxnMinor),
+    accounts,
+    liabilities,
+  };
+};
+
+/** Historical carry-forward balance used by immutable month-close reports. */
+export const getWealthOverviewAsOf = async (
+  owner: string,
+  asOfDay: string,
+): Promise<WealthBalanceOverview> => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asOfDay)) throw new Error('asOfDay must be YYYY-MM-DD.');
+  const year = asOfDay.slice(0, 4);
+  const [snapshots, yearPayslips, cards, liabilitySnapshots] = await Promise.all([
+    listCanonicalSnapshots(owner),
+    listPayslipsForYear(owner, year),
+    listCards({ database, tableName, owner }),
+    listCanonicalLiabilitySnapshots(owner),
+  ]);
+  const eligiblePayslips = yearPayslips.filter((payslip) => payslip.fechaPago <= asOfDay);
+  return wealthBalanceOverview({
+    snapshots,
+    liabilitySnapshots,
+    cards,
+    fondoTotalMinor: sumFondoAhorroDeduccionesMinor(eligiblePayslips),
+    asOfDay,
+    capturedAt: `${asOfDay}T12:00:00.000Z`,
+  });
 };
 
 export const getWealthOverview = async (
@@ -271,54 +368,25 @@ export const getWealthOverview = async (
   ]);
   const fondoTotal = sumFondoAhorroDeduccionesMinor(yearPayslips);
   const fondoRunning = runningFondoAhorroByDay(yearPayslips);
-  const fondoSnapshot = derivedFondoSnapshot(fondoTotal, now);
-  const latest = new Map(latestByAccount(snapshots));
-  if (fondoSnapshot) latest.set(FONDO_AHORRO_ACCOUNT_ID, fondoSnapshot);
-
-  const accounts = seededWealthAccounts().map((account) => {
-    const snapshot = latest.get(account.id) ?? null;
-    return {
-      ...account,
-      connected: Boolean(snapshot),
-      latestSnapshot: snapshot,
-    };
+  const today = dayKeyInZone(now, FINANCE_TIME_ZONE);
+  const balance = wealthBalanceOverview({
+    snapshots,
+    liabilitySnapshots,
+    cards,
+    fondoTotalMinor: fondoTotal,
+    asOfDay: today,
+    capturedAt: now.toISOString(),
   });
-  const assetsMxnMinor = accounts.reduce(
-    (sum, account) => sum + (account.latestSnapshot?.totalMxnMinor ?? 0),
-    0,
-  );
-  const latestLiabilities = latestLiabilityByCard(liabilitySnapshots);
-  const liabilities = cards.map((card) => {
-    const snapshot = latestLiabilities.get(card.id) ?? null;
-    return {
-      cardId: card.id,
-      name: card.name,
-      ...(card.institution ? { institution: card.institution } : {}),
-      latestSnapshot: snapshot,
-    };
-  });
-  const liabilitiesMxnMinor = liabilities.reduce(
-    (sum, liability) => sum + (liability.latestSnapshot?.totalMxnMinor ?? 0),
-    0,
-  );
-  const netMxnMinor = netWorthMxnMinor(assetsMxnMinor, liabilitiesMxnMinor);
   const liquidAll = historyPoints(snapshots, 'all');
   const assetsHistory = mergeHistoryWithFondo(liquidAll, fondoRunning);
-  const today = dayKeyInZone(now, FINANCE_TIME_ZONE);
   const currentMonth = today.slice(0, 7);
   const historyAll = wealthTotalMonthlyHistory({
     points: mergeHistoryWithLiabilities(assetsHistory, liabilitySnapshots),
     currentMonth,
-    currentTotalMinor: netMxnMinor,
+    currentTotalMinor: balance.netMxnMinor,
   });
   return {
-    currency: 'MXN',
-    totalMxnMinor: assetsMxnMinor,
-    assetsMxnMinor,
-    liabilitiesMxnMinor,
-    netMxnMinor,
-    accounts,
-    liabilities,
+    ...balance,
     history: {
       all: historyAll,
       byAccount: Object.fromEntries(

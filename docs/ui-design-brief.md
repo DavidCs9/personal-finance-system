@@ -58,6 +58,12 @@ La experiencia se diseña primero para móvil (95% del uso esperado):
 
 En escritorio se conserva la misma arquitectura con un ancho de lectura contenido; no se convierte en un dashboard distinto.
 
+## Cierre mensual por correo
+
+El día 1 de cada mes Olbia envía un correo **Cierre mensual** sobre el mes calendario ya terminado. No convierte Patrimonio y Resumen en una sola superficie: presenta dos capítulos consecutivos y explícitos —**Tu mes / Dónde se fue** y **Tu patrimonio / Qué cambió**— sin afirmar que el gasto de una categoría causó una variación patrimonial.
+
+El correo conserva la jerarquía visual marfil/carbón, cifras tabulares, serif editorial contenida y rojo sólo para consecuencias que requieren atención. Categorías son aditivas; tags son lentes de contexto superpuestos y el correo lo declara. La lectura de IA selecciona y explica hechos calculados por código: nunca calcula importes, introduce cifras propias, modifica movimientos ni llama rendimiento a un cambio de valor observado sin ajuste por aportaciones/retiros. Si la IA falla, el cierre numérico todavía se envía con una lectura determinista.
+
 ## Persistencia mensual
 
 Las compras continúan viniendo de la API existente. La liquidez del mes se deriva de `GET /months/{month}` a partir de las nóminas CFDI (`payslips`, `incomeMinor`, `estimateActive`, `provisionalActive`). Los pagos próximos se guardan con `PUT /months/{month}` (solo `upcomingPayments`). Cada registro queda aislado por el identificador autenticado del usuario y el mes calendario.
