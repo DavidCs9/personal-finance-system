@@ -1,5 +1,6 @@
 import {
   compareMonths,
+  InvalidAgentQueryError,
   investmentHistory,
   listMovementsForAgent,
   monthSnapshot,
@@ -48,7 +49,23 @@ export const runAgentTool = async (
     case 'wealth_snapshot':
       return wealthSnapshotForAgent(owner);
     case 'investment_history':
-      return investmentHistory(owner, input);
+      try {
+        return await investmentHistory(owner, input);
+      } catch (error) {
+        if (error instanceof InvalidAgentQueryError) {
+          const status = error.code === 'no_data' || error.code === 'ambiguous'
+            ? error.code
+            : 'invalid';
+          return {
+            ok: false,
+            status,
+            reasonCode: error.code,
+            message: error.message,
+            ...(error.details ? { details: error.details } : {}),
+          };
+        }
+        throw error;
+      }
     default:
       throw new Error(`Tool desconocida: ${name}`);
   }
@@ -77,9 +94,11 @@ export const citationsFromToolResult = (
     return [{ kind: 'wealth', label: 'Patrimonio' }];
   }
   if (toolName === 'investment_history') {
+    if (data.ok === false) return [];
+    const accountLabel = data.accountId === 'all' ? 'Inversiones · Bitso + IBKR' : String(data.accountId ?? '').toUpperCase();
     return [{
       kind: 'wealth',
-      label: [String(data.accountId ?? '').toUpperCase(), data.symbol ? String(data.symbol) : 'Historial']
+      label: [accountLabel, data.symbol ? String(data.symbol) : 'Historial']
         .filter(Boolean)
         .join(' · '),
     }];

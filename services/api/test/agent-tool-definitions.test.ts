@@ -33,6 +33,22 @@ describe('AgentCore finance tool definitions', () => {
     expect(TOOL_DEFINITIONS.map(({ name }) => name)).not.toContain('apply_category_edits');
   });
 
+  it('exposes global, point-in-time, bounded investment history queries', () => {
+    const tool = TOOL_DEFINITIONS.find((definition) => definition.name === 'investment_history');
+    expect(tool?.description).toContain('default es all-time');
+    expect(tool?.inputSchema.properties.range).toMatchObject({
+      enum: expect.arrayContaining(['today', 'all', 'custom']),
+    });
+    expect(tool?.inputSchema.properties.asOfDay).toMatchObject({
+      type: 'string',
+      pattern: '^\\d{4}-\\d{2}-\\d{2}$',
+    });
+    expect(tool?.inputSchema.properties.limit).toMatchObject({
+      type: 'integer', minimum: 1, maximum: 366,
+    });
+    expect(tool?.inputSchema.properties.holdingId).toMatchObject({ type: 'string' });
+  });
+
   it('exposes precise tag and category selectors with batch apply on the mutation gateway', () => {
     expect(TAG_MUTATION_TOOL_DEFINITIONS.map(({ name }) => name)).toEqual([
       'preview_tag_edit',

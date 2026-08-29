@@ -7,6 +7,7 @@ import {
   type MonthSummary,
   type SpendAggregateResult,
   type WealthAccountId,
+  wealthSnapshotAgeDays,
 } from '@finance/domain';
 import { getMonthlyPlan } from '../months/service.js';
 import { getWealthOverview, listWealthSnapshotsForAccount } from '../wealth/service.js';
@@ -16,6 +17,7 @@ import { isValidMonth } from '../months/monthly-plan.js';
 import {
   investmentHistoryFromSnapshots,
   InvalidInvestmentHistoryQueryError,
+  portfolioSnapshotsFromAccounts,
   type InvestmentHistoryGranularity,
   type InvestmentHistoryQuery,
   type InvestmentHistoryRange,
@@ -28,11 +30,29 @@ import {
 } from './spending-range.js';
 import { buildMonthScenario, type ScenarioCommitment } from './month-scenario.js';
 
-export class InvalidAgentQueryError extends Error {}
+export class InvalidAgentQueryError extends Error {
+  constructor(
+    message: string,
+    readonly code: string = 'invalid_query',
+    readonly details?: Record<string, unknown>,
+  ) {
+    super(message);
+  }
+}
 
-const investmentAccountId = (value: unknown): WealthAccountId => {
-  if (value === 'bitso' || value === 'ibkr') return value;
-  throw new InvalidAgentQueryError('La cuenta debe ser Bitso o IBKR.');
+const investmentAccountId = (value: unknown): WealthAccountId | 'all' => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : value;
+  if (normalized === 'bitso' || normalized === 'ibkr') return normalized;
+  // AgentCore's rendered schema currently drops enum values. Accept the
+  // obvious global labels so a natural-language request cannot turn into a
+  // misleading Gateway failure when the model supplies one as accountId.
+  if (normalized === 'all' || normalized === 'portfolio' || normalized === 'cartera' || normalized === 'inversiones') {
+    return 'all';
+  }
+  throw new InvalidAgentQueryError(
+    'La cuenta debe ser Bitso o IBKR. Omítela para consultar todas tus inversiones.',
+    'invalid_account',
+  );
 };
 
 const categoryNameMap = async (): Promise<Map<string, string>> => {
@@ -227,45 +247,94 @@ export const investmentHistory = async (
   const symbol = typeof input.symbol === 'string' && input.symbol.trim()
     ? input.symbol.trim().toUpperCase()
     : undefined;
-  const requestedAccount = input.accountId === undefined
+  const holdingId = typeof input.holdingId === 'string' && input.holdingId.trim()
+    ? input.holdingId.trim()
+    : undefined;
+  const positionRequested = Boolean(symbol || holdingId);
+  const requestedAccount = input.accountId == null
     ? undefined
     : investmentAccountId(input.accountId);
-  if (!requestedAccount && !symbol) {
-    throw new InvalidAgentQueryError('Indica accountId o un símbolo que permita inferir la cuenta.');
-  }
-
-  const accounts: readonly WealthAccountId[] = requestedAccount ? [requestedAccount] : ['bitso', 'ibkr'];
+  const accounts: readonly WealthAccountId[] = requestedAccount && requestedAccount !== 'all'
+    ? [requestedAccount]
+    : ['bitso', 'ibkr'];
   const candidates = await Promise.all(accounts.map(async (accountId) => ({
     accountId,
     snapshots: await listWealthSnapshotsForAccount(owner, accountId),
   })));
-  const matching = requestedAccount || !symbol
-    ? candidates
-    : candidates.filter(({ snapshots }) => snapshots.some(
-      (snapshot) => snapshot.holdings.some((holding) => holding.symbol.toUpperCase() === symbol),
-    ));
+  const matching = positionRequested && (!requestedAccount || requestedAccount === 'all')
+    ? candidates.filter(({ snapshots }) => snapshots.some(
+      (snapshot) => snapshot.holdings.some((holding) => holdingId
+        ? holding.id === holdingId
+        : holding.symbol.toUpperCase() === symbol),
+    ))
+    : candidates;
   if (matching.length === 0) {
-    throw new InvalidAgentQueryError(`No hay historial de ${symbol ?? 'esa inversión'}.`);
+    throw new InvalidAgentQueryError(
+      `No hay historial de ${holdingId ?? symbol ?? 'esa inversión'}.`,
+      'no_data',
+    );
   }
-  if (matching.length > 1) {
-    throw new InvalidAgentQueryError(`El símbolo ${symbol} existe en más de una cuenta; indica Bitso o IBKR.`);
+  if (matching.length > 1 && positionRequested) {
+    throw new InvalidAgentQueryError(
+      `${holdingId ? `La posición ${holdingId}` : `El símbolo ${symbol}`} existe en más de una cuenta; indica Bitso o IBKR.`,
+      'ambiguous',
+      { candidateAccountIds: matching.map(({ accountId }) => accountId) },
+    );
   }
 
   const query: InvestmentHistoryQuery = {
     ...(symbol ? { symbol } : {}),
+    ...(holdingId ? { holdingId } : {}),
     ...(typeof input.range === 'string' ? { range: input.range as InvestmentHistoryRange } : {}),
     ...(typeof input.fromDay === 'string' ? { fromDay: input.fromDay } : {}),
     ...(typeof input.toDay === 'string' ? { toDay: input.toDay } : {}),
+    ...(typeof input.asOfDay === 'string' ? { asOfDay: input.asOfDay } : {}),
     ...(typeof input.granularity === 'string'
       ? { granularity: input.granularity as InvestmentHistoryGranularity }
       : {}),
     ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
   };
   try {
+    if (!positionRequested && (!requestedAccount || requestedAccount === 'all')) {
+      if (matching.every(({ snapshots }) => snapshots.length === 0)) {
+        throw new InvalidAgentQueryError(
+          'No hay historial de Bitso ni IBKR.',
+          'no_data',
+          { expectedAccountIds: ['bitso', 'ibkr'] },
+        );
+      }
+      const result = investmentHistoryFromSnapshots(
+        'all',
+        portfolioSnapshotsFromAccounts(matching.flatMap(({ snapshots }) => snapshots)),
+        query,
+        now,
+      );
+      return {
+        ...result,
+        status: result.status,
+        expectedAccountIds: ['bitso', 'ibkr'],
+        includedAccountIds: matching
+          .filter(({ snapshots }) => snapshots.length > 0)
+          .map(({ accountId }) => accountId),
+        missingAccountIds: matching
+          .filter(({ snapshots }) => snapshots.length === 0)
+          .map(({ accountId }) => accountId),
+        accountCoverage: matching.flatMap(({ accountId, snapshots }) => snapshots.length > 0 ? [{
+          accountId,
+          availableFromDay: snapshots[0]!.day,
+          availableToDay: snapshots[snapshots.length - 1]!.day,
+          latestAgeDays: wealthSnapshotAgeDays(snapshots[snapshots.length - 1]!.day, now),
+        }] : []),
+        coverageStartDay: result.availableFromDay,
+        coverageEndDay: result.availableToDay,
+        completeCoverageStartDay: (result.completePointCount ?? 0) > 0 ? result.snapshotFromDay : null,
+        consolidationMethod: 'latest_known_value_per_account_as_of_each_point',
+      };
+    }
     return investmentHistoryFromSnapshots(matching[0]!.accountId, matching[0]!.snapshots, query, now);
   } catch (error) {
     if (error instanceof InvalidInvestmentHistoryQueryError) {
-      throw new InvalidAgentQueryError(error.message);
+      throw new InvalidAgentQueryError(error.message, error.code, error.details);
     }
     throw error;
   }

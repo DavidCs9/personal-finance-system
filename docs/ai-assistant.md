@@ -85,7 +85,7 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 | `list_movements` | Total sin truncar + detalle acotado por hoy/ayer/semana/7 días/mes/año o rango explícito; conserva semántica de cuota MSI y declara cuando evidencia histórica solo permite precisión mensual |
 | `compare_months` | Mes vs anterior / deltas |
 | `wealth_snapshot` | Neto / activos / deudas (solo lectura) |
-| `investment_history` | Historial DDB de cuenta o posición Bitso/IBKR por día, rango o all-time; distingue cambio de valor de rendimiento cuando cambió la cantidad |
+| `investment_history` | Historial DDB diario de inversiones de mercado (Bitso + IBKR), una cuenta o una posición por rango/all-time o fecha puntual as-of; incluye extremos de valor y, para símbolos, precio unitario implícito en MXN. La serie consolidada conserva el último valor conocido de cada cuenta hasta su siguiente sync |
 | `WebSearch` | Búsqueda web administrada por AWS; conserva citas y enlaces en la respuesta |
 | `preview_tag_edit` | Dry run que congela movimientos `accepted` por IDs exactos o por rango con filtro explícito, y devuelve la lista completa `affected`; debe preceder inmediatamente a apply |
 | `apply_tag_edit` | Aplica en el mismo turno el snapshot congelado; la instrucción explícita del chat ya es la autorización |
@@ -95,6 +95,17 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 | `apply_category_edit` | Aplica en el mismo turno el snapshot congelado; la instrucción explícita del chat ya es la autorización |
 | `undo_category_edit` | Restaura la categoría anterior cuando el usuario lo pide en el chat |
 | `apply_category_edits` | Aplica atómicamente varios previews category-only sin rondas separadas |
+
+### Contrato de `investment_history`
+
+- El scope global es `market_investments`: Bitso + IBKR. No incluye Cajita, Fondo, tarjetas ni Neto; esas preguntas usan `wealth_snapshot`.
+- Sin periodo, el default es `all`. `asOfDay` resuelve el último snapshot conocido en o antes de una fecha; `snapshotFromDay` / `snapshotToDay` exponen qué evidencia se usó realmente.
+- `summary` mide variación de valor observado en MXN. No es rendimiento ajustado por aportaciones, costo base, dividendos ni ganancias realizadas; `cashFlowAdjusted=false` e `includesFx=true` lo hacen explícito.
+- Para un símbolo se reporta además precio unitario implícito en MXN. Sus extremos excluyen días anteriores a comprarlo o posteriores a venderlo; `lifecycle` declara esos bordes.
+- Si un símbolo identifica más de una posición, el resultado `ambiguous` devuelve `candidateHoldingIds`; una llamada posterior con `holdingId` selecciona la posición exacta.
+- La consolidación global conserva el último valor conocido por cuenta. Cada punto declara sus componentes y `mixedAsOf`; `accountCoverage`, edades, cuentas incluidas/faltantes y `status=partial` hacen visible la cobertura incompleta.
+- `periodChange` compara la observación previa al inicio con el cierre del rango cuando existe. `summary` compara la primera y última observación dentro del rango. Los extremos siempre se calculan sobre observaciones diarias aunque la serie devuelta use cierres mensuales.
+- Estados esperados (`no_data`, `ambiguous`, `invalid`) regresan como datos con `ok=false`; sólo fallos técnicos deben aparecer como error del Gateway.
 
 ## Categorías
 

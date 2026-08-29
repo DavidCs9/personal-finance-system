@@ -143,7 +143,7 @@ const isTransient = (error: unknown): boolean => {
   return /throttl|timeout|temporar|429|503|ECONNRESET/i.test(`${name} ${message}`);
 };
 
-const citationsFromPayload = (data: Record<string, unknown>): AgentSseEvent[] => {
+export const citationsFromPayload = (data: Record<string, unknown>): AgentSseEvent[] => {
   const out: AgentSseEvent[] = [];
   if (Array.isArray(data.movements)) {
     for (const row of (data.movements as { id?: string; merchantRaw?: string }[]).slice(0, 8)) {
@@ -157,6 +157,14 @@ const citationsFromPayload = (data: Record<string, unknown>): AgentSseEvent[] =>
   }
   if (data.netMxnMinor !== undefined) {
     out.push({ type: 'citation', kind: 'wealth', label: 'Patrimonio' });
+  }
+  if (data.scope === 'market_investments' && data.accountId) {
+    const entity = data.symbol
+      ? String(data.symbol)
+      : data.accountId === 'all'
+        ? 'Bitso + IBKR'
+        : String(data.accountId).toUpperCase();
+    out.push({ type: 'citation', kind: 'wealth', label: `Inversiones · ${entity}` });
   }
   return out;
 };
@@ -280,8 +288,14 @@ export const summarizeToolResult = (
     case 'wealth_snapshot':
       return { summary: 'Patrimonio consultado.', material: true };
     case 'investment_history':
+      if (payload.ok === false) {
+        return {
+          summary: String(payload.message ?? 'La consulta de inversiones no fue válida.'),
+          material: true,
+        };
+      }
       return {
-        summary: `Revisé el historial de ${String(payload.symbol ?? payload.accountId ?? 'la inversión')}.`,
+        summary: `Revisé el historial de ${String(payload.symbol ?? (payload.accountId === 'all' ? 'tus inversiones de mercado' : payload.accountId ?? 'la inversión'))}.`,
         material: true,
       };
     case 'preview_tag_edit':

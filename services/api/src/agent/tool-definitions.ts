@@ -118,21 +118,23 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'investment_history',
     description:
-      'Historial general de Bitso o IBKR desde snapshots diarios. Consulta una cuenta o posición por día/rango/all-time; devuelve cambio, serie y cambios por holding. Si cambió la cantidad, trata el resultado como cambio de valor, no rendimiento. accountId puede omitirse si symbol identifica una sola cuenta.',
+      'Historial de inversiones de mercado desde snapshots diarios; no es el Patrimonio completo. Sin accountId ni symbol consulta Bitso + IBKR y el default es all-time; úsalo para preguntas globales o de mínimo/máximo sin periodo. Para cuánto había en una fecha usa asOfDay, que devuelve el último snapshot conocido en o antes de esa fecha. Para un periodo usa range o custom con fechas; para cambios de hoy/ayer usa periodChange, porque summary compara sólo observaciones dentro del rango. summary y periodChange son variaciones de valor observado en MXN, no rendimientos ajustados por aportaciones; incluyen FX. Con symbol, unitPriceChangePercent aproxima el cambio del precio unitario en MXN y también incluye FX. Revisa status, accountCoverage, mixedAsOf, limitations y lifecycle antes de responder. accountId solo acepta bitso o ibkr; no uses palabras como inversiones como accountId. Si ok=false, explica message como error de consulta o falta de datos, no como una falla del Gateway.',
     inputSchema: {
       type: 'object',
       properties: {
-        accountId: { type: 'string', enum: ['bitso', 'ibkr'] },
+        accountId: { type: 'string', enum: ['bitso', 'ibkr'], description: 'Opcional. Omítelo para todas las inversiones de mercado; usa solo bitso o ibkr para una cuenta. No significa Patrimonio.' },
         symbol: { type: 'string', description: 'Posición opcional, por ejemplo VOO o SOL' },
+        holdingId: { type: 'string', description: 'ID exacto de posición cuando un símbolo es ambiguo; usa uno de candidateHoldingIds devueltos por la tool.' },
         range: {
           type: 'string',
-          enum: ['yesterday', 'this_week', 'last_7_days', 'this_month', 'this_year', 'all', 'custom'],
-          description: 'Default: this_week. Usa custom con fromDay/toDay para fechas explícitas.',
+          enum: ['today', 'yesterday', 'this_week', 'last_7_days', 'this_month', 'this_year', 'all', 'custom'],
+          description: 'Default: all. Usa custom con fromDay/toDay para fechas explícitas; si mandas fechas sin range, se infiere custom.',
         },
-        fromDay: { type: 'string', description: 'Inicio YYYY-MM-DD para range=custom' },
-        toDay: { type: 'string', description: 'Fin YYYY-MM-DD para range=custom' },
+        fromDay: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'Inicio YYYY-MM-DD para range=custom' },
+        toDay: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'Fin YYYY-MM-DD para range=custom' },
+        asOfDay: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'Fecha YYYY-MM-DD para una consulta puntual as-of. No combinar con range/fromDay/toDay.' },
         granularity: { type: 'string', enum: ['daily', 'monthly'] },
-        limit: { type: 'number', description: 'Máximo de puntos devueltos (1–366; default 120)' },
+        limit: { type: 'integer', minimum: 1, maximum: 366, description: 'Máximo de puntos devueltos (1–366; default 120). No limita summary ni extremos.' },
       },
     },
   },
