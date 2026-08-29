@@ -22,6 +22,7 @@ Plan operativo de la tab **Patrimonio** (activos − deudas de tarjeta = neto).
 - Fallos de sync Bitso/IBKR: se conserva el último snapshot bueno; **push + email** (misma suscripción VAPID que Avisos de Olbia; títulos del estilo “Bitso no sincronizó” / equivalente IBKR).
 - FX: Bitso con tickers propios; IBKR (Interactive Brokers) con Banxico. Holdings no-USD de IBKR se omiten (skipped).
 - Historial en vista total: **neto** mensual (cierre por mes desde `2026-08`; carry-forward de saldos de tarjeta). Al filtrar una cuenta de activo, el historial sigue siendo solo esa cuenta (día a día).
+- En el asistente, “mis inversiones” puede consultar el historial diario de mercado Bitso + IBKR. Ese scope no es sinónimo de Patrimonio: excluye Cajita, Fondo y pasivos; una pregunta de Neto usa el snapshot de Patrimonio.
 
 ## API
 

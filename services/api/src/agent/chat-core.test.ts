@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildHarnessModelConfig,
   buildHarnessSystemPrompt,
+  citationsFromPayload,
   agentChatErrorStatus,
   assertConfiguredAgentOwner,
   mutationFromToolResult,
@@ -52,6 +53,23 @@ describe('REST API Gateway chat event helpers', () => {
     expect(summarizeToolResult('apply_tag_edit', {
       movementCount: 18,
     })).toEqual({ summary: 'Actualicé 18 movimientos.', material: true });
+    expect(summarizeToolResult('investment_history', {
+      ok: false,
+      status: 'no_data',
+      message: 'No hay snapshots en ese rango.',
+    })).toEqual({ summary: 'No hay snapshots en ese rango.', material: true });
+  });
+
+  it('emits a citation for investment history through the SSE payload path', () => {
+    expect(citationsFromPayload({
+      scope: 'market_investments',
+      accountId: 'all',
+      requestedRange: 'all',
+    })).toEqual([{
+      type: 'citation',
+      kind: 'wealth',
+      label: 'Inversiones · Bitso + IBKR',
+    }]);
   });
 
   it('normalizes target-qualified Harness tool names before lifecycle handling', () => {
