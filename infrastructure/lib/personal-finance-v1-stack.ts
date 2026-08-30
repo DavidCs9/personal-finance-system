@@ -1275,6 +1275,7 @@ export class PersonalFinanceV1Stack extends Stack {
         ...dataStorageEnvironment,
         MONTHLY_CLOSE_OWNER: agentOwnerSub.valueAsString,
         MONTHLY_CLOSE_MODEL_ID: olbiaSystemPromptModelId.valueAsString,
+        SYSTEM_PROMPT_VERSION_PARAM: systemPromptVersionParamName,
         ALERT_SENDER_EMAIL: senderEmail.valueAsString,
         ALERT_RECIPIENT_EMAIL: alertRecipientEmail.valueAsString,
         WEB_APP_URL: webAppUrl,
@@ -1291,6 +1292,16 @@ export class PersonalFinanceV1Stack extends Stack {
       resources: [
         `arn:${cdk.Aws.PARTITION}:bedrock:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:inference-profile/*`,
         `arn:${cdk.Aws.PARTITION}:bedrock:*::foundation-model/*`,
+      ],
+    }));
+    monthlyCloseEmailFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:GetPrompt'],
+      resources: [`${olbiaSystemPrompt.getAtt('Arn').toString()}:*`],
+    }));
+    monthlyCloseEmailFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ssm:GetParameter'],
+      resources: [
+        `arn:${cdk.Aws.PARTITION}:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter${systemPromptVersionParamName}`,
       ],
     }));
     new scheduler.Schedule(this, 'MonthlyCloseEmailSchedule', {

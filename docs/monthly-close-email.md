@@ -32,6 +32,8 @@ La Lambda construye primero un `MonthlyCloseFacts` determinista. Bedrock Convers
 
 La respuesta de IA no admite dígitos, signos de moneda ni porcentajes. Todas las cifras las inserta el renderer desde `MonthlyCloseFacts`. El modelo no usa memoria del chat, tools de mutación ni búsqueda web. `maxTokens` queda acotado explícitamente y el modelo llega por la misma configuración de modelo del prompt activo de Olbia.
 
+La personalización se carga en runtime desde la misma versión inmutable activa que señala `SYSTEM_PROMPT_VERSION_PARAM` para el agente. Actualmente es v10: restaura el perfil personal de v5 y conserva la continuidad de v9. El correo sólo extrae sus secciones privadas de perfil y voz; las reglas de tools del chat se excluyen. El repositorio público no contiene la biografía, prioridades ni filosofía financiera del owner, y el reporte persistido tampoco guarda ese prompt privado.
+
 Si Bedrock falla, un análisis determinista conserva el reporte y SES lo envía de todas formas.
 
 ## Ejecución
@@ -59,5 +61,6 @@ EventBridge Scheduler · día 1 · 07:10 America/Chihuahua
 - Schedule: `personal-finance-v1-monthly-close-email`.
 - Destinatario y remitente: parámetros existentes `AlertRecipientEmail` y `SesSenderEmail`.
 - Owner: parámetro existente `AgentOwnerSub`.
+- Perfil privado: versión activa del prompt nativo `OlbiaFinanceSystem`, resuelta por SSM y leída con `bedrock:GetPrompt`; la baseline actual es v10.
 - CTA: `WEB_APP_URL` existente.
 - Despliegue únicamente por PR y el job `deploy-production` después de integrar a `main`.

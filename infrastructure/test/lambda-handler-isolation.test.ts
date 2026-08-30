@@ -48,6 +48,7 @@ describe('lambda handler bundle isolation', () => {
     const code = await bundleEntry('monthly-close-email.ts');
     expect(code).toContain('MONTHLY_CLOSE_OWNER');
     expect(code).toContain('MONTHLY_CLOSE_MODEL_ID');
+    expect(code).toContain('SYSTEM_PROMPT_VERSION_PARAM');
     expect(code).toContain('ALERT_RECIPIENT_EMAIL');
     expect(code).not.toContain('APPLE_PAY_CAPTURE_SECRET_ARN');
   });

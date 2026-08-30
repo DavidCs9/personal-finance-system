@@ -12,8 +12,11 @@ const {
 } = await import('../src/reports/monthly-close.js');
 const {
   analyzeMonthlyClose,
+  clearMonthlyCloseProfileCache,
+  extractMonthlyCloseProfile,
   fallbackMonthlyCloseAnalysis,
   parseMonthlyCloseAnalysis,
+  resolveMonthlyCloseProfile,
 } = await import('../src/reports/monthly-close-analysis.js');
 const { renderMonthlyCloseEmail } = await import('../src/reports/monthly-close-email.js');
 const { runMonthlyClose } = await import('../src/reports/monthly-close-handler.js');
@@ -188,13 +191,45 @@ describe('monthly close AI analysis', () => {
       }) }] } },
     }) };
 
-    await analyzeMonthlyClose(facts, client, 'test-model');
+    const sourcePrompt = `Eres Olbia.\n\n## Perfil personal de David\nDavid construye patrimonio para conservar margen de elección y experiencias valiosas.\n\n## Voz\nDirecta, firme y natural.\n\n## Reglas operativas\nNo uses shell.`;
+    const personalProfile = extractMonthlyCloseProfile(sourcePrompt);
+    await analyzeMonthlyClose(facts, client, 'test-model', async () => personalProfile);
 
     const command = client.send.mock.calls[0]?.[0];
     expect(command.input).toMatchObject({
       modelId: 'test-model',
       inferenceConfig: { maxTokens: 1_200 },
       outputConfig: { textFormat: { type: 'json_schema' } },
+    });
+    const system = command.input.system?.[0]?.text;
+    expect(system).toContain('David construye patrimonio para conservar margen de elección');
+    expect(system).toContain('No eres un boletín financiero ni un asesor intercambiable');
+    expect(system).toContain('Una experiencia valiosa no es automáticamente un error');
+    expect(system).not.toContain('No uses shell');
+  });
+
+  it('rejects a profile prompt without the private profile and voice sections', () => {
+    expect(() => extractMonthlyCloseProfile('Eres un asistente genérico.')).toThrow(/missing profile or voice/);
+  });
+
+  it('resolves the active immutable profile through the shared SSM pointer', async () => {
+    clearMonthlyCloseProfileCache();
+    const parameterClient = { send: vi.fn().mockResolvedValue({
+      Parameter: { Value: 'arn:aws:bedrock:us-east-2:123456789012:prompt/ABCDEFGHIJ:10' },
+    }) };
+    const promptClient = { send: vi.fn().mockResolvedValue({
+      defaultVariant: 'default',
+      variants: [{
+        name: 'default',
+        templateConfiguration: { text: { text: `## Perfil personal\nPrioridades privadas.\n\n## Voz\nDirecta.\n\n## Reglas operativas\nTools.` } },
+      }],
+    }) };
+
+    await expect(resolveMonthlyCloseProfile(promptClient, parameterClient, '/prompt-pointer'))
+      .resolves.toContain('Prioridades privadas.');
+    expect(parameterClient.send.mock.calls[0]?.[0].input).toEqual({ Name: '/prompt-pointer' });
+    expect(promptClient.send.mock.calls[0]?.[0].input).toEqual({
+      promptIdentifier: 'arn:aws:bedrock:us-east-2:123456789012:prompt/ABCDEFGHIJ:10',
     });
   });
 });
