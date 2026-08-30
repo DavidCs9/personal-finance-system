@@ -66,6 +66,14 @@ Assume at least 95% of usage is mobile.
 - Patrimonio keeps the month selector enabled so you can change period without leaving the tab (Patrimonio totals themselves stay current, not month-scoped).
 - Desktop should be a contained adaptation of the same experience, not a separate dashboard with extra density.
 
+## Monthly close email
+
+- Send the completed prior calendar month on day 1, never an incomplete morning-of-last-day cut.
+- Keep two explicit chapters: **Tu mes / Dónde se fue** and **Tu patrimonio / Qué cambió**. Do not imply category spend mechanically caused a patrimonio change.
+- Categories are additive; tags overlap and their totals must never be added together or presented as exclusive shares.
+- All amounts, deltas, shares, freshness ages, and comparisons come from deterministic persisted-data calculations. AI may rank and explain those facts but must not calculate or introduce figures.
+- Preserve the same voice and visual rules as the app. If AI analysis fails, send the factual HTML/text report with a deterministic fallback instead of suppressing the monthly close.
+
 ## Financial-state rules
 
 - The calendar month is the reporting period for spend.
@@ -100,6 +108,7 @@ Assume at least 95% of usage is mobile.
 - IBKR syncs via Flex Query + Banxico FIX; on failure keep the last good snapshot and surface the error honestly.
 - Fondo de ahorro is a derived Patrimonio account: calendar-year sum of CFDI nómina deducciones SAT `004` (employee + employer portions into the fund). It counts fully in assets with an illiquid-until-December label. Do not invent a liquidation reset until a clear December XML fixture exists.
 - Patrimonio total history is a **monthly** net trend from `2026-08` onward (not daily). Per-account history can stay day-grained.
+- The monthly email reads patrimonio explicitly as of the prior month's final calendar day, carrying forward the latest snapshot on or before that day. First-day Bitso/IBKR snapshots must never leak into the prior-month close.
 
 ## Review checklist
 

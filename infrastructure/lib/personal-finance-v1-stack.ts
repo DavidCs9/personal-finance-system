@@ -1257,6 +1257,71 @@ export class PersonalFinanceV1Stack extends Stack {
       }),
     });
 
+    const monthlyCloseEmailDlq = new sqs.Queue(this, 'MonthlyCloseEmailDlq', {
+      queueName: 'personal-finance-v1-monthly-close-email-dlq',
+      retentionPeriod: Duration.days(14),
+      encryption: sqs.QueueEncryption.KMS_MANAGED,
+    });
+    const monthlyCloseEmailFunction = new NodejsFunction(this, 'MonthlyCloseEmailFunction', {
+      ...lambdaDefaults,
+      functionName: 'personal-finance-v1-monthly-close-email',
+      logGroup: this.createLogGroup('MonthlyCloseEmailLogGroup', 'personal-finance-v1-monthly-close-email'),
+      entry: path.join(__dirname, '..', 'lambda', 'monthly-close-email.ts'),
+      handler: 'handler',
+      description: 'Builds and sends the AI-grounded Olbia close for the completed prior month.',
+      timeout: Duration.minutes(5),
+      memorySize: 512,
+      environment: {
+        ...dataStorageEnvironment,
+        MONTHLY_CLOSE_OWNER: agentOwnerSub.valueAsString,
+        MONTHLY_CLOSE_MODEL_ID: olbiaSystemPromptModelId.valueAsString,
+        SYSTEM_PROMPT_VERSION_PARAM: systemPromptVersionParamName,
+        ALERT_SENDER_EMAIL: senderEmail.valueAsString,
+        ALERT_RECIPIENT_EMAIL: alertRecipientEmail.valueAsString,
+        WEB_APP_URL: webAppUrl,
+      },
+    });
+    metadataTable.grantReadWriteData(monthlyCloseEmailFunction);
+    monthlyCloseEmailFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ses:SendEmail'],
+      resources: ['*'],
+      conditions: { StringEquals: { 'ses:FromAddress': senderEmail.valueAsString } },
+    }));
+    monthlyCloseEmailFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:InvokeModel'],
+      resources: [
+        `arn:${cdk.Aws.PARTITION}:bedrock:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:inference-profile/*`,
+        `arn:${cdk.Aws.PARTITION}:bedrock:*::foundation-model/*`,
+      ],
+    }));
+    monthlyCloseEmailFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:GetPrompt'],
+      resources: [`${olbiaSystemPrompt.getAtt('Arn').toString()}:*`],
+    }));
+    monthlyCloseEmailFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ssm:GetParameter'],
+      resources: [
+        `arn:${cdk.Aws.PARTITION}:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter${systemPromptVersionParamName}`,
+      ],
+    }));
+    new scheduler.Schedule(this, 'MonthlyCloseEmailSchedule', {
+      scheduleName: 'personal-finance-v1-monthly-close-email',
+      description: 'Sends the completed prior-month Olbia close on day 1 at 07:10 America/Chihuahua.',
+      schedule: scheduler.ScheduleExpression.cron({
+        minute: '10',
+        hour: '7',
+        day: '1',
+        month: '*',
+        year: '*',
+        timeZone: cdk.TimeZone.of('America/Chihuahua'),
+      }),
+      timeWindow: scheduler.TimeWindow.off(),
+      target: new LambdaInvoke(monthlyCloseEmailFunction, {
+        deadLetterQueue: monthlyCloseEmailDlq,
+        retryAttempts: 2,
+      }),
+    });
+
     apiFunction.addEnvironment('IBKR_SECRET_ARN', ibkrApiSecret.secretArn);
     ibkrApiSecret.grantRead(apiFunction);
 
@@ -1487,6 +1552,16 @@ export class PersonalFinanceV1Stack extends Stack {
       threshold: 1,
       evaluationPeriods: 1,
     });
+    const monthlyCloseEmailErrorAlarm = new cdk.aws_cloudwatch.Alarm(this, 'MonthlyCloseEmailErrorsAlarm', {
+      metric: monthlyCloseEmailFunction.metricErrors({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
+    const monthlyCloseEmailDlqAlarm = new cdk.aws_cloudwatch.Alarm(this, 'MonthlyCloseEmailDlqAlarm', {
+      metric: monthlyCloseEmailDlq.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
 
     new cdk.CfnOutput(this, 'RawEmailBucketName', { value: rawEmailBucket.bucketName });
     new cdk.CfnOutput(this, 'MetadataTableName', { value: metadataTable.tableName });
@@ -1518,6 +1593,8 @@ export class PersonalFinanceV1Stack extends Stack {
     new cdk.CfnOutput(this, 'BitsoSyncDlqAlarmName', { value: bitsoSyncDlqAlarm.alarmName });
     new cdk.CfnOutput(this, 'IbkrSyncErrorsAlarmName', { value: ibkrSyncErrorAlarm.alarmName });
     new cdk.CfnOutput(this, 'IbkrSyncDlqAlarmName', { value: ibkrSyncDlqAlarm.alarmName });
+    new cdk.CfnOutput(this, 'MonthlyCloseEmailErrorsAlarmName', { value: monthlyCloseEmailErrorAlarm.alarmName });
+    new cdk.CfnOutput(this, 'MonthlyCloseEmailDlqAlarmName', { value: monthlyCloseEmailDlqAlarm.alarmName });
   }
 
   private createLogGroup(id: string, functionName: string): logs.LogGroup {

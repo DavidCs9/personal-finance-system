@@ -11,6 +11,7 @@
     "./ibkr-sync": "./src/wealth/ibkr-sync.ts",
     "./daily-balance-push": "./src/push/daily-balance-push.ts",
     "./card-cycle-push": "./src/push/card-cycle-push.ts",
+    "./monthly-close-email": "./src/reports/monthly-close-handler.ts",
     "./agent-proxy": "./src/agent/proxy.ts",
     "./agent-chat-buffered": "./src/agent/chat-buffered.ts",
     "./agent-tools": "./src/agent/tools-handler.ts",
