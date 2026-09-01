@@ -1,19 +1,37 @@
-import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { database, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
 import { incomeFieldsForMonth } from '../imports/cfdi-nomina-flow.js';
 import { monthlyPlanKey, type MonthlyPlanInput } from './monthly-plan.js';
 
 export const getMonthlyPlan = async (owner: string, month: string): Promise<JsonObject> => {
+  const monthKey = monthlyPlanKey(owner, month);
   const [result, income] = await Promise.all([
-    database.send(new GetCommand({
+    database.send(new QueryCommand({
       TableName: tableName,
-      Key: monthlyPlanKey(owner, month),
+      KeyConditionExpression: '#pk = :pk AND #sk BETWEEN :monthPrefix AND :month',
+      ExpressionAttributeNames: {
+        '#pk': 'PK',
+        '#sk': 'SK',
+      },
+      ExpressionAttributeValues: {
+        ':pk': monthKey.PK,
+        ':monthPrefix': 'MONTH#',
+        ':month': monthKey.SK,
+      },
       ConsistentRead: true,
+      ScanIndexForward: false,
+      Limit: 1,
     })),
     incomeFieldsForMonth(owner, month),
   ]);
-  const plan = result.Item?.payload as JsonObject | undefined;
+  const sourceItem = result.Items?.[0];
+  const plan = sourceItem?.payload as JsonObject | undefined;
+  const sourceMonth = typeof sourceItem?.month === 'string'
+    ? sourceItem.month
+    : typeof sourceItem?.SK === 'string' && sourceItem.SK.startsWith('MONTH#')
+      ? sourceItem.SK.slice('MONTH#'.length)
+      : undefined;
   const upcomingPayments =
     plan && Array.isArray(plan.upcomingPayments) ? plan.upcomingPayments : [];
   return {
@@ -27,6 +45,7 @@ export const getMonthlyPlan = async (owner: string, month: string): Promise<Json
     provisionalMinor: income.provisionalMinor,
     currency: 'MXN',
     upcomingPayments,
+    ...(sourceMonth && sourceMonth !== month ? { inheritedFromMonth: sourceMonth } : {}),
     payslips: income.payslips.map((payslip) => ({
       uuid: payslip.uuid,
       fechaPago: payslip.fechaPago,

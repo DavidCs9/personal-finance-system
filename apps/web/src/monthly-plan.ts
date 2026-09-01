@@ -41,6 +41,7 @@ export interface MonthlyPlan {
   readonly provisionalMinor?: number;
   readonly currency: "MXN";
   readonly upcomingPayments: readonly PlannedPayment[];
+  readonly inheritedFromMonth?: string;
   readonly payslips?: readonly Payslip[];
 }
 
@@ -111,3 +112,14 @@ export const emptyPlanFor = (month: string): MonthlyPlan => ({
 });
 
 export const planFor = (plans: MonthlyPlans, month: string): MonthlyPlan => plans[month] ?? emptyPlanFor(month);
+
+/** A recurring payment on day 29-31 falls on the final day of shorter months. */
+export const paymentDueDayForMonth = (month: string, dueDay: number): number => {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!match) return dueDay;
+  const year = Number(match[1]);
+  const monthNumber = Number(match[2]);
+  if (monthNumber < 1 || monthNumber > 12) return dueDay;
+  const daysInMonth = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  return Math.min(dueDay, daysInMonth);
+};
