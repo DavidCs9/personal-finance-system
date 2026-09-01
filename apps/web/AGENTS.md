@@ -90,6 +90,7 @@ Assume at least 95% of usage is mobile.
 - Spend-by-category answers use the same “Has gastado” semantics as Resumen (MSI cuota of the month, not full ticket). `categoryId` null/absent means Sin categoría; disclose uncategorized amounts when answering.
 - Show **Meses sin intereses / Planes con fin** only on **Resumen**, listing this month’s spent and committed cuotas with principal total and start–end range.
 - Keep **Gastos fijos / Servicios y suscripciones** for indefinite recurring charges only. Do not mix MSI plans into that list.
+- A month without its own fixed-expense record inherits the latest prior month's complete list. Reading is side-effect free; the first add, edit, or delete materializes the selected month, and an explicit empty list prevents older expenses from returning. Preserve past months. Treat days 29–31 as the month's final calendar day when necessary.
 - Show **Fechas de corte** on **Resumen** after gastos fijos and before push preferences. Card cut-off/payment days are durable profile data, not monthly plan amounts, and must not change “Te quedan”.
 - A cuota is never in both committed and spent. Committed MSI rows appear in the Resumen MSI section, not mixed into gastos fijos.
 - On statement import, when an MSI row includes `n/N` (and total when available), creating the plan — including Amex “MESES EN AUTOMÁTICO” labels — is preferred over discarding the cuota.

@@ -1,6 +1,6 @@
 import type { MonthMsiRow, SpendingAnalytics } from "@finance/domain";
 import { money, monthDate } from "../lib/format";
-import type { MonthlyPlan, Payslip, PlannedPayment } from "../monthly-plan";
+import { paymentDueDayForMonth, type MonthlyPlan, type Payslip, type PlannedPayment } from "../monthly-plan";
 import type { CardCycle } from "../card-cycle";
 import { Amt } from "../components/Amt";
 import { CardCycleSection } from "../components/CardCycleSection";
@@ -294,7 +294,9 @@ export function SummaryView(props: SummaryViewProps) {
                   >
                     <span className="date-block">
                       <small>{paymentMonth}</small>
-                      <strong>{String(payment.dueDay).padStart(2, "0")}</strong>
+                      <strong>
+                        {String(paymentDueDayForMonth(props.month, payment.dueDay)).padStart(2, "0")}
+                      </strong>
                     </span>
                     <span className="payment-name">
                       <strong>{payment.name}</strong>

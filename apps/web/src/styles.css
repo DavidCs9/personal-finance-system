@@ -1218,7 +1218,7 @@ html.private-mode .hero-amount .amt {
   .number-card, .projection-card { min-height: 170px; padding: 25px; }
   .analytics-preview, .analytics-view { max-width: 760px; margin-right: auto; margin-left: auto; }
   .analytics-total { font-size: 76px; }
-  .payments-section { max-width: 760px; margin: 0 auto; }
+  .payments-section, .payslip-month-section { max-width: 760px; margin-right: auto; margin-left: auto; }
   .card-cycle-section { max-width: 760px; margin: 0 auto; }
   .movements-view { max-width: 820px; margin: 0 auto; }
   .wealth-view { max-width: 820px; margin: 0 auto; }

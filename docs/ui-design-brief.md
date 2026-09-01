@@ -66,7 +66,7 @@ El correo conserva la jerarquía visual marfil/carbón, cifras tabulares, serif 
 
 ## Persistencia mensual
 
-Las compras continúan viniendo de la API existente. La liquidez del mes se deriva de `GET /months/{month}` a partir de las nóminas CFDI (`payslips`, `incomeMinor`, `estimateActive`, `provisionalActive`). Los pagos próximos se guardan con `PUT /months/{month}` (solo `upcomingPayments`). Cada registro queda aislado por el identificador autenticado del usuario y el mes calendario.
+Las compras continúan viniendo de la API existente. La liquidez del mes se deriva de `GET /months/{month}` a partir de las nóminas CFDI (`payslips`, `incomeMinor`, `estimateActive`, `provisionalActive`). Los gastos fijos se guardan con `PUT /months/{month}` (solo `upcomingPayments`). Si el mes solicitado no tiene registro propio, hereda la lista del último mes anterior; leerla no escribe datos y el primer alta, cambio o eliminación materializa la lista completa en el mes seleccionado. Una lista vacía explícita detiene la herencia y los meses pasados no cambian. Cada registro queda aislado por el identificador autenticado del usuario y el mes calendario. Un gasto configurado para los días 29–31 cae en el último día calendario cuando el mes es más corto.
 
 En el mes calendario actual, si aún no hay nóminas, la liquidez puede ser **provisional** a partir del patrón de las últimas 1–2 nóminas ordinarias (doble de la última, o suma de las dos más recientes). La UI muestra Resumen usable con esa cifra y pide el XML; al subir la primera nómina del mes, se aplica la lógica normal (depósitos + estimado de 2ª quincena si aplica). Un mes pasado sin nóminas sigue sin configurar.
 

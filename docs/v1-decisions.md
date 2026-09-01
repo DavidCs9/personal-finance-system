@@ -33,7 +33,7 @@
 - Una cuota del estado sin plan previo **no inventa** un schedule sola: queda `needs_decision`. Apply: `create_plan`, confirmar en plan existente, u omitir. Si la fila ya trae `n/N` completo, omitir **crea el plan** con esa metadata (incluye etiquetas Amex “MESES EN AUTOMÁTICO”).
 - Liquidación anticipada de MSI es manual (cancelar cuotas restantes + registrar el cargo de cierre si aplica).
 - PDF de estado (Amex y Santander): `POST /imports/amex/preview` o `POST /imports/santander-statement/preview` → poll `GET` → `POST …/apply` con decisiones. Se persiste `.textract.json` y el apply reconstruye desde ese JSON.
-- Ingreso del mes: `POST /imports/nomina` (XML CFDI) + `GET /months/:month` (payslips + estimado/provisional). `PUT /months/:month` solo guarda `upcomingPayments`.
+- Ingreso del mes: `POST /imports/nomina` (XML CFDI) + `GET /months/:month` (payslips + estimado/provisional). `PUT /months/:month` solo guarda `upcomingPayments`. Cuando el mes no tiene registro propio, `GET` hereda la lista del último mes anterior sin escribir; el siguiente cambio materializa la lista completa en el mes seleccionado.
 - Patrimonio: ver [Patrimonio](patrimonio.md). Tarjetas de ciclo: `GET|PUT|DELETE /cards/{cardId}` (máximo 3).
 
 ## Modelo de datos

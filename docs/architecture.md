@@ -232,7 +232,7 @@ _Notifies on accepted events_`"]
 
 Exception retries write a DynamoDB retry job; the Retry Dispatcher (C2) watches the stream and re-queues SQS — the API does not send to SQS directly.
 
-Month income on `GET /months/:month` is derived from CFDI nómina payslips. `PUT /months/:month` persists only `upcomingPayments`.
+Month income on `GET /months/:month` is derived from CFDI nómina payslips. `PUT /months/:month` persists only `upcomingPayments`. If the selected month has no plan record, `GET` resolves the latest earlier monthly plan without writing; the next edit saves the complete effective list for the selected month.
 
 ```mermaid
 flowchart TB
