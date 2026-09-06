@@ -58,10 +58,11 @@
 - Una regla de recepción de SES guarda primero el MIME y luego publica su puntero en SQS; una Lambda de ingestión normaliza MIME con `mailparser`, deduplica y usa los parsers deterministas conocidos como fast path.
 - Si un correo de una institución conocida no coincide o falla su parser, una cola aislada invoca Claude Haiku 4.5 en Bedrock con JSON Schema. La salida sólo se acepta cuando validadores deterministas comprueban institución, tipo, monto, estado, fecha/hora y evidencia literal. La cola de fallback tiene DLQ y alarmas propias.
 - La identidad de fuente (`Message-ID` + SHA-256) no cambia entre retries. Las excepciones se deduplican aparte por fuente y versión del extractor, y un intento fallido nunca consume permanentemente el claim del movimiento.
-- Amazon SES sólo alerta excepciones de ingestión (parser fallido, origen no soportado, datos incompletos) y fallos de sync Bitso/IBKR. Los movimientos aceptados no generan correo.
+- Amazon SES alerta excepciones de ingestión (parser fallido, origen no soportado, datos incompletos), fallos de sync Bitso/IBKR, el Precierre de saldos del último día y el cierre mensual del día 1. Los movimientos aceptados no generan correo.
 - Si el usuario activó Web Push, el alta de un evento nuevo (correo o Apple Pay) envía un aviso al dispositivo; cada mañana a las 07:00 America/Chihuahua el resumen diario; a las 07:05 los recordatorios de corte/pago. Detalle en [Avisos push de movimientos observados](push-on-new-observable.md), [Push diario del balance](daily-balance-push.md) y [Push de corte y pago](card-cycle-push.md).
 - Sync de patrimonio: Bitso 06:30 y IBKR 06:45 America/Chihuahua, con DLQ y alarmas.
-- El monitoreo V1 cubre fallos de recepción, mensajes en DLQ, errores persistentes de ingestión, errores/DLQ del fallback Bedrock, fallos del push diario/card-cycle, y fallos/DLQ de sync Bitso e IBKR.
+- Precierre de Patrimonio: último día calendario a las 18:00 America/Chihuahua, con checklist de saldos manuales, DLQ, alarmas y registro idempotente mensual.
+- El monitoreo V1 cubre fallos de recepción, mensajes en DLQ, errores persistentes de ingestión, errores/DLQ del fallback Bedrock, fallos del push diario/card-cycle, fallos/DLQ de sync Bitso e IBKR y errores/DLQ de los correos de Precierre y cierre mensual.
 - Ninguna Lambda usa concurrencia reservada. Los endpoints públicos limitan tráfico en API Gateway para conservar la concurrencia compartida de la cuenta.
 
 ## Calidad y salida de V1

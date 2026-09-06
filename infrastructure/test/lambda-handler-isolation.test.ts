@@ -53,6 +53,14 @@ describe('lambda handler bundle isolation', () => {
     expect(code).not.toContain('APPLE_PAY_CAPTURE_SECRET_ARN');
   });
 
+  it('month-end reminder entry keeps reminder-specific configuration isolated', async () => {
+    const code = await bundleEntry('month-end-balance-reminder.ts');
+    expect(code).toContain('MONTH_END_REMINDER_OWNER');
+    expect(code).toContain('ALERT_RECIPIENT_EMAIL');
+    expect(code).not.toContain('MONTHLY_CLOSE_MODEL_ID');
+    expect(code).not.toContain('APPLE_PAY_CAPTURE_SECRET_ARN');
+  });
+
   it('apple-pay entry keeps its secret env requirement', async () => {
     const code = await bundleEntry('apple-pay-capture.ts');
     expect(code).toContain('APPLE_PAY_CAPTURE_SECRET_ARN');

@@ -68,6 +68,7 @@ Assume at least 95% of usage is mobile.
 
 ## Monthly close email
 
+- On the last calendar day at 18:00 `America/Chihuahua`, send a deterministic **Precierre** email. Put manual balances first: Cajita and every card's total outstanding balance, with the latest amount/date and whether it was captured today. Show Fondo as derived and Bitso/IBKR as automatic. Link back to Olbia so the owner can update Patrimonio before day end.
 - Send the completed prior calendar month on day 1, never an incomplete morning-of-last-day cut.
 - Keep two explicit chapters: **Tu mes / Dónde se fue** and **Tu patrimonio / Qué cambió**. Do not imply category spend mechanically caused a patrimonio change.
 - Categories are additive; tags overlap and their totals must never be added together or presented as exclusive shares.

@@ -24,6 +24,7 @@ Plan operativo de la tab **Patrimonio** (activos − deudas de tarjeta = neto).
 - Historial en vista total: **neto** mensual (cierre por mes desde `2026-08`; carry-forward de saldos de tarjeta). Al filtrar una cuenta de activo, el historial sigue siendo solo esa cuenta (día a día).
 - En el asistente, “mis inversiones” puede consultar el historial diario de mercado Bitso + IBKR. Ese scope no es sinónimo de Patrimonio: excluye Cajita, Fondo y pasivos; una pregunta de Neto usa el snapshot de Patrimonio.
 - El correo de cierre mensual se envía el día 1 y calcula Patrimonio **as of** el último día del mes anterior. Para cada activo y tarjeta conserva el último snapshot en o antes de ese día; los syncs del día 1 no contaminan el cierre previo. El primer cierre total comparable sigue siendo `2026-08`.
+- El último día del mes a las **18:00 America/Chihuahua**, un correo de **Precierre** lista primero Cajita y todas las tarjetas con su último importe/fecha y pide capturar sus saldos antes de terminar el día. Fondo aparece como derivado; Bitso e IBKR como automáticos.
 
 ## API
 
@@ -36,7 +37,7 @@ Plan operativo de la tab **Patrimonio** (activos − deudas de tarjeta = neto).
 ## Infra
 
 - Secret `BitsoApiSecret` / `IbkrApiSecret` (placeholders `pending` hasta configurar).
-- Lambdas `personal-finance-v1-bitso-sync` y `personal-finance-v1-ibkr-sync` + Scheduler + DLQ.
+- Lambdas `personal-finance-v1-bitso-sync`, `personal-finance-v1-ibkr-sync` y `personal-finance-v1-month-end-balance-reminder` + Scheduler + DLQ.
 - API Lambda lee ambos secrets para refresh manual.
 
 ## UI

@@ -60,6 +60,8 @@ En escritorio se conserva la misma arquitectura con un ancho de lectura contenid
 
 ## Cierre mensual por correo
 
+El último día de cada mes, a las 18:00 `America/Chihuahua`, Olbia envía un correo de **Precierre**. Presenta primero la checklist de captura manual —Cajita Nu y saldo pendiente total de cada tarjeta— con el último importe y fecha disponibles. Fondo de ahorro aparece como derivado; Bitso e IBKR como automáticos. El mensaje pide registrar los saldos manuales antes de terminar el día para que el cierre use información completa.
+
 El día 1 de cada mes Olbia envía un correo **Cierre mensual** sobre el mes calendario ya terminado. No convierte Patrimonio y Resumen en una sola superficie: presenta dos capítulos consecutivos y explícitos —**Tu mes / Dónde se fue** y **Tu patrimonio / Qué cambió**— sin afirmar que el gasto de una categoría causó una variación patrimonial.
 
 El correo conserva la jerarquía visual marfil/carbón, cifras tabulares, serif editorial contenida y rojo sólo para consecuencias que requieren atención. Categorías son aditivas; tags son lentes de contexto superpuestos y el correo lo declara. La lectura de IA selecciona y explica hechos calculados por código: nunca calcula importes, introduce cifras propias, modifica movimientos ni llama rendimiento a un cambio de valor observado sin ajuste por aportaciones/retiros. Si la IA falla, el cierre numérico todavía se envía con una lectura determinista.

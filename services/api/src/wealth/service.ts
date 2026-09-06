@@ -168,42 +168,34 @@ const fondoAsOfDay = (
   return total;
 };
 
-const mergeHistoryWithFondo = (
-  liquidAll: readonly { readonly day: string; readonly totalMxnMinor: number }[],
+const netWorthHistoryPoints = (
+  snapshots: readonly WealthSnapshot[],
   fondoRunning: readonly { readonly day: string; readonly totalMxnMinor: number }[],
-): readonly { readonly day: string; readonly totalMxnMinor: number }[] => {
-  const days = new Set<string>([
-    ...liquidAll.map((point) => point.day),
-    ...fondoRunning.map((point) => point.day),
-  ]);
-  const liquidByDay = new Map(liquidAll.map((point) => [point.day, point.totalMxnMinor]));
-  return [...days]
-    .sort((left, right) => left.localeCompare(right))
-    .map((day) => ({
-      day,
-      totalMxnMinor: (liquidByDay.get(day) ?? 0) + fondoAsOfDay(fondoRunning, day),
-    }));
-};
-
-const mergeHistoryWithLiabilities = (
-  assetsHistory: readonly { readonly day: string; readonly totalMxnMinor: number }[],
   liabilitySnapshots: readonly CardLiabilitySnapshot[],
 ): readonly { readonly day: string; readonly totalMxnMinor: number }[] => {
   const days = new Set<string>([
-    ...assetsHistory.map((point) => point.day),
+    ...snapshots.map((snapshot) => snapshot.day),
+    ...fondoRunning.map((point) => point.day),
     ...liabilitySnapshots.map((snapshot) => snapshot.day),
   ]);
-  const assetsByDay = new Map(assetsHistory.map((point) => [point.day, point.totalMxnMinor]));
-  let lastAssets = 0;
-  return [...days]
-    .sort((left, right) => left.localeCompare(right))
-    .map((day) => {
-      if (assetsByDay.has(day)) lastAssets = assetsByDay.get(day)!;
-      return {
-        day,
-        totalMxnMinor: netWorthMxnMinor(lastAssets, liabilitiesAsOfDay(liabilitySnapshots, day)),
-      };
-    });
+  const sortedSnapshots = [...snapshots].sort(
+    (left, right) => left.day.localeCompare(right.day) || left.capturedAt.localeCompare(right.capturedAt),
+  );
+  const latestLiquidByAccount = new Map<WealthAccountId, number>();
+  let snapshotIndex = 0;
+  return [...days].sort((left, right) => left.localeCompare(right)).map((day) => {
+    while (snapshotIndex < sortedSnapshots.length && sortedSnapshots[snapshotIndex]!.day <= day) {
+      const snapshot = sortedSnapshots[snapshotIndex]!;
+      latestLiquidByAccount.set(snapshot.accountId, snapshot.totalMxnMinor);
+      snapshotIndex += 1;
+    }
+    const liquidAssetsMinor = [...latestLiquidByAccount.values()].reduce((sum, amount) => sum + amount, 0);
+    const assetsMinor = liquidAssetsMinor + fondoAsOfDay(fondoRunning, day);
+    return {
+      day,
+      totalMxnMinor: netWorthMxnMinor(assetsMinor, liabilitiesAsOfDay(liabilitySnapshots, day)),
+    };
+  });
 };
 
 const toPublicLiabilitySnapshot = (item: Record<string, unknown>): CardLiabilitySnapshot | undefined => {
@@ -377,11 +369,9 @@ export const getWealthOverview = async (
     asOfDay: today,
     capturedAt: now.toISOString(),
   });
-  const liquidAll = historyPoints(snapshots, 'all');
-  const assetsHistory = mergeHistoryWithFondo(liquidAll, fondoRunning);
   const currentMonth = today.slice(0, 7);
   const historyAll = wealthTotalMonthlyHistory({
-    points: mergeHistoryWithLiabilities(assetsHistory, liabilitySnapshots),
+    points: netWorthHistoryPoints(snapshots, fondoRunning, liabilitySnapshots),
     currentMonth,
     currentTotalMinor: balance.netMxnMinor,
   });

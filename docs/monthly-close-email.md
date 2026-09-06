@@ -2,6 +2,15 @@
 
 Reporte personal de Olbia enviado el día 1 con el mes calendario completo anterior.
 
+## Precierre del último día
+
+- A las **18:00 America/Chihuahua** del último día calendario, Olbia envía `Cierra tus saldos de {mes} · Olbia`.
+- El correo lista primero los saldos manuales: Cajita Nu y el saldo pendiente total de cada tarjeta, incluyendo MSI. Cada fila muestra el último importe/fecha y si ya se capturó ese día.
+- Fondo de ahorro se identifica como derivado de nómina; Bitso e IBKR como automáticos, con su última actualización disponible.
+- El CTA abre Olbia e indica entrar a Patrimonio. El recordatorio no modifica saldos ni anticipa el cierre.
+- Registro idempotente owner-scoped: `PK=USER#{owner}`, `SK=MONTH_END_BALANCE_REMINDER#{YYYY-MM}`. Conserva el HTML/texto preparado, hash, `sesMessageId` y `sentAt`.
+- Lambda y schedule: `personal-finance-v1-month-end-balance-reminder`; EventBridge Scheduler usa `L` a las 18:00, dos reintentos, DLQ cifrada de 14 días y alarmas de error/DLQ.
+
 ## Producto
 
 - Asunto discreto: `Tu cierre de {mes} · lectura de Olbia`; el Neto no aparece en el asunto.
