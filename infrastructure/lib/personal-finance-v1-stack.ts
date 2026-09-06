@@ -1257,6 +1257,51 @@ export class PersonalFinanceV1Stack extends Stack {
       }),
     });
 
+    const monthEndBalanceReminderDlq = new sqs.Queue(this, 'MonthEndBalanceReminderDlq', {
+      queueName: 'personal-finance-v1-month-end-balance-reminder-dlq',
+      retentionPeriod: Duration.days(14),
+      encryption: sqs.QueueEncryption.KMS_MANAGED,
+    });
+    const monthEndBalanceReminderFunction = new NodejsFunction(this, 'MonthEndBalanceReminderFunction', {
+      ...lambdaDefaults,
+      functionName: 'personal-finance-v1-month-end-balance-reminder',
+      logGroup: this.createLogGroup('MonthEndBalanceReminderLogGroup', 'personal-finance-v1-month-end-balance-reminder'),
+      entry: path.join(__dirname, '..', 'lambda', 'month-end-balance-reminder.ts'),
+      handler: 'handler',
+      description: 'Reminds the owner to capture manual Patrimonio balances before month end.',
+      timeout: Duration.minutes(1),
+      environment: {
+        ...dataStorageEnvironment,
+        MONTH_END_REMINDER_OWNER: agentOwnerSub.valueAsString,
+        ALERT_SENDER_EMAIL: senderEmail.valueAsString,
+        ALERT_RECIPIENT_EMAIL: alertRecipientEmail.valueAsString,
+        WEB_APP_URL: webAppUrl,
+      },
+    });
+    metadataTable.grantReadWriteData(monthEndBalanceReminderFunction);
+    monthEndBalanceReminderFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ses:SendEmail'],
+      resources: ['*'],
+      conditions: { StringEquals: { 'ses:FromAddress': senderEmail.valueAsString } },
+    }));
+    new scheduler.Schedule(this, 'MonthEndBalanceReminderSchedule', {
+      scheduleName: 'personal-finance-v1-month-end-balance-reminder',
+      description: 'Sends the Patrimonio balance checklist on the last day at 18:00 America/Chihuahua.',
+      schedule: scheduler.ScheduleExpression.cron({
+        minute: '0',
+        hour: '18',
+        day: 'L',
+        month: '*',
+        year: '*',
+        timeZone: cdk.TimeZone.of('America/Chihuahua'),
+      }),
+      timeWindow: scheduler.TimeWindow.off(),
+      target: new LambdaInvoke(monthEndBalanceReminderFunction, {
+        deadLetterQueue: monthEndBalanceReminderDlq,
+        retryAttempts: 2,
+      }),
+    });
+
     const monthlyCloseEmailDlq = new sqs.Queue(this, 'MonthlyCloseEmailDlq', {
       queueName: 'personal-finance-v1-monthly-close-email-dlq',
       retentionPeriod: Duration.days(14),
@@ -1562,6 +1607,16 @@ export class PersonalFinanceV1Stack extends Stack {
       threshold: 1,
       evaluationPeriods: 1,
     });
+    const monthEndBalanceReminderErrorAlarm = new cdk.aws_cloudwatch.Alarm(this, 'MonthEndBalanceReminderErrorsAlarm', {
+      metric: monthEndBalanceReminderFunction.metricErrors({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
+    const monthEndBalanceReminderDlqAlarm = new cdk.aws_cloudwatch.Alarm(this, 'MonthEndBalanceReminderDlqAlarm', {
+      metric: monthEndBalanceReminderDlq.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
 
     new cdk.CfnOutput(this, 'RawEmailBucketName', { value: rawEmailBucket.bucketName });
     new cdk.CfnOutput(this, 'MetadataTableName', { value: metadataTable.tableName });
@@ -1595,6 +1650,8 @@ export class PersonalFinanceV1Stack extends Stack {
     new cdk.CfnOutput(this, 'IbkrSyncDlqAlarmName', { value: ibkrSyncDlqAlarm.alarmName });
     new cdk.CfnOutput(this, 'MonthlyCloseEmailErrorsAlarmName', { value: monthlyCloseEmailErrorAlarm.alarmName });
     new cdk.CfnOutput(this, 'MonthlyCloseEmailDlqAlarmName', { value: monthlyCloseEmailDlqAlarm.alarmName });
+    new cdk.CfnOutput(this, 'MonthEndBalanceReminderErrorsAlarmName', { value: monthEndBalanceReminderErrorAlarm.alarmName });
+    new cdk.CfnOutput(this, 'MonthEndBalanceReminderDlqAlarmName', { value: monthEndBalanceReminderDlqAlarm.alarmName });
   }
 
   private createLogGroup(id: string, functionName: string): logs.LogGroup {

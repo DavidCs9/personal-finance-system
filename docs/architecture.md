@@ -101,6 +101,12 @@ _06:30 America/Chihuahua_`"]
     ibkrSync["`**IBKR Sync**
 «Container: Lambda + Scheduler»
 _06:45 America/Chihuahua_`"]
+    monthEndReminder["`**Patrimonio Precierre**
+«Container: Lambda + Scheduler»
+_Último día · 18:00 America/Chihuahua_`"]
+    monthlyClose["`**Monthly Close Email**
+«Container: Lambda + Scheduler»
+_Día 1 · 07:10 America/Chihuahua_`"]
   end
 
   owner -->|"Uses · HTTPS"| spa
@@ -118,7 +124,7 @@ _06:45 America/Chihuahua_`"]
   bedrock -->|"Reads MIME"| raw
   ingest -->|"Writes events/exceptions"| ddb
   ingest -->|"Emails exceptions"| ses
-  ses -->|"Delivers exception mail"| owner
+  ses -->|"Delivers email"| owner
   ingest -->|"Pushes new observations"| webpush
 
   shortcuts -->|"Posts captures · HTTPS + bearer"| apple
@@ -140,11 +146,15 @@ _06:45 America/Chihuahua_`"]
   bitsoSync -->|"Writes wealth snapshots"| ddb
   ibkrSync -->|"Flex + FIX"| ibkr
   ibkrSync -->|"Writes wealth snapshots"| ddb
+  monthEndReminder -->|"Reads latest wealth balances"| ddb
+  monthEndReminder -->|"Sends capture checklist"| ses
+  monthlyClose -->|"Reads completed month"| ddb
+  monthlyClose -->|"Sends monthly close"| ses
   webpush -->|"Notifies devices"| owner
 
   class owner person
   class gmail,shortcuts,bitso,ibkr,textract,webpush external
-  class spa,cognito,api,apple,ses,receipt,ingest,bedrock,retry,daily,cardsPush,bitsoSync,ibkrSync container
+  class spa,cognito,api,apple,ses,receipt,ingest,bedrock,retry,daily,cardsPush,bitsoSync,ibkrSync,monthEndReminder,monthlyClose container
   class queue,ddb,raw store
 ```
 

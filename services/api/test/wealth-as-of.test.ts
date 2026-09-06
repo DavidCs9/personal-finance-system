@@ -19,7 +19,7 @@ vi.mock('../src/cards/cards.js', () => ({
 }));
 vi.mock('../src/imports/cfdi-nomina-flow.js', () => ({ listPayslipsForYear }));
 
-const { getWealthOverviewAsOf } = await import('../src/wealth/service.js');
+const { getWealthOverview, getWealthOverviewAsOf } = await import('../src/wealth/service.js');
 
 const wealthItem = (accountId: string, day: string, amountMinor: number) => ({
   accountId,
@@ -89,5 +89,16 @@ describe('historical wealth overview', () => {
     expect(overview.assetsMxnMinor).toBe(155_000_00);
     expect(overview.liabilitiesMxnMinor).toBe(10_000_00);
     expect(overview.netMxnMinor).toBe(145_000_00);
+  });
+
+  it('carries each asset balance forward independently in monthly net-worth history', async () => {
+    const overview = await getWealthOverview('owner-1', new Date('2026-09-06T18:00:00-06:00'));
+
+    expect(overview.history).toMatchObject({
+      all: [
+        { day: '2026-08-01', totalMxnMinor: 145_000_00 },
+        { day: '2026-09-01', totalMxnMinor: 162_000_00 },
+      ],
+    });
   });
 });
