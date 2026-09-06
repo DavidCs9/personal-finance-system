@@ -106,11 +106,15 @@ describe('month-end balance reminder rendering', () => {
     );
 
     expect(email.subject).toBe('Cierra tus saldos de Septiembre · Olbia');
-    expect(email.html).toContain('Saldos manuales');
-    expect(email.html).toContain('Actualiza hoy · última captura 27 sep 2026');
+    expect(email.html).toContain('Deja el mes cerrado');
+    expect(email.html).toContain('1 saldo por actualizar');
+    expect(email.html).toContain('1 de 2 saldos manuales capturados hoy');
+    expect(email.html).toContain('Captura en este orden');
+    expect(email.html).toContain('Saldo disponible · última captura 27 sep 2026');
+    expect(email.html).toContain('Lo que no captures hoy se arrastrará al cierre');
     expect(email.html).toContain('Amex &lt;Gold&gt;');
     expect(email.html).not.toContain('Amex <Gold>');
-    expect(email.html).toContain('Saldo pendiente capturado hoy');
+    expect(email.html).toContain('Listo hoy');
     expect(email.html).toContain('Derivado de las nóminas cargadas');
     expect(email.html).toContain('Automático · actualizado hoy');
     expect(email.html).toContain('Automático · sin datos disponibles');
