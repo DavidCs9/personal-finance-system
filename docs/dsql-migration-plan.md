@@ -9,6 +9,10 @@ Rama de entrega del plan: `codex/dsql-migration-plan`.
 
 Migrar gradualmente movimientos y sus relaciones a Aurora DSQL para simplificar consultas y mejorar integridad. El usuario quiere empezar octubre con DSQL y solicita preparar este plan para que otra sesión en la nube continúe la implementación. La instrucción más reciente limita esta sesión a entregar el plan en un archivo/rama.
 
+Decisión explícita del usuario: este sistema es personal y tiene un solo usuario. Trabajar directamente con sus datos reales para investigar, diseñar el esquema y validar la migración; **no se requiere anonimizar, enmascarar ni generar un dataset sintético como paso previo**.
+
+Aplicar una solución proporcional al volumen real: componentes nativos, pocos recursos y verificaciones concretas. La prioridad es poner en marcha la copia en DSQL y comparar con DDB. No agregar soporte multiusuario, abstracciones genéricas, estudios extensos de capacidad ni periodos de espera arbitrarios. El inventario y las pruebas pueden hacerse junto con la primera implementación. Las garantías necesarias son conservar los datos, evitar duplicados o sobrescrituras antiguas, recuperar fallos y poder volver a DDB.
+
 **NO BORRAR DYNAMODB.** Conservar la tabla, sus datos, sus índices, protección y funcionamiento. Durante la convivencia, las operaciones del dominio deben continuar llegando a ambas bases. Tampoco reemplazar o recrear la tabla existente por un cambio de construct ID o logical ID.
 
 Objetivo inmediato recomendado: desplegar captura y proyección de cambios a DSQL mientras DynamoDB sigue siendo la fuente de escritura y lectura del producto. Eso permite empezar a acumular movimientos de octubre en SQL. No confundir ese hito con haber migrado todas las lecturas o convertido DSQL en fuente principal.
@@ -75,13 +79,13 @@ Primera alternativa a validar: un segundo consumidor de DynamoDB Streams dedicad
 
 DynamoDB Streams retiene sólo 24 horas. Preferir los reintentos, fallos parciales y destino S3 de event source mappings, donde se conserva el payload completo. SQS/SNS como destino de fallos del mapping no son equivalentes: llevan metadatos y pueden requerir recuperar un registro que ya expiró. Un destino de fallos tampoco convierte Streams en un archivo ilimitado ni garantiza captura durante una avería de invocación prolongada.
 
-Comparar si la retención y recuperación necesarias justifican captura nativa DynamoDB → Kinesis con retención configurada. Verificar límites, semántica de orden, entrega y costo actuales. Si se decide archivar cada cambio a S3 con código propio, documentar primero por qué retención nativa y reconstrucción no bastan. Evitar añadir una cola, archivo o outbox por costumbre.
+Para la primera entrega, partir de Streams → Lambda → DSQL con recuperación de fallos y reconstrucción desde DDB. Evaluar DynamoDB → Kinesis sólo si aparece una necesidad concreta de retención que esa solución no cubra. Si se decide archivar cada cambio a S3 con código propio, documentar primero por qué retención nativa y reconstrucción no bastan. Evitar añadir una cola, archivo o outbox por costumbre.
 
 El código específico inevitable es la transformación del modelo single-table a tablas SQL, su control de versiones/reconciliación y las comparaciones de dominio. Captura, autenticación, métricas de plataforma y retries deben aprovechar el proveedor.
 
 ## Modelo relacional candidato
 
-Diseñar el esquema contra payloads y ejemplos reales anonimizados antes de fijar DDL. Nombres siguientes orientativos, no un esquema aprobado.
+Diseñar el esquema contra los payloads y datos reales del usuario antes de fijar DDL, sin anonimización previa. Nombres siguientes orientativos, no un esquema aprobado.
 
 | Tabla lógica | Datos y precauciones |
 | --- | --- |
@@ -122,7 +126,7 @@ Futuras foreign keys deben respetar el orden de llegada: Streams no entrega una 
 ### 0. Inventario y contrato de equivalencia
 
 - [ ] Enumerar entidades, claves, fuentes, escritores y consumidores, incluyendo rutas y herramientas que no pasan por la API principal.
-- [ ] Obtener métricas agregadas del volumen, meses, tamaño, número de cuotas/revisiones y consultas; registrar qué es medido y qué es supuesto.
+- [ ] Revisar brevemente volumen, meses y casos reales de cuotas/revisiones para elegir lotes e índices; registrar supuestos sin convertirlo en un estudio de capacidad previo.
 - [ ] Definir alcance exacto de la primera proyección y su contrato de aceptación.
 - [ ] Elegir estrategia de orden, recuperación y carga inicial con pruebas descritas arriba.
 - [ ] Separar catálogo persistido de defaults de código y verificar relaciones de tarjetas y owners.
@@ -159,7 +163,7 @@ Criterio de aceptación: carga reanudable, sin brechas ni resurrecciones, y dife
 - [ ] Mantener el contrato API; reutilizar `packages/domain` y los mismos algoritmos de cálculo al principio.
 - [ ] Medir latencia y DPUs con consultas reales y `EXPLAIN ANALYZE VERBOSE`; ajustar índices de forma nativa.
 
-Criterio de aceptación: paridad sostenida en diferentes meses y casos límite, datos recientes completos, fallos/lag bajo control y medición de costo. Definir periodo y umbrales concretos a partir de la medición, no por una fecha impuesta.
+Criterio de aceptación: comparaciones correctas de meses y casos reales representativos, datos recientes completos y fallos/lag bajo control. Revisar costo con métricas nativas. Avanzar cuando esas verificaciones pasen; no exigir semanas de observación ni un benchmark formal como requisito previo.
 
 ### 4. Promoción gradual de lecturas
 
@@ -211,6 +215,6 @@ Revalidar antes de implementar: DSQL cambia rápidamente y materiales anteriores
 
 ## Instrucción para la sesión en la nube
 
-> Continúa la migración gradual a Aurora DSQL en `DavidCs9/personal-finance-system`. Lee `AGENTS.md` y `docs/dsql-migration-plan.md` en la rama `codex/dsql-migration-plan`. El plan contiene contexto, hallazgos y decisiones pendientes; contrástalo con main actual y documentación oficial. Implementa la primera entrega para capturar/proyectar movimientos nuevos y actualizaciones en DSQL, conservando DynamoDB como fuente principal y todos sus datos/protecciones. NO BORRAR NI REEMPLAZAR DDB. Resuelve orden, duplicados, recuperación, eliminaciones y bootstrap antes de activar. Prepara y verifica un PR desde origin/main actualizado, con pruebas y runbook. Producción sólo mediante el flujo existente de PR, quality y deploy-production; ningún despliegue manual. Distingue plan, código verificado, PR aprobado, despliegue exitoso y datos efectivamente replicados en tus reportes. El objetivo es empezar octubre acumulando datos en DSQL y continuar la migración sin prisas; no declares un corte completo ni saltes la validación por la fecha.
+> Continúa la migración gradual a Aurora DSQL en `DavidCs9/personal-finance-system`. Lee `AGENTS.md` y `docs/dsql-migration-plan.md` desde `main` actualizado. Es un sistema personal de un solo usuario: usa sus datos reales, sin exigir anonimización ni dataset sintético. Sé pragmático; elige la solución nativa más sencilla que conserve integridad y recuperación, y realiza el inventario junto con la implementación. El plan contiene contexto, hallazgos y decisiones pendientes; contrástalo con main actual y documentación oficial. Implementa la primera entrega para capturar/proyectar movimientos nuevos y actualizaciones en DSQL, conservando DynamoDB como fuente principal y todos sus datos/protecciones. NO BORRAR NI REEMPLAZAR DDB. Resuelve orden, duplicados, recuperación, eliminaciones y bootstrap antes de activar. Prepara y verifica un PR desde origin/main actualizado, con pruebas y runbook. Producción sólo mediante el flujo existente de PR, quality y deploy-production; ningún despliegue manual. Distingue plan, código verificado, PR aprobado, despliegue exitoso y datos efectivamente replicados en tus reportes. El objetivo es empezar octubre acumulando datos en DSQL y continuar la migración sin prisas; no declares un corte completo ni saltes la validación por la fecha.
 
 Si el entorno en la nube no tiene permisos de publicación, AWS o GitHub, completar y probar el código que sí permita y señalar exactamente qué paso queda pendiente. No inventar despliegues ni resultados de producción. La existencia del plan no autoriza enviar mensajes a otras tareas.
