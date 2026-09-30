@@ -16,7 +16,7 @@ The initial base was `0141593`. The final fetch brought in `dbdbddb` (#144), whi
 - Covered movements, observations, revisions, categories/rules, card profiles, tags and MSI. Preserved source envelopes, existing IDs, evidence, states, amounts and day/instant precision.
 - Added automatic post-deploy verification through the existing Actions role and deployment job; only verification counters appear in public logs.
 - Completed a clean `npm ci`, 370 tests, ledger/web/infra type checks, web build, synth and shell/diff validation. Final infrastructure tests also passed after adding the SNS resource policy.
-- Rebased onto current `origin/main` without conflicts. Next: publish this record with the PR, wait for required CI, inspect review/mergeability and close the record.
+- Rebased onto current `origin/main` without conflicts. Published [PR #145](https://github.com/DavidCs9/personal-finance-system/pull/145). Required `quality` passed; GitHub reported `mergeable=true` and `mergeable_state=clean`. Review submissions and inline threads were empty at the closure checkpoint.
 
 ## Decisions
 
@@ -86,15 +86,16 @@ The initial base was `0141593`. The final fetch brought in `dbdbddb` (#144), whi
 ## Verification results
 
 - Clean dependency installation: `npm ci` passed.
-- Required tests: 370 passed across web/domain/ingestion/API/ledger/notify/infrastructure, including 18 new migration tests.
+- Required tests: 370 passed across web/domain/ingestion/API/ledger/notify/infrastructure, including 20 new migration tests.
 - Type checks: ledger, web and infrastructure passed.
 - Web production build and CDK synth passed; existing unrelated CDK deprecation warnings remain.
 - Infrastructure safety test: source table before/after unchanged; runtime has no DDB mutations, no SQL admin and no recovery deletion; mapping waits for bootstrap; alarm actions/topic policy are present.
 - Full-stack template comparison against initial main template: `MetadataTable30E05F1F` and all three existing Lambda event-source mappings exactly unchanged. Table JSON SHA-256: `fba364d225dd458f3076df9e15961f2725ac20106381eec122fd05cc7780220c`.
 - `git diff --check` and `bash -n infrastructure/scripts/verify-dsql-deployment.sh` passed.
 - Production data, DSQL engine and IAM have not been inspected/executed from this session. Bootstrap and post-deploy job are the approved real-engine checks.
-- Required remote `quality` and final PR mergeability: pending PR publication and CI.
+- Required remote `quality`: [Actions run 36790867536](https://github.com/DavidCs9/personal-finance-system/actions/runs/36790867536) passed all installation/tests/checks/build/synth steps on implementation head `71aa4c0be15d13a003819846d0d77b617a044681`. `deploy-production` was correctly skipped for the PR. GitHub confirmed `CLEAN` and `MERGEABLE`.
+- This closing update changes only the run record. The latest-head result remains visible in [PR checks](https://github.com/DavidCs9/personal-finance-system/pull/145/checks) and is rechecked before the final handoff; no implementation changed after the successful validation above.
 
 ## Outcome and remaining work
 
-Implementation and local verification complete. The PR must still pass remote `quality` and show `CLEAN`/`MERGEABLE` before the merge-ready handoff. No manual deployment or merge occurred. After an approved merge: confirm SNS subscription, inspect real-engine bootstrap and historical job, verify normal stream-delivered operations, then decide the later read-promotion phase described in the migration plan. See [runbook](../dsql-migration-runbook.md).
+Run complete for the requested merge-ready coexistence PR. Implementation, local verification and remote `quality` succeeded, and the PR was `CLEAN`/`MERGEABLE` at the recorded closure checkpoint. No manual deployment or merge occurred. After an approved merge: confirm SNS subscription, inspect real-engine bootstrap and historical job, verify normal stream-delivered operations, then decide the later read-promotion phase described in the migration plan. See [runbook](../dsql-migration-runbook.md).
