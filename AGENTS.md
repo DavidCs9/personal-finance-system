@@ -1,5 +1,9 @@
 # Repository guidance
 
+## Autonomous runs
+
+When the user authorizes autonomous work or a long-running execution, read [`AUTONOMOUS_RUN_RULES.md`](AUTONOMOUS_RUN_RULES.md) completely before starting and follow it throughout the run. It defines how to resolve dilemmas, persist decisions, and resume work without losing context.
+
 ## Product north star
 
 **Olbia is David Castro's private application for controlling his overall financial situation. David Castro is its sole user and owner.** Read [`docs/product-north-star.md`](docs/product-north-star.md) before making product, architecture, data, or UI decisions, and treat it as a binding product constraint.
