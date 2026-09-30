@@ -1,4 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
+import { DsqlProjection } from './dsql-projection';
 import { Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
@@ -171,6 +172,10 @@ export class PersonalFinanceV1Stack extends Stack {
       partitionKey: { name: 'GSI3PK', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'GSI3SK', type: dynamodb.AttributeType.STRING },
       projectionType: dynamodb.ProjectionType.ALL,
+    });
+
+    new DsqlProjection(this, 'DsqlProjection', {
+      table: metadataTable, encryptionKey, alertRecipientEmail: alertRecipientEmail.valueAsString,
     });
 
     const deadLetterQueue = new sqs.Queue(this, 'IngestionDeadLetterQueue', {
