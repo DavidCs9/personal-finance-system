@@ -1,5 +1,13 @@
 # Repository guidance
 
+## Product north star
+
+**Olbia is David Castro's private application for controlling his overall financial situation. David Castro is its sole user and owner.** Read [`docs/product-north-star.md`](docs/product-north-star.md) before making product, architecture, data, or UI decisions, and treat it as a binding product constraint.
+
+Design for David's actual finances and usage. Do not introduce other users, public signup, organizations, sharing, tenant isolation frameworks, or generic customer configuration without his explicit product decision. Existing owner identifiers and authentication protect David's access; they are not a requirement to support multiple users.
+
+Use his real data to investigate and validate. Anonymization, masking, and synthetic datasets are not prerequisites. Keep the implementation proportional to this personal system while preserving financial correctness, recovery, and the existing PR/deployment workflow.
+
 ## User-interface changes
 
 Before planning, implementing, or reviewing any user-facing UI change, read these files completely:

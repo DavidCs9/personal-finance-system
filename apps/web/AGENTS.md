@@ -4,10 +4,16 @@ These instructions apply to every change under `apps/web`. Treat them as product
 
 ## Product promise
 
-Olbia has two primary financial answers, on separate tabs:
+**Olbia is David Castro's private application for controlling his overall financial situation. David Castro is its sole user and owner.** Follow the binding [`../../docs/product-north-star.md`](../../docs/product-north-star.md).
+
+Design for David's income, spending, liquidity, commitments, debts, investments, and net worth. Personalize for his actual needs and habits. Evaluate changes by financial clarity, reliable numbers, and less effort to maintain control. Do not add public signup, collaboration, switching between user accounts, or user-management flows for other people. Existing owner IDs and authentication identify and protect David; they do not imply a multiuser product.
+
+Within that overall purpose, Olbia has two primary financial answers, on separate tabs:
 
 - **Resumen:** how much have I spent this month, and what does that mean for the rest of the month?
 - **Patrimonio:** what is my net worth today (assets − card balances), and how has that changed?
+
+**Movimientos** lets David inspect, organize, correct, and reconcile the evidence behind those answers. Use his real data when validating; anonymization or synthetic data is not a prerequisite.
 
 Do not collapse patrimonio into Resumen. Do not let patrimonio analytics compete with the monthly spending hierarchy on Resumen.
 
