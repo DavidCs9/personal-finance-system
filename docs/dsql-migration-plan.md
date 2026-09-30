@@ -9,7 +9,7 @@ Rama de entrega del plan: `codex/dsql-migration-plan`.
 
 Migrar gradualmente movimientos y sus relaciones a Aurora DSQL para simplificar consultas y mejorar integridad. El usuario quiere empezar octubre con DSQL y solicita preparar este plan para que otra sesión en la nube continúe la implementación. La instrucción más reciente limita esta sesión a entregar el plan en un archivo/rama.
 
-Decisión explícita del usuario: este sistema es personal y tiene un solo usuario. Trabajar directamente con sus datos reales para investigar, diseñar el esquema y validar la migración; **no se requiere anonimizar, enmascarar ni generar un dataset sintético como paso previo**.
+Seguir el [norte del producto](product-north-star.md): **Olbia es la aplicación privada de David Castro para llevar el control de su situación financiera general. David Castro es su único usuario y dueño.** La migración simplifica el manejo de sus datos financieros y mejora su confiabilidad, sin introducir otros usuarios o tenants. Trabajar directamente con sus datos reales para investigar, diseñar el esquema y validar la migración; **no se requiere anonimizar, enmascarar ni generar un dataset sintético como paso previo**.
 
 Aplicar una solución proporcional al volumen real: componentes nativos, pocos recursos y verificaciones concretas. La prioridad es poner en marcha la copia en DSQL y comparar con DDB. No agregar soporte multiusuario, abstracciones genéricas, estudios extensos de capacidad ni periodos de espera arbitrarios. El inventario y las pruebas pueden hacerse junto con la primera implementación. Las garantías necesarias son conservar los datos, evitar duplicados o sobrescrituras antiguas, recuperar fallos y poder volver a DDB.
 

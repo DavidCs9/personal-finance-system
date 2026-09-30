@@ -1,6 +1,8 @@
 # Olbia
 
-A personal monthly spending ledger **and** net-worth view. It observes real purchases from bank email alerts and Apple Pay, tracks patrimonio (assets − card balances), keeps source evidence for every signal, and answers clearly how much has been spent, what remains after commitments, and what you are worth today.
+**Olbia is David Castro's private application for controlling his overall financial situation. David Castro is its sole user and owner.** Its [product north star](docs/product-north-star.md) guides product, design, data, and infrastructure decisions.
+
+It brings together his income, spending, available liquidity, commitments, debts, investments, and net worth. It observes real purchases from bank email alerts and Apple Pay, keeps source evidence, and helps David understand his finances and make decisions with reliable numbers and less manual work.
 
 It never asks for bank credentials. It works from notifications already arriving by email, authenticated observations on the phone, statement PDFs, CFDI nómina XMLs, and read-only wealth APIs.
 
@@ -15,7 +17,7 @@ The primary unit is not a final accounting transaction — it is an **observed e
 - MSI schedules attach to the observed purchase: committed cuotas reduce remaining money until statement/CSV evidence marks them spent.
 - Month income comes from uploaded CFDI nómina XMLs (not a typed total). Patrimonio snapshots live beside the spend ledger on the same DynamoDB table.
 
-That separates capture, evidence, reconciliation, and presentation — production-grade financial system discipline, applied to a single-user product.
+That separates capture, evidence, reconciliation, and presentation so David can trust his financial information and recover mistakes with a manageable personal system.
 
 ## Architecture
 
@@ -27,7 +29,7 @@ flowchart TB
   classDef system fill:#1168BD,stroke:#0B4884,color:#fff,stroke-width:1px
   classDef external fill:#999999,stroke:#6B6B6B,color:#fff,stroke-width:1px
 
-  owner["`**Owner**
+  owner["`**David Castro**
 «Person»
 _Reviews spend, patrimonio, recovers failures, reconciles statements_`"]
   olbia["`**Olbia**
@@ -102,11 +104,12 @@ npm workspaces, strict TypeScript, and Vitest. Parsers are tested against real A
 - **Traceability over convenience** — the full source is retained; parsing is reviewable and never rewrites the original.
 - **Idempotency per source** — forwards and retries do not duplicate the ledger.
 - **Explicit reconciliation** — a unique high-confidence match links; ambiguity requires a decision.
-- **Closed auth** — Cognito with a single user; no public signup. Sign-in is personalized for that owner.
+- **Private access for David Castro** — Cognito with his sole user; no public signup. Technical owner IDs identify David and his integrations, without adding support for other users.
 - **Linear history on `main`** — PRs with a quality gate (tests, types, build, `cdk synth`) and automatic deploy.
 
 ## Documentation
 
+- [Product north star](docs/product-north-star.md) — David Castro's private financial application and the decision criteria for every change
 - [Architecture (C4)](docs/architecture.md) — containers and components
 - [V1 decisions](docs/v1-decisions.md) — scope, data model, and infrastructure
 - [Patrimonio](docs/patrimonio.md) — net worth accounts, liabilities, and sync

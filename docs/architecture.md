@@ -2,6 +2,8 @@
 
 Maps of Olbia at three levels of zoom, following the [C4 model](https://c4model.com/). Mermaid flowcharts use C4 colours and stereotypes so they render cleanly on GitHub.
 
+Olbia is David Castro's private application for controlling his overall financial situation. David is the sole user represented in these diagrams. Apply the [product north star](product-north-star.md) to architectural decisions: existing owner IDs bind David's data and integrations; they do not introduce tenants or other customers.
+
 | Colour | Meaning |
 | --- | --- |
 | Dark blue | «Person» |
@@ -24,7 +26,7 @@ flowchart TB
   classDef container fill:#438DD5,stroke:#2E6295,color:#fff,stroke-width:1px
   classDef store fill:#438DD5,stroke:#2E6295,color:#fff,stroke-width:1px
 
-  owner["`**Owner**
+  owner["`**David Castro**
 «Person»`"]
   gmail["`**Gmail**
 «Software System»`"]

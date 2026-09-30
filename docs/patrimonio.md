@@ -1,6 +1,6 @@
 # Patrimonio
 
-Plan operativo de la tab **Patrimonio** (activos − deudas de tarjeta = neto).
+Plan operativo de la tab **Patrimonio** (activos − deudas de tarjeta = neto) dentro de la aplicación privada de David Castro, su único usuario. Sigue el [norte del producto](product-north-star.md): dar a David control sobre su situación financiera general, incluyendo activos, inversiones, deudas y su evolución, además del gasto mensual.
 
 ## Decisiones
 

@@ -1,6 +1,10 @@
 # Olbia — dirección de producto y UI
 
-Olbia es un tablero personal de finanzas. Su promesa principal en **Resumen** es responder, de inmediato: cuánto he gastado, qué porcentaje representa, cuánto me queda después de compromisos próximos y cómo cerraré el mes si mantengo el mismo ritmo. **Patrimonio** responde otra pregunta: cuánto tienes en neto hoy (activos − deudas de tarjeta) y cómo ha cambiado.
+**Olbia es la aplicación privada de David Castro para llevar el control de su situación financiera general. Su único usuario y dueño es David Castro.** El [norte del producto](product-north-star.md) guía todas las decisiones de esta interfaz: ingresos, gasto, liquidez, compromisos, deudas, inversiones y patrimonio al servicio de sus necesidades concretas.
+
+La experiencia se personaliza para David. Las cifras confiables, el contexto útil y menos esfuerzo para mantener el control son los criterios de éxito. No se diseñan flujos de registro, colaboración o gestión de otros usuarios; los identificadores de owner y la autenticación protegen su acceso privado.
+
+Dentro de ese propósito, **Resumen** responde de inmediato: cuánto he gastado, qué porcentaje representa, cuánto me queda después de compromisos próximos y cómo cerraré el mes si mantengo el mismo ritmo. **Patrimonio** responde otra pregunta: cuánto tienes en neto hoy (activos − deudas de tarjeta) y cómo ha cambiado. **Movimientos** permite revisar, organizar y conciliar la evidencia que sostiene esas respuestas.
 
 Las reglas operativas que deben seguir futuras implementaciones del frontend están en [`apps/web/AGENTS.md`](../apps/web/AGENTS.md).
 

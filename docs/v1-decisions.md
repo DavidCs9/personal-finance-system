@@ -1,5 +1,11 @@
 # Decisiones de V1
 
+## Norte del producto
+
+**Olbia es la aplicación privada de David Castro para llevar el control de su situación financiera general. David Castro es su único usuario y dueño.** El [norte del producto](product-north-star.md) es una restricción de producto para todas las decisiones: integrar ingresos, gasto, liquidez, compromisos, deudas, inversiones y patrimonio con cifras confiables y menos esfuerzo para David.
+
+La condición de usuario único es una decisión de producto, no una limitación temporal de V1. No se anticipan otros clientes, organizaciones o un producto multitenant. Los campos owner y la autenticación vinculan acciones y datos con David y sus integraciones.
+
 ## Objetivo y alcance
 
 - Capturar automáticamente compras con tarjeta notificadas por email de American Express México, Santander México y transferencias Nu, más cargos de facturación AWS, y pagos Santander observados por una automatización de Apple Pay.
@@ -54,7 +60,7 @@
 - Se usa la cuenta personal de AWS y tags consistentes para atribuir costes.
 - DynamoDB bajo demanda es la base de datos operativa.
 - La UI es una SPA de React en S3 + CloudFront. La API es API Gateway HTTP API + Lambdas con autorización JWT de Cognito.
-- Cognito tiene un único usuario administrado, sin registro público y sin MFA por ahora. El login web está personalizado para ese propietario.
+- Cognito tiene un único usuario administrado para David Castro, sin registro público y sin MFA por ahora. El login web está personalizado para él.
 - Una regla de recepción de SES guarda primero el MIME y luego publica su puntero en SQS; una Lambda de ingestión normaliza MIME con `mailparser`, deduplica y usa los parsers deterministas conocidos como fast path.
 - Si un correo de una institución conocida no coincide o falla su parser, una cola aislada invoca Claude Haiku 4.5 en Bedrock con JSON Schema. La salida sólo se acepta cuando validadores deterministas comprueban institución, tipo, monto, estado, fecha/hora y evidencia literal. La cola de fallback tiene DLQ y alarmas propias.
 - La identidad de fuente (`Message-ID` + SHA-256) no cambia entre retries. Las excepciones se deduplican aparte por fuente y versión del extractor, y un intento fallido nunca consume permanentemente el claim del movimiento.
@@ -67,5 +73,5 @@
 
 ## Calidad y salida de V1
 
-- Los parsers y validadores Bedrock se prueban con fixtures `.eml` anonimizadas y fieles a los formatos reales; los correos reales no se versionan. Antes de promover un extractor se replayan las fuentes cifradas de S3 y se comparan sus campos sin imprimir PII.
+- Los fixtures `.eml` existentes permiten probar parsers y validadores con los formatos reales. La investigación y validación también pueden usar directamente los datos y fuentes reales de David; no se exige anonimización, enmascaramiento ni dataset sintético previo. Antes de promover un extractor se replayan las fuentes cifradas de S3 y se comparan sus campos. Usar esos datos para validar no implica versionar correos reales en el repositorio público.
 - V1 está lista cuando los flujos de captura conservan su fuente, avisan por push si está activo, muestran gasto y patrimonio en UI, y hacen recuperables los fallos de parser y de sync.
