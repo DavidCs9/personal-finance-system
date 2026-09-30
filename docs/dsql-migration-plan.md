@@ -1,13 +1,13 @@
 # Migración gradual del ledger a Aurora DSQL
 
-Estado: plan para continuar en una sesión en la nube; implementación pendiente.
+Estado: plan de migración gradual. Primera entrega implementada para revisión en PR; activación productiva y fases posteriores pendientes. Ver [runbook de implementación](dsql-migration-runbook.md).
 Fecha: 2026-09-30, America/Chihuahua.
 Base investigada: `origin/main`, commit `9eadb571e9f19047d2525ab4effd48db65970d08`.
 Rama de entrega del plan: `codex/dsql-migration-plan`.
 
 ## Intención del usuario y alcance autorizado
 
-Migrar gradualmente movimientos y sus relaciones a Aurora DSQL para simplificar consultas y mejorar integridad. El usuario quiere empezar octubre con DSQL y solicita preparar este plan para que otra sesión en la nube continúe la implementación. La instrucción más reciente limita esta sesión a entregar el plan en un archivo/rama.
+Migrar gradualmente movimientos y sus relaciones a Aurora DSQL para simplificar consultas y mejorar integridad. El usuario quiere empezar octubre con DSQL y solicita preparar este plan para que otra sesión en la nube continúe la implementación. La sesión original entregó únicamente este plan; la continuación autorizó implementar la primera entrega de extremo a extremo y preparar una PR lista para integrar.
 
 Seguir el [norte del producto](product-north-star.md): **Olbia es la aplicación privada de David Castro para llevar el control de su situación financiera general. David Castro es su único usuario y dueño.** La migración simplifica el manejo de sus datos financieros y mejora su confiabilidad, sin introducir otros usuarios o tenants. Trabajar directamente con sus datos reales para investigar, diseñar el esquema y validar la migración; **no se requiere anonimizar, enmascarar ni generar un dataset sintético como paso previo**.
 
@@ -19,7 +19,7 @@ Objetivo inmediato recomendado: desplegar captura y proyección de cambios a DSQ
 
 El objetivo de fecha no está cumplido todavía. Antes de afirmar que octubre ya está capturado en DSQL, verificar despliegue, checkpoint de captura y paridad. Si la activación ocurre después del 1 de octubre, incorporar también los movimientos previos a la activación mediante una carga histórica validada. No perder septiembre, meses anteriores ni cuotas futuras.
 
-Esta sesión no instaló dependencias, escribió implementación, consultó datos de producción ni desplegó recursos.
+La sesión original del plan no implementó recursos. La continuación implementa proyección, bootstrap, recuperación, carga de claves históricas y paridad; no consultó AWS ni desplegó desde la sesión. Producción continúa pendiente del flujo aprobado.
 
 ## Restricciones de ejecución
 

@@ -29,6 +29,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test -- --runInBand
+      - run: npm run check --workspace @finance/ledger
       - run: npm run check --workspace @finance/web
       - run: npm run check --workspace @finance/infrastructure
       - run: npm run build --workspace @finance/web
@@ -113,3 +114,12 @@ jobs:
           --require-approval never
           --output cdk.out.github-deploy
         working-directory: infrastructure
+      - name: Refresh AWS session for DSQL verification
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::225989371926:role/personal-finance-v1-github-deploy
+          aws-region: us-east-2
+          role-session-name: personal-finance-dsql-verify
+      - name: Verify DSQL bootstrap, historical projection and parity
+        timeout-minutes: 55
+        run: bash infrastructure/scripts/verify-dsql-deployment.sh
