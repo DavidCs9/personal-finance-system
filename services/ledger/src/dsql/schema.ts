@@ -1,4 +1,4 @@
-import { TABLE_COLUMNS, TABLE_NAMES } from './model.js';
+import { TABLE_COLUMNS, TABLE_NAMES, OPERATIONAL_TABLE_NAMES } from './model.js';
 import type { SqlClient } from './projection.js';
 import { isOCCError } from '@aws/aurora-dsql-node-postgres-connector';
 
@@ -34,10 +34,11 @@ export const SCHEMA_STATEMENTS = [
   // Version 2 is additive: only new tables. Existing column definitions are unchanged.
   `INSERT INTO olbia.schema_migrations VALUES (2,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
   `INSERT INTO olbia.schema_migrations VALUES (3,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
+  `INSERT INTO olbia.schema_migrations VALUES (4,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
-  now?: () => number; pause?: (ms: number) => Promise<void>; indexWaitMs?: number; readerRoleArns?: readonly string[];
+  now?: () => number; pause?: (ms: number) => Promise<void>; indexWaitMs?: number; readerRoleArns?: readonly string[]; operationalVerifierRoleArns?: readonly string[];
 } = {}): Promise<void> => {
   const now = options.now ?? Date.now;
   const pause = options.pause ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -83,10 +84,22 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     const reader = await query('reader-role-lookup', "SELECT rolname FROM pg_roles WHERE rolname='olbia_reader'");
     if (!reader.rows.length) await query('reader-role-create', 'CREATE ROLE olbia_reader WITH LOGIN');
     await query('reader-schema-grant', 'GRANT USAGE ON SCHEMA olbia TO olbia_reader');
-    await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments', 'monthly_plans', 'payroll', 'cards', 'wealth_snapshots', 'wealth_versions', 'liability_snapshots', 'liability_versions', 'categories', 'merchant_category_rules'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
+    await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments', 'monthly_plans', 'payroll', 'cards', 'wealth_snapshots', 'wealth_versions', 'liability_snapshots', 'liability_versions', 'categories', 'merchant_category_rules', 'ingestion_exceptions', 'import_records', 'push_subscriptions', 'assistant_threads'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
     for (const arn of options.readerRoleArns) {
       if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid reader role ARN');
       await query('reader-iam-grant', `AWS IAM GRANT olbia_reader TO '${arn}'`);
     }
   }
+  if (options.operationalVerifierRoleArns?.length) {
+    const role = 'olbia_operational_verifier';
+    const existing = await query('operational-verifier-lookup', `SELECT rolname FROM pg_roles WHERE rolname='${role}'`);
+    if (!existing.rows.length) await query('operational-verifier-create', `CREATE ROLE ${role} WITH LOGIN`);
+    await query('operational-verifier-schema', `GRANT USAGE ON SCHEMA olbia TO ${role}`);
+    await query('operational-verifier-select', `GRANT SELECT ON ${OPERATIONAL_TABLE_NAMES.map(table => `olbia.${table}`).join(',')} TO ${role}`);
+    for (const arn of options.operationalVerifierRoleArns) {
+      if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid verifier role ARN');
+      await query('operational-verifier-iam', `AWS IAM GRANT ${role} TO '${arn}'`);
+    }
+  }
+
 };

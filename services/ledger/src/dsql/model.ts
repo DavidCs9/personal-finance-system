@@ -6,6 +6,8 @@ export type SqlRow = { table: TableName; values: Record<string, unknown> };
 
 // No foreign keys yet: a DynamoDB transaction's items arrive independently.
 // Source envelopes are retained in checkpoints; payloads retain optional fields.
+export const OPERATIONAL_TABLE_NAMES = ['dedupe_claims', 'exception_claims', 'ingestion_exceptions', 'ingestion_retries', 'import_records', 'bulk_edit_operations', 'delivery_records', 'push_subscriptions', 'assistant_threads'] as const;
+const operationalColumns = { id: 'text', owner: 'text', entity_type: 'text', status: 'text', created_at: 'timestamptz', updated_at: 'timestamptz', expires_at: 'bigint', payload: 'jsonb', source_item: 'jsonb' } as const;
 export const TABLE_COLUMNS = {
   movements: { id: 'text', institution: 'text', event_type: 'text', status: 'text', amount_minor: 'bigint', currency: 'text', personal_amount_minor: 'bigint', merchant_raw: 'text', category_id: 'text', spend_month: 'text', occurred_at: 'timestamptz', received_at: 'timestamptz', payload: 'jsonb' },
   movement_observations: { id: 'text', movement_id: 'text', capture_source: 'text', payload: 'jsonb' },
@@ -22,12 +24,32 @@ export const TABLE_COLUMNS = {
   wealth_versions: { account_id: 'text', owner: 'text', day: 'date', captured_at: 'timestamptz', source: 'text', currency: 'text', total_mxn_minor: 'bigint', evidence: 'jsonb', payload: 'jsonb', source_item: 'jsonb', holdings: 'jsonb', fx_rate: 'double precision', fx_source: 'text', version_id: 'text', superseded_at: 'timestamptz' },
   liability_snapshots: { card_id: 'text', owner: 'text', day: 'date', captured_at: 'timestamptz', source: 'text', currency: 'text', total_mxn_minor: 'bigint', evidence: 'jsonb', payload: 'jsonb', source_item: 'jsonb' },
   liability_versions: { card_id: 'text', owner: 'text', day: 'date', captured_at: 'timestamptz', source: 'text', currency: 'text', total_mxn_minor: 'bigint', evidence: 'jsonb', payload: 'jsonb', source_item: 'jsonb', version_id: 'text', superseded_at: 'timestamptz' },
+  dedupe_claims: { ...operationalColumns, event_id: 'text', observation_id: 'text' },
+  exception_claims: { ...operationalColumns, source_dedupe_key: 'text', extractor_version: 'text' },
+  ingestion_exceptions: { ...operationalColumns, received_at: 'timestamptz', retry_status: 'text', discarded: 'boolean', index_pk: 'text', index_sk: 'text' },
+  ingestion_retries: { ...operationalColumns, dispatched_at: 'timestamptz', job: 'jsonb' },
+  import_records: { ...operationalColumns, source: 'jsonb', applied_at: 'timestamptz' },
+  bulk_edit_operations: { ...operationalColumns, applied_at: 'timestamptz', undone_at: 'timestamptz' },
+  delivery_records: { ...operationalColumns, month: 'text', prepared_at: 'timestamptz', sent_at: 'timestamptz', content_sha256: 'text' },
+  push_subscriptions: { ...operationalColumns, active: 'boolean', content_mode: 'text' },
+  assistant_threads: { ...operationalColumns, session_id: 'text', title: 'text', first_month: 'text' },
 } as const;
 export type TableName = keyof typeof TABLE_COLUMNS;
 export const TABLE_NAMES = Object.keys(TABLE_COLUMNS) as TableName[];
-export const PROJECTION_VERSION = 3;
+export const PROJECTION_VERSION = 4;
 
 export const entityForKey = (key: SourceKey): TableName | undefined => {
+  if (key.PK.startsWith('DEDUPE#') && key.SK === 'CLAIM') return 'dedupe_claims';
+  if (key.PK.startsWith('EXCEPTION_DEDUPE#') && key.SK === 'CLAIM') return 'exception_claims';
+  if (key.PK.startsWith('EXCEPTION#') && key.SK === 'EXCEPTION') return 'ingestion_exceptions';
+  if (key.PK.startsWith('RETRY#') && (key.SK === 'DISPATCH' || key.SK.startsWith('DISPATCH#'))) return 'ingestion_retries';
+  if (key.PK.startsWith('BULK_EDIT#') && key.SK.startsWith('OP#')) return 'bulk_edit_operations';
+  if (key.PK.startsWith('USER#')) {
+    if (/^IMPORT#(?:AMEX|SANTANDER|SANTANDER_STATEMENT)#[^#]+$/.test(key.SK)) return 'import_records';
+    if (/^(?:MONTHLY_CLOSE|MONTH_END_BALANCE_REMINDER)#\d{4}-\d{2}$/.test(key.SK)) return 'delivery_records';
+    if (key.SK.startsWith('PUSH#')) return 'push_subscriptions';
+    if (key.SK.startsWith('ASSISTANT_THREAD#')) return 'assistant_threads';
+  }
   if (key.PK.startsWith('EVENT#')) {
     if (key.SK === 'EVENT') return 'movements';
     if (key.SK.startsWith('OBSERVATION#')) return 'movement_observations';
@@ -67,7 +89,8 @@ export const projectRows = (key: SourceKey, item?: SourceItem): SqlRow[] => {
   const defaultCategory = table === 'categories'
     ? DEFAULT_SPEND_CATEGORIES.find((category) => key.SK === `CAT#${category.id}`) : undefined;
   if (!item && !defaultCategory) return [];
-  const p = table === 'categories' || table === 'merchant_category_rules'
+  if ((OPERATIONAL_TABLE_NAMES as readonly string[]).includes(table)) return projectOperationalRows(key, item!, table);
+  const p = table === 'categories'  || table === 'merchant_category_rules'
     ? object(item ?? defaultCategory) : object(table.startsWith('wealth_') || table.startsWith('liability_') ? item : item?.payload);
   const row = (target: TableName, rowId: string, values: Record<string, unknown>): SqlRow => ({
     table: target, values: { source_pk: key.PK, source_sk: key.SK, row_id: rowId, ...values },
@@ -193,3 +216,31 @@ export const canonicalJson = (value: unknown): string => JSON.stringify(value, (
   }
   return current;
 });
+
+const projectOperationalRows = (key: SourceKey, item: SourceItem, table: TableName): SqlRow[] => {
+  const p = item.payload == null ? item : object(item.payload);
+  const retry = p.retry == null ? {} : object(p.retry);
+  const id = table === 'bulk_edit_operations' ? string(p.operationId)
+    : table === 'ingestion_exceptions' ? string(p.id)
+    : table === 'assistant_threads' ? key.SK.slice('ASSISTANT_THREAD#'.length)
+    : table === 'push_subscriptions' ? string(item.subscriptionId) : key.SK;
+  const owner = item.owner ?? (key.PK.startsWith('USER#') ? key.PK.slice(5) : key.PK.startsWith('BULK_EDIT#') ? key.PK.slice(10) : p.owner);
+  if (item.PK !== key.PK || item.SK !== key.SK) throw new Error('Operational source key mismatch');
+  if (item.expiresAt != null) integer(item.expiresAt);
+  const values: Record<string, unknown> = { source_pk: key.PK, source_sk: key.SK, row_id: id, id,
+    owner: optional(owner), entity_type: string(item.entityType), status: optional(p.status),
+    created_at: optional(p.createdAt ?? p.previewedAt ?? p.claimedAt), updated_at: optional(p.updatedAt),
+    expires_at: optional(item.expiresAt), payload: p, source_item: item };
+  if (table === 'dedupe_claims') Object.assign(values, { event_id: optional(item.eventId), observation_id: optional(item.observationId) });
+  if (table === 'exception_claims') Object.assign(values, { source_dedupe_key: optional(item.sourceDedupeKey), extractor_version: optional(item.extractorVersion) });
+  if (table === 'ingestion_exceptions') Object.assign(values, { received_at: optional(p.receivedAt), retry_status: optional(retry.status), discarded: Boolean(p.discarded), index_pk: optional(item.GSI1PK), index_sk: optional(item.GSI1SK) });
+  if (table === 'ingestion_retries') Object.assign(values, { dispatched_at: optional(item.dispatchedAt), job: optional(item.job) });
+  if (table === 'import_records') Object.assign(values, { source: optional(item.source), applied_at: optional(item.appliedAt) });
+  if (table === 'bulk_edit_operations') Object.assign(values, { applied_at: optional(p.appliedAt), undone_at: optional(p.undoneAt) });
+  if (table === 'delivery_records') Object.assign(values, { month: optional(item.month), prepared_at: optional(item.preparedAt), sent_at: optional(item.sentAt), content_sha256: optional(item.contentSha256) });
+  if (table === 'push_subscriptions') Object.assign(values, { active: optional(item.active), content_mode: optional(item.contentMode) });
+  if (table === 'assistant_threads') Object.assign(values, { session_id: optional(item.sessionId), title: optional(item.title), first_month: optional(item.firstMonth) });
+  const rows = [{ table, values }];
+  if (Buffer.byteLength(JSON.stringify(rows)) > 4 * 1024 * 1024) throw new Error('Projection exceeds transaction budget');
+  return rows;
+};

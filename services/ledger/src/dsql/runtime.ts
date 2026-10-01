@@ -30,7 +30,7 @@ export const streamHandler = (event: { Records: Parameters<typeof processStream>
 
 export const schemaHandler = async (event: {
   RequestType: string; PhysicalResourceId?: string;
-  ResourceProperties: { RuntimeRoleArns?: string[]; ReaderRoleArns?: string[] };
+  ResourceProperties: { RuntimeRoleArns?: string[]; ReaderRoleArns?: string[]; OperationalVerifierRoleArns?: string[] };
 }): Promise<{ PhysicalResourceId: string }> => {
   const PhysicalResourceId = event.PhysicalResourceId ?? 'olbia-dsql-schema-v1';
   if (event.RequestType === 'Delete') return { PhysicalResourceId };
@@ -39,7 +39,7 @@ export const schemaHandler = async (event: {
   try {
     const client = await admin.connect();
     try { await bootstrapSchema(client as SqlClient, event.ResourceProperties.RuntimeRoleArns ?? [], {
-      readerRoleArns: event.ResourceProperties.ReaderRoleArns,
+      readerRoleArns: event.ResourceProperties.ReaderRoleArns, operationalVerifierRoleArns: event.ResourceProperties.OperationalVerifierRoleArns,
     }); }
     finally { client.release(); }
     // Real engine / non-admin IAM smoke, before enabling the event source.

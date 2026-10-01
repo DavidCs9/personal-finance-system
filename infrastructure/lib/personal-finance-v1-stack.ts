@@ -454,6 +454,8 @@ export class PersonalFinanceV1Stack extends Stack {
     const wealthReadMode = 'guarded-sql';
     // Remaining read-only domain consumers start in shadow; authoritative decisions stay source-only.
     const domainReadMode = 'guarded-sql';
+    const operationalReadMode = 'shadow';
+    apiFunction.addEnvironment('DSQL_OPERATIONAL_READ_MODE', operationalReadMode);
     const workerLedgerReadMode = 'guarded-sql';
     apiFunction.addEnvironment('DSQL_DOMAIN_READ_MODE', domainReadMode);
     apiFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
@@ -466,7 +468,7 @@ export class PersonalFinanceV1Stack extends Stack {
       timeout: Duration.minutes(10), memorySize: 512,
       logGroup: this.createLogGroup('DsqlReadVerificationLogGroup', 'personal-finance-v1-dsql-read-verification'),
       environment: { ...dataStorageEnvironment, AGENT_OWNER_SUB: agentOwnerSub.valueAsString,
-        DSQL_LEDGER_READ_MODE: ledgerReadMode, DSQL_PLANNING_READ_MODE: planningReadMode, DSQL_WEALTH_READ_MODE: wealthReadMode, DSQL_DOMAIN_READ_MODE: domainReadMode },
+        DSQL_LEDGER_READ_MODE: ledgerReadMode, DSQL_PLANNING_READ_MODE: planningReadMode, DSQL_WEALTH_READ_MODE: wealthReadMode, DSQL_DOMAIN_READ_MODE: domainReadMode, DSQL_OPERATIONAL_READ_MODE: operationalReadMode },
     });
     metadataTable.grantReadData(readVerificationFunction);
     rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/cfdi-nomina/*');
@@ -474,6 +476,7 @@ export class PersonalFinanceV1Stack extends Stack {
     rawEmailBucket.grantRead(readVerificationFunction, 'wealth-api/*');
     encryptionKey.grantDecrypt(readVerificationFunction);
     dsqlProjection.grantReader(readVerificationFunction);
+    dsqlProjection.grantOperationalVerifier(readVerificationFunction);
     new cdk.CfnOutput(this, 'DsqlReadVerificationFunction', { value: readVerificationFunction.functionName });
     const readVerifyDeployRole = iam.Role.fromRoleName(this, 'DsqlReadVerifyDeployRole', 'personal-finance-v1-github-deploy');
     readVerificationFunction.grantInvoke(readVerifyDeployRole);

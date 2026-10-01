@@ -1,3 +1,4 @@
+import { readOperationalPartition, publicSubscriptions } from '../operational/reads.js';
 import {
   HttpStatusCodes,
   Router,
@@ -79,7 +80,6 @@ import { InvalidAssistantThreadError, parseActiveAssistantThreadInput } from '..
 import {
   deletePushSubscription,
   InvalidPushSubscriptionError,
-  listOwnerPushSubscriptions,
   parsePushSubscriptionInput,
   savePushSubscription,
 } from '@finance/notify';
@@ -170,11 +170,8 @@ app.delete('/cards/:cardId', async ({ event, params }) => {
 });
 
 app.get('/push/subscriptions', async ({ event }) => {
-  const subscriptions = await listOwnerPushSubscriptions({
-    database,
-    tableName,
-    owner: ownerOf(asHttpEvent(event)),
-  });
+  const subscriptions = publicSubscriptions(await readOperationalPartition('push_subscriptions', { database, tableName },
+    `USER#${ownerOf(asHttpEvent(event))}`, 'PUSH#'), new Date());
   return json(HttpStatusCodes.OK, {
     subscriptions: subscriptions.map((subscription) => ({
       subscriptionId: subscription.subscriptionId,

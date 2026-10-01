@@ -15,7 +15,7 @@ const canonical = (value: unknown): string | undefined => JSON.stringify(value, 
 export const samePublicResult = (left: unknown, right: unknown): boolean => canonical(left) === canonical(right);
 export type ReadOutcome = 'equal' | 'mismatch' | 'sql-error';
 
-export const observe = (query: 'month' | 'detail' | 'plan' | 'payroll-month' | 'payroll-income' | 'payroll-year' | 'payroll-detail' | 'wealth-inputs' | 'wealth-audit' | 'categories' | 'merchant-rules' | 'cards', mode: LedgerReadMode, outcome: ReadOutcome, selected: 'sql' | 'dynamodb'): void => {
+export const observe = (query: 'month' | 'detail' | 'plan' | 'payroll-month' | 'payroll-income' | 'payroll-year' | 'payroll-detail' | 'wealth-inputs' | 'wealth-audit' | 'categories' | 'merchant-rules' | 'cards' | 'operational-list' | 'operational-detail', mode: LedgerReadMode, outcome: ReadOutcome, selected: 'sql' | 'dynamodb'): void => {
   // Domain comparison cannot be inferred from native Lambda platform metrics. No IDs, payloads, sums or driver errors.
   console.log(JSON.stringify({
     _aws: { Timestamp: Date.now(), CloudWatchMetrics: [{ Namespace: 'Olbia/DsqlReads', Dimensions: [['Query']],

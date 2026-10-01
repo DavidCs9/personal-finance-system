@@ -13,10 +13,18 @@ describe('DSQL-specific schema bootstrap', () => {
     const statements = query.mock.calls.map(([statement]) => statement).filter(statement => statement.includes('olbia_reader'));
     expect(statements).toContain('CREATE ROLE olbia_reader WITH LOGIN');
     expect(statements).toContain('GRANT USAGE ON SCHEMA olbia TO olbia_reader');
-    expect(statements).toContain('GRANT SELECT ON olbia.movements,olbia.movement_observations,olbia.movement_revisions,olbia.msi_installments,olbia.monthly_plans,olbia.payroll,olbia.cards,olbia.wealth_snapshots,olbia.wealth_versions,olbia.liability_snapshots,olbia.liability_versions,olbia.categories,olbia.merchant_category_rules TO olbia_reader');
+    expect(statements).toContain('GRANT SELECT ON olbia.movements,olbia.movement_observations,olbia.movement_revisions,olbia.msi_installments,olbia.monthly_plans,olbia.payroll,olbia.cards,olbia.wealth_snapshots,olbia.wealth_versions,olbia.liability_snapshots,olbia.liability_versions,olbia.categories,olbia.merchant_category_rules,olbia.ingestion_exceptions,olbia.import_records,olbia.push_subscriptions,olbia.assistant_threads TO olbia_reader');
     expect(statements).toContain("AWS IAM GRANT olbia_reader TO 'arn:aws:iam::225989371926:role/api-reader'");
     expect(statements.join()).not.toMatch(/GRANT (?:ALL|INSERT|UPDATE|DELETE)|olbia_projector TO/);
     await expect(bootstrapSchema({ query } as SqlClient, [], { readerRoleArns: ["unsafe' ARN"] })).rejects.toThrow('Invalid reader role ARN');
+  });
+  it('isolates nine operational verification grants from product readers and rejects unsafe IAM identities', async () => {
+    const query = vi.fn(async (statement: string) => ready(statement));
+    await bootstrapSchema({ query } as SqlClient, [], { operationalVerifierRoleArns: ['arn:aws:iam::225989371926:role/probe'] });
+    const statements = query.mock.calls.map(([statement]) => statement).filter(statement => statement.includes('olbia_operational_verifier'));
+    expect(statements).toContain('GRANT SELECT ON olbia.dedupe_claims,olbia.exception_claims,olbia.ingestion_exceptions,olbia.ingestion_retries,olbia.import_records,olbia.bulk_edit_operations,olbia.delivery_records,olbia.push_subscriptions,olbia.assistant_threads TO olbia_operational_verifier');
+    expect(statements.join()).not.toMatch(/GRANT (?:ALL|INSERT|UPDATE|DELETE)|olbia_projector TO/);
+    await expect(bootstrapSchema({ query } as SqlClient, [], { operationalVerifierRoleArns: ["unsafe' ARN"] })).rejects.toThrow('Invalid verifier role ARN');
   });
   it('waits for native readiness and maps only validated runtime ARNs with scoped SQL grants', async () => {
     let polls = 0;

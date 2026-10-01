@@ -1,3 +1,4 @@
+import { terminalImportDisplay, readTerminalImportDisplay } from '../operational/import-display.js';
 import { createHash } from 'node:crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
@@ -109,7 +110,7 @@ export const previewAmexImport = async (
   };
 };
 
-export const getAmexImport = async (importId: string, owner: string): Promise<JsonObject> => {
+export const getAmexImport = async (importId: string, owner: string, sourceOnly = false): Promise<JsonObject> => {
   if (!/^[a-f0-9]{64}$/.test(importId)) {
     throw new InvalidAmexStatementError('Identificador de importación inválido.');
   }
@@ -122,16 +123,8 @@ export const getAmexImport = async (importId: string, owner: string): Promise<Js
     throw new InvalidAmexStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
   }
   if (stored.Item.status === 'previewed' || stored.Item.status === 'applied') {
-    const rows = Array.isArray(stored.Item.rows) ? stored.Item.rows as readonly StatementPreviewRow[] : [];
-    return statementPreviewResponse(
-      importId,
-      {
-        accountLastFour: String(stored.Item.accountLastFour ?? ''),
-        product: String(stored.Item.product ?? 'American Express'),
-        period: stored.Item.period as { readonly from: string; readonly to: string },
-      },
-      rows,
-    );
+    const display = sourceOnly ? terminalImportDisplay(importId, 'AMEX', stored.Item) : await readTerminalImportDisplay(owner, importId, 'AMEX');
+    return display ?? getAmexImport(importId, owner, true);
   }
   if (stored.Item.status === 'failed') {
     throw new InvalidAmexStatementError(

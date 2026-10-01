@@ -1,3 +1,4 @@
+import { terminalImportDisplay, readTerminalImportDisplay } from '../operational/import-display.js';
 import { createHash } from 'node:crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
@@ -114,7 +115,7 @@ export const previewSantanderStatementImport = async (
   };
 };
 
-export const getSantanderStatementImport = async (importId: string, owner: string): Promise<JsonObject> => {
+export const getSantanderStatementImport = async (importId: string, owner: string, sourceOnly = false): Promise<JsonObject> => {
   if (!/^[a-f0-9]{64}$/.test(importId)) {
     throw new InvalidSantanderStatementError('Identificador de importación inválido.');
   }
@@ -127,16 +128,8 @@ export const getSantanderStatementImport = async (importId: string, owner: strin
     throw new InvalidSantanderStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
   }
   if (stored.Item.status === 'previewed' || stored.Item.status === 'applied') {
-    const rows = Array.isArray(stored.Item.rows) ? stored.Item.rows as readonly StatementPreviewRow[] : [];
-    return statementPreviewResponse(
-      importId,
-      {
-        accountLastFour: String(stored.Item.accountLastFour ?? ''),
-        product: String(stored.Item.product ?? 'Santander'),
-        period: stored.Item.period as { readonly from: string; readonly to: string },
-      },
-      rows,
-    );
+    const display = sourceOnly ? terminalImportDisplay(importId, 'SANTANDER_STATEMENT', stored.Item) : await readTerminalImportDisplay(owner, importId, 'SANTANDER_STATEMENT');
+    return display ?? getSantanderStatementImport(importId, owner, true);
   }
   if (stored.Item.status === 'failed') {
     throw new InvalidSantanderStatementError(

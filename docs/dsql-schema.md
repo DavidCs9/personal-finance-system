@@ -2,7 +2,7 @@
 
 ## What is in DSQL now?
 
-The database contains the **ledger, planning, payroll and Patrimonio projection**, not every application record. Schema version 3 has fifteen domain tables, two operational tables and one view under `olbia` in the regional DSQL cluster in `us-east-2`. The [planning/payroll rollout](dsql-planning-payroll.md) extends the original nine-table ledger projection additively. [Patrimonio](dsql-patrimonio.md) adds four canonical/audit tables and the card envelope. The [shadow rollout](https://github.com/DavidCs9/personal-finance-system/actions/runs/36882229551) passed full retained-content/financial/evidence verification; the separate [guarded rollout](https://github.com/DavidCs9/personal-finance-system/actions/runs/36884373746) also passed and is active.
+The database contains the **ledger, planning, payroll, Patrimonio and retained operational projection**, not every application record. Schema version 4 has twenty-four entity tables, two operational tables and one view under `olbia` in the regional DSQL cluster in `us-east-2`. The [planning/payroll rollout](dsql-planning-payroll.md) extends the original nine-table ledger projection additively. [Patrimonio](dsql-patrimonio.md) adds four canonical/audit tables and the card envelope. The [shadow rollout](https://github.com/DavidCs9/personal-finance-system/actions/runs/36882229551) passed full retained-content/financial/evidence verification; the separate [guarded rollout](https://github.com/DavidCs9/personal-finance-system/actions/runs/36884373746) also passed and is active.
 
 DynamoDB remains the authority for application writes. Its stream projects supported records into DSQL; daily reconciliation repairs and verifies current state. The [movement read rollout](dsql-read-migration.md) introduces reversible shadow/guarded SQL reads with a source freshness check. The long-term destination, explicitly stated by David on 2026-09-30, is to retire DynamoDB after the remaining data and application dependencies migrate. That cutover has not happened.
 
@@ -24,13 +24,7 @@ The deployed schema and real historical ledger passed [production verification](
 
 The projector accepts only the source key patterns documented below. Other DynamoDB records are not copied merely because a source scan or parity job succeeded.
 
-- Dedupe claims and ingestion source/receipt state.
-- Ingestion exceptions, retry dispatch state and import workflow state outside movement payloads.
-- Bulk-edit operation records needed for apply/undo; movement revisions are projected, but the operation entity itself is not.
-- Report/reminder delivery state (monthly plan and payroll source records are projected in version 2).
-- Push subscription and notification state.
-- Assistant conversations and thread state.
-- All domain writes and strong freshness reads remain in DynamoDB, including projected Patrimonio.
+The [operational-state extension](dsql-operational-state.md) projects retained claims, exceptions/retries/imports, bulk operations, prepared/sent email state, subscriptions and minimal assistant indices. All source writes and authoritative decisions remain DynamoDB. S3 evidence, Cognito and native AgentCore transcript/memory remain outside SQL. Already expired/deleted history absent from the source is not recovered or claimed.
 
 Original MIME, CSV, PDF, XML and other evidence files remain in S3. SQL JSONB retains their references and source metadata; it does not embed or migrate the original files. Authentication remains with the existing identity provider.
 
@@ -280,6 +274,24 @@ All four use the same `(source_pk,source_sk,row_id)` primary key and columns `ow
 
 Audit tables never contribute to balances. Embedded holdings retain native currencies/quantities/value/unknown fields; evidence remains in S3. FX double precision preserves the source JS number; complete original metadata remains in JSONB. Fondo has no persisted snapshots: payroll continues deriving it. Canonical/account/day/month and historical as-of queries reuse existing domain calculations. Existing primary indexes cover owner-key ranges; no new secondary index is needed for this observed personal volume. See [full source/consumer inventory and contract](dsql-patrimonio.md).
 
+## Application operational tables (version 4)
+
+All nine additive tables use `(source_pk text NOT NULL, source_sk text NOT NULL, row_id text NOT NULL)` as primary key. Common nullable promoted columns: `id text`, `owner text`, `entity_type text`, `status text`, `created_at timestamptz`, `updated_at timestamptz`, `expires_at bigint`, `payload jsonb`, `source_item jsonb`. Complete original envelopes retain every unknown/optional field and status transition. Missing creation/status fields stay null, not fabricated. Owner derives only from existing owner/key contracts.
+
+| Table | Additional promoted columns | Source / row identity |
+| --- | --- | --- |
+| dedupe_claims | event_id text, observation_id text | DEDUPE#… / CLAIM; row_id original SK |
+| exception_claims | source_dedupe_key text, extractor_version text | EXCEPTION_DEDUPE#… / CLAIM; original SK |
+| ingestion_exceptions | received_at timestamptz, retry_status text, discarded boolean, index_pk text, index_sk text | EXCEPTION#id / EXCEPTION; original payload.id |
+| ingestion_retries | dispatched_at timestamptz, job jsonb | RETRY#id / DISPATCH or DISPATCH#requestId; original SK |
+| import_records | source jsonb, applied_at timestamptz | USER#owner / IMPORT#provider#id; original SK |
+| bulk_edit_operations | applied_at timestamptz, undone_at timestamptz | BULK_EDIT#owner / OP#id; original payload.operationId |
+| delivery_records | month text, prepared_at timestamptz, sent_at timestamptz, content_sha256 text | USER#owner / MONTHLY_CLOSE#month or MONTH_END_BALANCE_REMINDER#month; original SK |
+| push_subscriptions | active boolean, content_mode text | USER#owner / PUSH#id; original subscriptionId |
+| assistant_threads | session_id text, title text, first_month text | USER#owner / ASSISTANT_THREAD#id or ACTIVE; original suffix |
+
+Top-level numeric expiresAt alone promotes to expires_at. Bulk payload deadline is preserved in JSONB even after physical TTL is removed on apply/undo. Retained expired envelopes are parity evidence; live displays filter them, native source deletion removes SQL rows through tombstones. No custom SQL expiry authority or mirrored native memory exists. Primary-key ranges serve the observed personal volume; no additional secondary indexes are needed. See [complete keys/writers/read boundaries/retention](dsql-operational-state.md).
+
 ## Operational tables
 
 ### olbia.projection_state
@@ -301,7 +313,7 @@ CREATE TABLE IF NOT EXISTS olbia.projection_state (
 | `source_hash` | SHA-256 of canonical source JSON; null for an absent source item. |
 | `source_item` | Full DynamoDB source envelope as JSONB, not only the domain payload. Null when absent. |
 | `deleted` | Whether the source item is absent. A default category can still have an effective relational row. |
-| `transformer_version` | Projection transformation version, currently 3. |
+| `transformer_version` | Projection transformation version, currently 4. |
 | `reconciled_at` | Time SQL reconciliation applied the source’s current state. |
 | `stream_arn`, `stream_sequence`, `stream_delivered_at` | Last applied stream-trigger evidence for this key. These are not a global source version or a completeness watermark; recovery replay can update them. |
 
@@ -313,7 +325,7 @@ The checkpoint and its derived rows commit in the same SQL transaction. Reconcil
 CREATE TABLE IF NOT EXISTS olbia.schema_migrations (version integer PRIMARY KEY, applied_at timestamptz NOT NULL);
 ```
 
-Records applied SQL schema versions. Bootstrap preserves versions 1/2 and adds version 3 with conflict-safe inserts. Version 2 created the two planning/payroll tables. Version 3 creates four Patrimonio tables and explicitly adds cards.source_item. CloudFormation bootstrap provider version 5 applied the additive DDL and grants; current provider 6 extends only existing category/rule SELECT grants and the card-cycle reader identity. Versions 2/3 of the provider previously handled deployment recovery and movement reader grants.
+Records applied SQL schema versions. Bootstrap preserves versions 1/2/3 and adds version 4 with conflict-safe inserts. Version 2 created the two planning/payroll tables. Version 3 creates four Patrimonio tables and explicitly adds cards.source_item. CloudFormation bootstrap provider version 5 applied the additive DDL and grants; provider 6 extended category/rule SELECT grants and the card-cycle reader identity; provider 7 adds operational tables and the separate verifier role. Versions 2/3 of the provider previously handled deployment recovery and movement reader grants.
 
 ## View and indexes
 
@@ -340,12 +352,15 @@ Both are non-unique. Every table also has its primary-key index. Bootstrap waits
 
 ## Access and maintenance
 
-The SQL runtime role `olbia_projector` has schema USAGE and SELECT/INSERT/UPDATE/DELETE on the fifteen domain tables and projection_state. It has SELECT only on schema_migrations and movement_months. The projector, maintenance, replay and schema-bootstrap IAM roles are associated with this SQL role. The schema-bootstrap function also has admin connection permission to perform DDL, then uses the non-admin role for its smoke check. The projector, maintenance and replay functions do not have admin connection permission.
+The SQL runtime role `olbia_projector` has schema USAGE and SELECT/INSERT/UPDATE/DELETE on the twenty-four entity tables and projection_state. It has SELECT only on schema_migrations and movement_months. The projector, maintenance, replay and schema-bootstrap IAM roles are associated with this SQL role. The schema-bootstrap function also has admin connection permission to perform DDL, then uses the non-admin role for its smoke check. The projector, maintenance and replay functions do not have admin connection permission.
 
-`olbia_reader` has schema USAGE and SELECT only on `movements`, `movement_observations`, `movement_revisions`, `msi_installments`, `monthly_plans`, `payroll`, `cards`, `wealth_snapshots`, `wealth_versions`, `liability_snapshots`, `liability_versions`, `categories` and `merchant_category_rules`. The API, read verification, agent tools, daily balance push, monthly close, month-end reminder and card-cycle push IAM identities connect through this role without SQL write/admin grants. Bootstrap provider 5 added the four snapshot/audit tables and existing cards; provider 6 adds SELECT on existing categories/rules and the card-cycle identity. Existing schema/transformer 3 keys/indexes remain.
+`olbia_reader` has schema USAGE and SELECT only on `movements`, `movement_observations`, `movement_revisions`, `msi_installments`, `monthly_plans`, `payroll`, `cards`, `wealth_snapshots`, `wealth_versions`, `liability_snapshots`, `liability_versions`, `categories`, `merchant_category_rules`, `ingestion_exceptions`, `import_records`, `push_subscriptions` and `assistant_threads`. The API, read verification, agent tools, daily balance push, monthly close, month-end reminder and card-cycle push IAM identities connect through this role without SQL write/admin grants. Bootstrap provider 5 added the four snapshot/audit tables and existing cards; provider 6 adds SELECT on existing categories/rules and the card-cycle identity. Existing schema/transformer 3 keys/indexes remain.
 
 Maintain this reference whenever DDL, transformation, keys, indexes or projection scope change. Adding a column to CREATE TABLE IF NOT EXISTS does not alter an existing table: future schema changes need explicit additive, versioned migrations.
 
 Definition sources: [model.ts](../services/ledger/src/dsql/model.ts), [schema.ts](../services/ledger/src/dsql/schema.ts), [projection.ts](../services/ledger/src/dsql/projection.ts). Operational context: [runbook](dsql-migration-runbook.md), [migration plan](dsql-migration-plan.md), and [verified deployment repair](autonomous-runs/2026-09-30-dsql-deployment-repair.md).
 
 The [remaining domain-read phase](dsql-domain-reads.md) keeps schema/transformer version 3 and uses bootstrap provider 6 for thirteen SELECT-only reader tables (adds existing categories/rules) and the existing card-cycle worker association. No new tables, columns, indexes or projection/recovery changes are needed.
+
+
+Version 4 preserves migration rows 1/2/3 and adds row 4 and nine tables. Bootstrap provider 7 grants product olbia_reader SELECT only on four display tables (17 total with prior financial tables), and olbia_operational_verifier SELECT only on nine operational tables for the deployed probe. Projector runtime extends scoped table mutation grants across the complete 24-table projection; neither reader has mutation/admin permission. Existing native recovery and resource identities remain unchanged. Later schema text above preserves historical deployment context; the operational document/run record is the current rollout authority.
