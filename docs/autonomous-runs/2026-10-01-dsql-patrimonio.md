@@ -10,16 +10,9 @@ Read repository/autonomous/product/UI/Patrimonio and DSQL guidance before implem
 
 ## Progress and next steps
 
-- Started isolated branch codex/dsql-patrimonio from refreshed origin/main; read required guides and prior phase evidence.
-- Next: inventory real records and code dependencies; record architecture/latency decisions before implementation; extend additive schema/projector/verification/readers; meaningful SQL tests and checks; shadow PR/deploy/real gate; separate guarded promotion; final evidence.
+Completed shadow rollout (#158), independent real-data acceptance, separate guarded rollout (#159) and repeated production reconciliation/verification. Final documentation records the completed state; remaining dependencies belong to later phases.
 
 ## Decisions
-
-## Verification results
-
-## Outcome and remaining work
-
-Shadow implemented/deployed/verified; guarded promotion and final verification in progress.
 
 ### D1 — Reuse native capture and separate canonical/audit tables
 - Context: Same-day replacement must retain audit versions without multiplying balances; snapshots are flat source envelopes, not ledger payloads.
@@ -45,7 +38,9 @@ Shadow implemented/deployed/verified; guarded promotion and final verification i
 - Consequences, verification, and revisit conditions: Verify exact source FX values via independent column/content checks and native deployed gate; revisit only if source FX becomes an exact decimal string contract.
 - Status: Validated native documentation, local SQL and deployed column/complete-content comparisons.
 
-## Implementation checkpoint
+## Verification results
+
+### Implementation checkpoint
 
 Four additive source tables, source-key support, same existing checkpoint/OCC/reconciliation/replay, card-envelope ALTER, narrow reader grants and shadow flag on API/probe/agent/monthly-close/month-end-reminder implemented. Whole canonical inputs use one SQL statement/guard; report reuses inputs and yearly payroll; assistant market histories load once. Source-only manual/sync writes and notification behavior are unchanged. Independent gate compares all source content/promoted columns, every retained day/month/history/holding, deterministic report/reminder output and original S3 hashes; movement/planning/payroll gate remains.
 
@@ -75,3 +70,30 @@ Read-only component verification: six successful API/agent reads, six equal weal
 The shadow acceptance gate passed with real financial/evidence data, so proceed with a separate guarded promotion PR based directly on refreshed origin/main. Only wealth mode changes; financial algorithms, source authority, other flags, grants/schema/resources and recovery remain. No notifications, source mutations or manufactured records were used. No natural new Patrimonio capture was manufactured to test Streams; support/recovery/concurrency is covered by the deployed unfiltered native mapping and meaningful local adversarial/repeated-capture tests.
 
 Guarded promotion local checks: nine focused Patrimonio SQL tests passed; web build/synth passed; all ten protected resources remain unchanged and all five participating runtimes synthesize guarded wealth mode. Only the flag and evidence/status documentation differ from shadow. Next: required remote quality, CLEAN/MERGEABLE linear merge, deploy-production and repeat independent native verification.
+
+## Guarded delivery checkpoint
+
+[PR #159](https://github.com/DavidCs9/personal-finance-system/pull/159) passed required quality, was CLEAN/MERGEABLE and squash merged as `8320e36c93d19235dee664b78eec90e65fa9c4e0` at 15:27:10 UTC. Production deployment and repeated independent verification pending; no guarded completion claim yet. Final evidence will be delivered by a documentation PR from refreshed origin/main.
+
+Final evidence branch created directly from refreshed origin/main after the guarded merge. Production component probes invoke Lambda service/tool runtimes directly; they do not test API Gateway JWT authentication, send scheduled workers or call sync refresh mutations. Scheduled close/reminder results are checked by the shared deterministic functions in the independent deployed probe, without SES/Web Push. Existing authentication and delivery contracts are unchanged.
+
+Guarded deployment run 36884373746 completed CloudFormation UPDATE_COMPLETE and began reconciliation `deploy-36884373746-1` at 15:31:40 UTC. Native deployed template confirms every one of the ten protected source/retained definitions matches the pre-phase template exactly. Six API/agent component reads produced six equal wealth comparisons selecting SQL, zero mismatch/error; all five participating functions Successful/guarded-sql. Existing mapping Enabled/OK and eight DSQL alarms OK. Final independent production reconciliation/financial/evidence gate remains pending at this checkpoint.
+
+
+### Final guarded production acceptance
+
+[Guarded deploy-production run 36884373746](https://github.com/DavidCs9/personal-finance-system/actions/runs/36884373746) succeeded for merged PR #159. Deployed reconciliation `deploy-36884373746-1` ran 15:31:40–15:34:57 UTC (09:31:40–09:34:57 America/Chihuahua), with 3,560 projected/equal comparisons across both passes, zero lag and zero mismatches. Its versioned private recovery report reached `done`. These are comparison counts, not distinct table-row counts.
+
+The deployed independent gate returned `verified: true`, wealth `guarded-sql`, and zero mismatches: 120 canonical asset snapshots, four asset audit versions, 22 canonical liabilities, three liability audit versions and three card envelopes/columns; 95 as-of days and daily/history overviews, 21 months, 193 investment/position checks, 21 deterministic reports, 95 reminder renderings, and SHA-256 equality for all 149 original S3 evidence files. Whole content and promoted columns are verified independently of freshness fallback. Wealth elapsed 30,313 ms; full combined gate 64,538 ms.
+
+Existing movement/planning/payroll regression gates passed: six stored plans, 19 CFDIs/details/XML hashes, 22 plans/summaries/compensation/wealth closes, three payroll years, current payroll-derived overview, 492 movement details, 21 feeds/summaries and 19 ranges, zero mismatches. Native wealth input/audit EXPLAIN used Index Only Scan (single samples: inputs 2.716 ms / 1.02240 DPU, audit 0.754 ms / 0.06123 DPU); these observations are not latency guarantees.
+
+Six API/agent component reads recorded six equal comparisons selecting SQL, zero errors/mismatches. All five participating functions reported Successful/guarded-sql; CloudFormation UPDATE_COMPLETE, mapping Enabled/OK, eight DSQL alarms OK. All ten protected retained/source resource definitions exactly match the pre-phase deployed template. Schema 1/2/3 and bootstrap 5 are deployed with exactly eleven SELECT-only reader table grants. STS was checked immediately before production operations, including final native reconciliation evidence retrieval, and confirmed default codex-local-admin/account 225989371926.
+
+## Outcome and remaining work
+
+The requested Patrimonio migration is complete: retained backfill, continuous projection/recovery, independent financial/content/evidence verification, API/assistant/report/reminder SQL consumers, narrow grants, bounded guarded fallback and separate verified shadow/guarded production releases. Full workspace 409 tests, nine Python recovery tests, checks/build/synth and required remote quality passed. Original checkout still contains exactly David's three unrelated AWS-auth guidance edits, untouched.
+
+DynamoDB remains the authority for every domain write and strong freshness guard. Remaining source dependencies are enumerated in [Patrimonio migration](../dsql-patrimonio.md): standalone card cycle/validation/writes, categories/rules, movement worker/dedupe/import decisions, CFDI claims, bulk operations, ingestion/retry state, delivery/subscription state and assistant conversations. SQL write-authority cutover, DynamoDB retirement, unrelated state migrations and infrastructure-tool changes remain later phases. No outstanding product decision or user approval is required for this completed scope.
+
+No production financial records or notifications were fabricated; sync refreshes were not invoked for testing. Natural post-rollout captures were not forced, so repeated/manual/confirmed/sync-failure/transaction/recovery/outage/rollback behavior is supported by meaningful local tests and the existing deployed unfiltered mapping/reconciliation, rather than a fabricated live capture. No source history, identities, evidence or financial algorithm was changed.

@@ -1,6 +1,6 @@
 # DSQL Patrimonio migration
 
-Schema/transformer version 3 adds retained canonical asset/liability snapshots and their audit versions to the existing projection. Bootstrap provider version 5 applies additive DDL and narrow SELECT grants. DynamoDB remains the write authority and strong freshness reference. Shadow deployment and independent real-data verification passed; this promotion selects guarded SQL results only after the same strong equality check.
+Schema/transformer version 3 adds retained canonical asset/liability snapshots and their audit versions to the existing projection. Bootstrap provider version 5 applies additive DDL and narrow SELECT grants. DynamoDB remains the write authority and strong freshness reference. Separate shadow and guarded deployments passed independent real-data verification. Guarded reads are active and select SQL results only after the same strong equality check.
 
 ## Source and consumer inventory
 
@@ -60,4 +60,10 @@ Run evidence: [autonomous record](autonomous-runs/2026-10-01-dsql-patrimonio.md)
 
 Six deployed read-only API/agent component invocations returned equal wealth comparisons and selected source in shadow, with zero error/mismatch. All five participating runtimes reported Successful/shadow. CloudFormation UPDATE_COMPLETE, unchanged mapping Enabled/OK, eight DSQL alarms OK. Native schema rows [1,2,3] coexist; reader has exactly eleven SELECT table grants and no mutation grants. Both wealth input/audit SQL statements used Index Only Scan. Single EXPLAIN samples: inputs 2.703 ms / 0.99022 DPU; audit 1.116 ms / 0.03765 DPU. These are individual observations, not latency guarantees. Patrimonio gate elapsed 29,183 ms; full combined gate 60,482 ms.
 
-Guarded promotion preserves the same fallback and all writer/source/resource behavior. Its separate deployment must repeat reconciliation and the independent gate before completion is claimed.
+## Production guarded evidence
+
+[PR #159](https://github.com/DavidCs9/personal-finance-system/pull/159) passed quality/CLEAN/MERGEABLE and squash merged; [guarded deploy-production](https://github.com/DavidCs9/personal-finance-system/actions/runs/36884373746) succeeded. Reconciliation `deploy-36884373746-1` ran 15:31:40–15:34:57 UTC with 3,560 equal comparisons, zero lag/mismatch. The independent guarded gate repeated the complete retained-record/column, financial/history/audit, report/reminder and 149 evidence-hash checks listed above, with zero mismatches. Existing movement/planning/payroll gates again passed with zero mismatches. Patrimonio elapsed 30,313 ms; combined gate 64,538 ms.
+
+Six read-only API/agent component invocations recorded six equal comparisons selecting SQL, zero errors/mismatches. All five participating functions reported Successful/guarded-sql, CloudFormation UPDATE_COMPLETE, mapping Enabled/OK and eight DSQL alarms OK. Ten protected source/retained resource definitions match the pre-phase template exactly. Wealth input/audit queries used Index Only Scan; single samples: 2.716 ms / 1.02240 DPU and 0.754 ms / 0.06123 DPU.
+
+Component probes invoke deployed Lambda API/tool runtimes directly; they do not exercise API Gateway JWT authentication. The independent probe checks scheduled close/reminder deterministic functions without sending SES/Web Push or invoking sync refreshes. No new production captures were fabricated; local tests cover repeated/manual/confirmed captures, sync failures preserving the last good snapshot, transactional rollback and bounded SQL fallback. Native continuous projection/recovery and reconciliation remain deployed.

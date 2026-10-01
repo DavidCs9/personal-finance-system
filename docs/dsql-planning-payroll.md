@@ -1,6 +1,6 @@
 # DSQL monthly planning and payroll
 
-This phase extends the existing projection to `USER#owner / MONTH#YYYY-MM` and `USER#owner / PAYROLL#YYYY-MM#UUID`. DynamoDB remains the authority for every plan save, CFDI import and dedupe claim. Original XML files remain in S3. Patrimonio accounts, snapshots, liabilities and audit versions remain outside SQL.
+This phase extends the existing projection to `USER#owner / MONTH#YYYY-MM` and `USER#owner / PAYROLL#YYYY-MM#UUID`. DynamoDB remains the authority for every plan save, CFDI import and dedupe claim. Original XML files remain in S3. At the completion of this phase, Patrimonio snapshots, liabilities and audit versions remained outside SQL; the subsequent [Patrimonio phase](dsql-patrimonio.md) has now projected them and deployed independently verified guarded readers.
 
 ## Projection and backfill
 
