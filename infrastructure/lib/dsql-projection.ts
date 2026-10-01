@@ -68,7 +68,7 @@ export class DsqlProjection extends Construct {
     });
     const bootstrap = new CustomResource(this, 'Bootstrap', {
       serviceToken: provider.serviceToken,
-      properties: { Version: 1, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
+      properties: { Version: 2, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
     });
     // IAM policies must be installed before the bootstrap handler connects.
     for (const fn of runtimes) bootstrap.node.addDependency(fn.role!);

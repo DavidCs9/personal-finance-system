@@ -28,6 +28,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: python3 -m unittest discover -s infrastructure/scripts -p 'test_*.py'
       - run: npm run test -- --runInBand
       - run: npm run check --workspace @finance/ledger
       - run: npm run check --workspace @finance/web
@@ -89,6 +90,12 @@ jobs:
             echo "OLBIA_SYSTEM_PROMPT_MAX_TOKENS=$prompt_max_tokens"
           } >> "$GITHUB_ENV"
       - run: npm run build --workspace @finance/web
+      - name: Synthesize reviewed DSQL recovery definitions
+        run: npx cdk synth PersonalFinanceV1 --quiet --output cdk.out.recovery
+        working-directory: infrastructure
+      - name: Adopt DSQL resources retained by a failed rollout
+        timeout-minutes: 20
+        run: python3 infrastructure/scripts/recover-dsql-resources.py infrastructure/cdk.out.recovery/PersonalFinanceV1.template.json
       - run: >-
           npx cdk diff PersonalFinanceV1
           --parameters PersonalFinanceV1:SesSenderEmail="$SES_SENDER_EMAIL"

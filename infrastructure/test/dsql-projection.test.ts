@@ -4,6 +4,8 @@ import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { DsqlProjection } from '../lib/dsql-projection';
+import { spawnSync } from 'node:child_process';
+import * as path from 'node:path';
 
 const stackFor = (projection: boolean): Stack => {
   const stack = new Stack(new App(), 'Test', { env: { account: '225989371926', region: 'us-east-2' } });
@@ -56,5 +58,24 @@ describe('DSQL migration infrastructure safety', () => {
     template.resourceCountIs('AWS::Scheduler::Schedule', 1);
     expect(JSON.stringify(template.findResources('AWS::SNS::TopicPolicy'))).toContain('cloudwatch.amazonaws.com');
     expect(JSON.stringify(template.findResources('AWS::SNS::TopicPolicy'))).toContain('sns:Publish');
+    expect(Object.values(template.findResources('AWS::CloudFormation::CustomResource'))[0].Properties.Version).toBe(2);
+  });
+  it('can import every retained synthesized DSQL resource without updating the source table or encryption key', () => {
+    const script = `
+import importlib.util,json,sys
+spec=importlib.util.spec_from_file_location('recover','scripts/recover-dsql-resources.py')
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+current,desired=json.load(sys.stdin)
+events=[dict(LogicalResourceId=name,ResourceType=resource['Type'],ResourceStatus='DELETE_SKIPPED',PhysicalResourceId=name) for name,resource in desired['Resources'].items() if name.startswith('DsqlProjection') and resource.get('DeletionPolicy')=='Retain']
+template,imports=module.import_plan(current,desired,events)
+assert all(template['Resources'][name]==resource for name,resource in current['Resources'].items())
+assert len(imports)==8
+print(len(imports))
+`;
+    const result = spawnSync('python3', ['-c', script], { cwd: path.resolve(__dirname, '..'),
+      input: JSON.stringify([baseline.toJSON(), migrated.toJSON()]), encoding: 'utf8' });
+    expect(result.stderr).toBe('');
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('8');
   });
 });

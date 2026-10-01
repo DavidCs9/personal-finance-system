@@ -7,7 +7,7 @@ import { DEFAULT_SPEND_CATEGORIES } from '@finance/domain';
 import { canonicalJson, entityForKey, projectRows, TABLE_NAMES, PROJECTION_VERSION, type SourceItem, type SourceKey } from './model.js';
 import { processStream, reconcileKey, type TransactionPool, type SqlClient, type StreamDelivery } from './projection.js';
 import { verifyKeyDetails } from './verification.js';
-import { bootstrapSchema } from './schema.js';
+import { bootstrapSchema, BootstrapFailure } from './schema.js';
 
 const required = (name: string): string => {
   const value = process.env[name];
@@ -17,7 +17,7 @@ const required = (name: string): string => {
 export const createPool = (user = 'olbia_projector'): AuroraDSQLPool => new AuroraDSQLPool({
   host: required('DSQL_ENDPOINT'), user, database: 'postgres', max: 2,
   ssl: { rejectUnauthorized: true }, connectionTimeoutMillis: 10_000,
-  idleTimeoutMillis: 10_000, maxLifetimeSeconds: 300, statement_timeout: 20_000,
+  idleTimeoutMillis: 10_000, maxLifetimeSeconds: 300, query_timeout: 20_000,
   retry: { maxRetries: 4, baseDelayMs: 25, maxDelayMs: 100 },
   // Driver errors can contain parameter values. Native Lambda/ESM metrics expose failures.
   logger: { warn: () => {}, error: () => {} },
@@ -41,18 +41,20 @@ export const schemaHandler = async (event: {
   const PhysicalResourceId = event.PhysicalResourceId ?? 'olbia-dsql-schema-v1';
   if (event.RequestType === 'Delete') return { PhysicalResourceId };
   const admin = createPool('admin');
+  let stage = 'admin-connect';
   try {
     const client = await admin.connect();
     try { await bootstrapSchema(client as SqlClient, event.ResourceProperties.RuntimeRoleArns ?? []); }
     finally { client.release(); }
     // Real engine / non-admin IAM smoke, before enabling the event source.
+    stage = 'runtime-connect-and-smoke';
     const runtime = createPool();
     try {
       const version = await runtime.query('SELECT version FROM olbia.schema_migrations WHERE version=$1', [PROJECTION_VERSION]);
       if (version.rows.length !== 1) throw new Error('Schema smoke failed');
     } finally { await runtime.end(); }
-  } catch {
-    throw new Error('DSQL bootstrap or runtime IAM smoke failed; inspect native platform metrics');
+  } catch (error) {
+    throw error instanceof BootstrapFailure ? error : new BootstrapFailure(stage, error);
   } finally { await admin.end(); }
   return { PhysicalResourceId };
 };

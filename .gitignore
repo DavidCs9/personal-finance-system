@@ -21,3 +21,4 @@ cdk.context.json
 
 # Local Textract debug downloads
 .debug/
+__pycache__/

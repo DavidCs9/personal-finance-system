@@ -1,5 +1,14 @@
 import { TABLE_COLUMNS, TABLE_NAMES } from './model.js';
 import type { SqlClient } from './projection.js';
+import { isOCCError } from '@aws/aurora-dsql-node-postgres-connector';
+
+export class BootstrapFailure extends Error {
+  constructor(stage: string, error?: unknown) {
+    const code = (error as { code?: unknown })?.code;
+    const safeCode = typeof code === 'string' && /^(?:[A-Z0-9]{5}|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|CERT_HAS_EXPIRED|UNABLE_TO_VERIFY_LEAF_SIGNATURE)$/.test(code) ? code : 'operation';
+    super(`DSQL bootstrap failed at ${stage} (${safeCode})`);
+  }
+}
 
 // DSQL has no CloudFormation SQL-schema resource. Additive, independently
 // committed DDL is resumable; Delete of the provider must never run DROP.
@@ -22,28 +31,47 @@ export const SCHEMA_STATEMENTS = [
   `INSERT INTO olbia.schema_migrations VALUES (1,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
 ];
 
-export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[]): Promise<void> => {
-  for (const statement of SCHEMA_STATEMENTS) await client.query(statement);
+export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
+  now?: () => number; pause?: (ms: number) => Promise<void>; indexWaitMs?: number;
+} = {}): Promise<void> => {
+  const now = options.now ?? Date.now;
+  const pause = options.pause ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const query = async (stage: string, statement: string, params?: unknown[]) => {
+    for (let attempt = 0; ; attempt++) {
+      try { return await client.query(statement, params); }
+      catch (error) {
+        if (!isOCCError(error) || attempt >= 4) throw new BootstrapFailure(stage, error);
+        // One autocommit statement per retry; never combine DDL and DML.
+        await pause(25 * 2 ** attempt);
+      }
+    }
+  };
+  for (const [index, statement] of SCHEMA_STATEMENTS.entries()) await query(`schema-statement-${index + 1}`, statement);
   for (const [name, table, columns] of [
     ['movements_month_idx', 'movements', 'spend_month,id'],
     ['installments_month_idx', 'msi_installments', 'month,movement_id'],
   ]) {
-    const job = await client.query(`CREATE INDEX ASYNC IF NOT EXISTS ${name} ON olbia.${table} (${columns})`);
-    if (job.rows[0]?.job_id) {
-      const completed = await client.query('SELECT sys.wait_for_job($1) AS completed', [job.rows[0].job_id]);
-      if (completed.rows[0]?.completed !== true) throw new Error('DSQL index build failed');
+    await query(`index-create-${name}`, `CREATE INDEX ASYNC IF NOT EXISTS ${name} ON olbia.${table} (${columns})`);
+    const deadline = now() + (options.indexWaitMs ?? 180_000);
+    for (;;) {
+      const valid = await query(`index-ready-${name}`, 'SELECT indisvalid FROM pg_index WHERE indexrelid=$1::regclass', [`olbia.${name}`]);
+      if (valid.rows[0]?.indisvalid === true) break;
+      // IF NOT EXISTS returns no job ID when resuming an interrupted build.
+      // sys.wait_for_job is a PROCEDURE, not a function for SELECT.
+      const jobs = await query(`index-status-${name}`, 'SELECT status FROM sys.jobs WHERE object_id=$1::regclass AND job_type=$2', [`olbia.${name}`, 'INDEX_BUILD']);
+      if (jobs.rows.some((job) => job.status === 'failed')) throw new BootstrapFailure(`index-build-${name}`);
+      if (now() >= deadline) throw new BootstrapFailure(`index-timeout-${name}`);
+      await pause(1_000);
     }
-    const valid = await client.query('SELECT indisvalid FROM pg_index WHERE indexrelid=$1::regclass', [`olbia.${name}`]);
-    if (valid.rows[0]?.indisvalid !== true) throw new Error('DSQL index is not ready');
   }
 
-  const existing = await client.query("SELECT rolname FROM pg_roles WHERE rolname='olbia_projector'");
-  if (!existing.rows.length) await client.query('CREATE ROLE olbia_projector WITH LOGIN');
-  await client.query('GRANT USAGE ON SCHEMA olbia TO olbia_projector');
-  await client.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON ${['projection_state', ...TABLE_NAMES].map((table) => `olbia.${table}`).join(',')} TO olbia_projector`);
-  await client.query('GRANT SELECT ON olbia.schema_migrations,olbia.movement_months TO olbia_projector');
+  const existing = await query('role-lookup', "SELECT rolname FROM pg_roles WHERE rolname='olbia_projector'");
+  if (!existing.rows.length) await query('role-create', 'CREATE ROLE olbia_projector WITH LOGIN');
+  await query('schema-grant', 'GRANT USAGE ON SCHEMA olbia TO olbia_projector');
+  await query('tables-grant', `GRANT SELECT,INSERT,UPDATE,DELETE ON ${['projection_state', ...TABLE_NAMES].map((table) => `olbia.${table}`).join(',')} TO olbia_projector`);
+  await query('read-grant', 'GRANT SELECT ON olbia.schema_migrations,olbia.movement_months TO olbia_projector');
   for (const arn of roleArns) {
     if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid runtime role ARN');
-    await client.query(`AWS IAM GRANT olbia_projector TO '${arn}'`);
+    await query('iam-grant', `AWS IAM GRANT olbia_projector TO '${arn}'`);
   }
 };
