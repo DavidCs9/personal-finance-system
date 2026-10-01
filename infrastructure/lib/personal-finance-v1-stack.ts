@@ -174,7 +174,7 @@ export class PersonalFinanceV1Stack extends Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    new DsqlProjection(this, 'DsqlProjection', {
+    const dsqlProjection = new DsqlProjection(this, 'DsqlProjection', {
       table: metadataTable, encryptionKey, alertRecipientEmail: alertRecipientEmail.valueAsString,
     });
 
@@ -446,6 +446,24 @@ export class PersonalFinanceV1Stack extends Stack {
     rawEmailBucket.grantRead(apiFunction);
     rawEmailBucket.grantPut(apiFunction);
     metadataTable.grantReadWriteData(apiFunction);
+    // First rollout compares SQL without serving it. Promote only after deployed verification passes.
+    const ledgerReadMode = 'shadow';
+    apiFunction.addEnvironment('DSQL_LEDGER_READ_MODE', ledgerReadMode);
+    dsqlProjection.grantReader(apiFunction);
+    const readVerificationFunction = new NodejsFunction(this, 'DsqlReadVerification', {
+      ...lambdaDefaults, functionName: 'personal-finance-v1-dsql-read-verification',
+      entry: path.join(__dirname, '..', 'lambda', 'dsql-read-verification.ts'), handler: 'handler',
+      timeout: Duration.minutes(10), memorySize: 512,
+      logGroup: this.createLogGroup('DsqlReadVerificationLogGroup', 'personal-finance-v1-dsql-read-verification'),
+      environment: { ...dataStorageEnvironment, AGENT_OWNER_SUB: agentOwnerSub.valueAsString,
+        DSQL_LEDGER_READ_MODE: ledgerReadMode },
+    });
+    metadataTable.grantReadData(readVerificationFunction);
+    encryptionKey.grantDecrypt(readVerificationFunction);
+    dsqlProjection.grantReader(readVerificationFunction);
+    new cdk.CfnOutput(this, 'DsqlReadVerificationFunction', { value: readVerificationFunction.functionName });
+    const readVerifyDeployRole = iam.Role.fromRoleName(this, 'DsqlReadVerifyDeployRole', 'personal-finance-v1-github-deploy');
+    readVerificationFunction.grantInvoke(readVerifyDeployRole);
     apiFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'],
       resources: [metadataTable.tableArn, `${metadataTable.tableArn}/index/*`],

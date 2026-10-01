@@ -21,11 +21,28 @@ import { Construct } from 'constructs';
 import * as path from 'node:path';
 
 export class DsqlProjection extends Construct {
+  private readonly cluster: dsql.CfnCluster;
+  private readonly bootstrap: CustomResource;
+  private readonly readerRoleArns: string[] = [];
+
+  /** Add read-only API/probe access without granting projection writes or admin permissions. */
+  grantReader(fn: NodejsFunction): void {
+    fn.addEnvironment('DSQL_ENDPOINT', this.cluster.attrEndpoint);
+    fn.addToRolePolicy(new iam.PolicyStatement({ actions: ['dsql:DbConnect'], resources: [this.cluster.attrResourceArn] }));
+    this.readerRoleArns.push(fn.role!.roleArn);
+    (this.bootstrap.node.defaultChild as CfnResource).addPropertyOverride('ReaderRoleArns', this.readerRoleArns);
+    this.bootstrap.node.addDependency(fn.role!);
+    // Depend only the Lambda resource on bootstrap. Depending the whole construct
+    // would also order its IAM policy after bootstrap, creating a cycle.
+    (fn.node.defaultChild as CfnResource).addDependency(this.bootstrap.node.defaultChild as CfnResource);
+  }
+
   constructor(scope: Construct, id: string, props: {
     table: dynamodb.ITable; encryptionKey: kms.IKey; alertRecipientEmail: string;
   }) {
     super(scope, id);
     const cluster = new dsql.CfnCluster(this, 'Cluster', { deletionProtectionEnabled: true });
+    this.cluster = cluster;
     cluster.applyRemovalPolicy(RemovalPolicy.RETAIN);
     const recovery = new s3.Bucket(this, 'Recovery', {
       encryption: s3.BucketEncryption.KMS, encryptionKey: props.encryptionKey,
@@ -68,8 +85,9 @@ export class DsqlProjection extends Construct {
     });
     const bootstrap = new CustomResource(this, 'Bootstrap', {
       serviceToken: provider.serviceToken,
-      properties: { Version: 2, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
+      properties: { Version: 3, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
     });
+    this.bootstrap = bootstrap;
     // IAM policies must be installed before the bootstrap handler connects.
     for (const fn of runtimes) bootstrap.node.addDependency(fn.role!);
     projector.addEventSource(new DynamoEventSource(props.table, {

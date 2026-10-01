@@ -4,7 +4,7 @@
 
 The deployed database contains the **ledger projection**, not every application record. It has nine domain tables, two operational tables and one view, all under the SQL schema `olbia` in the regional DSQL cluster in `us-east-2`.
 
-DynamoDB remains the authority for application reads and writes. Its stream projects supported records into DSQL; daily reconciliation repairs and verifies current state. The long-term destination, explicitly stated by David on 2026-09-30, is to retire DynamoDB after the remaining data and application dependencies migrate. That cutover has not happened.
+DynamoDB remains the authority for application writes. Its stream projects supported records into DSQL; daily reconciliation repairs and verifies current state. The [movement read rollout](dsql-read-migration.md) introduces reversible shadow/guarded SQL reads with a source freshness check. The long-term destination, explicitly stated by David on 2026-09-30, is to retire DynamoDB after the remaining data and application dependencies migrate. That cutover has not happened.
 
 The deployed schema and real historical ledger passed [production verification](https://github.com/DavidCs9/personal-finance-system/actions/runs/36801466045): 3,200 source/target comparisons, zero lag, zero mismatches, and matching monthly/currency financial aggregates. These are comparison counts across both passes, not a SQL row count. Counts below are the observed snapshot from that execution on 2026-10-01 UTC (2026-09-30 in America/Chihuahua); they are not live counters or a claim that all DynamoDB entities migrated.
 
@@ -296,6 +296,8 @@ Both are non-unique. Every table also has its primary-key index. Bootstrap waits
 ## Access and maintenance
 
 The SQL runtime role `olbia_projector` has schema USAGE and SELECT/INSERT/UPDATE/DELETE on the nine domain tables and projection_state. It has SELECT only on schema_migrations and movement_months. The projector, maintenance, replay and schema-bootstrap IAM roles are associated with this SQL role. The schema-bootstrap function also has admin connection permission to perform DDL, then uses the non-admin role for its smoke check. The projector, maintenance and replay functions do not have admin connection permission.
+
+The read rollout adds `olbia_reader`, with schema USAGE and SELECT only on `movements`, `movement_observations`, `movement_revisions` and `msi_installments`. The API and read verification IAM identities connect through this role without SQL write/admin grants. Bootstrap provider version 3 adds these associations; SQL schema/transformer version remains 1 and no tables, indexes or keys change.
 
 Maintain this reference whenever DDL, transformation, keys, indexes or projection scope change. Adding a column to CREATE TABLE IF NOT EXISTS does not alter an existing table: future schema changes need explicit additive, versioned migrations.
 

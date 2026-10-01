@@ -18,7 +18,8 @@
     "./agent-tools": "./src/agent/tools-handler.ts",
     "./agent-tag-mutations": "./src/agent/tag-mutation-tools-handler.ts",
     "./agent-tag-mutation-tool-definitions": "./src/agent/tag-mutation-tool-definitions.ts",
-    "./agentcore-provisioner": "./src/agent/provisioner.ts"
+    "./agentcore-provisioner": "./src/agent/provisioner.ts",
+    "./dsql-read-verification": "./src/events/read-verification.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",
@@ -44,6 +45,7 @@
     "aws-jwt-verify": "^5.2.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@types/aws-lambda": "^8.10.147",
     "vitest": "^3.0.8"
   }

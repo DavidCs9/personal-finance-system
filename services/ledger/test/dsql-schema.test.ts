@@ -7,6 +7,17 @@ const ready = (statement: string) => ({ rows:
   statement.includes('pg_roles') ? [{ rolname: 'olbia_projector' }] : [],
 });
 describe('DSQL-specific schema bootstrap', () => {
+  it('grants reader IAM identities only SELECT on the exact read tables, with no projection or admin role membership', async () => {
+    const query = vi.fn(async (statement: string) => statement.includes("rolname='olbia_reader'") ? { rows: [] } : ready(statement));
+    await bootstrapSchema({ query } as SqlClient, [], { readerRoleArns: ['arn:aws:iam::225989371926:role/api-reader'] });
+    const statements = query.mock.calls.map(([statement]) => statement).filter(statement => statement.includes('olbia_reader'));
+    expect(statements).toContain('CREATE ROLE olbia_reader WITH LOGIN');
+    expect(statements).toContain('GRANT USAGE ON SCHEMA olbia TO olbia_reader');
+    expect(statements).toContain('GRANT SELECT ON olbia.movements,olbia.movement_observations,olbia.movement_revisions,olbia.msi_installments TO olbia_reader');
+    expect(statements).toContain("AWS IAM GRANT olbia_reader TO 'arn:aws:iam::225989371926:role/api-reader'");
+    expect(statements.join()).not.toMatch(/GRANT (?:ALL|INSERT|UPDATE|DELETE)|olbia_projector TO/);
+    await expect(bootstrapSchema({ query } as SqlClient, [], { readerRoleArns: ["unsafe' ARN"] })).rejects.toThrow('Invalid reader role ARN');
+  });
   it('waits for native readiness and maps only validated runtime ARNs with scoped SQL grants', async () => {
     let polls = 0;
     const query = vi.fn(async (statement: string) => statement.includes('indisvalid') && ++polls === 1
