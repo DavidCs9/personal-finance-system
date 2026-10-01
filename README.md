@@ -109,7 +109,7 @@ npm workspaces, strict TypeScript, and Vitest. Parsers are tested against real A
 
 ## Documentation
 
-- [TODOs de control financiero](TODO.md) — pending tables after SQL, monthly budgets, spending-limit alerts, MSI progress/history, and monthly close email improvements
+- [TODOs de control financiero](TODO.md) — database normalization first after migration, then tables, monthly budgets, spending-limit alerts, MSI progress/history, and monthly close email improvements
 - [Product north star](docs/product-north-star.md) — David Castro's private financial application and the decision criteria for every change
 - [Architecture (C4)](docs/architecture.md) — containers and components
 - [V1 decisions](docs/v1-decisions.md) — scope, data model, and infrastructure

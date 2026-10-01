@@ -4,6 +4,8 @@ Solicitud de David, 2026-09-30: «Una vez esté el SQL, quiero una tabla con las
 
 Las tablas de nóminas y estados de cuenta se retoman cuando SQL esté listo. Esta rama registra el trabajo futuro; las casillas permanecen abiertas hasta implementarlo y verificarlo.
 
+**Prioridad máxima después de terminar la migración: normalizar la base de datos SQL.** David lo solicita el 2026-10-01 porque el modelo heredado de DynamoDB está muy desnormalizado. Este trabajo es el item 1 y precede a los demás pendientes de esta lista tras la migración.
+
 Solicitud adicional de David: incorporar presupuestos mensuales, actualizar cómo vamos al registrar cada compra y avisar «cuidado, estás llegando al límite».
 
 Solicitud adicional de David: una tabla de MSI para ver progresos, planes pasados y activos.
@@ -14,7 +16,17 @@ Solicitud adicional de David, 2026-10-01: mejorar el correo de cierre que se env
 
 - [ ] Confirmar que la migración/proyección SQL está operativa y que su historial y cifras tienen paridad con la fuente actual. Referencia: [plan DSQL](docs/dsql-migration-plan.md) y [runbook](docs/dsql-migration-runbook.md).
 
-## 1. Tabla de nóminas
+## 1. Normalizar la base de datos — máxima prioridad después de la migración
+
+- [ ] Confirmar que terminó la migración antes de iniciar esta normalización; distinguir una proyección o promoción parcial de lecturas del cierre completo de la migración.
+- [ ] Auditar el esquema SQL y los datos reales para identificar duplicación, relaciones implícitas, estructuras anidadas y dependencia de PK/SK o payloads heredados de DynamoDB. Referencia: [esquema SQL](docs/dsql-schema.md).
+- [ ] Diseñar un modelo relacional normalizado con entidades, relaciones, claves e índices explícitos para movimientos, observaciones, revisiones, tarjetas, categorías, tags, planes/cuotas MSI, nóminas, estados de cuenta y patrimonio, según el inventario real.
+- [ ] Separar los datos del dominio que necesitan columnas y relaciones de la evidencia original y metadatos flexibles. Reducir la dependencia de JSON/documentos como modelo principal y eliminar redundancias que permitan inconsistencias; conservar cualquier desnormalización sólo con una necesidad documentada.
+- [ ] Verificar las capacidades y restricciones nativas de Aurora DSQL antes de definir integridad referencial, unicidad y transacciones; asegurar la integridad que el motor no pueda imponer mediante las operaciones de dominio.
+- [ ] Preparar una transformación de datos reanudable y auditable, con validación y recuperación, preservando IDs, importes, monedas, fechas, deduplicación, evidencia e historial.
+- [ ] Adaptar lecturas, escrituras, conciliación, reportes y asistente al modelo normalizado; comprobar paridad de datos y cálculos financieros antes de retirar estructuras redundantes. Documentar el esquema final y entregar los cambios por PR/quality y el flujo de despliegue existente.
+
+## 2. Tabla de nóminas
 
 - [ ] Tener una tabla consultable con el historial de nóminas, respaldada por SQL y vinculada a los CFDI XML importados.
 - [ ] Permitir filtrar por mes/año y ordenar por fecha de pago.
@@ -22,7 +34,7 @@ Solicitud adicional de David, 2026-10-01: mejorar el correo de cierre que se env
 - [ ] Abrir el desglose y la evidencia XML original desde cada nómina.
 - [ ] Mostrar totales del periodo sin mezclar nóminas reales con estimaciones o liquidez provisional; conservar la deduplicación por UUID.
 
-## 2. Tabla de estados de cuenta por tarjeta
+## 3. Tabla de estados de cuenta por tarjeta
 
 - [ ] Tener otra tabla consultable con el historial de estados de cuenta, respaldada por SQL y organizada por tarjeta.
 - [ ] Permitir filtrar por tarjeta y periodo, y ordenar cronológicamente.
@@ -30,7 +42,7 @@ Solicitud adicional de David, 2026-10-01: mejorar el correo de cierre que se env
 - [ ] Abrir el PDF original y revisar sus movimientos, cuotas MSI y pendientes de conciliación desde cada estado de cuenta.
 - [ ] Asociar cada estado de cuenta a la tarjeta correcta; dejar para revisión las asociaciones ambiguas y conservar la deduplicación de importaciones.
 
-## 3. Presupuestos mensuales y avisos de límite
+## 4. Presupuestos mensuales y avisos de límite
 
 - [ ] Incorporar presupuestos por mes, con un límite de gasto editable e historial que preserve los meses anteriores. Definir si el alcance incluye un presupuesto total, presupuestos por categoría o ambos.
 - [ ] Mostrar el límite, gasto acumulado, porcentaje consumido y cuánto queda del presupuesto; distinguir ese disponible de la liquidez y de «Te quedan» después de compromisos.
@@ -42,7 +54,7 @@ Solicitud adicional de David, 2026-10-01: mejorar el correo de cierre que se env
 - [ ] Evitar avisos repetidos en cada compra o reintento: definir una política por presupuesto, mes y umbral, incluyendo qué ocurre si el gasto baja o cambia el límite.
 - [ ] Verificar cambio de mes en America/Chihuahua, presupuesto ausente o cero, compras retrasadas, cruces de varios umbrales en una compra y correcciones, con importes en unidades menores y sin doble conteo.
 
-## 4. Tabla de MSI: progreso, activos e historial
+## 5. Tabla de MSI: progreso, activos e historial
 
 - [ ] Tener una tabla consultable de todos los planes MSI, incluyendo activos y pasados, sin limitar el historial al mes seleccionado.
 - [ ] Mostrar por plan: comercio, tarjeta cuando esté identificada, importe total, cuota, fecha de inicio y última cuota, estado, cuotas gastadas/pendientes/canceladas, progreso e importe pendiente según el calendario.
@@ -53,7 +65,7 @@ Solicitud adicional de David, 2026-10-01: mejorar el correo de cierre que se env
 - [ ] Acceder a la tabla desde Resumen → Planes con fin, conservando la sección de cuotas del mes, la lista simple de Movimientos y la navegación actual. Referencia: [reglas MSI](docs/msi.md).
 - [ ] Verificar planes activos, terminados, incompletos y cerrados anticipadamente; conservar la regla de gasto mensual por cuota y mantener las cuotas futuras como compromisos, sin sumar el principal completo al gasto ni confundirlo con la deuda actual de la tarjeta.
 
-## 5. Mejorar el correo de cierre mensual y su análisis de IA
+## 6. Mejorar el correo de cierre mensual y su análisis de IA
 
 - [ ] Revisar el correo realmente enviado el día 1 y su análisis persistido, contrastándolo con los datos del mes cerrado. Identificar qué aporta poco y si se usó IA o el fallback determinista antes de decidir la solución.
 - [ ] Mejorar la lectura de IA para que sea específica y útil para David: qué cambió frente a meses anteriores, qué explica las variaciones según la evidencia disponible, qué requiere atención y qué acciones concretas puede tomar. Evitar frases genéricas, obviedades y repetir las tablas sin interpretarlas.
