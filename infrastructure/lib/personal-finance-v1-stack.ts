@@ -453,8 +453,8 @@ export class PersonalFinanceV1Stack extends Stack {
     // Production shadow gate verified all retained canonical/audit records, financial histories and original evidence.
     const wealthReadMode = 'guarded-sql';
     // Remaining read-only domain consumers start in shadow; authoritative decisions stay source-only.
-    const domainReadMode = 'shadow';
-    const workerLedgerReadMode = 'shadow';
+    const domainReadMode = 'guarded-sql';
+    const workerLedgerReadMode = 'guarded-sql';
     apiFunction.addEnvironment('DSQL_DOMAIN_READ_MODE', domainReadMode);
     apiFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     apiFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
