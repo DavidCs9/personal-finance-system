@@ -1,6 +1,6 @@
 # Migración gradual del ledger a Aurora DSQL
 
-Estado: plan de migración gradual. Primera entrega implementada para revisión en PR; activación productiva y fases posteriores pendientes. Ver [runbook de implementación](dsql-migration-runbook.md).
+Estado actualizado: proyección histórica y continua activa y verificada en producción; lecturas SQL de movimientos y sus cálculos mensuales activas en modo guarded-sql, con comparación fuerte de frescura y fallback a DDB. Ver [runbook de implementación](dsql-migration-runbook.md), [esquema desplegado](dsql-schema.md) y [lecturas y evidencia de rollout](dsql-read-migration.md). El inventario y las listas iniciales siguientes conservan el contexto del plan original; estos documentos de implementación registran el estado actual.
 Fecha: 2026-09-30, America/Chihuahua.
 Base investigada: `origin/main`, commit `9eadb571e9f19047d2525ab4effd48db65970d08`.
 Rama de entrega del plan: `codex/dsql-migration-plan`.
@@ -13,13 +13,13 @@ Seguir el [norte del producto](product-north-star.md): **Olbia es la aplicación
 
 Aplicar una solución proporcional al volumen real: componentes nativos, pocos recursos y verificaciones concretas. La prioridad es poner en marcha la copia en DSQL y comparar con DDB. No agregar soporte multiusuario, abstracciones genéricas, estudios extensos de capacidad ni periodos de espera arbitrarios. El inventario y las pruebas pueden hacerse junto con la primera implementación. Las garantías necesarias son conservar los datos, evitar duplicados o sobrescrituras antiguas, recuperar fallos y poder volver a DDB.
 
-**NO BORRAR DYNAMODB.** Conservar la tabla, sus datos, sus índices, protección y funcionamiento. Durante la convivencia, las operaciones del dominio deben continuar llegando a ambas bases. Tampoco reemplazar o recrear la tabla existente por un cambio de construct ID o logical ID.
+**NO BORRAR DYNAMODB durante la convivencia.** Conservar la tabla, sus datos, sus índices, protección y funcionamiento. Durante la convivencia, las operaciones del dominio deben continuar llegando a ambas bases. Tampoco reemplazar o recrear la tabla existente por un cambio de construct ID o logical ID. David indicó explícitamente el 2026-09-30 que la meta final es retirar DDB; esa decisión cambia el destino del plan, pero no autoriza perder datos ni omitir la migración y verificación previas al retiro.
 
 Objetivo inmediato recomendado: desplegar captura y proyección de cambios a DSQL mientras DynamoDB sigue siendo la fuente de escritura y lectura del producto. Eso permite empezar a acumular movimientos de octubre en SQL. No confundir ese hito con haber migrado todas las lecturas o convertido DSQL en fuente principal.
 
-El objetivo de fecha no está cumplido todavía. Antes de afirmar que octubre ya está capturado en DSQL, verificar despliegue, checkpoint de captura y paridad. Si la activación ocurre después del 1 de octubre, incorporar también los movimientos previos a la activación mediante una carga histórica validada. No perder septiembre, meses anteriores ni cuotas futuras.
+El objetivo inicial de captura se cumplió: despliegue, stream, recuperación y carga histórica pasaron verificación productiva, incluyendo meses anteriores y cuotas futuras dentro del alcance. Esto no equivale a migrar toda la aplicación; [dsql-schema.md](dsql-schema.md) identifica las entidades que siguen fuera de SQL.
 
-La sesión original del plan no implementó recursos. La continuación implementa proyección, bootstrap, recuperación, carga de claves históricas y paridad; no consultó AWS ni desplegó desde la sesión. Producción continúa pendiente del flujo aprobado.
+La sesión original del plan no implementó recursos. Las continuaciones implementaron proyección, bootstrap, recuperación, carga histórica, paridad y lecturas SQL mediante PR/quality y el flujo aprobado de producción. La [reparación del despliegue](autonomous-runs/2026-09-30-dsql-deployment-repair.md) y la [migración de lecturas](autonomous-runs/2026-09-30-dsql-read-migration.md) conservan las verificaciones y decisiones.
 
 ## Restricciones de ejecución
 
@@ -158,19 +158,19 @@ Criterio de aceptación: carga reanudable, sin brechas ni resurrecciones, y dife
 
 ### 3. Lecturas de comparación
 
-- [ ] Interfaz de consultas acotada con adaptadores DDB/SQL; evitar una refactorización global incidental.
-- [ ] Comparar listados de un mes, cuotas relacionadas, detalle, rangos/filtros y cálculos de dominio. Comparar al mismo estado lógico o clasificar lag explícitamente para no reportarlo como corrupción.
-- [ ] Mantener el contrato API; reutilizar `packages/domain` y los mismos algoritmos de cálculo al principio.
-- [ ] Medir latencia y DPUs con consultas reales y `EXPLAIN ANALYZE VERBOSE`; ajustar índices de forma nativa.
+- [x] Interfaz de consultas acotada con adaptadores DDB/SQL; sin refactorización global incidental.
+- [x] Comparar listados de un mes, cuotas relacionadas, detalle, rangos/filtros y cálculos de dominio; guardia fuerte por resultado público y fallback por lag/error.
+- [x] Mantener el contrato API; reutilizar `packages/domain` y los mismos algoritmos de cálculo.
+- [x] Medir latencia y DPUs con consultas reales y `EXPLAIN ANALYZE VERBOSE`; los índices nativos existentes cubren las consultas verificadas.
 
 Criterio de aceptación: comparaciones correctas de meses y casos reales representativos, datos recientes completos y fallos/lag bajo control. Revisar costo con métricas nativas. Avanzar cuando esas verificaciones pasen; no exigir semanas de observación ni un benchmark formal como requisito previo.
 
 ### 4. Promoción gradual de lecturas
 
-- [ ] Flags por ruta/consulta y mecanismo probado para regresar a DDB.
-- [ ] Resolver lectura después de escritura: una respuesta SQL atrasada no debe hacer desaparecer temporalmente una edición confirmada.
-- [ ] Migrar consultas sin efectos externos primero; no usar una copia atrasada para decisiones de dedupe, conciliación, push o importación.
-- [ ] Promover dependencias de Resumen, analytics, asistente y reportes sólo tras pruebas de equivalencia.
+- [x] Flag para consultas de movimientos de la API y mecanismo probado para regresar a DDB.
+- [x] Resolver lectura después de escritura con comparación fuerte de la fuente: una respuesta SQL atrasada no oculta una edición confirmada.
+- [x] Migrar lecturas de la API sin efectos externos primero; dedupe, conciliación, push e importación mantienen sus decisiones en DDB.
+- [ ] Completar consumidores restantes. Resumen, analytics y rutas de lectura del asistente que comparten la API usan guarded-sql; las Lambdas separadas de herramientas, reportes y notificaciones conservan DDB en esta fase.
 
 Criterio de aceptación: cambio reversible sin alterar resultados financieros ni aceptación de capturas. Fallback técnico por error y retorno por discrepancia son mecanismos distintos que se deben verificar.
 
@@ -185,7 +185,11 @@ No es necesaria para empezar octubre capturando en DSQL. Sólo considerar despu�
 - [ ] Conservar IDs, dedupe, revisiones, operaciones de apply/undo y consumidores DDB pendientes.
 - [ ] Vuelta atrás con barrera de sincronización y verificación: DDB debe tener todas las escrituras SQL confirmadas antes de volver a ser autoridad. Un flag de lectura no constituye rollback de escritura.
 
-**No hay etapa de eliminación de DynamoDB.** Cualquier política de retiro futura exige una nueva decisión explícita del usuario.
+### 6. Retiro de DynamoDB: meta explícita posterior
+
+David decidió explícitamente que el destino final es discontinuar DDB. Esta fase requiere migrar las entidades y consumidores que permanecen fuera de SQL: Patrimonio e historial, planificación/nómina, operaciones apply/undo, dedupe e ingesta, excepciones/retries, notificaciones y conversaciones. Categorías, reglas y tarjetas ya tienen proyección, pero sus lecturas/escrituras actuales siguen dependiendo de DDB.
+
+Antes del retiro, SQL debe ser la única autoridad de las operaciones del dominio, con todas sus validaciones, auditoría, dedupe y transacciones verificadas; los consumidores deben usar SQL o los servicios nativos correspondientes. Probar recuperación/restauración y una barrera de sincronización para cualquier vuelta atrás mientras DDB continúe disponible. Eliminar la guardia temporal de lectura sólo cuando se haya resuelto la autoridad de escrituras. No borrar ni desactivar la fuente en la fase de comparación/promoción de movimientos.
 
 ## Verificación y producción
 
