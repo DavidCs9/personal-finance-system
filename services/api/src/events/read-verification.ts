@@ -7,6 +7,7 @@ import { ledgerReadMode, samePublicResult } from './read-selection.js';
 import { getMonthlyPlan } from '../months/service.js';
 import { summarizeMonthFeed } from '../months/summary.js';
 import type { JsonObject } from '../http/response.js';
+import { verifyDomainReads } from '../categories/read-verification.js';
 import { verifyWealthReads } from '../wealth/read-verification.js';
 import { verifyPlanningReads } from '../months/read-verification.js';
 
@@ -84,7 +85,9 @@ export const verifyLedgerReads = async () => {
   mismatches += planning.mismatches;
   const wealth = await verifyWealthReads(owner, orderedMonths, now);
   mismatches += wealth.mismatches;
-  return { verified: mismatches === 0, mode: ledgerReadMode(), planning, wealth, movements: source.length, feeds, summaries, ranges, details,
+  const domain = await verifyDomainReads(owner, source, orderedMonths, now);
+  mismatches += domain.mismatches;
+  return { verified: mismatches === 0, mode: ledgerReadMode(), planning, wealth, domain, movements: source.length, feeds, summaries, ranges, details,
     missingLookups: 1, mismatches, elapsedMs: Date.now() - started, sourceScanMs, configuredReadsMs, legacyRangeMs: legacyMs,
     sqlFeedTotalMs: sqlFeedMs, sqlFeedAverageMs: feeds ? Math.round(sqlFeedMs / feeds) : 0, queryPlan, scanTypes };
 };

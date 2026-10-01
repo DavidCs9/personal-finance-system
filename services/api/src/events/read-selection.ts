@@ -1,7 +1,7 @@
 import type { JsonObject } from '../http/response.js';
 import type { EventFeed } from './month-feed.js';
 import { readSourceDetail, readSourceFeed } from './source-reads.js';
-import { readSqlDetail, readSqlFeed } from './sql-reads.js';
+import { readSqlDetail, readSqlFeed, readerPool } from './sql-reads.js';
 
 export type LedgerReadMode = 'dynamodb' | 'shadow' | 'guarded-sql';
 export const ledgerReadMode = (): LedgerReadMode => {
@@ -15,7 +15,7 @@ const canonical = (value: unknown): string | undefined => JSON.stringify(value, 
 export const samePublicResult = (left: unknown, right: unknown): boolean => canonical(left) === canonical(right);
 export type ReadOutcome = 'equal' | 'mismatch' | 'sql-error';
 
-export const observe = (query: 'month' | 'detail' | 'plan' | 'payroll-month' | 'payroll-income' | 'payroll-year' | 'payroll-detail' | 'wealth-inputs' | 'wealth-audit', mode: LedgerReadMode, outcome: ReadOutcome, selected: 'sql' | 'dynamodb'): void => {
+export const observe = (query: 'month' | 'detail' | 'plan' | 'payroll-month' | 'payroll-income' | 'payroll-year' | 'payroll-detail' | 'wealth-inputs' | 'wealth-audit' | 'categories' | 'merchant-rules' | 'cards', mode: LedgerReadMode, outcome: ReadOutcome, selected: 'sql' | 'dynamodb'): void => {
   // Domain comparison cannot be inferred from native Lambda platform metrics. No IDs, payloads, sums or driver errors.
   console.log(JSON.stringify({
     _aws: { Timestamp: Date.now(), CloudWatchMetrics: [{ Namespace: 'Olbia/DsqlReads', Dimensions: [['Query']],
@@ -42,13 +42,13 @@ export const selectLedgerRead = async <T>(input: {
 
 export const readConfiguredFeed = (months: readonly string[], legacySource: () => Promise<EventFeed>): Promise<EventFeed> => {
   const mode = ledgerReadMode();
-  return selectLedgerRead({ mode, sql: () => readSqlFeed(months),
+  return selectLedgerRead({ mode, sql: () => readSqlFeed(months, readerPool()),
     source: mode === 'dynamodb' ? legacySource : () => readSourceFeed(months),
     report: (outcome, selected) => observe('month', mode, outcome, selected) });
 };
 export const readConfiguredDetail = (id: string, legacySource: () => Promise<JsonObject | undefined>): Promise<JsonObject | undefined> => {
   const mode = ledgerReadMode();
-  return selectLedgerRead({ mode, sql: () => readSqlDetail(id),
+  return selectLedgerRead({ mode, sql: () => readSqlDetail(id, readerPool()),
     source: mode === 'dynamodb' ? legacySource : () => readSourceDetail(id),
     report: (outcome, selected) => observe('detail', mode, outcome, selected) });
 };

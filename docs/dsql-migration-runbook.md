@@ -1,5 +1,7 @@
 # DSQL: proyección, verificación y recuperación
 
+The next [domain-read phase](dsql-domain-reads.md) extends read-only categories/rules, standalone cards/cycles and worker/assistant movement consumers. Its consumer inventory supersedes earlier remaining-read lists; all writes and authoritative decisions remain in DynamoDB. Shadow/guarded production evidence is recorded separately.
+
 La primera fase de [dsql-migration-plan.md](dsql-migration-plan.md) implementó carga histórica y comparación por registro. DynamoDB continúa como autoridad de escrituras. Las fases de [lecturas de movimientos](dsql-read-migration.md) y [planes mensuales/nómina](dsql-planning-payroll.md) añaden comparación y promoción reversible a SQL con guardia de frescura. La fase de [Patrimonio](dsql-patrimonio.md) proyecta sus canónicos y auditoría con schema/transformer 3 y bootstrap 5; pasó la verificación independiente de contenido/finanzas/evidencia en sombra y nuevamente en guarded-sql, activado por PR separada con el mismo guard y rollback. No se elimina ni reemplaza la tabla ni se cambian sus índices, stream `NEW_IMAGE`, TTL, cifrado, PITR de 35 días o retención. No hay cambios de UI ni promoción de escrituras a DSQL.
 
 La [referencia del esquema DSQL](dsql-schema.md) documenta las quince tablas de dominio y dos operativas, columnas y claves, la vista, los índices, el alcance verificado y los datos que todavía permanecen fuera de SQL. La carga productiva de esta proyección pasó paridad; eso no significa que todos los registros de DynamoDB estén migrados.

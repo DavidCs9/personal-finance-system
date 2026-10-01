@@ -8,6 +8,8 @@ import {
   type MerchantCategoryRule,
   type SpendCategory,
 } from '@finance/domain';
+import { listCategories } from './sql-reads.js';
+import { listMerchantRulesDynamo } from './source-reads.js';
 import { database, tableName } from '../http/clients.js';
 
 const CATALOG_PK = 'CATEGORY_CATALOG';
@@ -15,43 +17,8 @@ const RULES_PK = 'CATEGORY_RULES';
 
 export class InvalidCategoryError extends Error {}
 
-type CatalogItem = SpendCategory & { entityType?: string };
-type RuleItem = MerchantCategoryRule & { entityType?: string; PK?: string; SK?: string };
-
-export const listCategories = async (): Promise<readonly SpendCategory[]> => {
-  const result = await database.send(new QueryCommand({
-    TableName: tableName,
-    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-    ExpressionAttributeValues: { ':pk': CATALOG_PK, ':sk': 'CAT#' },
-  }));
-  const items = (result.Items ?? []) as CatalogItem[];
-  const categories = new Map(DEFAULT_SPEND_CATEGORIES.map((category) => [category.id, category]));
-  for (const item of items) {
-    categories.set(item.id, {
-      id: item.id,
-      name: item.name,
-      sortOrder: item.sortOrder,
-    });
-  }
-  return [...categories.values()]
-    .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name, 'es'));
-};
-
-export const listMerchantRules = async (): Promise<readonly MerchantCategoryRule[]> => {
-  const result = await database.send(new QueryCommand({
-    TableName: tableName,
-    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-    ExpressionAttributeValues: { ':pk': RULES_PK, ':sk': 'RULE#' },
-  }));
-  return ((result.Items ?? []) as RuleItem[]).map((item) => ({
-    id: item.id,
-    merchantKey: item.merchantKey,
-    pattern: item.pattern,
-    categoryId: item.categoryId,
-    source: item.source,
-    updatedAt: item.updatedAt,
-  }));
-};
+export { listCategories, listMerchantRules } from './sql-reads.js';
+export { listCategoriesDynamo, listMerchantRulesDynamo } from './source-reads.js';
 
 export const putCategoryCatalog = async (categories: readonly SpendCategory[]): Promise<readonly SpendCategory[]> => {
   for (const category of categories) {
@@ -117,7 +84,7 @@ export const upsertMerchantRule = async (input: {
 };
 
 export const resolveCategoryForMerchant = async (merchantRaw: string): Promise<string | undefined> => {
-  const rules = await listMerchantRules();
+  const rules = await listMerchantRulesDynamo();
   return resolveCategoryId(merchantRaw, rules);
 };
 

@@ -1,6 +1,6 @@
 import { paginateQuery } from '@aws-sdk/lib-dynamodb';
 import type { WealthSnapshot, CardLiabilitySnapshot } from '@finance/domain';
-import { listCards, toCardRecord, type CardRecord } from '../cards/cards.js';
+import { listCardsDynamo, toCardRecord, type CardRecord } from '../cards/cards.js';
 import { database, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
 import { readerPool, type ReadSqlClient } from '../events/sql-reads.js';
@@ -46,7 +46,7 @@ export const readSqlWealthInputs = async (owner: string, client: ReadSqlClient =
 };
 export const readSourceWealthInputs: WealthInputsReader = async owner => {
   const [snapshots, liabilitySnapshots, cards] = await Promise.all([
-    listCanonicalSnapshotsDynamo(owner), listCanonicalLiabilitySnapshotsDynamo(owner), listCards({ database, tableName, owner }),
+    listCanonicalSnapshotsDynamo(owner), listCanonicalLiabilitySnapshotsDynamo(owner), listCardsDynamo({ database, tableName, owner }),
   ]);
   return { snapshots, liabilitySnapshots, cards };
 };
