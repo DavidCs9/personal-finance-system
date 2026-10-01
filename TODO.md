@@ -1,10 +1,12 @@
-# TODOs — control financiero: nóminas, estados de cuenta y presupuestos
+# TODOs — control financiero: nóminas, estados de cuenta, presupuestos y MSI
 
 Solicitud de David, 2026-09-30: «Una vez esté el SQL, quiero una tabla con las nóminas y otra con estados de cuenta por tarjeta. Quiero tener súper control de todo».
 
 Las tablas de nóminas y estados de cuenta se retoman cuando SQL esté listo. Esta rama registra el trabajo futuro; las casillas permanecen abiertas hasta implementarlo y verificarlo.
 
 Solicitud adicional de David: incorporar presupuestos mensuales, actualizar cómo vamos al registrar cada compra y avisar «cuidado, estás llegando al límite».
+
+Solicitud adicional de David: una tabla de MSI para ver progresos, planes pasados y activos.
 
 ## Dependencia: SQL listo
 
@@ -37,6 +39,17 @@ Solicitud adicional de David: incorporar presupuestos mensuales, actualizar cóm
 - [ ] Al acercarse o superar el límite, mostrar un aviso útil con cifras: «Cuidado, estás llegando al límite: llevas X de Y; te quedan Z» o «Superaste tu presupuesto por X». Integrarlo en Resumen y aprovechar los avisos push existentes para notificar según las preferencias autorizadas.
 - [ ] Evitar avisos repetidos en cada compra o reintento: definir una política por presupuesto, mes y umbral, incluyendo qué ocurre si el gasto baja o cambia el límite.
 - [ ] Verificar cambio de mes en America/Chihuahua, presupuesto ausente o cero, compras retrasadas, cruces de varios umbrales en una compra y correcciones, con importes en unidades menores y sin doble conteo.
+
+## 4. Tabla de MSI: progreso, activos e historial
+
+- [ ] Tener una tabla consultable de todos los planes MSI, incluyendo activos y pasados, sin limitar el historial al mes seleccionado.
+- [ ] Mostrar por plan: comercio, tarjeta cuando esté identificada, importe total, cuota, fecha de inicio y última cuota, estado, cuotas gastadas/pendientes/canceladas, progreso e importe pendiente según el calendario.
+- [ ] Filtrar por activos, terminados y cancelados/cerrados anticipadamente, además de tarjeta y periodo; definir el estado con el calendario y la evidencia, no sólo con el paso del tiempo.
+- [ ] Mostrar el progreso como cuotas gastadas respecto del total y su porcentaje. Distinguir las cuotas conciliadas de los pagos efectivos de la tarjeta: una cuota `spent` no demuestra por sí sola que se haya pagado al banco. Marcar las cuotas anteriores asumidas por un estado de cuenta y no presentarlas como evidencia individual.
+- [ ] Abrir el calendario completo de cuotas desde cada plan, con mes, importe, estado y evidencia de conciliación; conservar el historial al terminar o cerrar anticipadamente un plan.
+- [ ] Actualizar el progreso al conciliar estados de cuenta/CSV o corregir un plan, preservando un único plan por compra y evitando duplicados o cuotas contadas dos veces.
+- [ ] Acceder a la tabla desde Resumen → Planes con fin, conservando la sección de cuotas del mes, la lista simple de Movimientos y la navegación actual. Referencia: [reglas MSI](docs/msi.md).
+- [ ] Verificar planes activos, terminados, incompletos y cerrados anticipadamente; conservar la regla de gasto mensual por cuota y mantener las cuotas futuras como compromisos, sin sumar el principal completo al gasto ni confundirlo con la deuda actual de la tarjeta.
 
 ## Verificación de control financiero
 

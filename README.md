@@ -109,7 +109,7 @@ npm workspaces, strict TypeScript, and Vitest. Parsers are tested against real A
 
 ## Documentation
 
-- [TODOs: nóminas, estados de cuenta y presupuestos](TODO.md) — pending tables after SQL, monthly budgets, and spending-limit alerts
+- [TODOs: nóminas, estados de cuenta, presupuestos y MSI](TODO.md) — pending tables after SQL, monthly budgets, spending-limit alerts, and MSI progress/history
 - [Product north star](docs/product-north-star.md) — David Castro's private financial application and the decision criteria for every change
 - [Architecture (C4)](docs/architecture.md) — containers and components
 - [V1 decisions](docs/v1-decisions.md) — scope, data model, and infrastructure
