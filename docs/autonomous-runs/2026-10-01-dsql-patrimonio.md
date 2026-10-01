@@ -1,0 +1,61 @@
+# DSQL Patrimonio migration — 2026-10-01
+
+## Objective and completion criteria
+
+Project all retained canonical wealth/liability snapshots and audit versions, preserve full identities/content/evidence, verify every retained account/day/month independently, and deploy shadow then guarded SQL reads through separate linear PRs, quality and deploy-production. Include API, assistant investment history, reports/reminders and supporting cards. DynamoDB remains write authority and strong freshness reference.
+
+## Constraints
+
+Read repository/autonomous/product/UI/Patrimonio and DSQL guidance before implementation. Preserve all financial algorithms, Chihuahua boundaries, carry-forward, zero liabilities, staleness, August 2026 monthly-history start, fund derived from payroll and last-good sync behavior. No manufactured production records or test notifications, local deployment, direct source mutations, source replacements, SQL write cutover or unrelated state migration. Reverify default IAM identity with STS immediately before production operations. User's three local AWS-auth guidance edits remain in original checkout, untouched; implementation uses an isolated worktree based directly on refreshed origin/main.
+
+## Progress and next steps
+
+- Started isolated branch codex/dsql-patrimonio from refreshed origin/main; read required guides and prior phase evidence.
+- Next: inventory real records and code dependencies; record architecture/latency decisions before implementation; extend additive schema/projector/verification/readers; meaningful SQL tests and checks; shadow PR/deploy/real gate; separate guarded promotion; final evidence.
+
+## Decisions
+
+## Verification results
+
+## Outcome and remaining work
+
+Work in progress; no production change claimed.
+
+### D1 — Reuse native capture and separate canonical/audit tables
+- Context: Same-day replacement must retain audit versions without multiplying balances; snapshots are flat source envelopes, not ledger payloads.
+- Evidence and uncertainty: Production inventory after STS verification: 120 wealth canonical rows (three liquid accounts, 2026-08-06–2026-10-01), four wealth versions, 22 liability canonical rows (three cards), three liability versions, three card profiles. All 149 snapshots/versions reference S3 evidence; native holdings currencies include MXN, USD, SOL and RENDER. No retained zero liability exists, so exercise that contract locally. Investment history has no separate persisted entity: it derives Bitso/IBKR canonical snapshots. No audit UI/API consumer exists.
+- Alternatives and tradeoffs: New replication/dual writes add failure paths. A single table with a kind flag risks mixing balances/versions. Four additive tables preserve source distinctions with explicit reads; existing native unfiltered mapping, checkpoint/OCC, replay and daily reconciliation already cover ordering/recovery.
+- Decision and reason: Schema/transformer v3 adds four tables. Preserve source SK as canonical row identity, original versionId for audits, whole source_item/JSONB holdings/evidence/FX and promoted bigint/date columns. Add source_item to existing cards with explicit additive ALTER to preserve envelope timestamps for supporting card reads. Extend narrow SELECT grants. Existing writers and domain algorithms remain unchanged.
+- Consequences, verification, and revisit conditions: Retained history is all retained source canonical rows plus retained audit keys, not missing intermediate captures absent from DynamoDB. Verify all content/evidence hashes, daily replacement/replay/deletion/OCC and existing gates. No fake fund rows.
+- Status: Provisional; real inventory validated, implementation/gates pending.
+
+### D2 — One SQL statement and freshness comparison for Patrimonio inputs
+- Context: Current/history/as-of calculations need canonical asset/liability history and card profiles; repeated guards inside historical loops would multiply outage latency.
+- Evidence and uncertainty: Existing connector reader timeouts are bounded (1.5s connection, 3s query). Product calculations already derive balances/history in domain code. Report facts need several as-of months; assistant investment history currently loads each account separately.
+- Alternatives and tradeoffs: Per-snapshot/account guards amplify SQL failures; custom circuit breaker adds state. One UNION ALL statement reads the complete canonical input bundle, then a strong source comparison preserves confirmed writes and source-only rollback.
+- Decision and reason: Guard complete source inputs once per bundle, retaining complete envelopes. Reuse that selected bundle across monthly report as-of evaluations; load assistant market histories once. Independent verification uses explicit source/SQL bundles, never fallback, and exercises every retained day/month/account/holding/audit/evidence plus deterministic reports/reminders.
+- Consequences, verification, and revisit conditions: Source reads remain until write authority cutover. One failure abandons SQL for the whole bundle; fund/payroll retains its separate existing guard. Test query counts for outage and no extra external notifications. Revisit if actual consumer structure needs a wider shared boundary.
+- Status: Provisional.
+
+### D3 — Preserve native FX precision
+- Context: A promoted numeric FX column must not silently round otherwise preserved source metadata.
+- Evidence and uncertainty: Revalidated official DSQL supported types: unqualified numeric defaults to (18,6), unlike local PostgreSQL. Source FX rates are finite JavaScript numbers; monetary totals remain integer bigint. Real-data current rates fit, but later rates could exceed six decimals.
+- Alternatives and tradeoffs: Specify a fixed decimal scale (still a rounding bound); omit promoted FX (less explicit schema); double precision matches the existing JS-number source contract, while JSONB/source_item retain the original decimal JSON representation.
+- Decision and reason: Use native double precision for promoted FX only; preserve every monetary amount in bigint and full original FX metadata/holdings in JSONB. This changes no financial calculation.
+- Consequences, verification, and revisit conditions: Verify exact source FX values via independent column/content checks and native deployed gate; revisit only if source FX becomes an exact decimal string contract.
+- Status: Validated native type documentation; deployment pending.
+
+## Implementation checkpoint
+
+Four additive source tables, source-key support, same existing checkpoint/OCC/reconciliation/replay, card-envelope ALTER, narrow reader grants and shadow flag on API/probe/agent/monthly-close/month-end-reminder implemented. Whole canonical inputs use one SQL statement/guard; report reuses inputs and yearly payroll; assistant market histories load once. Source-only manual/sync writes and notification behavior are unchanged. Independent gate compares all source content/promoted columns, every retained day/month/history/holding, deterministic report/reminder output and original S3 hashes; movement/planning/payroll gate remains.
+
+- Nine new SQL integration tests passed; 24 projector/schema tests passed, including four new adversarial snapshot/audit families. Existing 22 focused planning/payroll/as-of/assistant/report tests passed.
+- Private local PostgreSQL real-data projection: 152/152 records equal after two reconciliation passes, zero mismatches (149 snapshot/audit records + three cards). This is local evidence, not a production rollout claim.
+
+## Pre-PR verification
+
+- Full workspace suite passed: 409 tests (including nine Patrimonio integration tests and four extra adversarial source-key concurrency tests); nine Python recovery tests passed. All workspace checks, web build and infrastructure synth passed.
+- Synthesized source/retained resource comparison against the deployed template after STS verification: all ten DynamoDB/DSQL/KMS/bucket/event-source-mapping resources are byte-for-byte structurally unchanged. Five participating runtimes have shadow wealth mode and the existing native reader endpoint. Daily balance push remains on its previous flags because it does not consume these entities.
+- DSQL supported SQL/ALTER/data types/IAM/Streams recovery revalidated in current official documentation. Double-precision FX change was checked locally with the full real inventory and focused SQL tests after modification.
+- Existing monthly history labels and order are preserved exactly. A test initially assumed closing-day labels; corrected its expectation to the existing month-start labels without changing the algorithm. Month-close as-of day exclusion passed.
+- Next: shadow PR, required quality/CLEAN/MERGEABLE, linear squash merge and deploy-production; independent production verification before guarded PR.

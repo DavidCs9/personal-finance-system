@@ -8,7 +8,6 @@ import {
   FINANCE_TIME_ZONE,
   FONDO_AHORRO_ACCOUNT_ID,
   fondoAhorroHolding,
-  isWealthAccountId,
   liabilitiesAsOfDay,
   netWorthMxnMinor,
   runningFondoAhorroByDay,
@@ -26,6 +25,8 @@ import type { CardRecord } from '../cards/cards.js';
 import { database, rawSourceBucketName, s3, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
 import { listPayslipsForYear } from '../imports/cfdi-nomina-flow.js';
+import { toPublicSnapshot, toPublicLiabilitySnapshot } from './records.js';
+import { readConfiguredWealthInputs, type WealthInputsReader } from './sql-reads.js';
 import { InvalidWealthSnapshotError, parseCajitaSnapshot, parseCardLiabilitySnapshot } from './input.js';
 import {
   liabilitySnapshotKey,
@@ -68,31 +69,7 @@ export interface WealthBalanceOverview {
   readonly liabilities: readonly WealthBalanceLiability[];
 }
 
-const toPublicSnapshot = (item: Record<string, unknown>): WealthSnapshot | undefined => {
-  const accountId = item.accountId;
-  if (typeof accountId !== 'string' || !isWealthAccountId(accountId)) return undefined;
-  if (accountId === FONDO_AHORRO_ACCOUNT_ID) return undefined;
-  if (typeof item.day !== 'string' || typeof item.capturedAt !== 'string') return undefined;
-  if (typeof item.totalMxnMinor !== 'number' || !Array.isArray(item.holdings)) return undefined;
-  const source = item.source;
-  if (source !== 'manual' && source !== 'api' && source !== 'flex') return undefined;
-  return {
-    accountId,
-    day: item.day,
-    capturedAt: item.capturedAt,
-    source,
-    currency: 'MXN',
-    totalMxnMinor: item.totalMxnMinor,
-    holdings: item.holdings as WealthSnapshot['holdings'],
-    ...(item.evidence && typeof item.evidence === 'object'
-      ? { evidence: item.evidence as WealthSnapshot['evidence'] }
-      : {}),
-    ...(typeof item.fxRate === 'number' ? { fxRate: item.fxRate } : {}),
-    ...(typeof item.fxSource === 'string' ? { fxSource: item.fxSource } : {}),
-  };
-};
-
-const listCanonicalSnapshots = async (owner: string): Promise<readonly WealthSnapshot[]> => {
+export const listCanonicalSnapshotsDynamo = async (owner: string): Promise<readonly WealthSnapshot[]> => {
   const items: Record<string, unknown>[] = [];
   let exclusiveStartKey: Record<string, unknown> | undefined;
   do {
@@ -118,6 +95,9 @@ const listCanonicalSnapshots = async (owner: string): Promise<readonly WealthSna
     .sort((left, right) => left.day.localeCompare(right.day) || left.accountId.localeCompare(right.accountId));
 };
 
+export const listWealthSnapshots = async (owner: string): Promise<readonly WealthSnapshot[]> =>
+  (await readConfiguredWealthInputs(owner)).snapshots;
+
 /**
  * Canonical daily snapshots for a connected account. Used by read-only agent
  * queries that compare a holding's value over time; evidence itself remains
@@ -127,7 +107,7 @@ export const listWealthSnapshotsForAccount = async (
   owner: string,
   accountId: WealthAccountId,
 ): Promise<readonly WealthSnapshot[]> =>
-  (await listCanonicalSnapshots(owner)).filter((snapshot) => snapshot.accountId === accountId);
+  (await readConfiguredWealthInputs(owner)).snapshots.filter((snapshot) => snapshot.accountId === accountId);
 
 const latestByAccount = (
   snapshots: readonly WealthSnapshot[],
@@ -198,27 +178,7 @@ const netWorthHistoryPoints = (
   });
 };
 
-const toPublicLiabilitySnapshot = (item: Record<string, unknown>): CardLiabilitySnapshot | undefined => {
-  if (typeof item.cardId !== 'string' || !isValidCardId(item.cardId)) return undefined;
-  if (typeof item.day !== 'string' || typeof item.capturedAt !== 'string') return undefined;
-  if (typeof item.totalMxnMinor !== 'number' || !Number.isInteger(item.totalMxnMinor) || item.totalMxnMinor < 0) {
-    return undefined;
-  }
-  if (item.source !== 'manual') return undefined;
-  return {
-    cardId: item.cardId,
-    day: item.day,
-    capturedAt: item.capturedAt,
-    source: 'manual',
-    currency: 'MXN',
-    totalMxnMinor: item.totalMxnMinor,
-    ...(item.evidence && typeof item.evidence === 'object'
-      ? { evidence: item.evidence as CardLiabilitySnapshot['evidence'] }
-      : {}),
-  };
-};
-
-const listCanonicalLiabilitySnapshots = async (owner: string): Promise<readonly CardLiabilitySnapshot[]> => {
+export const listCanonicalLiabilitySnapshotsDynamo = async (owner: string): Promise<readonly CardLiabilitySnapshot[]> => {
   const items: Record<string, unknown>[] = [];
   let exclusiveStartKey: Record<string, unknown> | undefined;
   do {
@@ -328,15 +288,12 @@ export const getWealthOverviewAsOf = async (
   owner: string,
   asOfDay: string,
   readPayrollYear: typeof listPayslipsForYear = listPayslipsForYear,
+  readInputs: WealthInputsReader = readConfiguredWealthInputs,
 ): Promise<WealthBalanceOverview> => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(asOfDay)) throw new Error('asOfDay must be YYYY-MM-DD.');
   const year = asOfDay.slice(0, 4);
-  const [snapshots, yearPayslips, cards, liabilitySnapshots] = await Promise.all([
-    listCanonicalSnapshots(owner),
-    readPayrollYear(owner, year),
-    listCards({ database, tableName, owner }),
-    listCanonicalLiabilitySnapshots(owner),
-  ]);
+  const [inputs, yearPayslips] = await Promise.all([readInputs(owner), readPayrollYear(owner, year)]);
+  const { snapshots, cards, liabilitySnapshots } = inputs;
   const eligiblePayslips = yearPayslips.filter((payslip) => payslip.fechaPago <= asOfDay);
   return wealthBalanceOverview({
     snapshots,
@@ -352,14 +309,11 @@ export const getWealthOverview = async (
   owner: string,
   now: Date = new Date(),
   readPayrollYear: typeof listPayslipsForYear = listPayslipsForYear,
+  readInputs: WealthInputsReader = readConfiguredWealthInputs,
 ): Promise<JsonObject> => {
   const year = dayKeyInZone(now, FINANCE_TIME_ZONE).slice(0, 4);
-  const [snapshots, yearPayslips, cards, liabilitySnapshots] = await Promise.all([
-    listCanonicalSnapshots(owner),
-    readPayrollYear(owner, year),
-    listCards({ database, tableName, owner }),
-    listCanonicalLiabilitySnapshots(owner),
-  ]);
+  const [inputs, yearPayslips] = await Promise.all([readInputs(owner), readPayrollYear(owner, year)]);
+  const { snapshots, cards, liabilitySnapshots } = inputs;
   const fondoTotal = sumFondoAhorroDeduccionesMinor(yearPayslips);
   const fondoRunning = runningFondoAhorroByDay(yearPayslips);
   const today = dayKeyInZone(now, FINANCE_TIME_ZONE);
@@ -391,6 +345,18 @@ export const getWealthOverview = async (
       ),
     },
   };
+};
+
+/** One selected canonical bundle per report, reused across closing days. */
+export const getWealthOverviewsAsOf = async (owner: string, days: readonly string[],
+  readPayrollYear: typeof listPayslipsForYear = listPayslipsForYear,
+  readInputs: WealthInputsReader = readConfiguredWealthInputs,
+): Promise<readonly WealthBalanceOverview[]> => {
+  const inputs = await readInputs(owner);
+  const years = [...new Set(days.map(day => day.slice(0, 4)))];
+  const payroll = new Map(await Promise.all(years.map(async year => [year, await readPayrollYear(owner, year)] as const)));
+  return Promise.all(days.map(day => getWealthOverviewAsOf(owner, day,
+    async (_owner, year) => payroll.get(year) ?? [], async () => inputs)));
 };
 
 export const persistWealthSnapshot = async (input: {

@@ -25,12 +25,15 @@ export const SCHEMA_STATEMENTS = [
     source_pk text NOT NULL, source_sk text NOT NULL, row_id text NOT NULL,
     ${Object.entries(TABLE_COLUMNS[table]).map(([column, type]) => `${column} ${type}`).join(',')},
     PRIMARY KEY (source_pk,source_sk,row_id))`),
+  // Existing cards need the original envelope/timestamps for supporting Patrimonio reads.
+  `ALTER TABLE olbia.cards ADD COLUMN IF NOT EXISTS source_item jsonb`,
   `CREATE OR REPLACE VIEW olbia.movement_months AS
     SELECT id AS movement_id, spend_month AS month FROM olbia.movements
     UNION SELECT movement_id, month FROM olbia.msi_installments`,
   `INSERT INTO olbia.schema_migrations VALUES (1,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
   // Version 2 is additive: only new tables. Existing column definitions are unchanged.
   `INSERT INTO olbia.schema_migrations VALUES (2,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
+  `INSERT INTO olbia.schema_migrations VALUES (3,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
@@ -80,7 +83,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     const reader = await query('reader-role-lookup', "SELECT rolname FROM pg_roles WHERE rolname='olbia_reader'");
     if (!reader.rows.length) await query('reader-role-create', 'CREATE ROLE olbia_reader WITH LOGIN');
     await query('reader-schema-grant', 'GRANT USAGE ON SCHEMA olbia TO olbia_reader');
-    await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments', 'monthly_plans', 'payroll'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
+    await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments', 'monthly_plans', 'payroll', 'cards', 'wealth_snapshots', 'wealth_versions', 'liability_snapshots', 'liability_versions'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
     for (const arn of options.readerRoleArns) {
       if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid reader role ARN');
       await query('reader-iam-grant', `AWS IAM GRANT olbia_reader TO '${arn}'`);

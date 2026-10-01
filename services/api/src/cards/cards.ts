@@ -179,7 +179,7 @@ export const toPublicCard = (card: CardRecord): Record<string, unknown> => ({
   updatedAt: card.updatedAt,
 });
 
-const toCardRecord = (item: Record<string, unknown>): CardRecord | undefined => {
+export const toCardRecord = (item: Record<string, unknown>): CardRecord | undefined => {
   const payload = item.payload;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
   const body = payload as Record<string, unknown>;

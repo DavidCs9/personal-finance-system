@@ -1,4 +1,4 @@
-import { DEFAULT_SPEND_CATEGORIES, monthKeyInZone } from '@finance/domain';
+import { DEFAULT_SPEND_CATEGORIES, monthKeyInZone, isWealthAccountId, FONDO_AHORRO_ACCOUNT_ID } from '@finance/domain';
 
 export type SourceKey = { PK: string; SK: string };
 export type SourceItem = SourceKey & Record<string, unknown>;
@@ -12,16 +12,20 @@ export const TABLE_COLUMNS = {
   movement_revisions: { id: 'text', movement_id: 'text', created_at: 'timestamptz', payload: 'jsonb' },
   categories: { id: 'text', name: 'text', sort_order: 'integer', payload: 'jsonb' },
   merchant_category_rules: { id: 'text', merchant_key: 'text', category_id: 'text', payload: 'jsonb' },
-  cards: { id: 'text', owner: 'text', name: 'text', cut_off_day: 'integer', payment_due_day: 'integer', payload: 'jsonb' },
+  cards: { id: 'text', owner: 'text', name: 'text', cut_off_day: 'integer', payment_due_day: 'integer', payload: 'jsonb', source_item: 'jsonb' },
   movement_tags: { movement_id: 'text', tag: 'text', payload: 'jsonb' },
   msi_plans: { movement_id: 'text', months: 'integer', principal_minor: 'bigint', cuota_minor: 'bigint', status: 'text', needs_schedule_completion: 'boolean', payload: 'jsonb' },
   msi_installments: { movement_id: 'text', installment_index: 'integer', month: 'text', amount_minor: 'bigint', status: 'text', occurred_on: 'date', payload: 'jsonb' },
   monthly_plans: { owner: 'text', month: 'text', payload: 'jsonb', source_item: 'jsonb' },
   payroll: { owner: 'text', month: 'text', uuid: 'text', fecha_pago: 'date', total_minor: 'bigint', currency: 'text', ingested_at: 'timestamptz', source: 'jsonb', payload: 'jsonb', source_item: 'jsonb' },
+  wealth_snapshots: { account_id: 'text', owner: 'text', day: 'date', captured_at: 'timestamptz', source: 'text', currency: 'text', total_mxn_minor: 'bigint', evidence: 'jsonb', payload: 'jsonb', source_item: 'jsonb', holdings: 'jsonb', fx_rate: 'double precision', fx_source: 'text' },
+  wealth_versions: { account_id: 'text', owner: 'text', day: 'date', captured_at: 'timestamptz', source: 'text', currency: 'text', total_mxn_minor: 'bigint', evidence: 'jsonb', payload: 'jsonb', source_item: 'jsonb', holdings: 'jsonb', fx_rate: 'double precision', fx_source: 'text', version_id: 'text', superseded_at: 'timestamptz' },
+  liability_snapshots: { card_id: 'text', owner: 'text', day: 'date', captured_at: 'timestamptz', source: 'text', currency: 'text', total_mxn_minor: 'bigint', evidence: 'jsonb', payload: 'jsonb', source_item: 'jsonb' },
+  liability_versions: { card_id: 'text', owner: 'text', day: 'date', captured_at: 'timestamptz', source: 'text', currency: 'text', total_mxn_minor: 'bigint', evidence: 'jsonb', payload: 'jsonb', source_item: 'jsonb', version_id: 'text', superseded_at: 'timestamptz' },
 } as const;
 export type TableName = keyof typeof TABLE_COLUMNS;
 export const TABLE_NAMES = Object.keys(TABLE_COLUMNS) as TableName[];
-export const PROJECTION_VERSION = 2;
+export const PROJECTION_VERSION = 3;
 
 export const entityForKey = (key: SourceKey): TableName | undefined => {
   if (key.PK.startsWith('EVENT#')) {
@@ -34,6 +38,12 @@ export const entityForKey = (key: SourceKey): TableName | undefined => {
   if (key.PK.startsWith('USER#') && key.SK.startsWith('CARD#')) return 'cards';
   if (key.PK.startsWith('USER#') && /^MONTH#\d{4}-\d{2}$/.test(key.SK)) return 'monthly_plans';
   if (key.PK.startsWith('USER#') && /^PAYROLL#\d{4}-\d{2}#.+$/.test(key.SK)) return 'payroll';
+  if (key.PK.startsWith('USER#')) {
+    if (/^WEALTH_SNAP#[^#]+#\d{4}-\d{2}-\d{2}$/.test(key.SK)) return 'wealth_snapshots';
+    if (/^WEALTH_VER#[^#]+#\d{4}-\d{2}-\d{2}#.+$/.test(key.SK)) return 'wealth_versions';
+    if (/^LIAB_SNAP#[^#]+#\d{4}-\d{2}-\d{2}$/.test(key.SK)) return 'liability_snapshots';
+    if (/^LIAB_VER#[^#]+#\d{4}-\d{2}-\d{2}#.+$/.test(key.SK)) return 'liability_versions';
+  }
   return undefined;
 };
 
@@ -58,10 +68,37 @@ export const projectRows = (key: SourceKey, item?: SourceItem): SqlRow[] => {
     ? DEFAULT_SPEND_CATEGORIES.find((category) => key.SK === `CAT#${category.id}`) : undefined;
   if (!item && !defaultCategory) return [];
   const p = table === 'categories' || table === 'merchant_category_rules'
-    ? object(item ?? defaultCategory) : object(item?.payload);
+    ? object(item ?? defaultCategory) : object(table.startsWith('wealth_') || table.startsWith('liability_') ? item : item?.payload);
   const row = (target: TableName, rowId: string, values: Record<string, unknown>): SqlRow => ({
     table: target, values: { source_pk: key.PK, source_sk: key.SK, row_id: rowId, ...values },
   });
+  if (table.startsWith('wealth_') || table.startsWith('liability_')) {
+    const wealth = table.startsWith('wealth_');
+    const version = table.endsWith('_versions');
+    const owner = string(p.owner), id = string(wealth ? p.accountId : p.cardId);
+    const day = string(p.day), capturedAt = string(p.capturedAt);
+    const prefix = wealth ? (version ? 'WEALTH_VER' : 'WEALTH_SNAP') : (version ? 'LIAB_VER' : 'LIAB_SNAP');
+    if (key.PK !== `USER#${owner}` || key.SK !== `${prefix}#${id}#${day}${version ? `#${capturedAt}` : ''}`) throw new Error('Snapshot identity does not match source key');
+    if (wealth && (!isWealthAccountId(id) || id === FONDO_AHORRO_ACCOUNT_ID)) throw new Error('Invalid persisted wealth account');
+    if (!wealth && !/^[a-zA-Z0-9_-]{1,128}$/.test(id)) throw new Error('Invalid liability card');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(Date.parse(capturedAt))) throw new Error('Invalid snapshot date');
+    const total = integer(p.totalMxnMinor);
+    if ((!wealth && total < 0) || p.currency !== 'MXN' || !(wealth ? ['manual', 'api', 'flex'] : ['manual']).includes(string(p.source))) throw new Error('Invalid snapshot balance/source');
+    if (wealth) {
+      if (!Array.isArray(p.holdings)) throw new Error('Invalid embedded holdings');
+      for (const holding of p.holdings) {
+        const h = object(holding); string(h.id); string(h.currency); integer(h.valueMxnMinor);
+      }
+      if (p.fxRate != null && (typeof p.fxRate !== 'number' || !Number.isFinite(p.fxRate))) throw new Error('Invalid FX rate');
+    }
+    const values = { owner, [wealth ? 'account_id' : 'card_id']: id, day, captured_at: capturedAt,
+      source: p.source, currency: p.currency, total_mxn_minor: total, evidence: optional(p.evidence), payload: p, source_item: item,
+      ...(wealth ? { holdings: p.holdings, fx_rate: optional(p.fxRate), fx_source: optional(p.fxSource) } : {}),
+      ...(version ? { version_id: string(p.versionId), superseded_at: string(p.supersededAt) } : {}) };
+    const rows = [row(table, version ? string(p.versionId) : key.SK, values)];
+    if (Buffer.byteLength(JSON.stringify(rows)) > 4 * 1024 * 1024) throw new Error('Projection exceeds transaction budget');
+    return rows;
+  }
   if (table === 'monthly_plans' || table === 'payroll') {
     const owner = string(item?.owner);
     const month = string(item?.month);
@@ -140,7 +177,7 @@ export const projectRows = (key: SourceKey, item?: SourceItem): SqlRow[] => {
   })];
   return [row('cards', id, {
     id, owner: string(item?.owner), name: string(p.name), cut_off_day: integer(p.cutOffDay),
-    payment_due_day: integer(p.paymentDueDay), payload: p,
+    payment_due_day: integer(p.paymentDueDay), payload: p, source_item: item,
   })];
 };
 
