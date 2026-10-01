@@ -10,7 +10,7 @@ DynamoDB remains every write authority, freshness reference and acceptance/dedup
 
 ## Progress and next steps
 
-Read repository/autonomous/product/UI guidance and previous DSQL phase evidence. Inspecting exact writers/readers, retained production envelopes and TTL semantics before choosing additive schema and narrow read boundaries. Current phase not yet implemented or delivered.
+Implementation and local adversarial verification are complete. Shadow PR #164 is merged and its approved production job has deployed the additive schema/read boundaries. Historical reconciliation and the independent shadow acceptance gate passed. Separate guarded promotion is now authorized by the verified evidence below; its rollout and re-verification remain pending.
 
 ## Decisions
 
@@ -22,7 +22,7 @@ Original checkout has exactly AGENTS.md, docs/dsql-migration-plan.md and docs/ds
 
 ## Outcome and remaining work
 
-Implementation, local adversarial verification, shadow delivery/acceptance, separate promotion/reverification and final evidence remain.
+Shadow acceptance, separate guarded promotion/reverification and final evidence remain. DynamoDB remains all write and decision authority.
 
 ### D1 — Retained operational envelopes and explicit read boundaries
 - Context: Operational records mix display data with authoritative retry/apply/delivery and native-discovery decisions. Broad replacement would change acceptance during SQL lag.
@@ -55,3 +55,24 @@ Private real-data PostgreSQL replay initially exposed retained legacy retry SK=D
 - Local real retained replay: 652 envelopes, 1,304 equal comparisons, zero independently calculated promoted-column/envelope mismatches. Retained legacy retry keys included. Full private records stay outside Git.
 - All ten protected DynamoDB/DSQL/KMS/S3/mapping resource definitions match pre-phase deployed template exactly. Synth API/probe operational shadow, all existing financial flags guarded. Source mapping/configuration unchanged.
 - D1/D2/D3 locally validated; native production grants/compatibility/parity, shadow acceptance, guarded promotion and final evidence still pending. No production writes, notifications, retries or local deployments occurred.
+
+## Shadow delivery checkpoint
+
+PR #164 passed required quality and CLEAN/MERGEABLE and was squash merged. The approved main workflow owns deployment; operational mode remains shadow. Guarded branch starts directly from refreshed origin/main. No guarded flag changes until explicit native reconciliation/read gate acceptance. Final focused API type check and 15 operational/thread tests passed after review adjustments; required CI quality passed the complete suite.
+
+## Shadow native inspection (before backfill acceptance)
+
+- Main commit 8f1be255dc35d8e63be33e30a64ee9b869874d7d; approved [workflow 36915582121](https://github.com/DavidCs9/personal-finance-system/actions/runs/36915582121) stack deployment succeeded. Reconciliation/read gate still running.
+- Native SQL reports migration versions 1/2/3/4, exactly 17 product SELECT grants and nine operational-verifier SELECT grants. Verifier association is exclusively the deployed read probe; no additional product mutation/admin grants.
+- CloudFormation UPDATE_COMPLETE; all ten protected resource definitions equal the pre-phase production template. Projector mapping Enabled/OK; all eight native alarms OK. Seven financial reader runtimes retain guarded-sql; only API/probe operational flags are shadow.
+- Direct deployed Lambda component GETs for exceptions/subscriptions returned HTTP 200 and safely selected source on mismatch while historical operational backfill was incomplete. These are pre-acceptance fallback observations, not a failed parity claim or promotion approval. Repeat after reconciliation. Direct component invocation does not test the API Gateway JWT authorizer. Thread discovery endpoint is intentionally not invoked because it can backfill native indices; independent metadata/public rendering checks cover the read-only SQL boundary.
+
+## Shadow acceptance and promotion decision
+
+[PR #164](https://github.com/DavidCs9/personal-finance-system/pull/164) and [workflow 36915582121](https://github.com/DavidCs9/personal-finance-system/actions/runs/36915582121) succeeded, including quality and deploy-production. Reconciliation: projected 4,874; equal 4,874; lag zero; mismatch zero. Independent gate: verified=true, total mismatches zero; operational mode shadow, all 652 retained envelopes, 98 strong source pages / 14 target pages, 54 public responses, 59 configured reads and 114 expiration checks, operational mismatches zero (4,287 ms). Full gate 108,328 ms.
+
+Existing gates passed again: 494 movements/details; 21 feeds/summaries and 19 ranges; six stored plans / 19 CFDIs with 19 original XML evidence files; 120 wealth snapshots, four wealth audit versions, 22 liabilities, three liability audit versions, three cards and all 149 original evidence hashes; 13 effective categories and 174 rules. Domain checks included 60 assistant calculations, 20 reports, 1,212 daily messages and 240 cycle messages; wealth checks included 21 reports / 95 reminders. No notifications, actual retries/deliveries or source mutations invoked. These counts are observations, not fixed targets.
+
+Native SQL counts now match all nine retained family counts. Four display-table EXPLAIN ANALYZE VERBOSE results use Index Only Scan (execution 0.483–0.785 ms; 0.00525–0.21571 DPU); numeric query evidence stays outside Git. Direct deployed exception/subscription component GETs returned HTTP 200, shadow/equal, no mismatch/error and source selected, as intended.
+
+D1/D2/D3 validated by local adversarial tests, full real retained reconciliation, independent shadow raw/promoted/public/expiry gates and exact native grants. Decision before flag edit: promote only API/probe operational display mode to guarded-sql in a separate PR; preserve all source decision/write/freshness authority, schema/capture/resources and other flags. Roll back that flag through the same approved PR workflow if guarded verification fails; never release locally or change the source to obtain parity. Guarded verification and final evidence still pending.

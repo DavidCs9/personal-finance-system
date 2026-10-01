@@ -454,7 +454,8 @@ export class PersonalFinanceV1Stack extends Stack {
     const wealthReadMode = 'guarded-sql';
     // Remaining read-only domain consumers start in shadow; authoritative decisions stay source-only.
     const domainReadMode = 'guarded-sql';
-    const operationalReadMode = 'shadow';
+    // Independent production shadow gate passed complete operational envelopes and public/expiration contracts.
+    const operationalReadMode = 'guarded-sql';
     apiFunction.addEnvironment('DSQL_OPERATIONAL_READ_MODE', operationalReadMode);
     const workerLedgerReadMode = 'guarded-sql';
     apiFunction.addEnvironment('DSQL_DOMAIN_READ_MODE', domainReadMode);

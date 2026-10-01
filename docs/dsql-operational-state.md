@@ -1,6 +1,6 @@
 # DSQL retained operational state and display reads
 
-This phase adds schema/transformer 4 and bootstrap provider 7. DynamoDB remains every writer, strongly consistent freshness reference and authoritative decision. The first delivery uses `operationalReadMode=shadow`; promotion requires a separate PR after explicit independent production acceptance. Existing movement/planning/payroll/Patrimonio/domain flags remain guarded.
+This phase adds schema/transformer 4 and bootstrap provider 7. DynamoDB remains every writer, strongly consistent freshness reference and authoritative decision. Shadow PR #164 and its approved production workflow passed full independent verification with zero mismatches. This separate promotion changes only `operationalReadMode` to `guarded-sql`; its production re-verification is recorded in the run record. Existing movement/planning/payroll/Patrimonio/domain flags remain guarded.
 
 ## Exact source inventory
 
