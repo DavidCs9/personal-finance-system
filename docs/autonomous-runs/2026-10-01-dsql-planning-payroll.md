@@ -13,7 +13,9 @@ DynamoDB remains write authority and freshness reference. Preserve IDs, CFDI ded
 - Read required repository, autonomous, product, migration and UI/Patrimonio guidance. Clean checkout; branch `codex/dsql-planning-payroll` created directly from refreshed `origin/main`.
 - Production inventory: six plans (2026-04 through 2026-09), including four explicit empty lists and two nonempty lists; 19 CFDIs across 2026-01 through 2026-09, including extraordinary payroll. All source owner/month/UUID identities match their keys; XML references remain in S3. Full private inventory is outside Git.
 - AWS setup was updated by David during this run: default long-lived IAM user codex-local-admin has AdministratorAccess and no permissions boundary. Preserve his unrelated edits to AGENTS.md and migration authentication guidance.
-- Inspect source records, readers/writers and existing projector/recovery; extend additive schema and guarded readers; verify locally; ship shadow and verify real history before promotion.
+- Implemented additive schema/projection, guarded readers on all existing planning/payroll consumers, and independent financial/evidence verification.
+- [PR #155](https://github.com/DavidCs9/personal-finance-system/pull/155) passed required quality, was CLEAN/MERGEABLE and squash merged as `a8f2dcaa92a3f6c9bf83c6585851f4245ffd757d`. [Shadow production run](https://github.com/DavidCs9/personal-finance-system/actions/runs/36874254903) succeeded, including deployed historical reconciliation and independent financial/evidence checks.
+- Promotion branch `codex/dsql-planning-payroll-guarded` starts directly at refreshed `origin/main`. All six participating functions will use guarded planning reads; movement mode stays unchanged. Next: quality/linear merge/deploy-production, repeat the independent gate, verify actual SQL selections and native health, then persist final evidence.
 
 ## Decisions
 
@@ -23,7 +25,7 @@ DynamoDB remains write authority and freshness reference. Preserve IDs, CFDI ded
 - Alternatives and tradeoffs: A new replication service or dual writes adds failure paths; extending existing keyed reconciliation preserves its tested ordering and recovery. SQL-only reads would hide confirmed writes during lag.
 - Decision and reason: Add planning/payroll tables and source-key support to the existing projector. Preserve full envelopes/evidence and use the existing SQL-first, strongly consistent source comparison before selecting SQL. Deploy comparison mode first and promote only after production equivalence passes.
 - Consequences, verification, and revisit conditions: Extra source reads remain until write authority moves. Verify carry-forward/empty lists, all payroll fields, evidence, income/fund calculations, duplicate imports, lag/error/rollback and recovery; reconsider only if real source contracts expose a gap.
-- Status: Provisional, inventory and verification pending.
+- Status: Validated by local real-data/SQL tests and the deployed historical/financial/evidence gate.
 
 ### D2 — Cover existing planning/payroll consumers together
 - Context: API monthly state, summaries and Patrimonio are also called by agent tools, daily balance push, monthly close and month-end balance reminders. Leaving those workers on source-only reads would leave this data migration incomplete.
@@ -31,7 +33,7 @@ DynamoDB remains write authority and freshness reference. Preserve IDs, CFDI ded
 - Alternatives and tradeoffs: API-only rollout leaves known consumers unmigrated; enable the same separate planning flag and native reader grants on all four relevant workers, plus API/probe, covers them without changing their notifications, writes or financial algorithms.
 - Decision and reason: Roll out planning/payroll shadow and guarded modes together on API, agent tools, daily balance push, monthly close and month-end reminders. Extend SELECT-only grants by exactly the two tables; no admin/write privileges. Production probes compare deterministic report/Patrimonio results without sending emails or pushes.
 - Consequences, verification, and revisit conditions: Verify synthesized dependency graph and identity grants, deployed configurations and all shared calculations. No manufactured production writes or notification sends for testing.
-- Status: Provisional.
+- Status: Validated by local integration tests, synthesis, all six deployed shadow configurations, and API/agent component reads. Scheduled workers share these verified services; no notifications were sent for testing.
 
 ### D3 — Guard the complete income derivation
 - Context: Income can query up to 24 prior months. Guarding every inner query independently would repeat SQL connection timeouts during an outage and could exceed the API/agent timeout even though DynamoDB remains healthy.
@@ -39,13 +41,19 @@ DynamoDB remains write authority and freshness reference. Preserve IDs, CFDI ded
 - Alternatives and tradeoffs: Add a custom circuit breaker (extra state and recovery semantics); compare each inner query (possible timeout amplification); compare the complete income result with independent SQL/source readers (one failure abandons the SQL branch, then derives current source results).
 - Decision and reason: Reuse the existing guard around the complete income derivation; standalone monthly/year/detail payroll reads remain guarded. This preserves the financial algorithm and avoids introducing connection-health state.
 - Consequences, verification, and revisit conditions: Test a SQL outage with an empty month and prior-month traversal, asserting only one SQL connection attempt before source fallback. Source reads still fail openly when unavailable.
-- Status: Provisional.
+- Status: Validated: SQL outage test attempts connection only once before deriving provisional source income.
 
 ## Verification results
 
-- Full workspace checks passed. Initial full suite: 395 tests passed; the added gate test brings the targeted suite to eight passing tests. Nine Python recovery tests passed; build and synth passed.
+- Full workspace checks passed. Initial full suite: 395 tests passed; final API suite: 216 tests passed, including eight planning/payroll SQL integration tests (total 396 across the latest workspace results). Nine Python recovery tests passed; build and synth passed.
 - Private local PostgreSQL verification used all 25 real source records: six plans, 19 CFDIs, duplicate reconciliation and 14 months; zero mismatches in complete stored content, monthly payroll, income/compensation and running fund history. This is local SQL evidence, not a production deployment claim.
+- Before rollout, original stream mapping Enabled/OK and all eight DSQL alarms OK.
 - Synthesized production resource comparison: DynamoDB table, DSQL cluster, all four event source mappings, encryption key and all three buckets match the deployed definitions exactly.
+- Production schema versions 1 and 2 coexist; six plan and 19 payroll rows are present. Native SQL grants show exactly SELECT on the two new tables and the four existing movement tables, with no SQL write grant to the reader.
+- Shadow reconciliation execution `deploy-36874254903-1` succeeded (2026-10-01 14:15:42–14:18:48 UTC): projected/equal 3,262; lag 0; mismatch 0.
+- Deployed independent probe: planning mode shadow; six stored plans/19 payroll records; 22 plans, summaries, compensation results and full Patrimonio closes; three payroll years; current full Patrimonio; 19 details/19 original XML SHA-256 checks; one missing lookup; zero mismatches (11,737 ms planning verification). Existing movement gate also passed 492 movements/details, 21 feeds/summaries and 19 ranges, zero mismatches.
+- Native EXPLAIN: both plan and annual payroll use Index Only Scan. Plan execution 0.522 ms/0.01229 DPU; payroll 0.635 ms/0.12961 DPU (single diagnostic samples, not latency guarantees).
+- Seven read-only deployed component invocations succeeded: prior/current inherited plan, monthly summary, lowercase CFDI detail, current Patrimonio, agent month and agent Patrimonio. All planning comparisons equal and selected source in shadow; movement summary selected SQL as configured. These test Lambda service/runtime identities directly, not API Gateway authentication.
 
 ## Outcome and remaining work
 

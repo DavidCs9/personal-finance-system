@@ -33,6 +33,8 @@ YTD fund, running same-day history, compensation and Patrimonio as-of exclusion 
 
 ## Production verification
 
+The shadow rollout ([PR #155](https://github.com/DavidCs9/personal-finance-system/pull/155), [deployment](https://github.com/DavidCs9/personal-finance-system/actions/runs/36874254903)) passed on 2026-10-01: all 3,262 projected rows matched, with zero lag/mismatch; six stored plans and 19 CFDIs matched complete content. Independent reads verified 22 plans, monthly summaries, compensation results and Patrimonio closes, three payroll years, current Patrimonio, all 19 details and original XML hashes, with zero mismatches. Native plan/payroll queries used Index Only Scan. Seven deployed API/agent component reads also passed shadow comparisons. Guarded promotion keeps the same source equality check and rollback flag.
+
 The existing deployment job first executes the deployed reconciliation capability, then invokes the extended read verification Lambda. Independent SQL/source readers prevent the freshness fallback from concealing a migration mismatch. The gate verifies:
 
 - Every retained plan/payroll envelope, every CFDI detail and original XML SHA-256.

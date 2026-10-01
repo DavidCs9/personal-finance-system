@@ -448,7 +448,8 @@ export class PersonalFinanceV1Stack extends Stack {
     metadataTable.grantReadWriteData(apiFunction);
     // Shadow rollout passed real feed/detail/summary equivalence. Preserve source fallback for stream lag.
     const ledgerReadMode = 'guarded-sql';
-    const planningReadMode = 'shadow';
+    // Shadow backfill/read gate passed all retained plans, CFDIs, evidence and monthly/Patrimonio calculations.
+    const planningReadMode = 'guarded-sql';
     apiFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
     apiFunction.addEnvironment('DSQL_LEDGER_READ_MODE', ledgerReadMode);
     dsqlProjection.grantReader(apiFunction);
