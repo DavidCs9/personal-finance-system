@@ -1,3 +1,4 @@
+import { withApplicationTransaction } from '@finance/ledger/dsql-store';
 import { randomUUID } from 'node:crypto';
 import { GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import {
@@ -20,7 +21,7 @@ export class InvalidCategoryError extends Error {}
 export { listCategories, listMerchantRules } from './sql-reads.js';
 export { listCategoriesDynamo, listMerchantRulesDynamo } from './source-reads.js';
 
-export const putCategoryCatalog = async (categories: readonly SpendCategory[]): Promise<readonly SpendCategory[]> => {
+const putCategoryCatalogInternal = async (categories: readonly SpendCategory[]): Promise<readonly SpendCategory[]> => {
   for (const category of categories) {
     if (!isValidCategoryId(category.id)) {
       throw new InvalidCategoryError(`Categoría inválida: ${category.id}`);
@@ -45,7 +46,7 @@ export const putCategoryCatalog = async (categories: readonly SpendCategory[]): 
   return listCategories();
 };
 
-export const upsertMerchantRule = async (input: {
+const upsertMerchantRuleInternal = async (input: {
   readonly merchantRaw: string;
   readonly categoryId: string;
   readonly pattern?: string;
@@ -88,7 +89,7 @@ export const resolveCategoryForMerchant = async (merchantRaw: string): Promise<s
   return resolveCategoryId(merchantRaw, rules);
 };
 
-export const ensureDefaultCatalog = async (): Promise<readonly SpendCategory[]> => {
+const ensureDefaultCatalogInternal = async (): Promise<readonly SpendCategory[]> => {
   const existing = await database.send(new QueryCommand({
     TableName: tableName,
     KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
@@ -99,7 +100,7 @@ export const ensureDefaultCatalog = async (): Promise<readonly SpendCategory[]> 
   return putCategoryCatalog(DEFAULT_SPEND_CATEGORIES);
 };
 
-export const setEventCategory = async (
+const setEventCategoryInternal = async (
   eventId: string,
   changedBy: string,
   categoryId: string | null,
@@ -157,3 +158,11 @@ export const setEventCategory = async (
     categoryId: (nextPayload.categoryId as string | undefined) ?? null,
   };
 };
+
+export const putCategoryCatalog = (...args:Parameters<typeof putCategoryCatalogInternal>):ReturnType<typeof putCategoryCatalogInternal> => withApplicationTransaction(()=>putCategoryCatalogInternal(...args));
+
+export const upsertMerchantRule = (...args:Parameters<typeof upsertMerchantRuleInternal>):ReturnType<typeof upsertMerchantRuleInternal> => withApplicationTransaction(()=>upsertMerchantRuleInternal(...args));
+
+export const ensureDefaultCatalog = (...args:Parameters<typeof ensureDefaultCatalogInternal>):ReturnType<typeof ensureDefaultCatalogInternal> => withApplicationTransaction(()=>ensureDefaultCatalogInternal(...args));
+
+export const setEventCategory = (...args:Parameters<typeof setEventCategoryInternal>):ReturnType<typeof setEventCategoryInternal> => withApplicationTransaction(()=>setEventCategoryInternal(...args));

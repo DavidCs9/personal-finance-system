@@ -104,3 +104,13 @@ describe('deployed DSQL maintenance and recovery flow', () => {
 
   });
 });
+
+it('ignores stale DynamoDB stream data after SQL authority and verifies SQL envelopes without rewriting them',async()=>{
+  const beforeReads=reads;
+  await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
+  const before=(await sql.query('SELECT source_pk,source_sk,generation,source_hash FROM olbia.projection_state ORDER BY source_pk,source_sk')).rows;
+  expect(await streamHandler({Records:[{dynamodb:{Keys:{PK:{S:'EVENT#1'},SK:{S:'EVENT'}},SequenceNumber:'stale'}}]})).toEqual({batchItemFailures:[]});
+  const result=await complete('sql-authority');
+  expect(result).toMatchObject({phase:'done',lag:0,mismatch:0,projected:0});expect(reads).toBe(beforeReads);
+  expect((await sql.query('SELECT source_pk,source_sk,generation,source_hash FROM olbia.projection_state ORDER BY source_pk,source_sk')).rows).toEqual(before);
+});

@@ -1,3 +1,4 @@
+import { sqlStoreEnabled, storageAuthority } from '@finance/ledger/dsql-store';
 import type { JsonObject } from '../http/response.js';
 import type { EventFeed } from './month-feed.js';
 import { readSourceDetail, readSourceFeed } from './source-reads.js';
@@ -30,6 +31,7 @@ export const selectLedgerRead = async <T>(input: {
   mode: LedgerReadMode; sql: () => Promise<T>; source: () => Promise<T>;
   report?: (outcome: ReadOutcome, selected: 'sql' | 'dynamodb') => void;
 }): Promise<T> => {
+  if (sqlStoreEnabled() && await storageAuthority()==='sql') return input.sql();
   if (input.mode === 'dynamodb') return input.source();
   // Resolve SQL first, then read the source. A source failure must propagate, never serve unverified SQL.
   const sql = await Promise.resolve().then(input.sql).then(value => ({ ok: true as const, value }), () => ({ ok: false as const }));

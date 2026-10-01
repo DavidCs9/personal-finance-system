@@ -68,3 +68,13 @@ describe('DSQL-specific schema bootstrap', () => {
     catch (error) { expect(String(error)).not.toContain('private'); }
   });
 });
+
+it('separates product write permissions from the authority operator and keeps envelope probes read-only',async()=>{
+  const query=vi.fn(async(statement:string)=>ready(statement));
+  await bootstrapSchema({query} as SqlClient,[],{applicationRoleArns:['arn:aws:iam::225989371926:role/product'],storeReaderRoleArns:['arn:aws:iam::225989371926:role/probe'],cutoverRoleArns:['arn:aws:iam::225989371926:role/operator']});
+  const statements=query.mock.calls.map(([statement])=>statement);
+  expect(statements.filter(statement=>statement.endsWith('TO olbia_application')).join()).not.toContain('UPDATE ON olbia.runtime_state');
+  expect(statements).toContain('GRANT UPDATE ON olbia.runtime_state TO olbia_cutover');
+  expect(statements.filter(statement=>statement.includes('TO olbia_store_reader')).join()).not.toMatch(/INSERT|UPDATE|DELETE/);
+  expect(statements.filter(statement=>statement.includes('TO olbia_application')).join()).toContain('olbia.movement_months');
+});

@@ -25,6 +25,7 @@ IDENTIFIERS = {
     "AWS::DSQL::Cluster": "Identifier",
     "AWS::S3::Bucket": "BucketName",
     "AWS::Logs::LogGroup": "LogGroupName",
+    "AWS::Backup::BackupVault": "BackupVaultName",
 }
 
 

@@ -1,3 +1,4 @@
+import { SQL_AUTHORITY } from './storage-cutover';
 import * as cdk from 'aws-cdk-lib';
 import { DsqlProjection } from './dsql-projection';
 import { Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
@@ -273,7 +274,7 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     rawEmailBucket.grantRead(ingestionFunction);
-    metadataTable.grantReadWriteData(ingestionFunction);
+    if (SQL_AUTHORITY) metadataTable.grantReadData(ingestionFunction); else metadataTable.grantReadWriteData(ingestionFunction);
     vapidSecret.grantRead(ingestionFunction);
     ingestionFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ses:SendEmail'],
@@ -327,9 +328,12 @@ export class PersonalFinanceV1Stack extends Stack {
       entry: path.join(__dirname, '..', 'lambda', 'retry-dispatcher.ts'), handler: 'handler',
       environment: { ...dataStorageEnvironment, INGESTION_QUEUE_URL: ingestionQueue.queueUrl },
     });
-    metadataTable.grantReadWriteData(retryDispatcherFunction);
+    if (SQL_AUTHORITY) metadataTable.grantReadData(retryDispatcherFunction); else metadataTable.grantReadWriteData(retryDispatcherFunction);
     ingestionQueue.grantSendMessages(retryDispatcherFunction);
-    retryDispatcherFunction.addEventSource(new DynamoEventSource(metadataTable, { startingPosition: lambda.StartingPosition.LATEST, batchSize: 1, retryAttempts: 3 }));
+    retryDispatcherFunction.addEventSource(new DynamoEventSource(metadataTable, { startingPosition: lambda.StartingPosition.LATEST, batchSize: 1, retryAttempts: 3, enabled: !SQL_AUTHORITY }));
+
+    new scheduler.Schedule(this,'SqlRetryRecovery',{scheduleName:'personal-finance-v1-sql-retry-recovery',enabled:SQL_AUTHORITY,
+      schedule:scheduler.ScheduleExpression.rate(cdk.Duration.minutes(1)),target:new LambdaInvoke(retryDispatcherFunction,{input:scheduler.ScheduleTargetInput.fromObject({})})});
 
     const emailReceiptFunction = new NodejsFunction(this, 'EmailReceiptFunction', {
       ...lambdaDefaults,
@@ -445,7 +449,7 @@ export class PersonalFinanceV1Stack extends Stack {
     });
     rawEmailBucket.grantRead(apiFunction);
     rawEmailBucket.grantPut(apiFunction);
-    metadataTable.grantReadWriteData(apiFunction);
+    if (SQL_AUTHORITY) metadataTable.grantReadData(apiFunction); else metadataTable.grantReadWriteData(apiFunction);
     // Shadow rollout passed real feed/detail/summary equivalence. Preserve source fallback for stream lag.
     const ledgerReadMode = 'guarded-sql';
     // Shadow backfill/read gate passed all retained plans, CFDIs, evidence and monthly/Patrimonio calculations.
@@ -919,7 +923,7 @@ export class PersonalFinanceV1Stack extends Stack {
       ],
       resources: ['*'],
     }));
-    metadataTable.grantReadWriteData(agentProxyFunction);
+    if (SQL_AUTHORITY) metadataTable.grantReadData(agentProxyFunction); else metadataTable.grantReadWriteData(agentProxyFunction);
     agentProxyFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock:GetPrompt'],
       resources: [
@@ -1007,7 +1011,7 @@ export class PersonalFinanceV1Stack extends Stack {
       ],
       resources: ['*'],
     }));
-    metadataTable.grantReadWriteData(agentChatBufferedFunction);
+    if (SQL_AUTHORITY) metadataTable.grantReadData(agentChatBufferedFunction); else metadataTable.grantReadWriteData(agentChatBufferedFunction);
     agentChatBufferedFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock:GetPrompt'],
       resources: [
@@ -1101,7 +1105,7 @@ export class PersonalFinanceV1Stack extends Stack {
         WEB_APP_URL: webAppUrl,
       },
     });
-    metadataTable.grantReadWriteData(applePayCaptureFunction);
+    if (SQL_AUTHORITY) metadataTable.grantReadData(applePayCaptureFunction); else metadataTable.grantReadWriteData(applePayCaptureFunction);
     applePayCaptureSecret.grantRead(applePayCaptureFunction);
     vapidSecret.grantRead(applePayCaptureFunction);
 
@@ -1125,7 +1129,7 @@ export class PersonalFinanceV1Stack extends Stack {
         WEB_APP_URL: webAppUrl,
       },
     });
-    metadataTable.grantReadWriteData(dailyBalancePushFunction);
+    if (SQL_AUTHORITY) metadataTable.grantReadData(dailyBalancePushFunction); else metadataTable.grantReadWriteData(dailyBalancePushFunction);
     dailyBalancePushFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
     dailyBalancePushFunction.addEnvironment('DSQL_LEDGER_READ_MODE', workerLedgerReadMode);
     dsqlProjection.grantReader(dailyBalancePushFunction);
@@ -1167,7 +1171,7 @@ export class PersonalFinanceV1Stack extends Stack {
         WEB_APP_URL: webAppUrl,
       },
     });
-    metadataTable.grantReadWriteData(cardCyclePushFunction);
+    if (SQL_AUTHORITY) metadataTable.grantReadData(cardCyclePushFunction); else metadataTable.grantReadWriteData(cardCyclePushFunction);
     cardCyclePushFunction.addEnvironment('RAW_EMAIL_BUCKET_NAME', rawEmailBucket.bucketName);
     cardCyclePushFunction.addEnvironment('DSQL_DOMAIN_READ_MODE', domainReadMode);
     dsqlProjection.grantReader(cardCyclePushFunction);
@@ -1221,7 +1225,7 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     rawEmailBucket.grantReadWrite(bitsoSyncFunction);
-    metadataTable.grantReadWriteData(bitsoSyncFunction);
+    if (SQL_AUTHORITY) metadataTable.grantReadData(bitsoSyncFunction); else metadataTable.grantReadWriteData(bitsoSyncFunction);
     bitsoApiSecret.grantRead(bitsoSyncFunction);
     vapidSecret.grantRead(bitsoSyncFunction);
     bitsoSyncFunction.addToRolePolicy(new iam.PolicyStatement({
@@ -1282,7 +1286,7 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     rawEmailBucket.grantReadWrite(ibkrSyncFunction);
-    metadataTable.grantReadWriteData(ibkrSyncFunction);
+    if (SQL_AUTHORITY) metadataTable.grantReadData(ibkrSyncFunction); else metadataTable.grantReadWriteData(ibkrSyncFunction);
     ibkrApiSecret.grantRead(ibkrSyncFunction);
     vapidSecret.grantRead(ibkrSyncFunction);
     ibkrSyncFunction.addToRolePolicy(new iam.PolicyStatement({
@@ -1329,7 +1333,7 @@ export class PersonalFinanceV1Stack extends Stack {
         WEB_APP_URL: webAppUrl,
       },
     });
-    metadataTable.grantReadWriteData(monthEndBalanceReminderFunction);
+    if (SQL_AUTHORITY) metadataTable.grantReadData(monthEndBalanceReminderFunction); else metadataTable.grantReadWriteData(monthEndBalanceReminderFunction);
     monthEndBalanceReminderFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
     monthEndBalanceReminderFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     dsqlProjection.grantReader(monthEndBalanceReminderFunction);
@@ -1380,7 +1384,7 @@ export class PersonalFinanceV1Stack extends Stack {
         WEB_APP_URL: webAppUrl,
       },
     });
-    metadataTable.grantReadWriteData(monthlyCloseEmailFunction);
+    if (SQL_AUTHORITY) metadataTable.grantReadData(monthlyCloseEmailFunction); else metadataTable.grantReadWriteData(monthlyCloseEmailFunction);
     monthlyCloseEmailFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
     monthlyCloseEmailFunction.addEnvironment('DSQL_LEDGER_READ_MODE', workerLedgerReadMode);
     monthlyCloseEmailFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
@@ -1454,6 +1458,10 @@ export class PersonalFinanceV1Stack extends Stack {
     );
     // The API Lambda serves many routes. One API-scoped invoke permission avoids
     // exhausting Lambda's 20 KB resource-policy limit with one statement per route.
+    for (const fn of [ingestionFunction,retryDispatcherFunction,apiFunction,agentProxyFunction,agentChatBufferedFunction,applePayCaptureFunction,
+      dailyBalancePushFunction,cardCyclePushFunction,bitsoSyncFunction,ibkrSyncFunction,monthEndBalanceReminderFunction,monthlyCloseEmailFunction]) dsqlProjection.grantApplicationStore(fn);
+    for (const fn of [readVerificationFunction,agentToolsFunction,agentTagMutationFunction]) dsqlProjection.grantApplicationStore(fn,'reader');
+
     const apiIntegration = new HttpLambdaIntegration('ApiLambdaIntegration', apiFunction, {
       scopePermissionToRoute: false,
     });

@@ -7,7 +7,9 @@
     ".": "./src/index.ts",
     "./dsql-runtime": "./src/dsql/runtime.ts",
     "./dsql-schema": "./src/dsql/schema.ts",
-    "./dsql-connection": "./src/dsql/connection.ts"
+    "./dsql-connection": "./src/dsql/connection.ts",
+    "./dsql-store": "./src/dsql/store.ts",
+    "./dsql-cutover": "./src/dsql/cutover.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

@@ -1,6 +1,6 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
+import { createApplicationStore } from '@finance/ledger/dsql-store';
 import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
-import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import {
   dailyBalancePushMessage,
   dayKeyInZone,
@@ -11,7 +11,7 @@ import { loadVapidCredentials, sendPushToSubscriptions } from '@finance/notify';
 import { listActivePushSubscriptions, type PushSubscriptionRecord } from '@finance/notify';
 import { getMonthSummary } from '../months/summary.js';
 
-const database = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const database = createApplicationStore();
 const secrets = new SecretsManagerClient({});
 const tableName = process.env.METADATA_TABLE_NAME ?? '';
 const vapidSecretArn = process.env.VAPID_SECRET_ARN ?? '';
@@ -23,6 +23,7 @@ export const handler = async (): Promise<{
   readonly expired: number;
   readonly failed: number;
 }> => {
+  await assertMutationsAvailable();
   if (!tableName || !vapidSecretArn || !webAppUrl) {
     throw new Error('METADATA_TABLE_NAME, VAPID_SECRET_ARN, and WEB_APP_URL are required.');
   }

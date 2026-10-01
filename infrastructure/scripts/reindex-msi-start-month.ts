@@ -1,3 +1,4 @@
+throw new Error('Retired DynamoDB mutation script. Use the deployed Olbia API to preserve SQL authority and audit history.');
 /**
  * Re-anchor MSI events so GSI3 / occurredAt sit on cuota 1's month.
  * Fixes plans opened from mid-plan statement evidence (2/n, 3/n, …).

@@ -1,3 +1,4 @@
+throw new Error('Retired DynamoDB mutation script. Use the deployed Olbia API to preserve SQL authority and audit history.');
 /**
  * Reject duplicate MSI plans created from mid-schedule statement imports.
  * Keeps the most complete plan per (merchant, cuota, months) and merges

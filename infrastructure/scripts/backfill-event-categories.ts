@@ -1,3 +1,4 @@
+throw new Error('Retired DynamoDB mutation script. Use the deployed Olbia API to preserve SQL authority and audit history.');
 /**
  * Backfill categoryId on events using persisted merchant rules (+ heuristic residual).
  *

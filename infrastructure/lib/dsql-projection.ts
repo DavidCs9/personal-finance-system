@@ -1,3 +1,6 @@
+import { SQL_AUTHORITY } from './storage-cutover';
+import * as backup from 'aws-cdk-lib/aws-backup';
+import * as events from 'aws-cdk-lib/aws-events';
 import { ArnFormat, Aws, CfnOutput, CfnResource, CustomResource, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import * as dsql from 'aws-cdk-lib/aws-dsql';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
@@ -42,6 +45,21 @@ export class DsqlProjection extends Construct {
     (this.bootstrap.node.defaultChild as CfnResource).addPropertyOverride('OperationalVerifierRoleArns', [fn.role!.roleArn]);
   }
 
+  private readonly applicationRoleArns: string[] = [];
+  private readonly storeReaderRoleArns: string[] = [];
+  private readonly cutoverRoleArns: string[] = [];
+  grantApplicationStore(fn: NodejsFunction, access: 'writer'|'reader'|'operator'='writer'): void {
+    fn.addEnvironment('DSQL_ENDPOINT',this.cluster.attrEndpoint);
+    fn.addEnvironment('OLBIA_SQL_STORE_ENABLED','true');
+    fn.addEnvironment('OLBIA_SQL_STORE_ROLE',access==='reader'?'olbia_store_reader':access==='operator'?'olbia_cutover':'olbia_application');
+    fn.addToRolePolicy(new iam.PolicyStatement({actions:['dsql:DbConnect'],resources:[this.cluster.attrResourceArn]}));
+    const property=access==='reader'?'StoreReaderRoleArns':access==='operator'?'CutoverRoleArns':'ApplicationRoleArns';
+    const arns=access==='writer'?this.applicationRoleArns:access==='reader'?this.storeReaderRoleArns:this.cutoverRoleArns;arns.push(fn.role!.roleArn);
+    (this.bootstrap.node.defaultChild as CfnResource).addPropertyOverride(property,arns);
+    this.bootstrap.node.addDependency(fn.role!);
+    (fn.node.defaultChild as CfnResource).addDependency(this.bootstrap.node.defaultChild as CfnResource);
+  }
+
   constructor(scope: Construct, id: string, props: {
     table: dynamodb.ITable; encryptionKey: kms.IKey; alertRecipientEmail: string;
   }) {
@@ -56,7 +74,7 @@ export class DsqlProjection extends Construct {
     });
     // Change only through a reviewed PR/deploy-production rollout. A code flag
     // avoids CloudFormation silently reusing an old parameter during rollback.
-    const captureEnabled = true;
+    const captureEnabled = !SQL_AUTHORITY;
     const createFunction = (name: string, entry: string, timeout: number): NodejsFunction => new NodejsFunction(this, name, {
       functionName: `personal-finance-v1-dsql-${entry}`, runtime: lambda.Runtime.NODEJS_24_X,
       entry: path.join(__dirname, '..', 'lambda', `dsql-${entry}.ts`), handler: 'handler',
@@ -90,7 +108,7 @@ export class DsqlProjection extends Construct {
     });
     const bootstrap = new CustomResource(this, 'Bootstrap', {
       serviceToken: provider.serviceToken,
-      properties: { Version: 7, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
+      properties: { Version: 8, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
     });
     this.bootstrap = bootstrap;
     // IAM policies must be installed before the bootstrap handler connects.
@@ -141,6 +159,7 @@ export class DsqlProjection extends Construct {
     });
     machine.node.addDependency(bootstrap);
     new scheduler.Schedule(this, 'DailyReconciliation', {
+      enabled: !SQL_AUTHORITY,
       scheduleName: 'personal-finance-v1-dsql-reconciliation',
       schedule: scheduler.ScheduleExpression.rate(Duration.days(1)),
       target: new StepFunctionsStartExecution(machine, { input: scheduler.ScheduleTargetInput.fromObject({}) }),
@@ -174,6 +193,25 @@ export class DsqlProjection extends Construct {
     deployRole.addToPrincipalPolicy(new iam.PolicyStatement({ actions: ['states:StartExecution'], resources: [machine.stateMachineArn] }));
     deployRole.addToPrincipalPolicy(new iam.PolicyStatement({ actions: ['states:DescribeExecution'], resources: [Stack.of(this).formatArn({ service: 'states', resource: 'execution', resourceName: 'personal-finance-v1-dsql-reconciliation:*', arnFormat: ArnFormat.COLON_RESOURCE_NAME })] }));
     deployRole.addToPrincipalPolicy(new iam.PolicyStatement({ actions: ['cloudformation:DescribeStacks'], resources: [Stack.of(this).stackId] }));
+    const operator=createFunction('Cutover','cutover',120);
+    operator.addEnvironment('OLBIA_ALLOW_SQL_ACTIVATION',String(SQL_AUTHORITY));
+    this.grantApplicationStore(operator,'operator');
+    operator.grantInvoke(deployRole);
+    const vault=new backup.BackupVault(this,'BackupVault',{backupVaultName:'personal-finance-v1-dsql',encryptionKey:props.encryptionKey,removalPolicy:RemovalPolicy.RETAIN});
+    const backupRole=new iam.Role(this,'BackupRole',{assumedBy:new iam.ServicePrincipal('backup.amazonaws.com'),managedPolicies:[iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSBackupServiceRolePolicyForBackup')]});
+    props.encryptionKey.grantEncryptDecrypt(backupRole);
+    const plan=new backup.BackupPlan(this,'BackupPlan',{backupPlanName:'personal-finance-v1-dsql',backupVault:vault});
+    plan.addRule(new backup.BackupPlanRule({ruleName:'daily',scheduleExpression:events.Schedule.cron({hour:'8',minute:'0'}),deleteAfter:Duration.days(7)}));
+    plan.addSelection('ClusterBackup',{resources:[backup.BackupResource.fromArn(cluster.attrResourceArn)],role:backupRole});
+    deployRole.addToPrincipalPolicy(new iam.PolicyStatement({actions:['backup:StartBackupJob','backup:DescribeBackupJob'],resources:['*']}));
+    deployRole.addToPrincipalPolicy(new iam.PolicyStatement({actions:['iam:PassRole'],resources:[backupRole.roleArn],conditions:{StringEquals:{'iam:PassedToService':'backup.amazonaws.com'}}}));
+    deployRole.addToPrincipalPolicy(new iam.PolicyStatement({actions:['dynamodb:CreateBackup'],resources:[props.table.tableArn]}));
+    deployRole.addToPrincipalPolicy(new iam.PolicyStatement({actions:['dynamodb:DescribeBackup'],resources:[`${props.table.tableArn}/backup/*`]}));
+    new CfnOutput(Stack.of(this),'DsqlCutoverFunction',{value:operator.functionName});
+    new CfnOutput(Stack.of(this),'DsqlClusterArn',{value:cluster.attrResourceArn});
+    new CfnOutput(Stack.of(this),'DsqlBackupRole',{value:backupRole.roleArn});
+    new CfnOutput(Stack.of(this),'DsqlBackupVault',{value:vault.backupVaultName});
+    new CfnOutput(Stack.of(this),'DsqlSourceTable',{value:props.table.tableName});
     new CfnOutput(Stack.of(this), 'DsqlEndpoint', { value: cluster.attrEndpoint });
     new CfnOutput(Stack.of(this), 'DsqlRecoveryBucket', { value: recovery.bucketName });
     new CfnOutput(Stack.of(this), 'DsqlReconciliationArn', { value: machine.stateMachineArn });

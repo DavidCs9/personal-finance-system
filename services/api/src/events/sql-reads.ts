@@ -1,3 +1,4 @@
+import { currentStoreTransaction } from '@finance/ledger/dsql-store';
 import { createPool } from '@finance/ledger/dsql-connection';
 import type { JsonObject } from '../http/response.js';
 import { candidateMonthsFor, feedFromPayloads, type EventFeed } from './month-feed.js';
@@ -5,9 +6,9 @@ import { toPublicEvent } from './public-event.js';
 
 export interface ReadSqlClient { query(statement: string, values?: unknown[]): Promise<{ rows: JsonObject[] }> }
 let pool: ReturnType<typeof createPool> | undefined;
-export const readerPool = (): ReadSqlClient => pool ??= createPool('olbia_reader', {
+export const readerPool = (): ReadSqlClient => currentStoreTransaction() ?? (pool ??= createPool('olbia_reader', {
   connectionTimeoutMillis: 1_500, queryTimeoutMillis: 3_000,
-});
+}));
 
 export const monthReadStatement = `SELECT m.payload FROM olbia.movements m
   WHERE m.spend_month=ANY($2::text[]) AND (m.spend_month=ANY($1::text[]) OR EXISTS (

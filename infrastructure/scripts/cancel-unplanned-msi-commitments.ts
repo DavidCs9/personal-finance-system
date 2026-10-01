@@ -1,3 +1,4 @@
+throw new Error('Retired DynamoDB mutation script. Use the deployed Olbia API to preserve SQL authority and audit history.');
 /**
  * Cancel invented committed installments on statement_unplanned / incomplete MSI stubs.
  *

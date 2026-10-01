@@ -65,7 +65,7 @@ describe('DSQL migration infrastructure safety', () => {
     template.resourceCountIs('AWS::Scheduler::Schedule', 1);
     expect(JSON.stringify(template.findResources('AWS::SNS::TopicPolicy'))).toContain('cloudwatch.amazonaws.com');
     expect(JSON.stringify(template.findResources('AWS::SNS::TopicPolicy'))).toContain('sns:Publish');
-    expect(Object.values(template.findResources('AWS::CloudFormation::CustomResource'))[0].Properties.Version).toBe(7);
+    expect(Object.values(template.findResources('AWS::CloudFormation::CustomResource'))[0].Properties.Version).toBe(8);
   });
   it('can import every retained synthesized DSQL resource without updating the source table or encryption key', () => {
     const script = `
@@ -76,14 +76,14 @@ current,desired=json.load(sys.stdin)
 events=[dict(LogicalResourceId=name,ResourceType=resource['Type'],ResourceStatus='DELETE_SKIPPED',PhysicalResourceId=name) for name,resource in desired['Resources'].items() if name.startswith('DsqlProjection') and resource.get('DeletionPolicy')=='Retain']
 template,imports=module.import_plan(current,desired,events)
 assert all(template['Resources'][name]==resource for name,resource in current['Resources'].items())
-assert len(imports)==8
+assert len(imports)==10
 print(len(imports))
 `;
     const result = spawnSync('python3', ['-c', script], { cwd: path.resolve(__dirname, '..'),
       input: JSON.stringify([baseline.toJSON(), migrated.toJSON()]), encoding: 'utf8' });
     expect(result.stderr).toBe('');
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe('8');
+    expect(result.stdout.trim()).toBe('10');
   });
   it('allows native S3 destination validation across the dedicated bucket without deletion or other-account writes', () => {
     const recoveryId = Object.keys(migrated.findResources('AWS::S3::Bucket'))[0];

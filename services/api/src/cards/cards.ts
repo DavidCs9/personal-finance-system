@@ -1,3 +1,4 @@
+import { withApplicationTransaction } from '@finance/ledger/dsql-store';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DeleteCommand, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { INSTITUTIONS, isInstitution } from '@finance/domain';
@@ -99,7 +100,7 @@ export const listCardsDynamo = async (input: {
   return [...cards].sort((left, right) => left.name.localeCompare(right.name, 'es') || left.id.localeCompare(right.id));
 };
 
-export const saveCard = async (input: {
+const saveCardInternal = async (input: {
   readonly database: DynamoDBDocumentClient;
   readonly tableName: string;
   readonly owner: string;
@@ -202,3 +203,5 @@ export const toCardRecord = (item: Record<string, unknown>): CardRecord | undefi
     updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : new Date(0).toISOString(),
   };
 };
+
+export const saveCard = (...args: Parameters<typeof saveCardInternal>): ReturnType<typeof saveCardInternal> => withApplicationTransaction(() => saveCardInternal(...args));

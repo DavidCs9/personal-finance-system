@@ -130,6 +130,7 @@ app.methodNotAllowed(async () =>
 );
 
 app.errorHandler(Error, async (error) => {
+  if (error.name === 'MigrationPausedException') return json(503, { message: 'Olbia está en mantenimiento. Intenta de nuevo más tarde.' });
   console.error('API request failed', { message: errorMessage(error) });
   return json(HttpStatusCodes.INTERNAL_SERVER_ERROR, { message: 'Unable to complete this request.' });
 });

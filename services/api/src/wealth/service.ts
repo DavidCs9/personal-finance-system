@@ -1,3 +1,4 @@
+import { withApplicationTransaction } from '@finance/ledger/dsql-store';
 import { createHash, randomUUID } from 'node:crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
@@ -389,6 +390,7 @@ export const persistWealthSnapshot = async (input: {
     ContentType: 'application/json; charset=utf-8',
   }));
 
+  return withApplicationTransaction(async () => {
   const key = wealthSnapshotKey(input.owner, input.accountId, day);
   const existing = await database.send(new GetCommand({
     TableName: tableName,
@@ -443,6 +445,7 @@ export const persistWealthSnapshot = async (input: {
     },
   }));
   return snapshot;
+  });
 };
 
 export const createCajitaSnapshot = async (body: string | undefined, owner: string): Promise<JsonObject> => {
@@ -509,6 +512,7 @@ export const createCardLiabilitySnapshot = async (
     ContentType: 'application/json; charset=utf-8',
   }));
 
+  return withApplicationTransaction(async () => {
   const key = liabilitySnapshotKey(owner, cardId, day);
   const existing = await database.send(new GetCommand({
     TableName: tableName,
@@ -557,6 +561,7 @@ export const createCardLiabilitySnapshot = async (
     },
   }));
   return snapshot as unknown as JsonObject;
+  });
 };
 
 export const assertCajitaAccountParam = (accountId: string): void => {

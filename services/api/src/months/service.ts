@@ -1,3 +1,4 @@
+import { withApplicationTransaction } from '@finance/ledger/dsql-store';
 import { GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { database, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
@@ -72,7 +73,7 @@ export const getMonthlyPlan = (owner: string, month: string): Promise<JsonObject
   getMonthlyPlanFromReads(owner, month, (owner, month) => readConfiguredPlanning('plan',
     () => readSqlPlanRecord(owner, month), () => readMonthlyPlanRecordDynamo(owner, month)), incomeFieldsForMonth);
 
-export const saveMonthlyPlan = async (owner: string, month: string, input: MonthlyPlanInput): Promise<JsonObject> => {
+const saveMonthlyPlanInternal = async (owner: string, month: string, input: MonthlyPlanInput): Promise<JsonObject> => {
   const updatedAt = new Date().toISOString();
   const existing = await database.send(new GetCommand({
     TableName: tableName,
@@ -99,3 +100,5 @@ export const saveMonthlyPlan = async (owner: string, month: string, input: Month
   }));
   return getMonthlyPlan(owner, month);
 };
+
+export const saveMonthlyPlan = (...args: Parameters<typeof saveMonthlyPlanInternal>): ReturnType<typeof saveMonthlyPlanInternal> => withApplicationTransaction(() => saveMonthlyPlanInternal(...args));
