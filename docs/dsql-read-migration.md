@@ -32,6 +32,6 @@ The official DSQL connector obtains native IAM tokens, verifies TLS and uses a b
 
 CloudWatch EMF records `SqlSelected`, `SourceSelected`, `Mismatch` and `SqlError` in `Olbia/DsqlReads`, with the low-cardinality `Query` dimension (`month` / `detail`). Mode and outcome appear in each structured event. Platform latency/errors remain native Lambda metrics. A mismatch can be normal during stream lag and automatically selects source data; sustained mismatches require projection diagnosis using the existing reconciliation/recovery runbook.
 
-Monthly planning/payroll now have a separate rollout flag and verification gate, including payroll-derived Patrimonio and relevant worker consumers; see [planning/payroll migration](dsql-planning-payroll.md). DynamoDB remains write authority and freshness reference.
+Monthly planning/payroll now have a separate rollout flag and verification gate, including payroll-derived Patrimonio and relevant worker consumers; see [planning/payroll migration](dsql-planning-payroll.md). The subsequent [Patrimonio phase](dsql-patrimonio.md) also migrated retained canonical/audit records and its API/assistant/report/reminder consumers to guarded SQL. DynamoDB remains write authority and freshness reference.
 
 See [schema reference](dsql-schema.md), [projection runbook](dsql-migration-runbook.md) and [rollout evidence](autonomous-runs/2026-09-30-dsql-read-migration.md).
