@@ -62,4 +62,25 @@ Independent raw SQL comparisons happen before configured readers; fallback canno
 
 Independent shadow acceptance returned verified=true and zero mismatches across 494 live movements, 13 effective categories, 174 rules, three complete cards, 498 merchant resolutions, 60 assistant checks, 20 full reports/emails, 1,212 daily messages, 606 cycle dates and 240 cycle messages. Existing movement/planning/payroll/Patrimonio/evidence gates also passed, including all 149 retained evidence hashes. Nine deployed API/agent component reads produced twelve equal shadow comparisons, zero SQL errors/mismatches. Native schema [1,2,3], thirteen exact SELECT-only grants, eight alarms OK, mapping Enabled/OK and ten protected resource definitions unchanged. Initial investigation observed 492 movements; live ingestion explains the later count.
 
-Guarded promotion and repeated production acceptance are pending. The verifier shares each month feed across its daily loop while preserving every clock, calculation and content comparison.
+[Guarded PR #162](https://github.com/DavidCs9/personal-finance-system/pull/162) passed quality/CLEAN/MERGEABLE, squash merged and [deployed successfully](https://github.com/DavidCs9/personal-finance-system/actions/runs/36909613715). Reconciliation again passed 3,570 projected/equal comparisons with zero lag/mismatch. Independent guarded gate returned verified=true and zero total/domain/planning/wealth mismatches. Schema/transformer stays 3, bootstrap provider 6.
+
+| Independent acceptance | Shadow | Guarded |
+| --- | ---: | ---: |
+| Movement details / feeds / summaries / ranges | 494 / 21 / 21 / 19 | 494 / 21 / 21 / 19 |
+| Persisted / effective categories; rules; complete cards | 12 / 13; 174; 3 | 12 / 13; 174; 3 |
+| Merchant resolution / assistant comparisons | 498 / 60 | 498 / 60 |
+| Monthly full report + deterministic email comparisons | 20 | 20 |
+| Daily message content comparisons (both modes) | 1,212 | 1,212 |
+| Card cycle dates / messages | 606 / 240 | 606 / 240 |
+| Existing Patrimonio retained records / evidence hashes | 149 / 149 | 149 / 149 |
+| Existing Patrimonio as-of overviews / reminders | 95 / 95 | 95 / 95 |
+| Existing investment checks / reports | 193 / 21 | 193 / 21 |
+| Existing planning summaries / payroll details and evidence | 22 / 19 | 22 / 19 |
+| Total mismatches | 0 | 0 |
+| Gate elapsed (ms) / new-domain elapsed (ms) | 319,747 / 259,139 | 106,771 / 42,346 |
+
+The verifier shares each month feed across its daily loop and preserves every clock, calculation and content comparison; observed speedup is verification CPU work, not a product latency claim. Guarded native category/rule/card queries use Index Only Scan; total statement DPU estimates 0.00678 / 0.19833 / 0.00526. Existing 1.5s connection / 3s query bounds remain.
+
+Nine guarded deployed API/agent component reads yielded twelve equal comparisons and confirmed SQL selection (five worker movement comparisons), zero SQL errors/mismatches. All seven participating runtimes updated successfully; thirteen exact SELECT-only grants, mapping Enabled/OK, eight alarms OK and ten protected resources unchanged. Quality passed 416 tests plus nine Python recovery tests, checks, web build and synth; API type check and seven focused SQL tests also passed locally. SQL stale/create/edit/delete/outage/source-failure/rollback and authoritative source-only decisions are covered.
+
+Component reads exercised deployed Lambda route/tool handlers directly, without an API Gateway JWT-authentication test or worker delivery invocation. Full worker financial and deterministic notification content is independently verified without sending test notifications, invoking AI generation or refresh mutations, or manufacturing financial records. Real pattern rules were absent; local adversarial SQL tests cover exact/longest/tied-pattern precedence. Operational state, write cutover, reverse replication and DynamoDB retirement remain later phases.

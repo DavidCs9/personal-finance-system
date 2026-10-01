@@ -313,7 +313,7 @@ The checkpoint and its derived rows commit in the same SQL transaction. Reconcil
 CREATE TABLE IF NOT EXISTS olbia.schema_migrations (version integer PRIMARY KEY, applied_at timestamptz NOT NULL);
 ```
 
-Records applied SQL schema versions. Bootstrap preserves versions 1/2 and adds version 3 with conflict-safe inserts. Version 2 created the two planning/payroll tables. Version 3 creates four Patrimonio tables and explicitly adds cards.source_item. CloudFormation bootstrap provider version 5 applies the additive DDL and grants. Versions 2/3 of the provider previously handled deployment recovery and movement reader grants.
+Records applied SQL schema versions. Bootstrap preserves versions 1/2 and adds version 3 with conflict-safe inserts. Version 2 created the two planning/payroll tables. Version 3 creates four Patrimonio tables and explicitly adds cards.source_item. CloudFormation bootstrap provider version 5 applied the additive DDL and grants; current provider 6 extends only existing category/rule SELECT grants and the card-cycle reader identity. Versions 2/3 of the provider previously handled deployment recovery and movement reader grants.
 
 ## View and indexes
 
