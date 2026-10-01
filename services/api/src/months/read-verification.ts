@@ -12,6 +12,7 @@ import { getMonthlyPlan, getMonthlyPlanFromReads, readMonthlyPlanRecordDynamo } 
 import { planningReadMode, planReadStatement, payrollReadStatement, readSqlPlanRecord, readSqlPayslipsForMonth, readSqlPayslipsForYear } from './sql-reads.js';
 import { summarizeMonthFeed } from './summary.js';
 import { getWealthOverview, getWealthOverviewAsOf } from '../wealth/service.js';
+import { readSourceWealthInputs } from '../wealth/sql-reads.js';
 import { monthCloseDay } from '../reports/monthly-close.js';
 
 /** Explicit source/SQL reads prevent the freshness fallback from hiding a failed migration gate. */
@@ -47,8 +48,8 @@ export const verifyPlanningReads = async (owner: string, movementPayloads: JsonO
     mismatches += Number(!samePublicResult(summarizeMonthFeed(month, sourcePlan, feedFromPayloads([month], movementPayloads), now),
       summarizeMonthFeed(month, sqlPlan, await readSqlFeed([month], client), now))); summaries++;
     const day = monthCloseDay(month);
-    mismatches += Number(!samePublicResult(await getWealthOverviewAsOf(owner, day, listPayslipsForYearDynamo),
-      await getWealthOverviewAsOf(owner, day, readSqlPayslipsForYear))); wealthCloses++;
+    mismatches += Number(!samePublicResult(await getWealthOverviewAsOf(owner, day, listPayslipsForYearDynamo, readSourceWealthInputs),
+      await getWealthOverviewAsOf(owner, day, readSqlPayslipsForYear, readSourceWealthInputs))); wealthCloses++;
   }
   const years = new Set([...months].map(month => month.slice(0, 4)));
   let payrollYears = 0;
@@ -72,7 +73,7 @@ export const verifyPlanningReads = async (owner: string, movementPayloads: JsonO
   }
   const missing = '__dsql_missing_payroll__';
   mismatches += Number(!samePublicResult(await getPayslipDynamo(owner, '1900-01', missing), await getPayslipSql(owner, '1900-01', missing)));
-  mismatches += Number(!samePublicResult(await getWealthOverview(owner, now, listPayslipsForYearDynamo), await getWealthOverview(owner, now, readSqlPayslipsForYear)));
+  mismatches += Number(!samePublicResult(await getWealthOverview(owner, now, listPayslipsForYearDynamo, readSourceWealthInputs), await getWealthOverview(owner, now, readSqlPayslipsForYear, readSourceWealthInputs)));
   // The configured path must also succeed; its guard cannot substitute for explicit comparisons above.
   mismatches += Number(!samePublicResult(await getMonthlyPlan(owner, monthKeyInZone(now)),
     await getMonthlyPlanFromReads(owner, monthKeyInZone(now), readSqlPlanRecord, sqlIncome)));

@@ -10,7 +10,7 @@ import {
   wealthSnapshotAgeDays,
 } from '@finance/domain';
 import { getMonthlyPlan } from '../months/service.js';
-import { getWealthOverview, listWealthSnapshotsForAccount } from '../wealth/service.js';
+import { getWealthOverview, listWealthSnapshots } from '../wealth/service.js';
 import { listCategories } from '../categories/service.js';
 import { loadCategorizedMonthEvents, loadCategorizedMonthsEvents } from '../analytics/events.js';
 import { isValidMonth } from '../months/monthly-plan.js';
@@ -257,10 +257,9 @@ export const investmentHistory = async (
   const accounts: readonly WealthAccountId[] = requestedAccount && requestedAccount !== 'all'
     ? [requestedAccount]
     : ['bitso', 'ibkr'];
-  const candidates = await Promise.all(accounts.map(async (accountId) => ({
-    accountId,
-    snapshots: await listWealthSnapshotsForAccount(owner, accountId),
-  })));
+  const snapshots = await listWealthSnapshots(owner);
+  const candidates = accounts.map(accountId => ({ accountId,
+    snapshots: snapshots.filter(snapshot => snapshot.accountId === accountId) }));
   const matching = positionRequested && (!requestedAccount || requestedAccount === 'all')
     ? candidates.filter(({ snapshots }) => snapshots.some(
       (snapshot) => snapshot.holdings.some((holding) => holdingId

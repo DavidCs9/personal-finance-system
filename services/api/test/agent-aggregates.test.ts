@@ -7,7 +7,7 @@ process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-raw-email';
 const listWealthSnapshotsForAccount = vi.fn();
 
 vi.mock('../src/wealth/service.js', () => ({
-  listWealthSnapshotsForAccount,
+  listWealthSnapshots: async (owner: string) => (await Promise.all(['bitso', 'ibkr'].map(accountId => listWealthSnapshotsForAccount(owner, accountId)))).flat(),
   getWealthOverview: vi.fn(),
 }));
 

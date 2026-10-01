@@ -13,7 +13,7 @@ describe('DSQL-specific schema bootstrap', () => {
     const statements = query.mock.calls.map(([statement]) => statement).filter(statement => statement.includes('olbia_reader'));
     expect(statements).toContain('CREATE ROLE olbia_reader WITH LOGIN');
     expect(statements).toContain('GRANT USAGE ON SCHEMA olbia TO olbia_reader');
-    expect(statements).toContain('GRANT SELECT ON olbia.movements,olbia.movement_observations,olbia.movement_revisions,olbia.msi_installments,olbia.monthly_plans,olbia.payroll TO olbia_reader');
+    expect(statements).toContain('GRANT SELECT ON olbia.movements,olbia.movement_observations,olbia.movement_revisions,olbia.msi_installments,olbia.monthly_plans,olbia.payroll,olbia.cards,olbia.wealth_snapshots,olbia.wealth_versions,olbia.liability_snapshots,olbia.liability_versions TO olbia_reader');
     expect(statements).toContain("AWS IAM GRANT olbia_reader TO 'arn:aws:iam::225989371926:role/api-reader'");
     expect(statements.join()).not.toMatch(/GRANT (?:ALL|INSERT|UPDATE|DELETE)|olbia_projector TO/);
     await expect(bootstrapSchema({ query } as SqlClient, [], { readerRoleArns: ["unsafe' ARN"] })).rejects.toThrow('Invalid reader role ARN');

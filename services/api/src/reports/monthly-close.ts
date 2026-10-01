@@ -13,6 +13,7 @@ import { listCategories } from '../categories/service.js';
 import { loadCategorizedMonthsEvents } from '../analytics/events.js';
 import {
   getWealthOverviewAsOf,
+  getWealthOverviewsAsOf,
   type WealthBalanceOverview,
 } from '../wealth/service.js';
 
@@ -124,12 +125,14 @@ export interface MonthlyCloseFactDependencies {
   readonly loadEvents: (months: readonly string[]) => Promise<readonly CategorizedSpendEvent[]>;
   readonly loadCategories: typeof listCategories;
   readonly loadWealthAsOf: (owner: string, day: string) => Promise<WealthBalanceOverview>;
+  readonly loadWealthAsOfDays?: typeof getWealthOverviewsAsOf;
 }
 
 const defaultDependencies: MonthlyCloseFactDependencies = {
   loadEvents: loadCategorizedMonthsEvents,
   loadCategories: listCategories,
   loadWealthAsOf: getWealthOverviewAsOf,
+  loadWealthAsOfDays: getWealthOverviewsAsOf,
 };
 
 const requiredPreviousMonth = (month: string): string => {
@@ -327,11 +330,12 @@ export const buildMonthlyCloseFacts = async (
   const closeDay = monthCloseDay(month);
   const comparableWealth = month > WEALTH_TOTAL_HISTORY_START_MONTH;
   const previousWealthDay = monthCloseDay(againstMonth);
-  const [events, categories, currentWealth, previousWealth] = await Promise.all([
+  const wealthDays = comparableWealth ? [closeDay, previousWealthDay] : [closeDay];
+  const [events, categories, [currentWealth, previousWealth]] = await Promise.all([
     dependencies.loadEvents([month, ...priorMonths]),
     dependencies.loadCategories(),
-    dependencies.loadWealthAsOf(owner, closeDay),
-    comparableWealth ? dependencies.loadWealthAsOf(owner, previousWealthDay) : Promise.resolve(undefined),
+    dependencies.loadWealthAsOfDays ? dependencies.loadWealthAsOfDays(owner, wealthDays)
+      : Promise.all(wealthDays.map(day => dependencies.loadWealthAsOf(owner, day))),
   ]);
   const categoryNames = new Map(categories.map((category) => [category.id, category.name]));
   const currentCategories = aggregateSpendByCategory(events, month, categoryNames);

@@ -85,7 +85,7 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 | `list_movements` | Total sin truncar + detalle acotado por hoy/ayer/semana/7 días/mes/año o rango explícito; conserva semántica de cuota MSI y declara cuando evidencia histórica solo permite precisión mensual |
 | `compare_months` | Mes vs anterior / deltas |
 | `wealth_snapshot` | Neto / activos / deudas (solo lectura) |
-| `investment_history` | Historial DDB diario de inversiones de mercado (Bitso + IBKR), una cuenta o una posición por rango/all-time o fecha puntual as-of; incluye extremos de valor y, para símbolos, precio unitario implícito en MXN. La serie consolidada conserva el último valor conocido de cada cuenta hasta su siguiente sync |
+| `investment_history` | Historial diario de inversiones de mercado ([lecturas DSQL protegidas](dsql-patrimonio.md)) (Bitso + IBKR), una cuenta o una posición por rango/all-time o fecha puntual as-of; incluye extremos de valor y, para símbolos, precio unitario implícito en MXN. La serie consolidada conserva el último valor conocido de cada cuenta hasta su siguiente sync |
 | `WebSearch` | Búsqueda web administrada por AWS; conserva citas y enlaces en la respuesta |
 | `preview_tag_edit` | Dry run que congela movimientos `accepted` por IDs exactos o por rango con filtro explícito, y devuelve la lista completa `affected`; debe preceder inmediatamente a apply |
 | `apply_tag_edit` | Aplica en el mismo turno el snapshot congelado; la instrucción explícita del chat ya es la autorización |

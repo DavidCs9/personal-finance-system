@@ -450,6 +450,8 @@ export class PersonalFinanceV1Stack extends Stack {
     const ledgerReadMode = 'guarded-sql';
     // Shadow backfill/read gate passed all retained plans, CFDIs, evidence and monthly/Patrimonio calculations.
     const planningReadMode = 'guarded-sql';
+    const wealthReadMode = 'shadow';
+    apiFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     apiFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
     apiFunction.addEnvironment('DSQL_LEDGER_READ_MODE', ledgerReadMode);
     dsqlProjection.grantReader(apiFunction);
@@ -459,10 +461,12 @@ export class PersonalFinanceV1Stack extends Stack {
       timeout: Duration.minutes(10), memorySize: 512,
       logGroup: this.createLogGroup('DsqlReadVerificationLogGroup', 'personal-finance-v1-dsql-read-verification'),
       environment: { ...dataStorageEnvironment, AGENT_OWNER_SUB: agentOwnerSub.valueAsString,
-        DSQL_LEDGER_READ_MODE: ledgerReadMode, DSQL_PLANNING_READ_MODE: planningReadMode },
+        DSQL_LEDGER_READ_MODE: ledgerReadMode, DSQL_PLANNING_READ_MODE: planningReadMode, DSQL_WEALTH_READ_MODE: wealthReadMode },
     });
     metadataTable.grantReadData(readVerificationFunction);
     rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/cfdi-nomina/*');
+    rawEmailBucket.grantRead(readVerificationFunction, 'wealth-manual/*');
+    rawEmailBucket.grantRead(readVerificationFunction, 'wealth-api/*');
     encryptionKey.grantDecrypt(readVerificationFunction);
     dsqlProjection.grantReader(readVerificationFunction);
     new cdk.CfnOutput(this, 'DsqlReadVerificationFunction', { value: readVerificationFunction.functionName });
@@ -493,6 +497,7 @@ export class PersonalFinanceV1Stack extends Stack {
     });
     metadataTable.grantReadData(agentToolsFunction);
     agentToolsFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
+    agentToolsFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     dsqlProjection.grantReader(agentToolsFunction);
 
     const agentTagMutationFunction = new NodejsFunction(this, 'AgentTagMutationFunction', {
@@ -1311,6 +1316,7 @@ export class PersonalFinanceV1Stack extends Stack {
     });
     metadataTable.grantReadWriteData(monthEndBalanceReminderFunction);
     monthEndBalanceReminderFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
+    monthEndBalanceReminderFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     dsqlProjection.grantReader(monthEndBalanceReminderFunction);
     monthEndBalanceReminderFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ses:SendEmail'],
@@ -1361,6 +1367,7 @@ export class PersonalFinanceV1Stack extends Stack {
     });
     metadataTable.grantReadWriteData(monthlyCloseEmailFunction);
     monthlyCloseEmailFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
+    monthlyCloseEmailFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     dsqlProjection.grantReader(monthlyCloseEmailFunction);
     monthlyCloseEmailFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ses:SendEmail'],

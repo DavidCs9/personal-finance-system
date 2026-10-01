@@ -191,9 +191,12 @@ const gate = (): { promise: Promise<void>; release: () => void } => {
   return { promise, release };
 };
 describe('source/target concurrency protocol', () => {
-  for (const table of ['plan', 'payroll']) it(`never overwrites a confirmed ${table} update or resurrects it during concurrent backfill`, async () => {
-    const sourceKey = { PK: 'USER#owner', SK: table === 'plan' ? 'MONTH#2026-09' : 'PAYROLL#2026-09#UUID' };
-    const make = (amountMinor: number): SourceItem => ({ ...sourceKey, owner: 'owner', month: '2026-09', uuid: 'UUID',
+  for (const table of ['plan', 'payroll', 'WEALTH_SNAP', 'WEALTH_VER', 'LIAB_SNAP', 'LIAB_VER']) it(`never overwrites a confirmed ${table} update or resurrects it during concurrent backfill`, async () => {
+    const sourceKey = { PK: 'USER#owner', SK: table === 'plan' ? 'MONTH#2026-09' : table === 'payroll' ? 'PAYROLL#2026-09#UUID'
+      : `${table}#${table.startsWith('WEALTH') ? 'bitso' : 'amex'}#2026-09-15${table.endsWith('VER') ? '#2026-09-15T12:00:00.123Z' : ''}` };
+    const make = (amountMinor: number): SourceItem => table !== 'plan' && table !== 'payroll'
+      ? { ...sourceKey, owner: 'owner', accountId: 'bitso', cardId: 'amex', day: '2026-09-15', capturedAt: '2026-09-15T12:00:00.123Z', source: 'manual', currency: 'MXN', totalMxnMinor: amountMinor, holdings: [], versionId: 'original-version-id', supersededAt: '2026-09-15T13:00:00.456Z' }
+      : ({ ...sourceKey, owner: 'owner', month: '2026-09', uuid: 'UUID',
       payload: table === 'plan' ? { upcomingPayments: [{ id: 'bill', amountMinor }] } : {
         uuid: 'UUID', month: '2026-09', fechaPago: '2026-09-15', totalMinor: amountMinor,
         totalPercepcionesMinor: amountMinor, totalDeduccionesMinor: 0, totalOtrosPagosMinor: 0, lines: [],
