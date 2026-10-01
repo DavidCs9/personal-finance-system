@@ -114,6 +114,8 @@ aws stepfunctions describe-execution --execution-arn '<executionArn>' --region u
 
 Si una ejecución se interrumpe, conservar/revisar su reporte privado y reanudar iniciando otra ejecución con ese JSON como `--input file://progress.json` (fase distinta de `done`). La máquina acepta fase, cursor, contadores y `sourceTotals`. Un reporte `done` con lag/mismatch requiere una pasada nueva completa, no reanudar su última página. Step Functions también permite redrive nativo de ejecuciones fallidas; para fallos de paridad, hacer una ejecución nueva desde `source`.
 
+La comparación conserva milisegundos de `timestamptz`: pg devuelve objetos Date y se normalizan directamente con `toISOString()`. Convertirlos primero con `String()` descartaba esa precisión y causaba discrepancias falsas en movimientos/revisiones. La regresión usa el parser nativo de pg y sigue rechazando diferencias reales de un milisegundo; no se reduce precisión ni se omiten columnas para aprobar paridad.
+
 Para una falla S3, listar objetos del prefijo `aws/lambda/` del bucket de recuperación y pasar su clave al replay desplegado:
 
 ```bash
