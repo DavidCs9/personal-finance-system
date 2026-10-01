@@ -34,6 +34,8 @@ type StoreDependencies = {
   readonly database: DynamoDBDocumentClient;
   readonly tableName: string;
   readonly now?: () => Date;
+  // Display-only envelope selection. Discovery, activation, backfill and deletion never use this reader.
+  readonly displayIndices?: (owner: string) => Promise<readonly Record<string, unknown>[]>;
 };
 
 type HistoryDependencies = StoreDependencies & {
@@ -59,7 +61,7 @@ export const assistantThreadTitle = (message: string): string => {
   return normalized.length <= 72 ? normalized : `${normalized.slice(0, 69).trimEnd()}…`;
 };
 
-const publicThread = (item: Record<string, unknown>): AssistantThread | undefined => {
+export const publicThread = (item: Record<string, unknown>): AssistantThread | undefined => {
   if (
     typeof item.sessionId !== 'string'
     || !isValidAssistantThreadId(item.sessionId)
@@ -178,7 +180,7 @@ const indexedThreads = async (dependencies: StoreDependencies, owner: string): P
       ConsistentRead: true,
     }));
     for (const item of page.Items ?? []) {
-      if (item.SK === ACTIVE_THREAD_SK) continue;
+      if (item.SK === ACTIVE_THREAD_SK || (typeof item.expiresAt === 'number' && item.expiresAt <= Math.floor((dependencies.now?.() ?? new Date()).getTime() / 1000))) continue;
       const thread = publicThread(item);
       if (thread) threads.push(thread);
     }
@@ -352,6 +354,12 @@ export const getAssistantThread = async (
       month: monthFromMemoryEvents(events) ?? firstUser.createdAt.slice(0, 7),
     });
   }
+  if (dependencies.displayIndices) {
+    const indices = await dependencies.displayIndices(owner);
+    const selected = indices.find(item => item.sessionId === sessionId && item.SK !== ACTIVE_THREAD_SK);
+    if (!selected) throw new InvalidAssistantThreadError('La conversación ya no está disponible.');
+    thread = publicThread(selected) ?? thread;
+  }
   return { thread, messages };
 };
 
@@ -421,7 +429,13 @@ export const listAssistantThreads = async (
   const selectedActive = active.configured
     ? active.id && threads.some((thread) => thread.id === active.id) ? active.id : undefined
     : threads[0]?.id;
-  return { threads, ...(selectedActive ? { activeThreadId: selectedActive } : {}) };
+  // Native session membership, ordering/page membership and active-state decisions above remain source-owned.
+  const indices = dependencies.displayIndices ? await dependencies.displayIndices(owner) : undefined;
+  const displayThreads = indices ? threads.flatMap(thread => {
+    const item = indices.find(item => item.sessionId === thread.id && item.SK !== ACTIVE_THREAD_SK);
+    return item ? [publicThread(item) ?? thread] : [];
+  }) : threads;
+  return { threads: displayThreads, ...(selectedActive && displayThreads.some(thread => thread.id === selectedActive) ? { activeThreadId: selectedActive } : {}) };
 };
 
 export const deleteAssistantThread = async (

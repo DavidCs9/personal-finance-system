@@ -225,6 +225,28 @@ describe('assistant thread persistence', () => {
     expect(command.input).toMatchObject({ actorId: 'owner-1', filter: { eventFilter: 'HAS_EVENTS' } });
   });
 
+  it('selects display metadata once after native/source decisions and never uses it to backfill or activate', async () => {
+    const record = { PK: 'USER#owner-1', SK: `ASSISTANT_THREAD#${sessionId}`, sessionId, title: 'Source title', firstMonth: '2026-09', createdAt: '2026-09-01T12:00:00.000Z', updatedAt: '2026-09-30T12:00:00.000Z' };
+    const sourceCalls: string[] = [];
+    const databaseSend = vi.fn(async (command: unknown) => {
+      if (command instanceof QueryCommand) { sourceCalls.push('source-index'); return { Items: [record] }; }
+      if (command instanceof GetCommand) { sourceCalls.push('source-active'); return { Item: { sessionId } }; }
+      throw new Error('Unexpected mutation');
+    });
+    const memorySend = vi.fn(async (command: unknown) => {
+      if (command instanceof ListSessionsCommand) { sourceCalls.push('native-sessions'); return { sessionSummaries: [{ sessionId }] }; }
+      throw new Error('Native history duplication is forbidden');
+    });
+    const displayIndices = vi.fn(async () => { sourceCalls.push('display'); return [{ ...record, title: 'Selected display' }]; });
+    const dependencies = { database: { send: databaseSend } as unknown as DynamoDBDocumentClient, tableName: 'metadata',
+      memory: { send: memorySend } as unknown as BedrockAgentCoreClient, memoryId: 'native', now: () => new Date('2026-10-01'), displayIndices };
+    const result = await listAssistantThreads(dependencies, 'owner-1');
+    expect(result.threads[0].title).toBe('Selected display'); expect(result.activeThreadId).toBe(sessionId);
+    expect(sourceCalls).toEqual(['source-index', 'native-sessions', 'source-active', 'display']); expect(displayIndices).toHaveBeenCalledTimes(1);
+    displayIndices.mockResolvedValueOnce([]);
+    expect(await listAssistantThreads(dependencies, 'owner-1')).toEqual({ threads: [] });
+  });
+
   it('accepts an explicit empty active selection and rejects malformed ids', () => {
     expect(parseActiveAssistantThreadInput('{"threadId":null}')).toBeUndefined();
     expect(() => parseActiveAssistantThreadInput('{"threadId":"short"}')).toThrow('threadId no es válido');

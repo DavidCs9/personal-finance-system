@@ -1,3 +1,5 @@
+import { operationalReadMode, selectOperationalRecords, sourceExceptionRecords, publicExceptions, readOperationalItem, isRetainedLive } from '../operational/reads.js';
+import { readerPool } from '../events/sql-reads.js';
 import { GetCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { database, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
@@ -5,23 +7,15 @@ import { readSource } from '../events/queries.js';
 import { randomUUID } from 'node:crypto';
 
 export const listExceptions = async (): Promise<readonly JsonObject[]> => {
-  const result = await database.send(new QueryCommand({
-    TableName: tableName, IndexName: 'GSI1', KeyConditionExpression: 'GSI1PK = :partition',
-    ExpressionAttributeValues: { ':partition': 'EXCEPTIONS' }, ScanIndexForward: false, Limit: 100,
-  }));
-  return (result.Items ?? [])
-    .map((item) => item.payload as JsonObject)
-    .filter((payload) => !payload.discarded && (payload.retry as JsonObject | undefined)?.status !== 'completed')
-    .map(toPublicException);
-};
-
-const toPublicException = (payload: JsonObject): JsonObject => {
-  const retry = payload.retry as JsonObject | undefined;
-  return {
-    id: payload.id, receivedAt: payload.receivedAt, institution: payload.institution, reason: payload.reason,
-    details: payload.details,
-    ...(retry?.status === 'queued' || retry?.status === 'completed' ? { retry } : {}),
-  };
+  const at = new Date();
+  if (operationalReadMode() === 'dynamodb') {
+    const result = await database.send(new QueryCommand({ TableName: tableName, IndexName: 'GSI1',
+      KeyConditionExpression: 'GSI1PK = :partition', ExpressionAttributeValues: { ':partition': 'EXCEPTIONS' }, ScanIndexForward: false, Limit: 100 }));
+    return publicExceptions(result.Items ?? [], at, true);
+  }
+  const items = await selectOperationalRecords('ingestion_exceptions', () => sourceExceptionRecords({ database, tableName }), async () =>
+    (await readerPool().query("SELECT source_item FROM olbia.ingestion_exceptions WHERE index_pk='EXCEPTIONS'")).rows.map(row => row.source_item as JsonObject));
+  return publicExceptions(items, at);
 };
 
 export const requestRetry = async (exceptionId: string, requestedBy: string): Promise<JsonObject> => {
@@ -62,10 +56,9 @@ export const discardException = async (exceptionId: string, discardedBy: string)
 };
 
 export const readExceptionRawEmail = async (exceptionId: string): Promise<string> => {
-  const record = await database.send(new GetCommand({
-    TableName: tableName, Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' }, ConsistentRead: true,
-  }));
-  const source = (record.Item?.payload as JsonObject | undefined)?.source as { bucket?: string; key?: string } | undefined;
+  const item = await readOperationalItem('ingestion_exceptions', { database, tableName }, `EXCEPTION#${exceptionId}`, 'EXCEPTION');
+  if (item && !isRetainedLive(item, new Date())) throw new Error(`Missing raw source for exception ${exceptionId}`);
+  const source = (item?.payload as JsonObject | undefined)?.source as { bucket?: string; key?: string } | undefined;
   if (!source?.bucket || !source.key) throw new Error(`Missing raw source for exception ${exceptionId}`);
   return readSource({ bucket: source.bucket, key: source.key }, `exception ${exceptionId}`);
 };

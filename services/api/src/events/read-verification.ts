@@ -1,3 +1,4 @@
+import { verifyOperationalReads } from '../operational/verification.js';
 import { addCalendarMonths, monthKeyInZone } from '@finance/domain';
 import { feedFromPayloads, spendMonthOf } from './month-feed.js';
 import { readCurrentMovementPayloads, readSourceDetail } from './source-reads.js';
@@ -87,7 +88,9 @@ export const verifyLedgerReads = async () => {
   mismatches += wealth.mismatches;
   const domain = await verifyDomainReads(owner, source, orderedMonths, now);
   mismatches += domain.mismatches;
-  return { verified: mismatches === 0, mode: ledgerReadMode(), planning, wealth, domain, movements: source.length, feeds, summaries, ranges, details,
+  const operational = await verifyOperationalReads(owner, now);
+  mismatches += operational.mismatches;
+  return { operational, verified: mismatches === 0, mode: ledgerReadMode(), planning, wealth, domain, movements: source.length, feeds, summaries, ranges, details,
     missingLookups: 1, mismatches, elapsedMs: Date.now() - started, sourceScanMs, configuredReadsMs, legacyRangeMs: legacyMs,
     sqlFeedTotalMs: sqlFeedMs, sqlFeedAverageMs: feeds ? Math.round(sqlFeedMs / feeds) : 0, queryPlan, scanTypes };
 };

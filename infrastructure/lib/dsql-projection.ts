@@ -37,6 +37,11 @@ export class DsqlProjection extends Construct {
     (fn.node.defaultChild as CfnResource).addDependency(this.bootstrap.node.defaultChild as CfnResource);
   }
 
+  /** Additional SELECT-only operational verification identity; never used by product decision paths. */
+  grantOperationalVerifier(fn: NodejsFunction): void {
+    (this.bootstrap.node.defaultChild as CfnResource).addPropertyOverride('OperationalVerifierRoleArns', [fn.role!.roleArn]);
+  }
+
   constructor(scope: Construct, id: string, props: {
     table: dynamodb.ITable; encryptionKey: kms.IKey; alertRecipientEmail: string;
   }) {
@@ -85,7 +90,7 @@ export class DsqlProjection extends Construct {
     });
     const bootstrap = new CustomResource(this, 'Bootstrap', {
       serviceToken: provider.serviceToken,
-      properties: { Version: 6, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
+      properties: { Version: 7, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
     });
     this.bootstrap = bootstrap;
     // IAM policies must be installed before the bootstrap handler connects.
