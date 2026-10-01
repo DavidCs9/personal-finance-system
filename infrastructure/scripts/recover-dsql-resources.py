@@ -6,6 +6,7 @@ live template verbatim and add only retained resources from rollback events; the
 normal CDK deployment applies the reviewed application update afterwards.
 """
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,11 +18,40 @@ ACCOUNT = "225989371926"
 REGION = "us-east-2"
 STACK = "PersonalFinanceV1"
 PREFIX = "DsqlProjection"
+# Immutable CDK template from the last successful production rollout before #145.
+# GetTemplate corrupts its Unicode descriptions/schema to question marks.
+PRE_MIGRATION_TEMPLATE_SHA256 = "4b7dec2e3164baca19e6564f242c2347d2612b4e48ac55cb7494ab4a52c6eae6"
 IDENTIFIERS = {
     "AWS::DSQL::Cluster": "Identifier",
     "AWS::S3::Bucket": "BucketName",
     "AWS::Logs::LogGroup": "LogGroupName",
 }
+
+
+def restore_original_template(current, original):
+    """Restore only verified GetTemplate Unicode loss, never application changes."""
+    def lossy(value):
+        if isinstance(value, str):
+            return "".join(character if ord(character) < 128 else "?" for character in value)
+        if isinstance(value, list):
+            return [lossy(item) for item in value]
+        if isinstance(value, dict):
+            return {lossy(key): lossy(item) for key, item in value.items()}
+        return value
+
+    restored = copy.deepcopy(current)
+    for key, value in original.items():
+        if key == "Resources":
+            for name, resource in value.items():
+                live = current["Resources"].get(name)
+                if live != resource and live != lossy(resource):
+                    raise RuntimeError("Original deployment artifact differs from live application resource")
+                restored["Resources"][name] = copy.deepcopy(resource)
+        else:
+            if current.get(key) != value and current.get(key) != lossy(value):
+                raise RuntimeError("Original deployment artifact differs from live stack configuration")
+            restored[key] = copy.deepcopy(value)
+    return restored
 
 
 def import_plan(current, desired, events):
@@ -152,8 +182,17 @@ def main():
     key = f"dsql-recovery/{name}.json"
     publisher = base.assume(f"cdk-hnb659fds-file-publishing-role-{ACCOUNT}-{REGION}")
     with tempfile.TemporaryDirectory() as directory:
+        original_path = Path(directory) / "original-template.json"
+        publisher.check_identity()
+        publisher.call("s3api", "get-object", "--bucket", bucket,
+                       "--key", f"{PRE_MIGRATION_TEMPLATE_SHA256}.json", str(original_path))
+        original_bytes = original_path.read_bytes()
+        if hashlib.sha256(original_bytes).hexdigest() != PRE_MIGRATION_TEMPLATE_SHA256:
+            raise RuntimeError("Original deployment template checksum mismatch")
+        current = restore_original_template(current, json.loads(original_bytes))
+        template, imports = import_plan(current, desired, events)
         path = Path(directory) / "import-template.json"
-        path.write_text(json.dumps(template))
+        path.write_text(json.dumps(template, ensure_ascii=False), encoding="utf-8")
         publisher.check_identity()
         publisher.call("s3api", "put-object", "--bucket", bucket, "--key", key, "--body", str(path))
         deploy.check_identity()

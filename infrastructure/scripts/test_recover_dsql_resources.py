@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -52,6 +53,29 @@ class RecoveryTests(unittest.TestCase):
     def test_no_failed_rollout_is_a_noop(self):
         self.assertEqual(recovery.import_plan(self.live, self.desired, []), (self.live, []))
 
+    def test_original_artifact_restores_unicode_without_guessing_from_desired_code(self):
+        original = copy.deepcopy(self.live)
+        original["Resources"]["MetadataTable"]["Description"] = "Datos de David — México"
+        original["Resources"]["MetadataTable"]["Metadata"] = {"schema": {"description": "Información financiera"}}
+        damaged = copy.deepcopy(original)
+        damaged["Resources"]["MetadataTable"]["Description"] = "Datos de David ? M?xico"
+        damaged["Resources"]["MetadataTable"]["Metadata"]["schema"]["description"] = "Informaci?n financiera"
+        damaged["Resources"]["DsqlProjectionAlreadyImported"] = {"Type": "AWS::Logs::LogGroup"}
+        restored = recovery.restore_original_template(damaged, original)
+        self.assertEqual(restored["Resources"]["MetadataTable"], original["Resources"]["MetadataTable"])
+        self.assertIn("DsqlProjectionAlreadyImported", restored["Resources"])
+        self.assertEqual(damaged["Resources"]["MetadataTable"]["Description"], "Datos de David ? M?xico")
+        self.assertEqual(recovery.restore_original_template(original, original), original)
+
+    def test_original_artifact_rejects_unrelated_changes_and_missing_resources(self):
+        resource_changed, resource_missing, output_changed = [copy.deepcopy(self.live) for _ in range(3)]
+        resource_changed["Resources"]["MetadataTable"]["Properties"] = {"Changed": True}
+        del resource_missing["Resources"]["MetadataTable"]
+        output_changed["Outputs"]["Source"]["Value"] = "different"
+        for changed in [resource_changed, resource_missing, output_changed]:
+            with self.subTest(changed=changed), self.assertRaises(RuntimeError):
+                recovery.restore_original_template(changed, self.live)
+
     def test_ambiguous_identity_unknown_type_missing_identifier_and_dependency_fail_closed(self):
         cases = [self.events + [{**self.events[0], "PhysicalResourceId": "another-cluster"}],
                  [{**self.events[0], "ResourceType": "AWS::DynamoDB::Table"}],
@@ -83,6 +107,7 @@ class RecoveryTests(unittest.TestCase):
         _, imports = recovery.import_plan(self.live, self.desired, self.events)
         calls = []
         execution_role = f"arn:aws:iam::{recovery.ACCOUNT}:role/cdk-hnb659fds-cfn-exec-role-{recovery.ACCOUNT}-{recovery.REGION}"
+        original_bytes = json.dumps(self.live).encode()
         def call(*args):
             calls.append(args)
             operation = args[:2]
@@ -96,6 +121,8 @@ class RecoveryTests(unittest.TestCase):
             if operation == ("s3api", "put-object"):
                 uploaded = json.loads(Path(args[args.index("--body") + 1]).read_text())
                 self.assertEqual(uploaded["Resources"]["MetadataTable"], self.live["Resources"]["MetadataTable"])
+            if operation == ("s3api", "get-object"):
+                Path(args[-1]).write_bytes(original_bytes)
             if operation == ("cloudformation", "get-template-summary"):
                 return {"ResourceIdentifierSummaries": [{"ResourceType": item["ResourceType"],
                          "LogicalResourceIds": [item["LogicalResourceId"]], "ResourceIdentifiers": list(item["ResourceIdentifier"])} for item in imports]}
@@ -119,7 +146,8 @@ class RecoveryTests(unittest.TestCase):
                             "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}), patch.object(recovery.sys, "argv", ["recover", str(desired)]), \
                  patch.object(recovery.Aws, "check_identity"), patch.object(recovery.Aws, "assume", return_value=recovery.Aws()), \
                  patch.object(recovery.Aws, "call", side_effect=call), patch("builtins.print"):
-                recovery.main()
+                with patch.object(recovery, "PRE_MIGRATION_TEMPLATE_SHA256", hashlib.sha256(original_bytes).hexdigest()):
+                    recovery.main()
         operations = [args[:2] for args in calls]
         self.assertLess(operations.index(("cloudformation", "describe-change-set")), operations.index(("cloudformation", "execute-change-set")))
         self.assertFalse(any(args[0] in {"dynamodb", "dsql", "lambda"} for args in calls))
