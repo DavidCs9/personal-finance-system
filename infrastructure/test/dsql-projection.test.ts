@@ -2,6 +2,8 @@ import { App, Stack, RemovalPolicy } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as kms from 'aws-cdk-lib/aws-kms';
+import { Runtime } from 'aws-cdk-lib/aws-lambda';
+import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { DsqlProjection } from '../lib/dsql-projection';
 import { spawnSync } from 'node:child_process';
@@ -18,7 +20,12 @@ const stackFor = (projection: boolean): Stack => {
   });
   for (const index of ['GSI1', 'GSI2', 'GSI3']) table.addGlobalSecondaryIndex({ indexName: index,
     partitionKey: { name: `${index}PK`, type: dynamodb.AttributeType.STRING }, sortKey: { name: `${index}SK`, type: dynamodb.AttributeType.STRING } });
-  if (projection) new DsqlProjection(stack, 'DsqlProjection', { table, encryptionKey, alertRecipientEmail: 'owner@example.com' });
+  if (projection) {
+    const dsql = new DsqlProjection(stack, 'DsqlProjection', { table, encryptionKey, alertRecipientEmail: 'owner@example.com' });
+    const reader = new NodejsFunction(stack, 'ApiReader', { runtime: Runtime.NODEJS_24_X,
+      entry: path.resolve(__dirname, '../lambda/dsql-schema.ts'), handler: 'handler' });
+    dsql.grantReader(reader);
+  }
   return stack;
 };
 
@@ -58,7 +65,7 @@ describe('DSQL migration infrastructure safety', () => {
     template.resourceCountIs('AWS::Scheduler::Schedule', 1);
     expect(JSON.stringify(template.findResources('AWS::SNS::TopicPolicy'))).toContain('cloudwatch.amazonaws.com');
     expect(JSON.stringify(template.findResources('AWS::SNS::TopicPolicy'))).toContain('sns:Publish');
-    expect(Object.values(template.findResources('AWS::CloudFormation::CustomResource'))[0].Properties.Version).toBe(2);
+    expect(Object.values(template.findResources('AWS::CloudFormation::CustomResource'))[0].Properties.Version).toBe(3);
   });
   it('can import every retained synthesized DSQL resource without updating the source table or encryption key', () => {
     const script = `
@@ -89,5 +96,18 @@ print(len(imports))
     expect(statements.find((statement: { Action: string }) => statement.Action === 's3:ListBucket').Resource)
       .toEqual({ 'Fn::GetAtt': [recoveryId, 'Arn'] });
     expect(JSON.stringify(statements)).not.toContain('s3:DeleteObject');
+  });
+  it('maps a read-only API identity and waits for reader bootstrap without source or SQL admin/write grants', () => {
+    const api = Object.entries(migrated.findResources('AWS::Lambda::Function')).find(([id]) => id.startsWith('ApiReader'))![1];
+    expect(api.Properties.Environment.Variables.DSQL_ENDPOINT).toBeDefined();
+    expect(api.DependsOn.some((id: string) => id.includes('Bootstrap'))).toBe(true);
+    const bootstrap = Object.values(migrated.findResources('AWS::CloudFormation::CustomResource'))[0];
+    expect(bootstrap.Properties.ReaderRoleArns).toHaveLength(1);
+    const policy = Object.entries(migrated.findResources('AWS::IAM::Policy')).find(([id]) => id.startsWith('ApiReader'))![1];
+    const actions = policy.Properties.PolicyDocument.Statement.flatMap((s: { Action: string | string[] }) => s.Action);
+    expect(actions).toContain('dsql:DbConnect');
+    expect(actions).not.toContain('dsql:DbConnectAdmin');
+    expect(actions).not.toContain('dynamodb:PutItem');
+    expect(actions).not.toContain('dynamodb:UpdateItem');
   });
 });

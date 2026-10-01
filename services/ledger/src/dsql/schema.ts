@@ -32,7 +32,7 @@ export const SCHEMA_STATEMENTS = [
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
-  now?: () => number; pause?: (ms: number) => Promise<void>; indexWaitMs?: number;
+  now?: () => number; pause?: (ms: number) => Promise<void>; indexWaitMs?: number; readerRoleArns?: readonly string[];
 } = {}): Promise<void> => {
   const now = options.now ?? Date.now;
   const pause = options.pause ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -73,5 +73,15 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   for (const arn of roleArns) {
     if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid runtime role ARN');
     await query('iam-grant', `AWS IAM GRANT olbia_projector TO '${arn}'`);
+  }
+  if (options.readerRoleArns?.length) {
+    const reader = await query('reader-role-lookup', "SELECT rolname FROM pg_roles WHERE rolname='olbia_reader'");
+    if (!reader.rows.length) await query('reader-role-create', 'CREATE ROLE olbia_reader WITH LOGIN');
+    await query('reader-schema-grant', 'GRANT USAGE ON SCHEMA olbia TO olbia_reader');
+    await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
+    for (const arn of options.readerRoleArns) {
+      if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid reader role ARN');
+      await query('reader-iam-grant', `AWS IAM GRANT olbia_reader TO '${arn}'`);
+    }
   }
 };

@@ -23,6 +23,20 @@ while (( SECONDS < deadline )); do
       # Publish only verification counters to the public repository's Actions log.
       aws stepfunctions describe-execution --execution-arn "$execution_arn" --query output --output text | \
         jq '{phase,projected,equal,lag,mismatch}'
+      # Read-only deployed probe: compare actual public feeds, details and monthly
+      # calculations, then report counts/timings/native DPU estimates only.
+      aws sts get-caller-identity --query '{Account:Account,Arn:Arn}' --output json
+      reader_function="$(aws cloudformation describe-stacks --stack-name PersonalFinanceV1 \
+        --query "Stacks[0].Outputs[?OutputKey=='DsqlReadVerificationFunction'].OutputValue | [0]" --output text)"
+      [[ -n "$reader_function" && "$reader_function" != 'None' ]] || { echo 'Read verification output missing' >&2; exit 1; }
+      response_file="$(mktemp)"
+      metadata_file="$(mktemp)"
+      trap 'rm -f "$response_file" "$metadata_file"' EXIT
+      aws lambda invoke --function-name "$reader_function" --cli-binary-format raw-in-base64-out \
+        --payload '{}' --cli-read-timeout 900 "$response_file" > "$metadata_file"
+      jq -e '.StatusCode == 200 and .FunctionError == null' "$metadata_file" > /dev/null || { echo 'Read verification invocation failed' >&2; exit 1; }
+      cat "$response_file"
+      jq -e '.verified == true and .mismatches == 0' "$response_file" > /dev/null || { echo 'Public read equivalence failed' >&2; exit 1; }
       exit 0 ;;
     FAILED|TIMED_OUT|ABORTED)
       aws stepfunctions describe-execution --execution-arn "$execution_arn" --query '{status:status,error:error,cause:cause}' --output json

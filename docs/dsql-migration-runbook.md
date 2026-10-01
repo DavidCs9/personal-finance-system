@@ -1,6 +1,6 @@
 # DSQL: proyección, verificación y recuperación
 
-Esta entrega implementa la primera fase de [dsql-migration-plan.md](dsql-migration-plan.md), con carga histórica y comparación por registro. DynamoDB continúa como autoridad de escrituras y lecturas de Olbia. No se elimina ni reemplaza la tabla ni se cambian sus índices, stream `NEW_IMAGE`, TTL, cifrado, PITR de 35 días o retención. No hay cambios de UI ni promoción de lecturas/escrituras a DSQL.
+La primera fase de [dsql-migration-plan.md](dsql-migration-plan.md) implementó carga histórica y comparación por registro. DynamoDB continúa como autoridad de escrituras. La fase siguiente de [lecturas de movimientos](dsql-read-migration.md) añade comparación y promoción reversible a SQL con guardia de frescura. No se elimina ni reemplaza la tabla ni se cambian sus índices, stream `NEW_IMAGE`, TTL, cifrado, PITR de 35 días o retención. No hay cambios de UI ni promoción de escrituras a DSQL.
 
 La [referencia del esquema DSQL](dsql-schema.md) documenta las once tablas, columnas y claves, la vista, los índices, el alcance verificado y los datos que todavía permanecen fuera de SQL. La carga productiva de esta proyección pasó paridad; eso no significa que todos los registros de DynamoDB estén migrados.
 

@@ -1,4 +1,4 @@
-import { AuroraDSQLPool } from '@aws/aurora-dsql-node-postgres-connector';
+import type { AuroraDSQLPool } from '@aws/aurora-dsql-node-postgres-connector';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -8,20 +8,14 @@ import { canonicalJson, entityForKey, projectRows, TABLE_NAMES, PROJECTION_VERSI
 import { processStream, reconcileKey, type TransactionPool, type SqlClient, type StreamDelivery } from './projection.js';
 import { verifyKeyDetails } from './verification.js';
 import { bootstrapSchema, BootstrapFailure } from './schema.js';
+import { createPool } from './connection.js';
+export { createPool } from './connection.js';
 
 const required = (name: string): string => {
   const value = process.env[name];
   if (!value) throw new Error(`Missing ${name}`);
   return value;
 };
-export const createPool = (user = 'olbia_projector'): AuroraDSQLPool => new AuroraDSQLPool({
-  host: required('DSQL_ENDPOINT'), user, database: 'postgres', max: 2,
-  ssl: { rejectUnauthorized: true }, connectionTimeoutMillis: 10_000,
-  idleTimeoutMillis: 10_000, maxLifetimeSeconds: 300, query_timeout: 20_000,
-  retry: { maxRetries: 4, baseDelayMs: 25, maxDelayMs: 100 },
-  // Driver errors can contain parameter values. Native Lambda/ESM metrics expose failures.
-  logger: { warn: () => {}, error: () => {} },
-});
 let pool: AuroraDSQLPool | undefined;
 const runtimePool = (): TransactionPool => pool ??= createPool();
 const database = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
@@ -36,7 +30,7 @@ export const streamHandler = (event: { Records: Parameters<typeof processStream>
 
 export const schemaHandler = async (event: {
   RequestType: string; PhysicalResourceId?: string;
-  ResourceProperties: { RuntimeRoleArns?: string[] };
+  ResourceProperties: { RuntimeRoleArns?: string[]; ReaderRoleArns?: string[] };
 }): Promise<{ PhysicalResourceId: string }> => {
   const PhysicalResourceId = event.PhysicalResourceId ?? 'olbia-dsql-schema-v1';
   if (event.RequestType === 'Delete') return { PhysicalResourceId };
@@ -44,7 +38,9 @@ export const schemaHandler = async (event: {
   let stage = 'admin-connect';
   try {
     const client = await admin.connect();
-    try { await bootstrapSchema(client as SqlClient, event.ResourceProperties.RuntimeRoleArns ?? []); }
+    try { await bootstrapSchema(client as SqlClient, event.ResourceProperties.RuntimeRoleArns ?? [], {
+      readerRoleArns: event.ResourceProperties.ReaderRoleArns,
+    }); }
     finally { client.release(); }
     // Real engine / non-admin IAM smoke, before enabling the event source.
     stage = 'runtime-connect-and-smoke';
