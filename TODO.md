@@ -1,4 +1,4 @@
-# TODOs — control financiero: nóminas, estados de cuenta, presupuestos y MSI
+# TODOs — control financiero
 
 Solicitud de David, 2026-09-30: «Una vez esté el SQL, quiero una tabla con las nóminas y otra con estados de cuenta por tarjeta. Quiero tener súper control de todo».
 
@@ -7,6 +7,8 @@ Las tablas de nóminas y estados de cuenta se retoman cuando SQL esté listo. Es
 Solicitud adicional de David: incorporar presupuestos mensuales, actualizar cómo vamos al registrar cada compra y avisar «cuidado, estás llegando al límite».
 
 Solicitud adicional de David: una tabla de MSI para ver progresos, planes pasados y activos.
+
+Solicitud adicional de David, 2026-10-01: mejorar el correo de cierre que se envía el día 1; considera que el correo actual es malo y que el análisis de IA es de baja calidad.
 
 ## Dependencia: SQL listo
 
@@ -50,6 +52,15 @@ Solicitud adicional de David: una tabla de MSI para ver progresos, planes pasado
 - [ ] Actualizar el progreso al conciliar estados de cuenta/CSV o corregir un plan, preservando un único plan por compra y evitando duplicados o cuotas contadas dos veces.
 - [ ] Acceder a la tabla desde Resumen → Planes con fin, conservando la sección de cuotas del mes, la lista simple de Movimientos y la navegación actual. Referencia: [reglas MSI](docs/msi.md).
 - [ ] Verificar planes activos, terminados, incompletos y cerrados anticipadamente; conservar la regla de gasto mensual por cuota y mantener las cuotas futuras como compromisos, sin sumar el principal completo al gasto ni confundirlo con la deuda actual de la tarjeta.
+
+## 5. Mejorar el correo de cierre mensual y su análisis de IA
+
+- [ ] Revisar el correo realmente enviado el día 1 y su análisis persistido, contrastándolo con los datos del mes cerrado. Identificar qué aporta poco y si se usó IA o el fallback determinista antes de decidir la solución.
+- [ ] Mejorar la lectura de IA para que sea específica y útil para David: qué cambió frente a meses anteriores, qué explica las variaciones según la evidencia disponible, qué requiere atención y qué acciones concretas puede tomar. Evitar frases genéricas, obviedades y repetir las tablas sin interpretarlas.
+- [ ] Revisar el contexto que recibe el modelo, el prompt, las señales calculadas y las restricciones del formato de salida; corregir las limitaciones que estén produciendo un análisis superficial, sin inventar causas ni cifras.
+- [ ] Mejorar la jerarquía y redacción del correo para destacar los hallazgos relevantes y facilitar la lectura en móvil, conservando los capítulos «Tu mes / Dónde se fue» y «Tu patrimonio / Qué cambió».
+- [ ] Mantener cifras calculadas por código, incertidumbre explícita, corte al último día del mes anterior y distinción entre variación patrimonial y rendimiento. Incluir presupuestos y compromisos MSI cuando esos datos estén disponibles y aporten contexto.
+- [ ] Preparar una vista previa del cierre mejorado con los datos reales del correo criticado y comparar el antes/después; verificar que cada hallazgo esté respaldado por evidencia y que el fallback siga siendo útil si falla la IA. Referencia: [correo de cierre mensual](docs/monthly-close-email.md).
 
 ## Verificación de control financiero
 
