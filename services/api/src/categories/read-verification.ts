@@ -85,10 +85,11 @@ export const verifyDomainReads = async (owner: string, movements: readonly JsonO
       renderMonthlyCloseEmail(sqlFacts, fallbackMonthlyCloseAnalysis(sqlFacts), url)); reports++;
     // Planning has its own independent gate; share the selected plan so only this phase's movement input varies.
     const plan = await getMonthlyPlan(owner, month);
+    const sourceFeed = feedFromPayloads([month], movements), sqlFeed = feedFromPayloads([month], sqlMovements);
     for (let day = 1; day <= daysInCalendarMonth(month); day++) {
       const dayKey = `${month}-${String(day).padStart(2, '0')}`, clock = new Date(`${dayKey}T13:00:00.000Z`);
-      const sourceSummary = summarizeMonthFeed(month, plan, feedFromPayloads([month], movements), clock);
-      const sqlSummary = summarizeMonthFeed(month, plan, feedFromPayloads([month], sqlMovements), clock);
+      const sourceSummary = summarizeMonthFeed(month, plan, sourceFeed, clock);
+      const sqlSummary = summarizeMonthFeed(month, plan, sqlFeed, clock);
       check(sourceSummary, sqlSummary);
       for (const mode of ['amounts', 'private'] as const) {
         check(dailyBalancePushMessage(sourceSummary, mode, url, dayKey), dailyBalancePushMessage(sqlSummary, mode, url, dayKey)); dailyMessages++;

@@ -1,14 +1,14 @@
 # DSQL remaining domain reads
 
-This phase completes read-only category/rule, standalone card/cycle and worker/assistant movement consumers. Shadow is the initial rollout; guarded promotion requires a separate PR after independent production parity. DynamoDB remains every domain write authority and the strong freshness reference. Schema/transformer stays version 3; bootstrap provider 6 extends SELECT grants on two existing tables and associates the existing card-cycle runtime. No new table, projection, index, source resource or financial algorithm is needed.
+This phase completes read-only category/rule, standalone card/cycle and worker/assistant movement consumers. Shadow deployed in PR #161 and independent production parity passed; this separate promotion selects guarded SQL after freshness equality. DynamoDB remains every domain write authority and the strong freshness reference. Schema/transformer stays version 3; bootstrap provider 6 extends SELECT grants on two existing tables and associates the existing card-cycle runtime. No new table, projection, index, source resource or financial algorithm is needed.
 
 ## Consumer inventory and source boundaries
 
 | Reader / runtime | Selected inputs and behavior |
 | --- | --- |
-| API `GET /categories`, `GET /category-rules` | Effective defaults over persisted categories; complete public rules in ascending source SK order |
+| API `GET /categories`, `GET /categories/rules` | Effective defaults over persisted categories; complete public rules in ascending source SK order |
 | API analytics and assistant aggregate routes; agent-tools `month_snapshot`, `spend_by_category`, `compare_months` | Selected category names and selected movement feeds; unchanged MSI/Mi parte/uncertainty algorithms |
-| Agent-tools `spend_by_merchant`, `list_movements`, `plan_month_scenario` | Existing movement readers now enabled in shadow on the separate runtime; category names where applicable |
+| Agent-tools `spend_by_merchant`, `list_movements`, `plan_month_scenario` | Existing movement readers now enabled in guarded mode on the separate runtime; category names where applicable |
 | API `GET /cards` | Complete public card profiles including issuer, created/updated milliseconds, name and both cycle days |
 | Card-cycle push | Cards selected once before per-day reminder/subscription loops; unchanged clamping, message modes, tags and delivery |
 | Monthly close | One four-month movement feed and category list, existing shared Patrimonio/payroll inputs; unchanged prior closing-day facts, deterministic fallback HTML/text and AI rules |
@@ -40,7 +40,7 @@ S3 evidence, Cognito access and native AgentCore memory remain their existing pr
 
 `domainReadMode` configures `DSQL_DOMAIN_READ_MODE` on API, agent-tools, monthly-close and card-cycle push. `workerLedgerReadMode` configures `DSQL_LEDGER_READ_MODE` on agent-tools, daily balance and monthly-close. The API's previously verified guarded movement flag is unchanged; the probe independently verifies the new domain flag and all movement calculations. Reminder has no new movement input or flag.
 
-Both new flags initially use `shadow`. `dynamodb` skips SQL, `shadow` compares and returns source, and `guarded-sql` returns SQL only after complete equality with the strong source result. Mismatch/SQL error falls back, source failure propagates. Arrays and optional/zero values retain the serialized public contract. No cross-engine atomic snapshot is claimed.
+Both new flags deployed first in `shadow` and now select `guarded-sql` after independent acceptance. `dynamodb` skips SQL, `shadow` compares and returns source, and `guarded-sql` returns SQL only after complete equality with the strong source result. Mismatch/SQL error falls back, source failure propagates. Arrays and optional/zero values retain the serialized public contract. No cross-engine atomic snapshot is claimed.
 
 Each catalog/rule/card selection uses one SQL query. Reports share their four-month movement feed; assistant comparison shares one two-month feed; daily push selects once per summary; cycle push selects once before reminder/subscription loops. Wealth still reads cards in its single bundle using explicit source readers for its guard. Existing 1.5s connection/3s query bounds apply; a failed branch aborts that input selection instead of retrying SQL across days/cards/months. Planning/payroll and wealth keep their previously bounded aggregate guards. This correctness step still incurs source reads and is not a claim of lower latency.
 
@@ -58,4 +58,8 @@ Independent raw SQL comparisons happen before configured readers; fallback canno
 
 ## Production evidence
 
-Pending approved shadow rollout, independent parity, separate promotion and repeated guarded verification.
+[Shadow PR #161](https://github.com/DavidCs9/personal-finance-system/pull/161) passed quality/CLEAN/MERGEABLE and deployed through deploy-production. Reconciliation passed 3,570 projected/equal comparisons with zero lag/mismatch. The workflow completed successfully with verified=true and zero mismatches after a delayed synchronous invocation. An independent invocation of the same deployed read-only gate also passed; no cancellation or local deployment occurred.
+
+Independent shadow acceptance returned verified=true and zero mismatches across 494 live movements, 13 effective categories, 174 rules, three complete cards, 498 merchant resolutions, 60 assistant checks, 20 full reports/emails, 1,212 daily messages, 606 cycle dates and 240 cycle messages. Existing movement/planning/payroll/Patrimonio/evidence gates also passed, including all 149 retained evidence hashes. Nine deployed API/agent component reads produced twelve equal shadow comparisons, zero SQL errors/mismatches. Native schema [1,2,3], thirteen exact SELECT-only grants, eight alarms OK, mapping Enabled/OK and ten protected resource definitions unchanged. Initial investigation observed 492 movements; live ingestion explains the later count.
+
+Guarded promotion and repeated production acceptance are pending. The verifier shares each month feed across its daily loop while preserving every clock, calculation and content comparison.

@@ -50,3 +50,41 @@ In progress; no new production rollout claimed.
 - Initial standalone card parser tests exposed an eager environment import. Card configured reads now load their adapter on demand so pure input parsing retains its existing environment-free contract; full tests passed after correction.
 - Native docs revalidated SQL/UTF-8 C collation/IAM/Streams recovery. No new schema/projection/recovery gap exists; only existing bootstrap extends grants/association.
 - Next: shadow PR/quality/CLEAN/MERGEABLE, linear merge and deploy-production; independent production gate must pass before guarded promotion.
+
+## Shadow delivery checkpoint
+
+[PR #161](https://github.com/DavidCs9/personal-finance-system/pull/161) passed required quality and CLEAN/MERGEABLE, squash merged as 3be4454e045d79c8fe489b138d0656488b2381a5 at 18:14:05 UTC (12:14:05 America/Chihuahua). [Shadow production workflow](https://github.com/DavidCs9/personal-finance-system/actions/runs/36905311537) is running. Guarded branch starts directly from refreshed origin/main; flags will change only after independent shadow acceptance. Original checkout's three AWS-auth edits remain untouched.
+
+Shadow CloudFormation UPDATE_COMPLETE. Native schema [1,2,3], thirteen exact SELECT-only grants; source UTF-8 ordering confirmed. Nine deployed API/agent component reads produced twelve equal shadow comparisons (five worker movement comparisons), zero SQL errors/mismatches. All seven participating runtimes Successful with expected flags. Unchanged mapping Enabled/OK, eight DSQL alarms OK, all ten protected deployed resource definitions match baseline. One initial probe supplied incompatible month/range parameters; the application rejected it as specified. Corrected the probe to the existing contract; the full component pass succeeded, with no application change.
+
+Reconciliation deploy-36905311537-1 ran 12:20:17–12:23:52 America/Chihuahua (18:20:17–18:23:52 UTC), SUCCEEDED/done with 3,570 projected/equal comparisons, zero lag and mismatch. Independent deployed financial/content/evidence gate remains pending; no guarded flag change yet.
+
+### D3 — Reuse monthly feeds in the independent daily verification loop
+- Context: Production probe is progressing, but native timestamps show roughly 14–17 seconds between monthly plan comparisons while it verifies daily message content. Rebuilding two feeds for every day repeatedly computes source financial dates.
+- Evidence and uncertainty: Native logs show equal outcomes, no SQL/source error. Inspection confirms daily feeds depend on month and source/SQL payloads, not the daily clock. The daily clock only affects summarizeMonthFeed/message output. Probe timeout is ten minutes; this is verification CPU cost, not an extra product SQL timeout.
+- Alternatives and tradeoffs: Leave redundant work and wait several minutes; drop date checks (unacceptable); reuse the exact monthly feeds once, keeping every day/content-mode comparison.
+- Decision and reason: Hoist source/SQL month feeds outside the daily loop. Same payloads/month/parser, unchanged clocks/financial algorithms and number of comparisons. Include this verification-only optimization with promotion; the shadow gate still verifies the original equivalent calculations before promotion.
+- Consequences, verification, and revisit conditions: Focused independent corruption/content/daily tests must pass unchanged, followed by repeated production gate. No runtime consumer or notification behavior changes; revisit only if a feed becomes day-dependent.
+- Status: Validating.
+
+### D4 — Recover explicit shadow acceptance from the deployed read-only probe
+- Context: Native Lambda END/REPORT confirms the shadow verifier completed in 329.018 seconds at 18:29:34 UTC without a logged error; deploy-production remains waiting for its synchronous invoke response at 18:38 UTC. A successful Lambda execution alone cannot prove the returned mismatch count.
+- Evidence and uncertainty: Native comparisons are equal and reconciliation passed, but running Actions job logs are unavailable (HTTP 404). The long synchronous invocation may have lost its caller connection; this remains an inference until Actions returns.
+- Alternatives and tradeoffs: Promote based on platform completion (insufficient); wait without independent evidence; invoke the existing deployed read-only verification capability and obtain explicit counters independently.
+- Decision and reason: Run the unchanged deployed verifier locally with the default verified identity and a bounded long invocation timeout. No source/SQL data mutation, notification delivery or local code deployment. Keep flags shadow until the explicit independent result and deployment status are established.
+- Consequences, verification, and revisit conditions: Capture only safe counters in repository evidence, private outputs outside Git. Investigate workflow outcome and use native CLI connection options if its invocation failed.
+- Status: Investigating.
+
+## Explicit shadow acceptance and promotion decision
+
+The separately invoked deployed gate returned StatusCode 200, verified=true and zero total/planning/wealth/domain mismatches. It observed 494 movements (initial investigation observed 492; live ingestion continued), 21 feeds/summaries, 19 ranges and 494 details. New domain: 12 persisted/13 effective categories, 174 rules, three complete cards, 498 merchant checks, 20 months, 60 assistant checks, 20 full report/email comparisons, 1,212 daily messages, 606 cycle dates and 240 cycle messages. Existing planning/payroll gate passed 22 plans/summaries/compensation/wealth closes, 19 payroll details/evidence files. Existing Patrimonio gate passed 149 retained records/evidence files, 95 as-of overviews/reminders, 193 investment checks and 21 reports. Total elapsed 315.758s; new domain 250.328s. Native new-domain scans are Index Only Scan, total DPU estimates categories 0.00697/rules 0.19838/cards 0.00535.
+
+D3 focused seven SQL tests and API type check passed after sharing identical monthly verification feeds. D4 recovered explicit acceptance through the deployed capability. The shadow Actions job has already completed quality, CDK deployment and reconciliation; its final synchronous caller still waits after Lambda completion. Cancel only that stalled Actions run now, preserving deployed shadow state and recorded independent acceptance. This avoids its concurrency lock delaying the separately reviewed guarded deployment. This is not a successful Actions conclusion claim; the final guarded workflow must complete its own full gate. AWS documents caller disconnect risks for long synchronous invocation: https://docs.aws.amazon.com/lambda/latest/api/API_Invoke.html. Exact network cause remains unproven.
+
+Proceed with guarded flags in a separate PR, leaving DynamoDB authority and freshness unchanged. Repeat all deployed checks after promotion.
+
+### D4 resolution — Shadow workflow completed before cancellation
+
+Before cancellation took effect, Actions completed successfully. The cancellation request returned "Cannot cancel a workflow run that is completed"; no run was cancelled. Downloaded final job logs confirm verified=true, 494 movements, identical domain/content/evidence counts and zero mismatches, elapsed 319.747s (domain 259.139s). The earlier intended cancellation is superseded. The delayed synchronous caller ultimately returned; exact network/retry cause remains unproven and requires no infrastructure change. Both CI and independent local invocation establish shadow acceptance.
+
+D4 status: validated. D1/D2 shadow behavior and independent real-data parity validated. D3 local tests validated; repeated optimized production gate remains required.
