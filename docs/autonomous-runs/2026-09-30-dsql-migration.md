@@ -99,3 +99,56 @@ The initial base was `0141593`. The final fetch brought in `dbdbddb` (#144), whi
 ## Outcome and remaining work
 
 Run complete for the requested merge-ready coexistence PR. Implementation, local verification and remote `quality` succeeded, and the PR was `CLEAN`/`MERGEABLE` at the recorded closure checkpoint. No manual deployment or merge occurred. After an approved merge: confirm SNS subscription, inspect real-engine bootstrap and historical job, verify normal stream-delivered operations, then decide the later read-promotion phase described in the migration plan. See [runbook](../dsql-migration-runbook.md).
+
+
+## Resumed after deployment failure — 2026-09-30 (America/Chihuahua)
+
+PR #145 merged as `e4154cb`. The approved production workflow [36793116033](https://github.com/DavidCs9/personal-finance-system/actions/runs/36793116033) failed at the bootstrap custom resource and completed rollback. The user supplied the failure log. No stream mapping was enabled. The cluster, recovery bucket and log groups were retained and detached. This supersedes the original closure's expectation of successful activation; the earlier code/CI results remain valid but did not prove real-engine compatibility.
+
+### D8 — Bootstrap diagnosis without an attached AWS identity
+- Context: The handler erased the underlying exception; the supplied logs only identify the bootstrap stage. A one-second failure suggests a deterministic connection/SQL/privilege issue, but the exact cause is unverified.
+- Evidence and uncertainty: The session has no AWS credentials or TCP grants. The production deployment is the only authorized real-engine path. PostgreSQL tests do not validate DSQL-specific startup parameters or IAM associations.
+- Alternatives and tradeoffs: Guess and blindly rerun; wait for AWS credentials; audit official DSQL and connector documentation, add safe stage/code diagnostics, and fix any confirmed incompatibilities in a reviewed corrective PR.
+- Decision and reason: Use the documented audit and stage/code diagnostics while continuing independent recovery work. Preserve the bootstrap gate and avoid raw driver values/tokens in public logs.
+- Consequences, verification, and revisit conditions: Real-engine verification remains the approved deployment gate. Record confirmed defects separately from hypotheses and test the corrected paths.
+- Status: Provisional; investigation underway.
+
+### D9 — Recover retained resources after failed creation
+- Context: Retained, fixed-name Lambda log groups now collide with fresh creation; recreating the cluster/bucket would also leave duplicates.
+- Evidence and uncertainty: CloudFormation explicitly reported DELETE_SKIPPED for these resources. Their physical identifiers are not available in the user log; stack-event history/native import can discover them during approved CI. Production DDB remains authoritative and unchanged.
+- Alternatives and tradeoffs: Delete the retained resources (loses evidence and requires destructive access); rename new resources and leave orphans (duplicates/cost and repeated rollback problems); adopt the retained resources using native CloudFormation/CDK facilities in the approved deployment job.
+- Decision and reason: Investigate native import/adoption and implement a bounded recovery path for the known failed rollout. Preserve existing data/evidence; future failures must remain recoverable through the same workflow.
+- Consequences, verification, and revisit conditions: Recovery must fail closed for missing/ambiguous identities and never modify the source table. Verify import template isolation and resource identities before normal deployment.
+- Status: Provisional; recovery design underway before implementation.
+
+
+### D10 — Native index polling and safe bootstrap diagnostics
+- Context: The audit found `SELECT sys.wait_for_job(...)` treating a DSQL procedure as a PostgreSQL function. Existing mocked tests accepted this invalid protocol. Startup `statement_timeout` is also an unnecessary wire-protocol dependency, although its role in this failure is unproven.
+- Evidence and uncertainty: AWS async-index documentation calls `sys.wait_for_job` a procedure; AWS-maintained examples use `CALL` and a `succeeded` result. Native `sys.jobs` and `pg_index.indisvalid` provide documented status/readiness checks. DSQL catalog updates can return retryable OCC errors. Original exception remains unavailable.
+- Alternatives and tradeoffs: Switch to CALL (simple but awkward interruption/resume); poll native catalog/job state (bounded, resumes builds with no new job ID); skip readiness (unsafe).
+- Decision and reason: Poll readiness and native job failure with a bounded deadline, retry only native OCC classification on autocommit bootstrap statements, and label each failed stage with an allowlisted code. Use client query timeout rather than a server startup parameter; never print raw driver messages/details.
+- Consequences, verification, and revisit conditions: Unit tests must model an already-running job, failed job, deadline and OCC. Handler tests must prove stage/code survive while secrets do not. Keep each DDL independently committed and the event mapping gated.
+- Status: Provisional; documented protocol defect confirmed, exact production failure stage unverified.
+
+### D11 — Native import isolated from the normal application update
+- Context: Native CloudFormation import supports DSQL clusters, S3 buckets and Logs log groups, but disallows simultaneous changes to existing resources.
+- Evidence and uncertainty: AWS resource support matrix lists import support for all three types. Existing GitHub role can assume CDK deployment and file-publishing roles; no new permissions need to be installed before recovery. Stack rollback events retain physical identifiers. No live AWS access is available locally.
+- Alternatives and tradeoffs: Add a second recovery stack/custom resource framework; invoke CDK import against the whole modified application (would mix updates); build an isolated import template from the currently deployed template plus only matching retained DSQL resources.
+- Decision and reason: The approved deploy-production job will run a narrow script using native AWS CLI APIs. It checks identity/status, discovers detached DELETE_SKIPPED resources from native stack events, adds only those definitions, preserves every existing resource/output/parameter, uploads the template through the existing CDK file-publishing role, previews an import-only change set, then imports before normal CDK deployment. No deletes or direct financial operations.
+- Consequences, verification, and revisit conditions: Fail closed on ambiguous identifiers, unexpected resource types/dependencies or non-import changes. Reruns skip already-owned resources. Regression fixtures verify rollback recovery, no-op, identity mismatch and protection of the source table. Validate operationally after approved merge.
+- Status: Provisional; implementation authorized through existing PR/main workflow.
+
+
+### Corrective implementation checkpoint
+
+- Fixed the confirmed function/procedure protocol error by polling native index status/readiness, including interrupted builds. Bootstrap retries only native OCC classifications, emits safe stage/code failures, and still gates capture. Removed the unnecessary server startup timeout in favor of a client query deadline. Bootstrap custom-resource version is now 2.
+- Added import-only recovery inside deploy-production, using existing CDK roles and native stack-event identities. It validates native identifier schemas, preserves previous parameters, rejects non-import changes, verifies imported physical identities, and skips resources already owned. No additional IAM permissions or local production release.
+- Validation: 377 Vitest tests and seven Python tests passed; ledger/web/infrastructure type checks, web build, CDK synth, workflow YAML parsing and diff checks passed. Actual full-stack recovery-template exercise imported exactly eight retained resources while keeping every existing resource unchanged. The source table and all three pre-existing event-source mappings still exactly match the pre-migration template.
+- Remaining: publish corrective PR, await required quality and confirm CLEAN/MERGEABLE. AWS engine/IAM/import execution remains unverified locally because the session has no AWS identity. Exact original failure stage cannot be recovered from the discarded exception; approved deployment must establish real activation.
+- D8–D11 are validated for code/documentation/local tests; production behavior remains provisional. D6's suppression of bootstrap diagnostic context is superseded by D10's sanitized native exception stages; its restriction on publishing financial values remains in force.
+
+### Corrective PR closure
+
+Published and attached [PR #146](https://github.com/DavidCs9/personal-finance-system/pull/146). Required [quality run 36795592365](https://github.com/DavidCs9/personal-finance-system/actions/runs/36795592365) passed every installation/recovery-test/application-test/check/build/synth step on implementation commit `80821addada726406e3e18cff34c124c480d3144`. Production deployment was correctly skipped for the PR. GitHub reported `mergeable=true` and `mergeable_state=clean`; submitted reviews and inline threads were empty at this checkpoint. This closing change updates only this record; latest-head quality and mergeability are rechecked before handoff through [PR checks](https://github.com/DavidCs9/personal-finance-system/pull/146/checks).
+
+The requested corrective implementation is complete as a merge-ready PR. No merge, manual deployment, destructive cleanup or AWS production operation occurred in this session. The approved main deployment must import the eight retained resources, pass bootstrap/IAM and finish historical parity before SQL activation is claimed. The original failure's exact exception is irretrievable from the sanitized first-rollout log; confirmed protocol defects and rollback recovery are fixed, and future failures identify their safe stage/code. Continue any operational follow-up in this same record.
