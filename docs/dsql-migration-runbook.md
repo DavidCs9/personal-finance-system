@@ -1,6 +1,6 @@
 # DSQL: proyección, verificación y recuperación
 
-The [operational-state phase](dsql-operational-state.md) extends retained projections with schema/transformer 4 and bootstrap 7, and separately flags display-only reads. Its exact inventory and write-phase prerequisites supersede older remaining-state lists below. Existing financial flags remain guarded; DynamoDB owns all writes, decisions and freshness checks. Rollout evidence is recorded in the dated autonomous run.
+The completed [operational-state phase](dsql-operational-state.md) deployed schema/transformer 4 and bootstrap 7; eligible display-only reads now use guarded-sql after separate shadow #164 and promotion #165 workflows both passed full independent verification with zero mismatches. Its exact inventory and write-phase prerequisites supersede older remaining-state lists below. Existing financial flags remain guarded; DynamoDB owns all writes, decisions and freshness checks. Final production evidence is recorded in the [dated autonomous run](autonomous-runs/2026-10-01-dsql-operational-state.md).
 
 The completed [domain-read phase](dsql-domain-reads.md) enables guarded SQL for read-only categories/rules, standalone cards/cycles and worker/assistant movement consumers after separate verified shadow and promotion PRs. Its consumer inventory supersedes earlier remaining-read lists; all writes, authoritative decisions and strong freshness references remain in DynamoDB. Production evidence and rollback are recorded there.
 
