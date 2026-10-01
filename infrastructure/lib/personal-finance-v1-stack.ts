@@ -446,8 +446,8 @@ export class PersonalFinanceV1Stack extends Stack {
     rawEmailBucket.grantRead(apiFunction);
     rawEmailBucket.grantPut(apiFunction);
     metadataTable.grantReadWriteData(apiFunction);
-    // First rollout compares SQL without serving it. Promote only after deployed verification passes.
-    const ledgerReadMode = 'shadow';
+    // Shadow rollout passed real feed/detail/summary equivalence. Preserve source fallback for stream lag.
+    const ledgerReadMode = 'guarded-sql';
     apiFunction.addEnvironment('DSQL_LEDGER_READ_MODE', ledgerReadMode);
     dsqlProjection.grantReader(apiFunction);
     const readVerificationFunction = new NodejsFunction(this, 'DsqlReadVerification', {
