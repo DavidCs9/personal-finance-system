@@ -31,7 +31,7 @@ Repair the failed DSQL rollout autonomously. Complete the required PR/quality/li
 - Alternatives and tradeoffs: Ignore timestamp differences (weakens correctness); change source/SQL data to lower precision (unnecessary loss); preserve Date objects' milliseconds with toISOString and verify with the actual pg parser.
 - Decision and reason: Correct comparison normalization, preserving stored source and SQL data. Add a regression using the driver's native timestamptz parser and require real-engine zero-lag/zero-mismatch verification.
 - Consequences, verification, and revisit conditions: No schema/source changes. The live reconciliation must pass after rollout; investigate any remaining mismatch separately rather than weakening the gate.
-- Status: Implementing; real-data parity pending.
+- Status: Validated in production; #149 passed all 3,200 real-data comparisons with zero lag and zero mismatches.
 
 ### D2 — Match Lambda's native S3 destination permission validation
 - Context: After #147 recovered all retained resources and bootstrap passed, deployment failed creating the DynamoDB event source mapping: its execution role lacked acceptable PutObject permission for the failure destination.
@@ -51,7 +51,7 @@ Repair the failed DSQL rollout autonomously. Complete the required PR/quality/li
 
 ## Verification results
 
-- 377 application/infrastructure tests and nine Python recovery tests passed.
+- Final corrective PR passed 379 application/infrastructure tests and nine Python recovery tests.
 - Ledger, web and infrastructure type checks passed; web production build and CDK synth passed.
 - Corrected import preview accepted by CloudFormation; no diagnostic preview executed.
 - Original artifact SHA-256 verified; all 268 existing resources match it exactly (restoring only Unicode lost by GetTemplate).
@@ -61,7 +61,11 @@ Repair the failed DSQL rollout autonomously. Complete the required PR/quality/li
 
 ## Outcome and remaining work
 
-Repair, production deployment and runtime verification are in progress.
+The authorized deployment repair is complete. [Production run 36801466045](https://github.com/DavidCs9/personal-finance-system/actions/runs/36801466045) passed both quality and deploy-production. Its native reconciliation execution succeeded with projected 3,200, equal 3,200, lag zero and mismatch zero; the gate also confirmed monthly/currency financial aggregates match. All nine relational tables loaded successfully and stream evidence covers 103 keys after recovery replay.
+
+CloudFormation is UPDATE_COMPLETE. The mapping is Enabled with last processing OK and the original stream ARN. DynamoDB remains ACTIVE, KMS encrypted, with unchanged NEW_IMAGE stream and 35-day PITR. DSQL is ACTIVE with deletion protection. The app returns HTTP 200. The configured SNS email subscription is confirmed; the daily native reconciliation remains enabled. Original failure objects remain retained after successful replay.
+
+Infrastructure tool changes and promotion of application reads/writes to SQL remain separate decisions. This repair does not change DynamoDB's authority. No source records were fabricated or modified for verification; no local code deployment or manual SQL DDL was performed. No deployment or data repair work remains. All eight DSQL alarms returned to OK naturally, including the initial backlog iterator-age alarm; none were manually reset or disabled.
 
 ## Resumed after the first corrective rollout
 
@@ -77,3 +81,9 @@ Repair, production deployment and runtime verification are in progress.
 - Activated the configured SNS alarm email subscription via native ConfirmSubscription using the confirmation token from the exact AWS message for the live topic/recipient. Verified topic/account/recipient; no email was sent manually and no tokens were published. Subscription is now confirmed with authenticated unsubscribe required.
 - #148's infrastructure deployment succeeded, but its post-deploy parity gate failed. Historical load produced all nine relational tables; verification reported 1,416 equal, zero lag and 1,784 mismatch comparisons across two passes. The 892 distinct mismatches correspond exactly to 491 movements and 401 revisions, the timestamp-bearing entities. Native stream delivery captured 102 keys without artificial source mutations.
 - Created codex/fix-dsql-timestamp-parity directly from refreshed origin/main. Native pg parsing reproduces `.123Z` becoming `.000Z` through the previous verifier. The correction preserves Date precision; all 51 ledger tests and ledger type check pass, including equal movement/revision checks and rejection of a one-millisecond SQL discrepancy. Infrastructure synth and whitespace checks pass. Production parity remains the completion gate.
+- [PR #149](https://github.com/DavidCs9/personal-finance-system/pull/149) passed required quality ([run 36801314210](https://github.com/DavidCs9/personal-finance-system/actions/runs/36801314210)) on `916de7dd88a43ec7f7dd38a17d33f743a5132ec0`; confirmed CLEAN and MERGEABLE, then squash-merged as `e01b396c6fe1dac788e8bdd99903b38611fa8247`. Awaiting the automatic production rollout and parity rerun.
+- [Production run 36801466045](https://github.com/DavidCs9/personal-finance-system/actions/runs/36801466045) is deploying #149. Mapping remains Enabled / last processing OK; native metrics show 14 invocations with zero errors or throttles during initial backlog replay. SNS email subscription is confirmed. Initial backlog iterator age and the known failed parity execution have triggered alarms; verify subsequent health and parity before closure.
+- Inspected three native S3 recovery objects: all were RecordAgeExceeded from initial TRIM_HORIZON backlog, containing 1/2/2 records. Replayed all five through the already-deployed `personal-finance-v1-dsql-replay` capability; every invocation returned HTTP 200 with no FunctionError and expected replay counts. The capability rereads current DynamoDB and modifies only SQL. Originals remain retained. This occurred before the corrected deployment's reconciliation starts.
+- Corrected maintenance Lambda updated successfully in CloudFormation. Deployment-owned execution `deploy-36801466045-1` is now running the full source/target reconciliation and subsequent comparison passes.
+- #149 production run succeeded. Native DescribeExecution confirms SUCCEEDED, 3,200 projected and 3,200 equal comparisons, zero lag/mismatch. Historical and SQL monthly/currency totals match. Stream evidence covers 103 keys; the last timestamp includes the authorized native recovery replay. All three original recovery objects remain intact. Reconciliation failure alarm has returned to OK; initial-backlog iterator-age alarm is still awaiting its native evaluation window.
+- Final native checks at 2026-10-01 01:41 UTC confirm all eight DSQL alarms are OK and the rate(1 day) reconciliation schedule is ENABLED with the intended state-machine target. The initial backlog datapoint aged out without any manual alarm mutation. The completed record and runbook precision note are delivered in documentation-only PR #150; required quality and linear merge apply, with no additional production rollout.
