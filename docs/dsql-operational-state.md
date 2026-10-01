@@ -1,6 +1,6 @@
 # DSQL retained operational state and display reads
 
-This phase adds schema/transformer 4 and bootstrap provider 7. DynamoDB remains every writer, strongly consistent freshness reference and authoritative decision. Shadow PR #164 and its approved production workflow passed full independent verification with zero mismatches. This separate promotion changes only `operationalReadMode` to `guarded-sql`; its production re-verification is recorded in the run record. Existing movement/planning/payroll/Patrimonio/domain flags remain guarded.
+This phase adds schema/transformer 4 and bootstrap provider 7. DynamoDB remains every writer, strongly consistent freshness reference and authoritative decision. Shadow PR #164 and separate guarded promotion #165 both passed their approved production workflows and full independent verification with zero mismatches. Eligible API/probe display reads now use `operationalReadMode=guarded-sql`; production evidence is recorded below and in the run record. Existing movement/planning/payroll/Patrimonio/domain flags remain guarded.
 
 ## Exact source inventory
 
@@ -50,7 +50,13 @@ The approved workflow runs deployed full source/target reconciliation, then the 
 
 Existing movement, planning/payroll/XML, Patrimonio/audit/149 retained evidence hashes and deterministic notification/report content gates run unchanged. No test SES/Web Push/Bedrock generation, sync, retry dispatch, capture or financial source mutation is invoked. Local real retained replay verifies content and SQL compatibility basics; deployed DSQL bootstrap/IAM/gates establish native compatibility. Local adversarial SQL tests exercise pagination/limit, stale create/edit/delete, envelope/promoted-column corruption, optional fields/milliseconds, rollback/outage/source failure, all-family concurrent update/delete, TTL renewal/removal and stale tombstone replay, partial rollback/lost commit replay and explicit source-only apply/retry.
 
-Shadow delivery and production evidence are recorded in [autonomous run](autonomous-runs/2026-10-01-dsql-operational-state.md). Promotion and rollback change only operationalReadMode through PR → quality → CLEAN/MERGEABLE → squash/rebase → deploy-production. Never deploy locally, modify source directly, remove guards or retire DynamoDB.
+Both production rollouts and final evidence are recorded in [autonomous run](autonomous-runs/2026-10-01-dsql-operational-state.md). Promotion and rollback change only operationalReadMode through PR → quality → CLEAN/MERGEABLE → squash/rebase → deploy-production. Never deploy locally, modify source directly, remove guards or retire DynamoDB.
+
+## Verified production state — 2026-10-01
+
+[Shadow #164](https://github.com/DavidCs9/personal-finance-system/pull/164) / [workflow 36915582121](https://github.com/DavidCs9/personal-finance-system/actions/runs/36915582121) and separate [guarded #165](https://github.com/DavidCs9/personal-finance-system/pull/165) / [workflow 36917474660](https://github.com/DavidCs9/personal-finance-system/actions/runs/36917474660) passed quality and deploy-production. Each reconciliation recorded 4,874 equal comparisons, zero lag/mismatches. Each independent gate verified 652 complete operational envelopes, 54 public responses, 59 configured item reads and 114 expiration checks with zero mismatches; all existing financial, original-evidence and deterministic notification-content gates also passed.
+
+Live API/probe flags are guarded-sql. Native schema versions 1–4, transformer 4 and bootstrap 7 are deployed; product 17 SELECT grants and verifier nine SELECT grants are exact, with verifier mapped only to the probe. All ten protected resource definitions remain identical, mapping Enabled/OK and all eight alarms OK. Deployed exception/subscription component GETs selected SQL on equality and returned exactly their saved shadow responses. These component checks do not exercise the JWT authorizer or invoke native thread discovery/backfill. Local tests cover forced pagination, deletion, corruption, concurrent updates, TTL renewal/removal, outage and partial replay; production verification never fabricates source records or sends retries/notifications.
 
 ## Remaining DynamoDB dependencies and next-phase prerequisites
 
