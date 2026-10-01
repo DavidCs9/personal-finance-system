@@ -1,3 +1,4 @@
+import { withApplicationTransaction } from '@finance/ledger/dsql-store';
 import { randomUUID } from 'node:crypto';
 import { PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import {
@@ -17,7 +18,7 @@ import { parsePersonalAmountMinor } from './personal-amount.js';
 
 export class InvalidMsiError extends Error {}
 
-export const patchEvent = async (
+const patchEventInternal = async (
   eventId: string,
   changedBy: string,
   body: string | undefined,
@@ -130,7 +131,7 @@ const clearEventPersonalAmount = async (
   return persistEventPersonalAmount(eventId, changedBy, existing.personalAmountMinor, undefined);
 };
 
-export const persistEventMsi = async (
+const persistEventMsiInternal = async (
   eventId: string,
   changedBy: string,
   previous: unknown,
@@ -312,7 +313,7 @@ const markRejected = async (eventId: string, changedBy: string): Promise<JsonObj
   return toPublicEvent(updated.Attributes?.payload as JsonObject, [revision, ...(Array.isArray(existing.revisions) ? existing.revisions as JsonObject[] : [])], Array.isArray(existing.observations) ? existing.observations as JsonObject[] : []);
 };
 
-export const markDeferredMsi = async (
+const markDeferredMsiInternal = async (
   eventId: string,
   changedBy: string,
   deferralIdentity: string,
@@ -414,3 +415,9 @@ const setEventTags = async (
   }));
   return toPublicEvent(updated.Attributes?.payload as JsonObject, [revision]);
 };
+
+export const patchEvent = (...args: Parameters<typeof patchEventInternal>): ReturnType<typeof patchEventInternal> => withApplicationTransaction(() => patchEventInternal(...args));
+
+export const persistEventMsi = (...args: Parameters<typeof persistEventMsiInternal>): ReturnType<typeof persistEventMsiInternal> => withApplicationTransaction(() => persistEventMsiInternal(...args));
+
+export const markDeferredMsi = (...args: Parameters<typeof markDeferredMsiInternal>): ReturnType<typeof markDeferredMsiInternal> => withApplicationTransaction(() => markDeferredMsiInternal(...args));

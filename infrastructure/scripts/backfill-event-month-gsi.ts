@@ -1,3 +1,4 @@
+throw new Error('Retired DynamoDB mutation script. Use the deployed Olbia API to preserve SQL authority and audit history.');
 /**
  * One-shot backfill: set GSI3PK / GSI3SK / spendMonth on existing EVENT items.
  *

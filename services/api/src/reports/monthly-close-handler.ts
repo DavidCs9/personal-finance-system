@@ -1,3 +1,4 @@
+import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
 import { createHash } from 'node:crypto';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
@@ -178,6 +179,7 @@ export const runMonthlyClose = async (
   readonly messageId?: string;
   readonly analysisSource?: AnalysisSource;
 }> => {
+  await assertMutationsAvailable();
   const owner = requiredEnvironment('MONTHLY_CLOSE_OWNER');
   const currentMonth = monthKeyInZone(now);
   const month = previousCalendarMonth(currentMonth);

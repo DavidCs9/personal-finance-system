@@ -1,3 +1,4 @@
+throw new Error('Retired DynamoDB mutation script. Use the deployed Olbia API to preserve SQL authority and audit history.');
 /**
  * Propose category catalog + merchant→category rules from historical merchants.
  *

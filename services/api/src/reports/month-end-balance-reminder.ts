@@ -1,3 +1,4 @@
+import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
 import { createHash } from 'node:crypto';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
@@ -334,6 +335,7 @@ export const runMonthEndBalanceReminder = async (
   now: Date = new Date(),
   dependencies: MonthEndBalanceReminderDependencies = defaultDependencies,
 ): Promise<{ readonly month: string; readonly status: 'sent' | 'already_sent'; readonly messageId?: string }> => {
+  await assertMutationsAvailable();
   const owner = requiredEnvironment('MONTH_END_REMINDER_OWNER');
   const month = monthKeyInZone(now);
   const asOfDay = dayKeyInZone(now);

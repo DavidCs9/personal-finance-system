@@ -1,7 +1,7 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
+import { createApplicationStore } from '@finance/ledger/dsql-store';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
-import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import {
   BITSO_ACCOUNT_ID,
   dayKeyInZone,
@@ -16,7 +16,7 @@ import {
 } from './bitso-client.js';
 import { persistWealthSnapshot } from './service.js';
 
-const database = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const database = createApplicationStore();
 const secrets = new SecretsManagerClient({});
 const ses = new SESClient({});
 
@@ -166,6 +166,7 @@ export const syncBitsoForOwner = async (owner: string): Promise<JsonObjectLike> 
 type JsonObjectLike = Record<string, unknown>;
 
 export const runBitsoSyncJob = async (): Promise<BitsoSyncResult> => {
+  await assertMutationsAvailable();
   const secretArn = process.env.BITSO_SECRET_ARN ?? '';
   if (!secretArn) {
     return { status: 'skipped', reason: 'BITSO_SECRET_ARN is not configured.' };

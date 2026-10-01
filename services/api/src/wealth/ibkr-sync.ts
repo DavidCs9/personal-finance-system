@@ -1,7 +1,7 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
+import { createApplicationStore } from '@finance/ledger/dsql-store';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
-import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import {
   dayKeyInZone,
   FINANCE_TIME_ZONE,
@@ -20,7 +20,7 @@ import {
 } from './ibkr-client.js';
 import { persistWealthSnapshot } from './service.js';
 
-const database = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const database = createApplicationStore();
 const secrets = new SecretsManagerClient({});
 const ses = new SESClient({});
 
@@ -186,6 +186,7 @@ export const syncIbkrForOwner = async (owner: string): Promise<JsonObjectLike> =
 };
 
 export const runIbkrSyncJob = async (): Promise<IbkrSyncResult> => {
+  await assertMutationsAvailable();
   const secretArn = process.env.IBKR_SECRET_ARN ?? '';
   if (!secretArn) {
     return { status: 'skipped', reason: 'IBKR_SECRET_ARN is not configured.' };

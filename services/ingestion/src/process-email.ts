@@ -1,10 +1,10 @@
+import { createApplicationStore } from '@finance/ledger/dsql-store';
 import { createHash, randomUUID } from 'node:crypto';
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { SendEmailCommand, SESClient } from '@aws-sdk/client-ses';
 import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
-import { DynamoDBDocumentClient, PutCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { PutCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { SQSHandler } from 'aws-lambda';
 import { ingestionExceptionAlert, type IngestionExceptionAlertInput } from './notifications.js';
 import { maybeAutoAmexMsi } from '@finance/domain';
@@ -23,9 +23,7 @@ const s3 = new S3Client({});
 const ses = new SESClient({});
 const sqs = new SQSClient({ region: process.env.AWS_REGION, maxAttempts: 5, retryMode: 'adaptive' });
 const secrets = new SecretsManagerClient({});
-const database = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
-  marshallOptions: { removeUndefinedValues: true },
-});
+const database = createApplicationStore();
 
 export const ingestionHandler: SQSHandler = async (event) => {
   const failures: { itemIdentifier: string }[] = [];

@@ -11,7 +11,7 @@ if [[ -z "$machine_arn" || "$machine_arn" == 'None' ]]; then
   exit 1
 fi
 execution_arn="$(aws stepfunctions start-execution --state-machine-arn "$machine_arn" \
-  --name "deploy-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}" --input '{}' --query executionArn --output text)"
+  --name "deploy-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}-${DSQL_VERIFICATION_PHASE:-initial}" --input '{}' --query executionArn --output text)"
 echo "DSQL reconciliation execution: $execution_arn"
 deadline=$((SECONDS + 3000))
 while (( SECONDS < deadline )); do
@@ -37,6 +37,15 @@ while (( SECONDS < deadline )); do
       jq -e '.StatusCode == 200 and .FunctionError == null' "$metadata_file" > /dev/null || { echo 'Read verification invocation failed' >&2; exit 1; }
       cat "$response_file"
       jq -e '.verified == true and .mismatches == 0' "$response_file" > /dev/null || { echo 'Public read equivalence failed' >&2; exit 1; }
+      operator_function="$(aws cloudformation describe-stacks --stack-name PersonalFinanceV1 \
+        --query "Stacks[0].Outputs[?OutputKey=='DsqlCutoverFunction'].OutputValue | [0]" --output text)"
+      [[ -n "$operator_function" && "$operator_function" != 'None' ]] || { echo 'Write verification output missing' >&2; exit 1; }
+      aws sts get-caller-identity --query '{Account:Account,Arn:Arn}' --output json
+      aws lambda invoke --function-name "$operator_function" --cli-binary-format raw-in-base64-out \
+        --payload '{"action":"smoke"}' --cli-read-timeout 180 "$response_file" > "$metadata_file"
+      jq -e '.StatusCode == 200 and .FunctionError == null' "$metadata_file" > /dev/null || { echo 'Native SQL write smoke failed' >&2; exit 1; }
+      jq -e '.verified == true and .rolledBack == true' "$response_file" > /dev/null || { echo 'Native SQL rollback verification failed' >&2; exit 1; }
+      cat "$response_file"
       exit 0 ;;
     FAILED|TIMED_OUT|ABORTED)
       aws stepfunctions describe-execution --execution-arn "$execution_arn" --query '{status:status,error:error,cause:cause}' --output json

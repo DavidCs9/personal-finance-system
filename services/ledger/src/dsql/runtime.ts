@@ -9,6 +9,7 @@ import { processStream, reconcileKey, type TransactionPool, type SqlClient, type
 import { verifyKeyDetails } from './verification.js';
 import { bootstrapSchema, BootstrapFailure } from './schema.js';
 import { createPool } from './connection.js';
+import { authorityFrom } from './store.js';
 export { createPool } from './connection.js';
 
 const required = (name: string): string => {
@@ -17,20 +18,29 @@ const required = (name: string): string => {
   return value;
 };
 let pool: AuroraDSQLPool | undefined;
-const runtimePool = (): TransactionPool => pool ??= createPool();
+const runtimePool = (): TransactionPool & SqlClient => pool ??= createPool();
 const database = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 const s3 = new S3Client({});
 const readSource = async (key: SourceKey): Promise<SourceItem | undefined> => {
+  if(await authorityFrom(pool ??= createPool())==='sql') {
+    const rows=(await pool!.query('SELECT source_item FROM olbia.projection_state WHERE source_pk=$1 AND source_sk=$2 AND deleted=false',[key.PK,key.SK])).rows;return rows[0]?.source_item as SourceItem|undefined;
+  }
   const result = await database.send(new GetCommand({ TableName: required('METADATA_TABLE_NAME'), Key: { PK: key.PK, SK: key.SK }, ConsistentRead: true }));
   return result.Item as SourceItem | undefined;
 };
-const reconcile = (key: SourceKey, delivery?: StreamDelivery): Promise<void> => reconcileKey(runtimePool(), readSource, key, delivery);
-export const streamHandler = (event: { Records: Parameters<typeof processStream>[0] }): ReturnType<typeof processStream> =>
-  processStream(event.Records, reconcile);
+const reconcile = (key: SourceKey, delivery?: StreamDelivery): Promise<void> => reconcileKey({transaction: callback => runtimePool().transaction(async client => {
+  await client.query("UPDATE olbia.application_barrier SET generation=generation+1 WHERE id='storage'");
+  if(await authorityFrom(client)==='sql') return undefined as never;
+  return callback(client);
+})}, readSource, key, delivery);
+export const streamHandler = async (event: { Records: Parameters<typeof processStream>[0] }): ReturnType<typeof processStream> => {
+  if(await authorityFrom(pool ??= createPool())==='sql') return {batchItemFailures:[]};
+  return processStream(event.Records,reconcile);
+};
 
 export const schemaHandler = async (event: {
   RequestType: string; PhysicalResourceId?: string;
-  ResourceProperties: { RuntimeRoleArns?: string[]; ReaderRoleArns?: string[]; OperationalVerifierRoleArns?: string[] };
+  ResourceProperties: { RuntimeRoleArns?: string[]; ReaderRoleArns?: string[]; OperationalVerifierRoleArns?: string[]; ApplicationRoleArns?: string[]; StoreReaderRoleArns?: string[]; CutoverRoleArns?: string[] };
 }): Promise<{ PhysicalResourceId: string }> => {
   const PhysicalResourceId = event.PhysicalResourceId ?? 'olbia-dsql-schema-v1';
   if (event.RequestType === 'Delete') return { PhysicalResourceId };
@@ -40,6 +50,7 @@ export const schemaHandler = async (event: {
     const client = await admin.connect();
     try { await bootstrapSchema(client as SqlClient, event.ResourceProperties.RuntimeRoleArns ?? [], {
       readerRoleArns: event.ResourceProperties.ReaderRoleArns, operationalVerifierRoleArns: event.ResourceProperties.OperationalVerifierRoleArns,
+      applicationRoleArns: event.ResourceProperties.ApplicationRoleArns,storeReaderRoleArns:event.ResourceProperties.StoreReaderRoleArns,cutoverRoleArns:event.ResourceProperties.CutoverRoleArns,
     }); }
     finally { client.release(); }
     // Real engine / non-admin IAM smoke, before enabling the event source.
@@ -66,11 +77,16 @@ export type MaintenanceInput = MaintenanceProgress & { runId: string };
 const runMaintenance = async (event: MaintenanceInput): Promise<MaintenanceInput> => {
   const runId = event.runId;
   if (typeof runId !== 'string' || !runId) throw new Error('runId is required');
+  const sqlAuthority=await authorityFrom(pool ??= createPool())==='sql';
+  if(sqlAuthority && !event.phase.startsWith('verify') && event.phase!=='done') event={...event,phase:event.phase==='source'?'verify-source':'verify-target'};
   const input: MaintenanceInput = { ...event, projected: event.projected ?? 0, equal: event.equal ?? 0, lag: event.lag ?? 0, mismatch: event.mismatch ?? 0, sourceTotals: { ...event.sourceTotals } };
   let keys: SourceKey[];
   let cursor: SourceKey | undefined;
   if (input.phase === 'source' || input.phase === 'verify-source') {
-    const page = await database.send(new ScanCommand({
+    const page = sqlAuthority ? await (async () => {
+      const result=await pool!.query('SELECT source_pk,source_sk FROM olbia.projection_state WHERE deleted=false AND (source_pk,source_sk)>($1,$2) ORDER BY source_pk,source_sk LIMIT 25',[input.cursor?.PK??'',input.cursor?.SK??'']);
+      const Items=result.rows.map(row=>({PK:String(row.source_pk),SK:String(row.source_sk)}));return {Items,LastEvaluatedKey:Items.length===25?Items.at(-1):undefined};
+    })() : await database.send(new ScanCommand({
       TableName: required('METADATA_TABLE_NAME'), ConsistentRead: true, Limit: 25,
       ProjectionExpression: 'PK,SK', ExclusiveStartKey: input.cursor ?? undefined,
     }));

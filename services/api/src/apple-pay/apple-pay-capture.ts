@@ -1,15 +1,12 @@
+import { createApplicationStore } from '@finance/ledger/dsql-store';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
-import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import { InvalidApplePayCaptureError, parseApplePayCapture } from './apple-pay-input.js';
 import { saveObservedEvent } from '@finance/ledger';
 import { notifyObservedPurchasePush } from '@finance/notify';
 
-const database = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
-  marshallOptions: { removeUndefinedValues: true },
-});
+const database = createApplicationStore();
 const secrets = new SecretsManagerClient({});
 const tableName = requiredEnvironment('METADATA_TABLE_NAME');
 const secretArn = requiredEnvironment('APPLE_PAY_CAPTURE_SECRET_ARN');
