@@ -12,7 +12,7 @@ import {
 import { getMonthlyPlan } from '../months/service.js';
 import { getWealthOverview, listWealthSnapshots } from '../wealth/service.js';
 import { listCategories } from '../categories/service.js';
-import { loadCategorizedMonthEvents, loadCategorizedMonthsEvents } from '../analytics/events.js';
+import { loadCategorizedMonthEvents, loadCategorizedMonthsEvents, loadCategorizedComparisonEvents } from '../analytics/events.js';
 import { isValidMonth } from '../months/monthly-plan.js';
 import {
   investmentHistoryFromSnapshots,
@@ -168,9 +168,9 @@ export const compareMonths = async (
 }> => {
   const prior = againstMonth ?? previousCalendarMonth(month);
   if (!prior) throw new InvalidAgentQueryError('No hay mes anterior para comparar.');
-  const [left, right, names] = await Promise.all([
-    loadMonthEvents(month),
-    loadMonthEvents(prior),
+  if (!isValidMonth(month) || !isValidMonth(prior)) throw new InvalidAgentQueryError('Mes inválido (YYYY-MM).');
+  const [[left, right], names] = await Promise.all([
+    loadCategorizedComparisonEvents([month, prior]),
     categoryNameMap(),
   ]);
   const leftAgg = aggregateSpendByCategory(left, month, names);

@@ -2,6 +2,9 @@ import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DeleteCommand, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { INSTITUTIONS, isInstitution } from '@finance/domain';
 
+export const listCards = async (input: Parameters<typeof listCardsDynamo>[0]): Promise<readonly CardRecord[]> =>
+  (await import('./sql-reads.js')).readConfiguredCards(input);
+
 export const MAX_CARDS = 3;
 
 export interface CardRecord {
@@ -69,7 +72,7 @@ export const parseCardInput = (rawBody: string | undefined): CardInput => {
 export const isValidCardId = (cardId: string): boolean =>
   typeof cardId === 'string' && cardId.length >= 1 && cardId.length <= 128 && /^[a-zA-Z0-9_-]+$/.test(cardId);
 
-export const listCards = async (input: {
+export const listCardsDynamo = async (input: {
   readonly database: DynamoDBDocumentClient;
   readonly tableName: string;
   readonly owner: string;
@@ -115,7 +118,7 @@ export const saveCard = async (input: {
   const now = new Date().toISOString();
   const isCreate = !existing.Item;
   if (isCreate) {
-    const current = await listCards({
+    const current = await listCardsDynamo({
       database: input.database,
       tableName: input.tableName,
       owner: input.owner,

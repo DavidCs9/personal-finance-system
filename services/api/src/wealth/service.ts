@@ -20,7 +20,7 @@ import {
   type WealthSnapshot,
   type WealthSnapshotSource,
 } from '@finance/domain';
-import { isValidCardId, listCards } from '../cards/cards.js';
+import { isValidCardId, listCardsDynamo } from '../cards/cards.js';
 import type { CardRecord } from '../cards/cards.js';
 import { database, rawSourceBucketName, s3, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
@@ -479,7 +479,7 @@ export const createCardLiabilitySnapshot = async (
   if (!isValidCardId(cardId)) {
     throw new InvalidWealthSnapshotError('cardId is invalid.');
   }
-  const cards = await listCards({ database, tableName, owner });
+  const cards = await listCardsDynamo({ database, tableName, owner });
   if (!cards.some((card) => card.id === cardId)) {
     throw new InvalidWealthSnapshotError('Card not found. Add the card under Fechas de corte first.');
   }

@@ -11,7 +11,7 @@ import {
 } from './manual-entry-input.js';
 import { database, rawSourceBucketName, s3, tableName } from '../http/clients.js';
 import { errorName, type JsonObject } from '../http/response.js';
-import { getEventDetail, toPublicEvent } from './queries.js';
+import { getEventDetailDynamo as getEventDetail, toPublicEvent } from './queries.js';
 
 const manualClaimKey = (fingerprint: string): { readonly PK: string; readonly SK: string } => ({
   PK: `DEDUPE#MANUAL#${fingerprint}`,

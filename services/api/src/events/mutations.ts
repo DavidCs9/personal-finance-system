@@ -11,7 +11,7 @@ import {
 import { InvalidManualEntryError } from './manual-entry-input.js';
 import { database, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
-import { getEventDetail, toPublicEvent } from './queries.js';
+import { getEventDetailDynamo as getEventDetail, toPublicEvent } from './queries.js';
 import { setEventCategory } from '../categories/service.js';
 import { parsePersonalAmountMinor } from './personal-amount.js';
 
