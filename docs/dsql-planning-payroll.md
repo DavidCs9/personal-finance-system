@@ -10,6 +10,8 @@ The same checkpoint/OCC transaction, current strongly consistent source reread, 
 
 Plans retain their full payload, including legacy manual income values, payment IDs/order, explicit empty lists and timestamps. Payroll retains UUIDs, all totals/CFDI lines, employer/payment periods, ingestion time and evidence references. No foreign keys, derived fake parents or rewritten IDs are introduced. Primary-key ranges cover plan inheritance and payroll month/year queries; additional indexes are unnecessary at the observed six-plan/19-CFDI volume.
 
+Source writers remain `saveMonthlyPlan` in `services/api/src/months/service.ts` and `persistPayslip` in `services/api/src/imports/cfdi-nomina-flow.ts`, reached by the authenticated monthly-plan save and CFDI preview/commit/import flows. Plan saves keep existing legacy income and return guarded state after the source write. Payroll persistence keeps its existing UUID claim transaction and original XML evidence upload. No extra writer, SQL dedupe claim or dual-write path was added. Shared readers are `getMonthlyPlan`, `incomeFieldsForMonth`, `listPayslipsForMonth`, `listPayslipsForYear` and `getPayslip`; original strongly consistent readers remain explicit for freshness comparison and verification.
+
 ## Reads, rollout and rollback
 
 `planningReadMode` in `infrastructure/lib/personal-finance-v1-stack.ts` supplies `DSQL_PLANNING_READ_MODE` to these consumers:
@@ -34,6 +36,8 @@ YTD fund, running same-day history, compensation and Patrimonio as-of exclusion 
 ## Production verification
 
 The shadow rollout ([PR #155](https://github.com/DavidCs9/personal-finance-system/pull/155), [deployment](https://github.com/DavidCs9/personal-finance-system/actions/runs/36874254903)) passed on 2026-10-01: all 3,262 projected rows matched, with zero lag/mismatch; six stored plans and 19 CFDIs matched complete content. Independent reads verified 22 plans, monthly summaries, compensation results and Patrimonio closes, three payroll years, current Patrimonio, all 19 details and original XML hashes, with zero mismatches. Native plan/payroll queries used Index Only Scan. Seven deployed API/agent component reads also passed shadow comparisons. Guarded promotion keeps the same source equality check and rollback flag.
+
+Guarded promotion ([PR #156](https://github.com/DavidCs9/personal-finance-system/pull/156), [production deployment](https://github.com/DavidCs9/personal-finance-system/actions/runs/36876545927)) succeeded on 2026-10-01. Its deployed reconciliation repeated 3,262 equal rows, zero lag/mismatch, and its independent guarded-read gate repeated all the above financial/evidence checks with zero mismatches. All six functions report guarded planning mode; seven deployed API/agent component reads produced 12 equal comparisons selecting SQL. CloudFormation is UPDATE_COMPLETE, the unchanged native mapping is Enabled/OK, and all eight DSQL alarms are OK. DynamoDB remains write authority and freshness reference.
 
 The existing deployment job first executes the deployed reconciliation capability, then invokes the extended read verification Lambda. Independent SQL/source readers prevent the freshness fallback from concealing a migration mismatch. The gate verifies:
 

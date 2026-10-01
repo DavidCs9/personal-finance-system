@@ -1,6 +1,6 @@
 # Migración gradual del ledger a Aurora DSQL
 
-Estado actualizado: proyección histórica y continua activa y verificada en producción; lecturas SQL de movimientos y sus cálculos mensuales activas en modo guarded-sql, con comparación fuerte de frescura y fallback a DDB. Ver [runbook de implementación](dsql-migration-runbook.md), [esquema desplegado](dsql-schema.md) y [lecturas y evidencia de rollout](dsql-read-migration.md). El inventario y las listas iniciales siguientes conservan el contexto del plan original; estos documentos de implementación registran el estado actual.
+Estado actualizado: proyección histórica y continua activa y verificada en producción; lecturas SQL de movimientos, planes mensuales, nómina y sus cálculos mensuales/Patrimonio activas en modo guarded-sql, con comparación fuerte de frescura y fallback a DDB. Ver [runbook de implementación](dsql-migration-runbook.md), [esquema desplegado](dsql-schema.md), [lecturas de movimientos](dsql-read-migration.md) y [planes/nómina y evidencia de rollout](dsql-planning-payroll.md). DynamoDB conserva autoridad de escrituras; las entidades propias de Patrimonio permanecen en DDB. El inventario y las listas iniciales siguientes conservan el contexto del plan original; estos documentos de implementación registran el estado actual.
 Fecha: 2026-09-30, America/Chihuahua.
 Base investigada: `origin/main`, commit `9eadb571e9f19047d2525ab4effd48db65970d08`.
 Rama de entrega del plan: `codex/dsql-migration-plan`.

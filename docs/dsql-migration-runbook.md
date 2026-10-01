@@ -1,8 +1,8 @@
 # DSQL: proyección, verificación y recuperación
 
-La primera fase de [dsql-migration-plan.md](dsql-migration-plan.md) implementó carga histórica y comparación por registro. DynamoDB continúa como autoridad de escrituras. La fase siguiente de [lecturas de movimientos](dsql-read-migration.md) añade comparación y promoción reversible a SQL con guardia de frescura. No se elimina ni reemplaza la tabla ni se cambian sus índices, stream `NEW_IMAGE`, TTL, cifrado, PITR de 35 días o retención. No hay cambios de UI ni promoción de escrituras a DSQL.
+La primera fase de [dsql-migration-plan.md](dsql-migration-plan.md) implementó carga histórica y comparación por registro. DynamoDB continúa como autoridad de escrituras. Las fases de [lecturas de movimientos](dsql-read-migration.md) y [planes mensuales/nómina](dsql-planning-payroll.md) añaden comparación y promoción reversible a SQL con guardia de frescura. La nómina proyectada alimenta los cálculos existentes de Patrimonio; sus entidades propias permanecen en DDB. No se elimina ni reemplaza la tabla ni se cambian sus índices, stream `NEW_IMAGE`, TTL, cifrado, PITR de 35 días o retención. No hay cambios de UI ni promoción de escrituras a DSQL.
 
-La [referencia del esquema DSQL](dsql-schema.md) documenta las once tablas, columnas y claves, la vista, los índices, el alcance verificado y los datos que todavía permanecen fuera de SQL. La carga productiva de esta proyección pasó paridad; eso no significa que todos los registros de DynamoDB estén migrados.
+La [referencia del esquema DSQL](dsql-schema.md) documenta las once tablas de dominio y dos operativas, columnas y claves, la vista, los índices, el alcance verificado y los datos que todavía permanecen fuera de SQL. La carga productiva de esta proyección pasó paridad; eso no significa que todos los registros de DynamoDB estén migrados.
 
 ## Alcance e inventario
 
@@ -14,8 +14,10 @@ La [referencia del esquema DSQL](dsql-schema.md) documenta las once tablas, colu
 | `CATEGORY_CATALOG / CAT#id` | `categories` | Catálogo persistido, superpuesto a `DEFAULT_SPEND_CATEGORIES` del dominio |
 | `CATEGORY_RULES / RULE#merchant` | `merchant_category_rules` | Reglas humanas, seed y asistente |
 | `USER#owner / CARD#id` | `cards` | Perfiles de corte/pago y eliminación de tarjeta |
+| `USER#owner / MONTH#YYYY-MM` | `monthly_plans` (versión 2) | Guardado autenticado del plan mensual; listas vacías y herencia conservadas |
+| `USER#owner / PAYROLL#YYYY-MM#UUID` | `payroll` (versión 2) | Importación/commit de CFDI; claim de UUID permanece en DDB y XML en S3 |
 
-Claims de dedupe, operaciones masivas como entidad independiente, fuentes/recibos de ingesta, excepciones, planificación mensual, push, conversaciones y Patrimonio permanecen en DDB y están fuera de esta proyección. S3 conserva toda evidencia original. No se infiere una relación `card_id` a partir de nombre, banco o últimos cuatro; la cuenta observada queda en el payload del movimiento.
+Claims de dedupe, operaciones masivas como entidad independiente, fuentes/recibos de ingesta, excepciones, push, conversaciones y entidades propias de Patrimonio permanecen en DDB y están fuera de esta proyección. Todos los escritores y la referencia fuerte de frescura también permanecen en DDB. S3 conserva toda evidencia original. No se infiere una relación `card_id` a partir de nombre, banco o últimos cuatro; la cuenta observada queda en el payload del movimiento.
 
 Los IDs string existentes, moneda, importe bancario, Mi parte (incluido cero), estados y campos opcionales se conservan. Los importes son `bigint` en unidades menores; los agregados usan strings decimales para evitar pérdida de precisión. El mes financiero usa `America/Chihuahua`. Las fechas de cuota `occurredOn` tienen tipo `date`, y los instantes `timestamptz`. Cada checkpoint conserva el envelope completo del origen en `source_item`; los payloads JSONB conservan evidencia, warnings y atributos aún sin columna.
 
@@ -45,7 +47,7 @@ Si A observa un estado antiguo y B escribe uno nuevo primero, ambos modifican el
 
 Cada transacción de movimiento limita la proyección a 900 filas y 4 MiB de filas nuevas, dejando margen para borrar el agregado anterior, guardar el envelope y permanecer debajo de 3.000 modificaciones / 10 MiB. Datos inválidos fallan sin modificar la última proyección válida y terminan en recuperación nativa.
 
-Una transacción DDB multi-item puede aparecer separada/intercalada en SQL. La proyección converge por item; no promete una transacción financiera global entre motores. Por eso sigue fuera de las lecturas del producto y no hay FKs que requieran padres ficticios o borren historial en cascada.
+Una transacción DDB multi-item puede aparecer separada/intercalada en SQL. La proyección converge por item; no promete una transacción financiera global entre motores. Las lecturas del producto sólo seleccionan SQL tras igualdad con la referencia fuerte de DDB y vuelven a DDB ante lag o fallo SQL. No hay FKs que requieran padres ficticios o borren historial en cascada.
 
 ## Carga histórica, reconciliación y paridad
 
@@ -137,7 +139,7 @@ Rollback de código conserva cluster, tablas SQL, recovery y DDB; el Delete del 
 
 `quality` incluye tests, checks de ledger/web/infraestructura, build web y synth. Las pruebas usan PostgreSQL embebido (PGlite) para ejecutar SQL real, el wrapper de transacciones oficial con conflictos forzados, y un modelo OCC para intercalaciones adversas. Cubren idempotencia, replay tras commit perdido, rollback parcial, tombstones, snapshot/carga concurrente, tags/MSI obsoletos, evidencia, defaults y paridad. Los tests de infraestructura comparan el recurso DDB antes/después, retención, orden del bootstrap, límites IAM, recuperación y alarmas con acciones.
 
-Después de verificar esta fase con datos reales, continuar con consultas de comparación del contrato API (detalle/listados/resumen), latencia y `EXPLAIN ANALYZE VERBOSE`; luego promover rutas reversibles y resolver lectura después de escritura. Cambiar la autoridad de escrituras requiere la decisión posterior y réplica SQL→DDB del plan. No hay eliminación de DynamoDB en esta entrega.
+Las fases de movimientos y planes/nómina ya verifican contratos API, resultados financieros y `EXPLAIN ANALYZE VERBOSE` con datos reales; las lecturas guarded-sql preservan lectura después de escritura mediante comparación fuerte. Las siguientes fases deben migrar las entidades restantes, incluyendo Patrimonio. Cambiar la autoridad de escrituras requiere la decisión posterior y réplica SQL→DDB del plan. No hay eliminación de DynamoDB en esta entrega.
 
 Fuentes oficiales verificadas: [conector Node](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/SECTION_program-with-dsql-connector-for-node-postgres.html), [roles IAM/SQL](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/authentication-authorization.html), [SQL](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/working-with-postgresql-compatibility-supported-sql-features.html), [tipos JSONB/bigint](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/working-with-postgresql-compatibility-supported-data-types.html), [OCC](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/working-with-concurrency-control.html), [índices async](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/working-with-create-index-async.html), [recuperación Streams/S3](https://docs.aws.amazon.com/lambda/latest/dg/services-dynamodb-errors.html), [métricas del mapping](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-metrics-types.html).
 
