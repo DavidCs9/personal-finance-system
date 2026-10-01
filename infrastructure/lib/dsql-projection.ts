@@ -78,10 +78,11 @@ export class DsqlProjection extends Construct {
       maxRecordAge: Duration.hours(6), bisectBatchOnError: true,
       reportBatchItemFailures: true,
       // CDK's S3OnFailureDestination also grants DeleteObject. The native mapping
-      // only needs ListBucket and PutObject; bind those exact provider permissions.
+      // only needs ListBucket and PutObject. Its destination validation requires
+      // bucket-wide object scope, even though delivery uses aws/lambda/ keys.
       onFailure: { bind: (_mapping, fn) => {
         fn.addToRolePolicy(new iam.PolicyStatement({ actions: ['s3:ListBucket'], resources: [recovery.bucketArn] }));
-        fn.addToRolePolicy(new iam.PolicyStatement({ actions: ['s3:PutObject'], resources: [recovery.arnForObjects('aws/lambda/*')], conditions: { StringEquals: { 's3:ResourceAccount': Aws.ACCOUNT_ID } } }));
+        fn.addToRolePolicy(new iam.PolicyStatement({ actions: ['s3:PutObject'], resources: [recovery.arnForObjects('*')], conditions: { StringEquals: { 's3:ResourceAccount': Aws.ACCOUNT_ID } } }));
         props.encryptionKey.grantEncryptDecrypt(fn);
         return { destination: recovery.bucketArn };
       } },

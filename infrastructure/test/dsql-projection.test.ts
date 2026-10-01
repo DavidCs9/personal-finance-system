@@ -78,4 +78,16 @@ print(len(imports))
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe('8');
   });
+  it('allows native S3 destination validation across the dedicated bucket without deletion or other-account writes', () => {
+    const recoveryId = Object.keys(migrated.findResources('AWS::S3::Bucket'))[0];
+    const projectorPolicy = Object.entries(migrated.findResources('AWS::IAM::Policy'))
+      .find(([id]) => id.includes('ProjectorServiceRole'))![1];
+    const statements = projectorPolicy.Properties.PolicyDocument.Statement;
+    const put = statements.find((statement: { Action: string }) => statement.Action === 's3:PutObject');
+    expect(put.Resource).toEqual({ 'Fn::Join': ['', [{ 'Fn::GetAtt': [recoveryId, 'Arn'] }, '/*']] });
+    expect(put.Condition).toEqual({ StringEquals: { 's3:ResourceAccount': { Ref: 'AWS::AccountId' } } });
+    expect(statements.find((statement: { Action: string }) => statement.Action === 's3:ListBucket').Resource)
+      .toEqual({ 'Fn::GetAtt': [recoveryId, 'Arn'] });
+    expect(JSON.stringify(statements)).not.toContain('s3:DeleteObject');
+  });
 });
