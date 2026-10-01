@@ -6,6 +6,8 @@ import { database, rawSourceBucketName, s3, tableName } from "../http/clients.js
 import type { JsonObject } from "../http/response.js";
 import { InvalidCfdiNominaError, parseCfdiNominaXml } from "./cfdi-nomina.js";
 
+import { readConfiguredPlanning, readSqlPayslipsForMonth, readSqlPayslipsForYear, readSqlPayslipRecord } from '../months/sql-reads.js';
+
 export { InvalidCfdiNominaError };
 
 const MAX_BULK_DOCUMENTS = 40;
@@ -37,7 +39,7 @@ const dedupeKey = (uuid: string) => ({
 const sourceKey = (owner: string, sha256: string): string =>
   `manual-imports/cfdi-nomina/${owner}/${sha256}.xml`;
 
-const toPublicPayslip = (payslip: PayslipSummary, ingestedAt: string, source: JsonObject): JsonObject => ({
+export const toPublicPayslip = (payslip: PayslipSummary, ingestedAt: string, source: JsonObject): JsonObject => ({
   uuid: payslip.uuid,
   fechaPago: payslip.fechaPago,
   month: payslip.month,
@@ -54,7 +56,7 @@ const toPublicPayslip = (payslip: PayslipSummary, ingestedAt: string, source: Js
   source,
 });
 
-export const listPayslipsForMonth = async (
+export const listPayslipsForMonthDynamo = async (
   owner: string,
   month: string,
 ): Promise<readonly PayslipSummary[]> => {
@@ -84,7 +86,7 @@ export const listPayslipsForMonth = async (
   return items.sort((a, b) => a.fechaPago.localeCompare(b.fechaPago) || a.uuid.localeCompare(b.uuid));
 };
 
-export const listPayslipsForYear = async (
+export const listPayslipsForYearDynamo = async (
   owner: string,
   year: string,
 ): Promise<readonly PayslipSummary[]> => {
@@ -115,7 +117,7 @@ export const listPayslipsForYear = async (
   return items.sort((a, b) => a.fechaPago.localeCompare(b.fechaPago) || a.uuid.localeCompare(b.uuid));
 };
 
-export const getPayslip = async (
+export const getPayslipDynamo = async (
   owner: string,
   month: string,
   uuid: string,
@@ -135,16 +137,30 @@ export const getPayslip = async (
   );
 };
 
+export const listPayslipsForMonth = (owner: string, month: string): Promise<readonly PayslipSummary[]> =>
+  readConfiguredPlanning('payroll-month', () => readSqlPayslipsForMonth(owner, month), () => listPayslipsForMonthDynamo(owner, month));
+export const listPayslipsForYear = (owner: string, year: string): Promise<readonly PayslipSummary[]> =>
+  readConfiguredPlanning('payroll-year', () => readSqlPayslipsForYear(owner, year), () => listPayslipsForYearDynamo(owner, year));
+export const getPayslipSql = async (owner: string, month: string, uuid: string): Promise<JsonObject | undefined> => {
+  const item = await readSqlPayslipRecord(owner, month, uuid);
+  return item?.payload ? toPublicPayslip(item.payload as PayslipSummary, String(item.ingestedAt ?? ''), (item.source as JsonObject) ?? {}) : undefined;
+};
+export const getPayslip = (owner: string, month: string, uuid: string): Promise<JsonObject | undefined> =>
+  readConfiguredPlanning('payroll-detail', () => getPayslipSql(owner, month, uuid), () => getPayslipDynamo(owner, month, uuid));
+
+export type MonthPayslipReader = (owner: string, month: string) => Promise<readonly PayslipSummary[]>;
+
 export const listPriorOrdinaryPayslips = async (
   owner: string,
   beforeMonth: string,
   limit = 2,
+  readMonth: MonthPayslipReader = listPayslipsForMonth,
 ): Promise<readonly PayslipSummary[]> => {
   const collected: PayslipSummary[] = [];
   let cursor: string | undefined = previousCalendarMonth(beforeMonth);
   let guard = 0;
   while (cursor && collected.length < limit && guard < 24) {
-    const monthSlips = await listPayslipsForMonth(owner, cursor);
+    const monthSlips = await readMonth(owner, cursor);
     for (const slip of [...monthSlips].reverse()) {
       if (!isOrdinaryNomina(slip.tipoNomina)) continue;
       collected.push(slip);
@@ -156,10 +172,11 @@ export const listPriorOrdinaryPayslips = async (
   return collected;
 };
 
-export const incomeFieldsForMonth = async (
+const incomeFieldsForMonthFromReads = async (
   owner: string,
   month: string,
   now: Date = new Date(),
+  readMonth: MonthPayslipReader = listPayslipsForMonthDynamo,
 ): Promise<{
   readonly configured: boolean;
   readonly incomeMinor: number;
@@ -170,9 +187,9 @@ export const incomeFieldsForMonth = async (
   readonly provisionalMinor: number;
   readonly payslips: readonly PayslipSummary[];
 }> => {
-  const payslips = await listPayslipsForMonth(owner, month);
+  const payslips = await readMonth(owner, month);
   const priorOrdinaryPayslips =
-    payslips.length === 0 ? await listPriorOrdinaryPayslips(owner, month) : [];
+    payslips.length === 0 ? await listPriorOrdinaryPayslips(owner, month, 2, readMonth) : [];
   const derived = deriveMonthIncome({ payslips, month, now, priorOrdinaryPayslips });
   return {
     configured: derived.configured,
@@ -185,6 +202,15 @@ export const incomeFieldsForMonth = async (
     payslips,
   };
 };
+
+// Guard the whole derivation: an unavailable SQL connection must not be retried
+// for every prior month while calculating provisional income.
+export const incomeFieldsForMonth = (owner: string, month: string, now: Date = new Date(),
+  readMonth?: MonthPayslipReader): ReturnType<typeof incomeFieldsForMonthFromReads> => readMonth
+  ? incomeFieldsForMonthFromReads(owner, month, now, readMonth)
+  : readConfiguredPlanning('payroll-income',
+    () => incomeFieldsForMonthFromReads(owner, month, now, readSqlPayslipsForMonth),
+    () => incomeFieldsForMonthFromReads(owner, month, now, listPayslipsForMonthDynamo));
 
 const persistPayslip = async (
   owner: string,

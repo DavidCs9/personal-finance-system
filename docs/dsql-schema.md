@@ -2,7 +2,7 @@
 
 ## What is in DSQL now?
 
-The deployed database contains the **ledger projection**, not every application record. It has nine domain tables, two operational tables and one view, all under the SQL schema `olbia` in the regional DSQL cluster in `us-east-2`.
+The database contains the **ledger, planning and payroll projection**, not every application record. Schema version 2 has eleven domain tables, two operational tables and one view under `olbia` in the regional DSQL cluster in `us-east-2`. The [planning/payroll rollout](dsql-planning-payroll.md) extends the original nine-table ledger projection additively.
 
 DynamoDB remains the authority for application writes. Its stream projects supported records into DSQL; daily reconciliation repairs and verifies current state. The [movement read rollout](dsql-read-migration.md) introduces reversible shadow/guarded SQL reads with a source freshness check. The long-term destination, explicitly stated by David on 2026-09-30, is to retire DynamoDB after the remaining data and application dependencies migrate. That cutover has not happened.
 
@@ -27,7 +27,7 @@ The projector accepts only the source key patterns documented below. Other Dynam
 - Dedupe claims and ingestion source/receipt state.
 - Ingestion exceptions, retry dispatch state and import workflow state outside movement payloads.
 - Bulk-edit operation records needed for apply/undo; movement revisions are projected, but the operation entity itself is not.
-- Monthly planning and report/reminder state.
+- Report/reminder delivery state (monthly plan and payroll source records are projected in version 2).
 - Push subscription and notification state.
 - Assistant conversations and thread state.
 - Patrimonio records (assets, liabilities and their history).
@@ -235,6 +235,35 @@ CREATE TABLE IF NOT EXISTS olbia.msi_installments (
 
 `month` is the scheduled financial month; `occurred_on` preserves an optional calendar date without inventing a time. Each installment object remains in `payload`. Reconciliation replaces the source movement’s derived rows, removing obsolete tags/plans/installments as well as inserting current ones.
 
+### olbia.monthly_plans (version 2)
+
+Source: `USER#owner / MONTH#YYYY-MM`. `row_id`: original month; plans have no payload ID.
+
+```sql
+CREATE TABLE IF NOT EXISTS olbia.monthly_plans (
+    source_pk text NOT NULL, source_sk text NOT NULL, row_id text NOT NULL,
+    owner text, month text, payload jsonb, source_item jsonb,
+    PRIMARY KEY (source_pk, source_sk, row_id)
+);
+```
+
+`payload` retains the complete fixed-expense list/order, original payment IDs, explicit-empty stops, legacy income and timestamps. `source_item` preserves the whole DynamoDB envelope. SQL selects the latest source sort key at or before the requested month using the primary-key index; reading never writes or materializes an inherited month.
+
+### olbia.payroll (version 2)
+
+Source: `USER#owner / PAYROLL#YYYY-MM#UUID`. `row_id`: original CFDI UUID.
+
+```sql
+CREATE TABLE IF NOT EXISTS olbia.payroll (
+    source_pk text NOT NULL, source_sk text NOT NULL, row_id text NOT NULL,
+    owner text, month text, uuid text, fecha_pago date, total_minor bigint,
+    currency text, ingested_at timestamptz, source jsonb, payload jsonb, source_item jsonb,
+    PRIMARY KEY (source_pk, source_sk, row_id)
+);
+```
+
+`total_minor` is deposited liquidity in MXN; ordinary/extraordinary payroll, all component totals, SAT lines, employer and payment periods remain in `payload`. `source` retains XML bucket/key/hash metadata; `source_item` also preserves ingestion time and all source envelope fields. Payroll periods use the original source-key ranges and FechaPago/UUID ordering. CFDI dedupe claims remain in DynamoDB. The [version 2 gate](dsql-planning-payroll.md) checks original envelopes and financial results, including fund-derived Patrimonio and evidence hashes.
+
 ## Operational tables
 
 ### olbia.projection_state
@@ -256,7 +285,7 @@ CREATE TABLE IF NOT EXISTS olbia.projection_state (
 | `source_hash` | SHA-256 of canonical source JSON; null for an absent source item. |
 | `source_item` | Full DynamoDB source envelope as JSONB, not only the domain payload. Null when absent. |
 | `deleted` | Whether the source item is absent. A default category can still have an effective relational row. |
-| `transformer_version` | Projection transformation version, currently 1. |
+| `transformer_version` | Projection transformation version, currently 2. |
 | `reconciled_at` | Time SQL reconciliation applied the source’s current state. |
 | `stream_arn`, `stream_sequence`, `stream_delivered_at` | Last applied stream-trigger evidence for this key. These are not a global source version or a completeness watermark; recovery replay can update them. |
 
@@ -268,7 +297,7 @@ The checkpoint and its derived rows commit in the same SQL transaction. Reconcil
 CREATE TABLE IF NOT EXISTS olbia.schema_migrations (version integer PRIMARY KEY, applied_at timestamptz NOT NULL);
 ```
 
-Records applied SQL schema versions. Bootstrap inserts version 1 with CURRENT_TIMESTAMP, preserving the existing row on conflict. SQL schema/transformer version 1 is separate from CloudFormation bootstrap provider version 2, which forced corrected initialization during deployment recovery.
+Records applied SQL schema versions. Bootstrap preserves version 1 and adds version 2 with conflict-safe inserts. Version 2 creates only the two new planning/payroll tables; existing table definitions are unchanged. CloudFormation bootstrap provider version 4 applies the additive DDL and grants. Versions 2/3 of the provider previously handled deployment recovery and movement reader grants.
 
 ## View and indexes
 
@@ -295,9 +324,9 @@ Both are non-unique. Every table also has its primary-key index. Bootstrap waits
 
 ## Access and maintenance
 
-The SQL runtime role `olbia_projector` has schema USAGE and SELECT/INSERT/UPDATE/DELETE on the nine domain tables and projection_state. It has SELECT only on schema_migrations and movement_months. The projector, maintenance, replay and schema-bootstrap IAM roles are associated with this SQL role. The schema-bootstrap function also has admin connection permission to perform DDL, then uses the non-admin role for its smoke check. The projector, maintenance and replay functions do not have admin connection permission.
+The SQL runtime role `olbia_projector` has schema USAGE and SELECT/INSERT/UPDATE/DELETE on the eleven domain tables and projection_state. It has SELECT only on schema_migrations and movement_months. The projector, maintenance, replay and schema-bootstrap IAM roles are associated with this SQL role. The schema-bootstrap function also has admin connection permission to perform DDL, then uses the non-admin role for its smoke check. The projector, maintenance and replay functions do not have admin connection permission.
 
-The read rollout adds `olbia_reader`, with schema USAGE and SELECT only on `movements`, `movement_observations`, `movement_revisions` and `msi_installments`. The API and read verification IAM identities connect through this role without SQL write/admin grants. Bootstrap provider version 3 adds these associations; SQL schema/transformer version remains 1 and no tables, indexes or keys change.
+`olbia_reader` has schema USAGE and SELECT only on `movements`, `movement_observations`, `movement_revisions`, `msi_installments`, `monthly_plans` and `payroll`. The API, read verification, agent tools, daily balance push, monthly close and month-end reminder IAM identities connect through this role without SQL write/admin grants. Bootstrap provider version 4 extends the version 3 movement grants by exactly the two new tables and the relevant worker identities. No existing tables, indexes or keys change.
 
 Maintain this reference whenever DDL, transformation, keys, indexes or projection scope change. Adding a column to CREATE TABLE IF NOT EXISTS does not alter an existing table: future schema changes need explicit additive, versioned migrations.
 
