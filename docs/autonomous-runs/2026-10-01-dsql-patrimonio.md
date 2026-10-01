@@ -19,7 +19,7 @@ Read repository/autonomous/product/UI/Patrimonio and DSQL guidance before implem
 
 ## Outcome and remaining work
 
-Work in progress; no production change claimed.
+Shadow implemented/deployed/verified; guarded promotion and final verification in progress.
 
 ### D1 — Reuse native capture and separate canonical/audit tables
 - Context: Same-day replacement must retain audit versions without multiplying balances; snapshots are flat source envelopes, not ledger payloads.
@@ -27,7 +27,7 @@ Work in progress; no production change claimed.
 - Alternatives and tradeoffs: New replication/dual writes add failure paths. A single table with a kind flag risks mixing balances/versions. Four additive tables preserve source distinctions with explicit reads; existing native unfiltered mapping, checkpoint/OCC, replay and daily reconciliation already cover ordering/recovery.
 - Decision and reason: Schema/transformer v3 adds four tables. Preserve source SK as canonical row identity, original versionId for audits, whole source_item/JSONB holdings/evidence/FX and promoted bigint/date columns. Add source_item to existing cards with explicit additive ALTER to preserve envelope timestamps for supporting card reads. Extend narrow SELECT grants. Existing writers and domain algorithms remain unchanged.
 - Consequences, verification, and revisit conditions: Retained history is all retained source canonical rows plus retained audit keys, not missing intermediate captures absent from DynamoDB. Verify all content/evidence hashes, daily replacement/replay/deletion/OCC and existing gates. No fake fund rows.
-- Status: Provisional; real inventory validated, implementation/gates pending.
+- Status: Validated by local SQL/adversarial tests and full independent production shadow gate.
 
 ### D2 — One SQL statement and freshness comparison for Patrimonio inputs
 - Context: Current/history/as-of calculations need canonical asset/liability history and card profiles; repeated guards inside historical loops would multiply outage latency.
@@ -35,7 +35,7 @@ Work in progress; no production change claimed.
 - Alternatives and tradeoffs: Per-snapshot/account guards amplify SQL failures; custom circuit breaker adds state. One UNION ALL statement reads the complete canonical input bundle, then a strong source comparison preserves confirmed writes and source-only rollback.
 - Decision and reason: Guard complete source inputs once per bundle, retaining complete envelopes. Reuse that selected bundle across monthly report as-of evaluations; load assistant market histories once. Independent verification uses explicit source/SQL bundles, never fallback, and exercises every retained day/month/account/holding/audit/evidence plus deterministic reports/reminders.
 - Consequences, verification, and revisit conditions: Source reads remain until write authority cutover. One failure abandons SQL for the whole bundle; fund/payroll retains its separate existing guard. Test query counts for outage and no extra external notifications. Revisit if actual consumer structure needs a wider shared boundary.
-- Status: Provisional.
+- Status: Validated: one bounded attempt in SQL outage tests; production current/history/report/position comparisons passed.
 
 ### D3 — Preserve native FX precision
 - Context: A promoted numeric FX column must not silently round otherwise preserved source metadata.
@@ -43,7 +43,7 @@ Work in progress; no production change claimed.
 - Alternatives and tradeoffs: Specify a fixed decimal scale (still a rounding bound); omit promoted FX (less explicit schema); double precision matches the existing JS-number source contract, while JSONB/source_item retain the original decimal JSON representation.
 - Decision and reason: Use native double precision for promoted FX only; preserve every monetary amount in bigint and full original FX metadata/holdings in JSONB. This changes no financial calculation.
 - Consequences, verification, and revisit conditions: Verify exact source FX values via independent column/content checks and native deployed gate; revisit only if source FX becomes an exact decimal string contract.
-- Status: Validated native type documentation; deployment pending.
+- Status: Validated native documentation, local SQL and deployed column/complete-content comparisons.
 
 ## Implementation checkpoint
 
@@ -59,3 +59,19 @@ Four additive source tables, source-key support, same existing checkpoint/OCC/re
 - DSQL supported SQL/ALTER/data types/IAM/Streams recovery revalidated in current official documentation. Double-precision FX change was checked locally with the full real inventory and focused SQL tests after modification.
 - Existing monthly history labels and order are preserved exactly. A test initially assumed closing-day labels; corrected its expectation to the existing month-start labels without changing the algorithm. Month-close as-of day exclusion passed.
 - Next: shadow PR, required quality/CLEAN/MERGEABLE, linear squash merge and deploy-production; independent production verification before guarded PR.
+
+## Shadow delivery checkpoint
+
+[PR #158](https://github.com/DavidCs9/personal-finance-system/pull/158) passed required quality, was CLEAN/MERGEABLE and squash merged as `d098c56523a6a3596ae42442ef66884ce878331b` at 15:10:52 UTC. [Shadow deploy-production run](https://github.com/DavidCs9/personal-finance-system/actions/runs/36882229551) is in progress. Guarded promotion is not authorized by parity until this real production gate passes. Original checkout still has exactly the three unrelated AWS-auth guidance edits; no original worktree files were modified.
+
+Native read-only diagnostics after bootstrap: schema versions [1,2,3]; olbia_reader has exactly eleven SELECT table grants, no mutation grant; additive cards.source_item is JSONB and both FX columns are double precision. STS immediately before diagnostics confirmed default codex-local-admin/account 225989371926. CloudFormation completed; deployed reconciliation `deploy-36882229551-1` started at 15:16:02 UTC. Complete backfill/financial/evidence gate still pending.
+
+## Shadow production verification and promotion decision
+
+Shadow deploy-production run 36882229551 succeeded. Reconciliation ran 15:16:02–15:19:20 UTC: projected/equal 3,560, lag/mismatch zero. Full independent gate verified all 149 canonical/audit snapshot records and three card envelopes/columns, 95 as-of and daily/history overviews, 21 months, 193 market/position results, 21 deterministic monthly reports, 95 reminder renderings and 149 original S3 SHA-256 files, zero mismatches. Patrimonio elapsed 29,183 ms; combined gate 60,482 ms. Existing six plans/19 payroll details/XML hashes, 22 monthly/compensation/Patrimonio checks, three payroll years and 492 movement details/21 feeds/summaries/19 ranges also passed with zero mismatches.
+
+Read-only component verification: six successful API/agent reads, six equal wealth comparisons, source selected in shadow; all five functions Successful/shadow with prior planning guarded flags. CloudFormation UPDATE_COMPLETE; unchanged mapping Enabled/OK; eight DSQL alarms OK. Native EXPLAIN showed Index Only Scan for both wealth inputs/audit (single samples: 2.703 ms/0.99022 DPU and 1.116 ms/0.03765 DPU).
+
+The shadow acceptance gate passed with real financial/evidence data, so proceed with a separate guarded promotion PR based directly on refreshed origin/main. Only wealth mode changes; financial algorithms, source authority, other flags, grants/schema/resources and recovery remain. No notifications, source mutations or manufactured records were used. No natural new Patrimonio capture was manufactured to test Streams; support/recovery/concurrency is covered by the deployed unfiltered native mapping and meaningful local adversarial/repeated-capture tests.
+
+Guarded promotion local checks: nine focused Patrimonio SQL tests passed; web build/synth passed; all ten protected resources remain unchanged and all five participating runtimes synthesize guarded wealth mode. Only the flag and evidence/status documentation differ from shadow. Next: required remote quality, CLEAN/MERGEABLE linear merge, deploy-production and repeat independent native verification.

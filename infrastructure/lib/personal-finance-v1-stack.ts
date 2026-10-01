@@ -450,7 +450,8 @@ export class PersonalFinanceV1Stack extends Stack {
     const ledgerReadMode = 'guarded-sql';
     // Shadow backfill/read gate passed all retained plans, CFDIs, evidence and monthly/Patrimonio calculations.
     const planningReadMode = 'guarded-sql';
-    const wealthReadMode = 'shadow';
+    // Production shadow gate verified all retained canonical/audit records, financial histories and original evidence.
+    const wealthReadMode = 'guarded-sql';
     apiFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     apiFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
     apiFunction.addEnvironment('DSQL_LEDGER_READ_MODE', ledgerReadMode);
