@@ -3,11 +3,11 @@ import { database, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
 import { incomeFieldsForMonth } from '../imports/cfdi-nomina-flow.js';
 import { monthlyPlanKey, type MonthlyPlanInput } from './monthly-plan.js';
+import { readConfiguredPlanning, readSqlPlanRecord } from './sql-reads.js';
 
-export const getMonthlyPlan = async (owner: string, month: string): Promise<JsonObject> => {
+export const readMonthlyPlanRecordDynamo = async (owner: string, month: string): Promise<JsonObject | undefined> => {
   const monthKey = monthlyPlanKey(owner, month);
-  const [result, income] = await Promise.all([
-    database.send(new QueryCommand({
+  const result = await database.send(new QueryCommand({
       TableName: tableName,
       KeyConditionExpression: '#pk = :pk AND #sk BETWEEN :monthPrefix AND :month',
       ExpressionAttributeNames: {
@@ -22,10 +22,14 @@ export const getMonthlyPlan = async (owner: string, month: string): Promise<Json
       ConsistentRead: true,
       ScanIndexForward: false,
       Limit: 1,
-    })),
-    incomeFieldsForMonth(owner, month),
-  ]);
-  const sourceItem = result.Items?.[0];
+    }));
+  return result.Items?.[0];
+};
+
+export const getMonthlyPlanFromReads = async (owner: string, month: string,
+  readRecord: (owner: string, month: string) => Promise<JsonObject | undefined>,
+  readIncome: typeof incomeFieldsForMonth): Promise<JsonObject> => {
+  const [sourceItem, income] = await Promise.all([readRecord(owner, month), readIncome(owner, month)]);
   const plan = sourceItem?.payload as JsonObject | undefined;
   const sourceMonth = typeof sourceItem?.month === 'string'
     ? sourceItem.month
@@ -63,6 +67,10 @@ export const getMonthlyPlan = async (owner: string, month: string): Promise<Json
     ...(plan && typeof plan.updatedAt === 'string' ? { updatedAt: plan.updatedAt } : {}),
   };
 };
+
+export const getMonthlyPlan = (owner: string, month: string): Promise<JsonObject> =>
+  getMonthlyPlanFromReads(owner, month, (owner, month) => readConfiguredPlanning('plan',
+    () => readSqlPlanRecord(owner, month), () => readMonthlyPlanRecordDynamo(owner, month)), incomeFieldsForMonth);
 
 export const saveMonthlyPlan = async (owner: string, month: string, input: MonthlyPlanInput): Promise<JsonObject> => {
   const updatedAt = new Date().toISOString();

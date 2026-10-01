@@ -327,12 +327,13 @@ const wealthBalanceOverview = (input: {
 export const getWealthOverviewAsOf = async (
   owner: string,
   asOfDay: string,
+  readPayrollYear: typeof listPayslipsForYear = listPayslipsForYear,
 ): Promise<WealthBalanceOverview> => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(asOfDay)) throw new Error('asOfDay must be YYYY-MM-DD.');
   const year = asOfDay.slice(0, 4);
   const [snapshots, yearPayslips, cards, liabilitySnapshots] = await Promise.all([
     listCanonicalSnapshots(owner),
-    listPayslipsForYear(owner, year),
+    readPayrollYear(owner, year),
     listCards({ database, tableName, owner }),
     listCanonicalLiabilitySnapshots(owner),
   ]);
@@ -350,11 +351,12 @@ export const getWealthOverviewAsOf = async (
 export const getWealthOverview = async (
   owner: string,
   now: Date = new Date(),
+  readPayrollYear: typeof listPayslipsForYear = listPayslipsForYear,
 ): Promise<JsonObject> => {
   const year = dayKeyInZone(now, FINANCE_TIME_ZONE).slice(0, 4);
   const [snapshots, yearPayslips, cards, liabilitySnapshots] = await Promise.all([
     listCanonicalSnapshots(owner),
-    listPayslipsForYear(owner, year),
+    readPayrollYear(owner, year),
     listCards({ database, tableName, owner }),
     listCanonicalLiabilitySnapshots(owner),
   ]);

@@ -7,6 +7,7 @@ import { ledgerReadMode, samePublicResult } from './read-selection.js';
 import { getMonthlyPlan } from '../months/service.js';
 import { summarizeMonthFeed } from '../months/summary.js';
 import type { JsonObject } from '../http/response.js';
+import { verifyPlanningReads } from '../months/read-verification.js';
 
 /** Read-only deployed capability. Public results contain no source payloads, IDs or financial aggregates. */
 export const verifyLedgerReads = async () => {
@@ -78,7 +79,9 @@ export const verifyLedgerReads = async () => {
   const queryPlan = lines.filter(line => /(?:DPU|Planning Time|Execution Time)/i.test(line))
     .map(line => line.trim()).filter(line => /^[\w\s():.=,+-]+$/.test(line));
   const scanTypes = [...new Set(lines.flatMap(line => line.match(/(?:Index Only Scan|Index Scan|Seq Scan|Bitmap Heap Scan)/g) ?? []))];
-  return { verified: mismatches === 0, mode: ledgerReadMode(), movements: source.length, feeds, summaries, ranges, details,
+  const planning = await verifyPlanningReads(owner, source, orderedMonths, now);
+  mismatches += planning.mismatches;
+  return { verified: mismatches === 0, mode: ledgerReadMode(), planning, movements: source.length, feeds, summaries, ranges, details,
     missingLookups: 1, mismatches, elapsedMs: Date.now() - started, sourceScanMs, configuredReadsMs, legacyRangeMs: legacyMs,
     sqlFeedTotalMs: sqlFeedMs, sqlFeedAverageMs: feeds ? Math.round(sqlFeedMs / feeds) : 0, queryPlan, scanTypes };
 };

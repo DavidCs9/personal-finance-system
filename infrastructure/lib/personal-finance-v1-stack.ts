@@ -448,6 +448,8 @@ export class PersonalFinanceV1Stack extends Stack {
     metadataTable.grantReadWriteData(apiFunction);
     // Shadow rollout passed real feed/detail/summary equivalence. Preserve source fallback for stream lag.
     const ledgerReadMode = 'guarded-sql';
+    const planningReadMode = 'shadow';
+    apiFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
     apiFunction.addEnvironment('DSQL_LEDGER_READ_MODE', ledgerReadMode);
     dsqlProjection.grantReader(apiFunction);
     const readVerificationFunction = new NodejsFunction(this, 'DsqlReadVerification', {
@@ -456,9 +458,10 @@ export class PersonalFinanceV1Stack extends Stack {
       timeout: Duration.minutes(10), memorySize: 512,
       logGroup: this.createLogGroup('DsqlReadVerificationLogGroup', 'personal-finance-v1-dsql-read-verification'),
       environment: { ...dataStorageEnvironment, AGENT_OWNER_SUB: agentOwnerSub.valueAsString,
-        DSQL_LEDGER_READ_MODE: ledgerReadMode },
+        DSQL_LEDGER_READ_MODE: ledgerReadMode, DSQL_PLANNING_READ_MODE: planningReadMode },
     });
     metadataTable.grantReadData(readVerificationFunction);
+    rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/cfdi-nomina/*');
     encryptionKey.grantDecrypt(readVerificationFunction);
     dsqlProjection.grantReader(readVerificationFunction);
     new cdk.CfnOutput(this, 'DsqlReadVerificationFunction', { value: readVerificationFunction.functionName });
@@ -488,6 +491,8 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     metadataTable.grantReadData(agentToolsFunction);
+    agentToolsFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
+    dsqlProjection.grantReader(agentToolsFunction);
 
     const agentTagMutationFunction = new NodejsFunction(this, 'AgentTagMutationFunction', {
       ...lambdaDefaults,
@@ -1104,6 +1109,8 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     metadataTable.grantReadWriteData(dailyBalancePushFunction);
+    dailyBalancePushFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
+    dsqlProjection.grantReader(dailyBalancePushFunction);
     vapidSecret.grantRead(dailyBalancePushFunction);
     new scheduler.Schedule(this, 'DailyBalancePushSchedule', {
       scheduleName: 'personal-finance-v1-daily-balance-push',
@@ -1302,6 +1309,8 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     metadataTable.grantReadWriteData(monthEndBalanceReminderFunction);
+    monthEndBalanceReminderFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
+    dsqlProjection.grantReader(monthEndBalanceReminderFunction);
     monthEndBalanceReminderFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ses:SendEmail'],
       resources: ['*'],
@@ -1350,6 +1359,8 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     metadataTable.grantReadWriteData(monthlyCloseEmailFunction);
+    monthlyCloseEmailFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
+    dsqlProjection.grantReader(monthlyCloseEmailFunction);
     monthlyCloseEmailFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ses:SendEmail'],
       resources: ['*'],

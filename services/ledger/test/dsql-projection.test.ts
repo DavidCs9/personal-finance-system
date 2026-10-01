@@ -191,6 +191,28 @@ const gate = (): { promise: Promise<void>; release: () => void } => {
   return { promise, release };
 };
 describe('source/target concurrency protocol', () => {
+  for (const table of ['plan', 'payroll']) it(`never overwrites a confirmed ${table} update or resurrects it during concurrent backfill`, async () => {
+    const sourceKey = { PK: 'USER#owner', SK: table === 'plan' ? 'MONTH#2026-09' : 'PAYROLL#2026-09#UUID' };
+    const make = (amountMinor: number): SourceItem => ({ ...sourceKey, owner: 'owner', month: '2026-09', uuid: 'UUID',
+      payload: table === 'plan' ? { upcomingPayments: [{ id: 'bill', amountMinor }] } : {
+        uuid: 'UUID', month: '2026-09', fechaPago: '2026-09-15', totalMinor: amountMinor,
+        totalPercepcionesMinor: amountMinor, totalDeduccionesMinor: 0, totalOtrosPagosMinor: 0, lines: [],
+      } });
+    for (const removed of [false, true]) {
+      const occ = new OccPool(); let live: SourceItem | undefined = make(100);
+      await reconcileKey(occ, async () => live, sourceKey);
+      const read = gate(), resume = gate(); let first = true;
+      const backfill = reconcileKey(occ, async () => {
+        const observed = live;
+        if (first) { first = false; read.release(); await resume.promise; }
+        return observed;
+      }, sourceKey);
+      await read.promise; live = removed ? undefined : make(200);
+      await reconcileKey(occ, async () => live, sourceKey); resume.release(); await backfill;
+      expect(occ.retries).toBe(1);
+      expect(occ.checkpoint).toMatchObject({ hash: sourceHash(live), deleted: removed });
+    }
+  });
   for (const existing of [false, true]) it(`re-reads current DDB when an older worker commits last (existing=${existing})`, async () => {
     const occ = new OccPool(); let live = movement();
     if (existing) await reconcileKey(occ, async () => live, key);

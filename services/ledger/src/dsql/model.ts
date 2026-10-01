@@ -16,10 +16,12 @@ export const TABLE_COLUMNS = {
   movement_tags: { movement_id: 'text', tag: 'text', payload: 'jsonb' },
   msi_plans: { movement_id: 'text', months: 'integer', principal_minor: 'bigint', cuota_minor: 'bigint', status: 'text', needs_schedule_completion: 'boolean', payload: 'jsonb' },
   msi_installments: { movement_id: 'text', installment_index: 'integer', month: 'text', amount_minor: 'bigint', status: 'text', occurred_on: 'date', payload: 'jsonb' },
+  monthly_plans: { owner: 'text', month: 'text', payload: 'jsonb', source_item: 'jsonb' },
+  payroll: { owner: 'text', month: 'text', uuid: 'text', fecha_pago: 'date', total_minor: 'bigint', currency: 'text', ingested_at: 'timestamptz', source: 'jsonb', payload: 'jsonb', source_item: 'jsonb' },
 } as const;
 export type TableName = keyof typeof TABLE_COLUMNS;
 export const TABLE_NAMES = Object.keys(TABLE_COLUMNS) as TableName[];
-export const PROJECTION_VERSION = 1;
+export const PROJECTION_VERSION = 2;
 
 export const entityForKey = (key: SourceKey): TableName | undefined => {
   if (key.PK.startsWith('EVENT#')) {
@@ -30,6 +32,8 @@ export const entityForKey = (key: SourceKey): TableName | undefined => {
   if (key.PK === 'CATEGORY_CATALOG' && key.SK.startsWith('CAT#')) return 'categories';
   if (key.PK === 'CATEGORY_RULES' && key.SK.startsWith('RULE#')) return 'merchant_category_rules';
   if (key.PK.startsWith('USER#') && key.SK.startsWith('CARD#')) return 'cards';
+  if (key.PK.startsWith('USER#') && /^MONTH#\d{4}-\d{2}$/.test(key.SK)) return 'monthly_plans';
+  if (key.PK.startsWith('USER#') && /^PAYROLL#\d{4}-\d{2}#.+$/.test(key.SK)) return 'payroll';
   return undefined;
 };
 
@@ -55,10 +59,29 @@ export const projectRows = (key: SourceKey, item?: SourceItem): SqlRow[] => {
   if (!item && !defaultCategory) return [];
   const p = table === 'categories' || table === 'merchant_category_rules'
     ? object(item ?? defaultCategory) : object(item?.payload);
-  const id = string(p.id);
   const row = (target: TableName, rowId: string, values: Record<string, unknown>): SqlRow => ({
     table: target, values: { source_pk: key.PK, source_sk: key.SK, row_id: rowId, ...values },
   });
+  if (table === 'monthly_plans' || table === 'payroll') {
+    const owner = string(item?.owner);
+    const month = string(item?.month);
+    if (key.PK !== `USER#${owner}`) throw new Error('Planning owner does not match source key');
+    if (Buffer.byteLength(JSON.stringify(item)) > 4 * 1024 * 1024) throw new Error('Projection exceeds transaction budget');
+    if (table === 'monthly_plans') {
+      if (key.SK !== `MONTH#${month}`) throw new Error('Plan month does not match source key');
+      if (!Array.isArray(p.upcomingPayments)) throw new Error('Invalid planned payments');
+      for (const value of p.upcomingPayments) integer(object(value).amountMinor);
+      return [row(table, month, { owner, month, payload: p, source_item: item })];
+    }
+    const uuid = string(p.uuid);
+    if (key.SK !== `PAYROLL#${month}#${uuid}` || p.month !== month || item?.uuid !== uuid) throw new Error('Payroll identity does not match source key');
+    for (const field of ['totalPercepcionesMinor', 'totalDeduccionesMinor', 'totalOtrosPagosMinor']) integer(p[field]);
+    if (!Array.isArray(p.lines)) throw new Error('Invalid payroll lines');
+    for (const line of p.lines) integer(object(line).amountMinor);
+    return [row(table, uuid, { owner, month, uuid, fecha_pago: string(p.fechaPago), total_minor: integer(p.totalMinor),
+      currency: 'MXN', ingested_at: optional(item?.ingestedAt), source: optional(item?.source), payload: p, source_item: item })];
+  }
+  const id = string(p.id);
   if (table === 'movements') {
     if (key.PK !== `EVENT#${id}`) throw new Error('Movement ID does not match source key');
     const amount = object(p.amount);
