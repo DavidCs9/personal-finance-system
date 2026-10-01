@@ -25,13 +25,21 @@ Repair the failed DSQL rollout autonomously. Complete the required PR/quality/li
 
 ## Decisions
 
+### D3 — Preserve native driver timestamp precision in parity verification
+- Context: #148 deployed successfully and loaded the actual ledger, but the parity pass reports hundreds of mismatches with zero lag.
+- Evidence and uncertainty: The verifier converts timestamptz values with `new Date(String(value))`. node-postgres returns Date objects; Date.toString omits milliseconds. This deterministically changes a timestamp such as `.123Z` to `.000Z`, while the source's ISO string preserves `.123Z`. Existing embedded PostgreSQL tests did not cover native pg Date parsing. The real parity pass will determine whether further differences remain.
+- Alternatives and tradeoffs: Ignore timestamp differences (weakens correctness); change source/SQL data to lower precision (unnecessary loss); preserve Date objects' milliseconds with toISOString and verify with the actual pg parser.
+- Decision and reason: Correct comparison normalization, preserving stored source and SQL data. Add a regression using the driver's native timestamptz parser and require real-engine zero-lag/zero-mismatch verification.
+- Consequences, verification, and revisit conditions: No schema/source changes. The live reconciliation must pass after rollout; investigate any remaining mismatch separately rather than weakening the gate.
+- Status: Implementing; real-data parity pending.
+
 ### D2 — Match Lambda's native S3 destination permission validation
 - Context: After #147 recovered all retained resources and bootstrap passed, deployment failed creating the DynamoDB event source mapping: its execution role lacked acceptable PutObject permission for the failure destination.
 - Evidence and uncertainty: Production run 36798503418 confirms successful adoption and schema/non-admin smoke, then CREATE_FAILED on the mapping. The existing policy restricts writes to `aws/lambda/*`; AWS's documented destination policy grants bucket object scope (`bucket/*`) and restricts the resource account. DynamoDB remains authoritative and the failed rollout completed rollback.
 - Alternatives and tradeoffs: Remove recovery (would lose failed payloads); grant broad S3 writes or use CDK's helper with DeleteObject (unnecessary privileges); allow PutObject on all objects in the single private recovery bucket with the existing same-account condition, retaining replay read-prefix restrictions and no deletion permission.
 - Decision and reason: Use the provider-compatible bucket object scope for native destination validation, preserving the narrow action, exact bucket and account guard. The native helper's additional delete permission remains an explicit gap justifying the existing small binding.
 - Consequences, verification, and revisit conditions: Lambda can write anywhere in this dedicated recovery bucket; it still cannot delete objects or write other buckets. Add a synthesized-policy regression check and verify mapping creation and data parity in the approved production job.
-- Status: Implementing; real production acceptance pending.
+- Status: Validated in production; #148 created the enabled mapping with the native S3 destination. Actual stream delivery captured 102 keys.
 
 ### D1 — Preserve the original deployed template during retained-resource import
 - Context: The prior recovery copied GetTemplate output verbatim, but AWS rejected import as application modifications.
@@ -63,3 +71,9 @@ Repair, production deployment and runtime verification are in progress.
 - Working on codex/fix-dsql-stream-destination, created directly from updated origin/main. Continue with PR/quality/linear merge and production verification.
 - Destination policy corrected to exact recovery bucket object scope with the existing account guard. Regression tests check provider-compatible write/list permissions and absence of delete rights. Thirteen infrastructure tests, nine recovery tests, infrastructure type check and synth passed; the source DynamoDB table and all three prior mappings match the original deployed template exactly.
 - Native DescribeStackResource confirms the original cluster, recovery bucket and schema log group are still owned by the stack after rollback, with unchanged physical identities.
+- [PR #148](https://github.com/DavidCs9/personal-finance-system/pull/148) passed required quality on `66547dc6e34294ba599836900ec44471ed72e577` ([run 36800160644](https://github.com/DavidCs9/personal-finance-system/actions/runs/36800160644)); confirmed CLEAN and MERGEABLE before squash merge. Awaiting production mapping activation and historical/live parity.
+- #148 merged as `1e82496c6acba2181969c9132f9cadc36306b03b`; [production run 36800303862](https://github.com/DavidCs9/personal-finance-system/actions/runs/36800303862) is applying the rollout. Native Lambda confirms mapping `044e9b6c-d091-4b07-938d-d011885aeb3f` is Enabled with the original DynamoDB stream ARN and retained recovery bucket. SQL bootstrap passed again. Historical parity is pending.
+- CloudFormation reached UPDATE_COMPLETE. The deployment's historical reconciliation execution (`deploy-36800303862-1`) and the first native scheduled reconciliation are running. Only safe counters/table counts will be recorded; financial aggregates remain private in AWS.
+- Activated the configured SNS alarm email subscription via native ConfirmSubscription using the confirmation token from the exact AWS message for the live topic/recipient. Verified topic/account/recipient; no email was sent manually and no tokens were published. Subscription is now confirmed with authenticated unsubscribe required.
+- #148's infrastructure deployment succeeded, but its post-deploy parity gate failed. Historical load produced all nine relational tables; verification reported 1,416 equal, zero lag and 1,784 mismatch comparisons across two passes. The 892 distinct mismatches correspond exactly to 491 movements and 401 revisions, the timestamp-bearing entities. Native stream delivery captured 102 keys without artificial source mutations.
+- Created codex/fix-dsql-timestamp-parity directly from refreshed origin/main. Native pg parsing reproduces `.123Z` becoming `.000Z` through the previous verifier. The correction preserves Date precision; all 51 ledger tests and ledger type check pass, including equal movement/revision checks and rejection of a one-millisecond SQL discrepancy. Infrastructure synth and whitespace checks pass. Production parity remains the completion gate.

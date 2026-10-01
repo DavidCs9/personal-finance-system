@@ -6,7 +6,8 @@ const normalizedRow = (row: SqlRow): SqlRow => ({
   values: Object.fromEntries(Object.entries(row.values).map(([column, value]) => {
     const type = (TABLE_COLUMNS[row.table] as Record<string, string>)[column];
     if (value != null && type === 'bigint') return [column, String(value)];
-    if (value != null && type === 'timestamptz') return [column, new Date(String(value)).toISOString()];
+    // node-postgres returns Date objects. String(Date) discards milliseconds.
+    if (value != null && type === 'timestamptz') return [column, (value instanceof Date ? value : new Date(String(value))).toISOString()];
     if (value instanceof Date && type === 'date') return [column, value.toISOString().slice(0, 10)];
     return [column, value];
   })),

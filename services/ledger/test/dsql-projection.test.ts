@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { types as pgTypes } from 'pg';
 import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_SPEND_CATEGORIES, buildMsiSchedule } from '@finance/domain';
 import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
@@ -117,6 +118,30 @@ describe('SQL projection integrity', () => {
     await reconcileKey(pool, readSource, key);
     let read = 0;
     expect(await verifyKey(pool, async () => movement({ status: read++ ? 'rejected' : 'accepted' }), key)).toBe('lag');
+  });
+
+  it('preserves milliseconds from the native pg timestamp parser and still detects a one-millisecond discrepancy', async () => {
+    const item = movement({ occurredAt: '2026-09-30T23:45:20.123Z', receivedAt: '2026-09-30T23:45:20.456Z' });
+    const revision = { PK: key.PK, SK: 'REVISION#precision', payload: {
+      id: 'precision', createdAt: '2026-09-30T23:45:20.789Z', changes: {},
+    } };
+    for (const sourceItem of [item, revision]) { setSource(sourceItem); await reconcileKey(pool, readSource, sourceItem); }
+    const parseTimestamp = pgTypes.getTypeParser(1184);
+    expect(parseTimestamp('2026-09-30 23:45:20.123+00')).toBeInstanceOf(Date);
+    const nativeDates: TransactionPool = { transaction: (callback) => sql.transaction((client) => callback({
+      query: async (statement, values) => {
+        const result = await client.query(statement, values);
+        return { rows: (result.rows as Record<string, unknown>[]).map((row) => Object.fromEntries(
+          Object.entries(row).map(([column, value]) => [column,
+            value != null && ['occurred_at', 'received_at', 'created_at'].includes(column)
+              ? parseTimestamp((value instanceof Date ? value.toISOString() : String(value)).replace('T', ' ').replace(/Z$/, '+00')) : value]),
+        )) };
+      },
+    })) };
+    expect(await verifyKey(nativeDates, readSource, key)).toBe('equal');
+    expect(await verifyKey(nativeDates, readSource, revision)).toBe('equal');
+    await sql.query("UPDATE olbia.movements SET occurred_at='2026-09-30T23:45:20.124Z' WHERE id='movement'");
+    expect(await verifyKey(nativeDates, readSource, key)).toBe('mismatch');
   });
 
   it('ignores stale stream images and resumes only from first failed sequence', async () => {
