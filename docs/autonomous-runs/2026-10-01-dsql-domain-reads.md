@@ -10,11 +10,11 @@ DynamoDB retains every write and authoritative validation/acceptance/dedupe/reco
 
 ## Progress and next steps
 
-Read repository/autonomous/product/UI and migration guidance. Created isolated managed worktree and shadow branch. Inspect all consumers and real inventory; implement proportional guarded readers and independent verification, test and complete phased production delivery.
+Completed inspected consumer inventory, independent SQL/source verification and phased shadow/guarded production delivery through PRs #161/#162. Final evidence is captured below on an isolated documentation branch directly from refreshed origin/main.
 
 ## Decisions
 
-Pending consumer inspection. Current user AWS-auth instructions override older committed login guidance; do not alter the unrelated original edits.
+D1–D4 below record the domain boundaries, shared inputs, verification optimization and synchronous invocation investigation. Current user AWS-auth instructions override older committed login guidance; the unrelated original edits remain untouched.
 
 ## Verification results
 
@@ -22,7 +22,7 @@ Initial main state matches completed Patrimonio PRs #158–#160. Original checko
 
 ## Outcome and remaining work
 
-In progress; no new production rollout claimed.
+Requested read phase completed and independently verified in shadow and guarded production. DynamoDB remains all writes/authoritative decisions and strong freshness reference; later phases retain operational-state migration, SQL write cutover, reverse replication and DynamoDB retirement. Final evidence and remaining dependencies are documented below.
 
 ### D1 — Reuse projected catalogs/rules/cards and preserve source-only decisions
 - Context: These entities already project into SQL; moving authoritative reads would expand migration scope and let lag affect acceptance or classification.
@@ -30,7 +30,7 @@ In progress; no new production rollout claimed.
 - Alternatives and tradeoffs: New schema/envelopes duplicate retained data; broad replacement of shared readers risks validation and mutation decisions. Existing payloads plus cards.source_item satisfy all read-only contracts.
 - Decision and reason: No schema/transformer change. Bootstrap 6 adds SELECT on exactly categories/rules and associates existing card-cycle worker. Explicit strong paginated source readers remain for rule classification, card max-three/liability validation and all movement mutation/manual-dedupe reads. Catalog/rule API, category analytics/assistant/report and standalone card/cycle reads use a new shadow flag. Existing worker/assistant movement readers get a separate shadow flag, leaving API movement guarded mode intact.
 - Consequences, verification, and revisit conditions: Verify complete metadata, effective defaults, source key ordering, exact/pattern precedence, deletion/lag/failure and independent columns/content. SQL failure or mismatch selects source; source failure propagates. Revisit only for write-authority phase.
-- Status: Implemented; validation in progress.
+- Status: Validated by local adversarial tests and both independent production gates.
 
 ### D2 — Share financial inputs and verify deterministic notifications without delivery
 - Context: SQL attempts inside month/day/card loops multiply outage latency; existing reminder only reads Patrimonio and has no movement input.
@@ -38,7 +38,7 @@ In progress; no new production rollout claimed.
 - Alternatives and tradeoffs: A custom circuit breaker adds state; per-loop selection adds latency. Reuse selected bundles and unchanged domain functions.
 - Decision and reason: Assistant comparison loads both months once. Worker flags reuse existing shared movement selection and card selection outside loops. Independent gate compares explicit SQL/source categories/rules/cards/columns and movement inputs, assistant aggregates/ranges, full monthly facts plus deterministic email rendering, daily push and all card reminder dates/content modes including leap/short February. Existing Patrimonio gate covers reminder rendering and evidence without sending.
 - Consequences, verification, and revisit conditions: No scheduling/delivery/idempotence behavior changes. Existing native capture/recovery/OCC suffice; no custom telemetry beyond established domain mismatch counters or new replication service. Test SQL call counts on outage and preserve financial algorithms.
-- Status: Implemented; validation in progress.
+- Status: Validated by local adversarial tests and both independent production gates.
 
 ## Pre-PR verification checkpoint
 
@@ -65,7 +65,7 @@ Reconciliation deploy-36905311537-1 ran 12:20:17–12:23:52 America/Chihuahua (1
 - Alternatives and tradeoffs: Leave redundant work and wait several minutes; drop date checks (unacceptable); reuse the exact monthly feeds once, keeping every day/content-mode comparison.
 - Decision and reason: Hoist source/SQL month feeds outside the daily loop. Same payloads/month/parser, unchanged clocks/financial algorithms and number of comparisons. Include this verification-only optimization with promotion; the shadow gate still verifies the original equivalent calculations before promotion.
 - Consequences, verification, and revisit conditions: Focused independent corruption/content/daily tests must pass unchanged, followed by repeated production gate. No runtime consumer or notification behavior changes; revisit only if a feed becomes day-dependent.
-- Status: Validating.
+- Status: Validated; identical production comparison counts, domain verification 259.139s to 42.346s.
 
 ### D4 — Recover explicit shadow acceptance from the deployed read-only probe
 - Context: Native Lambda END/REPORT confirms the shadow verifier completed in 329.018 seconds at 18:29:34 UTC without a logged error; deploy-production remains waiting for its synchronous invoke response at 18:38 UTC. A successful Lambda execution alone cannot prove the returned mismatch count.
@@ -73,7 +73,7 @@ Reconciliation deploy-36905311537-1 ran 12:20:17–12:23:52 America/Chihuahua (1
 - Alternatives and tradeoffs: Promote based on platform completion (insufficient); wait without independent evidence; invoke the existing deployed read-only verification capability and obtain explicit counters independently.
 - Decision and reason: Run the unchanged deployed verifier locally with the default verified identity and a bounded long invocation timeout. No source/SQL data mutation, notification delivery or local code deployment. Keep flags shadow until the explicit independent result and deployment status are established.
 - Consequences, verification, and revisit conditions: Capture only safe counters in repository evidence, private outputs outside Git. Investigate workflow outcome and use native CLI connection options if its invocation failed.
-- Status: Investigating.
+- Status: Validated; see resolution below.
 
 ## Explicit shadow acceptance and promotion decision
 
@@ -88,3 +88,29 @@ Proceed with guarded flags in a separate PR, leaving DynamoDB authority and fres
 Before cancellation took effect, Actions completed successfully. The cancellation request returned "Cannot cancel a workflow run that is completed"; no run was cancelled. Downloaded final job logs confirm verified=true, 494 movements, identical domain/content/evidence counts and zero mismatches, elapsed 319.747s (domain 259.139s). The earlier intended cancellation is superseded. The delayed synchronous caller ultimately returned; exact network/retry cause remains unproven and requires no infrastructure change. Both CI and independent local invocation establish shadow acceptance.
 
 D4 status: validated. D1/D2 shadow behavior and independent real-data parity validated. D3 local tests validated; repeated optimized production gate remains required.
+
+## Guarded delivery checkpoint
+
+[PR #162](https://github.com/DavidCs9/personal-finance-system/pull/162) passed required quality and CLEAN/MERGEABLE, squash merged as bf8895486c270d080ee2d9d01aa8ad4440eabbee at 18:48:38 UTC (12:48:38 America/Chihuahua). Guarded synth keeps all ten protected resources unchanged. Final evidence branch starts directly from refreshed origin/main. Await approved production workflow, then repeat independent parity/configuration/grant/health/component checks.
+
+## Guarded component/health checkpoint
+
+CloudFormation UPDATE_COMPLETE; all seven participating Lambda updates Successful with expected guarded flags. Nine deployed API/agent read-only component calls produced twelve equal guarded comparisons and SQL selections (five worker movement comparisons), zero mismatches/SQL errors; assistant compare_months made one movement selection. Native schema rows remain [1,2,3]; reader grants are exactly thirteen SELECT entries and no SQL mutation grant. Native category/rule/card source order matches UTF-8. Mapping Enabled/OK, eight DSQL alarms OK; all ten protected deployed definitions match baseline. Full approved-workflow independent gate remains pending.
+
+Verification scope: component calls directly exercised deployed Lambda route/tool handlers; they did not test API Gateway JWT authentication or invoke delivery workers. Worker financial and notification content is compared via the deployed read-only independent gate; no test email, Web Push, AI generation, refresh mutation or fabricated financial record was used. Real pattern rules were absent; precedence is covered by adversarial local SQL tests and actual native ordering, not claimed as production pattern data coverage.
+
+Guarded reconciliation deploy-36909613715-1 ran 12:53:22–12:56:39 America/Chihuahua (18:53:22–18:56:39 UTC), SUCCEEDED/done with 3,570 projected/equal comparisons, zero lag/mismatch. Independent optimized production gate is now running.
+
+## Final guarded production acceptance
+
+[Approved guarded workflow](https://github.com/DavidCs9/personal-finance-system/actions/runs/36909613715) completed quality and deploy-production successfully. Independent gate returned verified=true, guarded-sql, zero total/domain/planning/wealth mismatches. Counts exactly match shadow acceptance: 494 movements/details, 21 feeds/summaries, 19 ranges; 12 persisted/13 effective categories, 174 rules, three complete cards, 498 merchant resolutions, 20 months, 60 assistant checks, 20 full reports/emails, 1,212 daily messages, 606 cycle dates and 240 cycle messages. Existing planning/payroll: six stored plans, 19 stored payroll records, 22 plan/summary/compensation/wealth-close checks, 19 details and XML evidence hashes, three payroll years and one wealth overview. Existing Patrimonio: 120 canonical assets + four audit versions + 22 canonical liabilities + three audit versions = 149 retained records/evidence hashes; 95 as-of overviews/reminders, 193 investment checks and 21 reports.
+
+Gate elapsed 106.771s; new domain 42.346s versus shadow CI 259.139s. D3 retained every comparison count and unchanged output while eliminating repeated feed/date parsing. Native category/rule/card queries use Index Only Scan; DPU totals 0.00678 / 0.19833 / 0.00526. Movement native scan types Index Scan/Index Only Scan; average SQL feed 43ms, configured feed/detail pair 398ms. These are observed probe timings, not a product latency guarantee or removal of source freshness cost.
+
+Final required quality passed 416 tests (28 web + 55 domain + 232 API + 20 ingestion + 58 ledger + nine notify + 14 infra), nine Python recovery tests, ledger/web/infra checks, web build and synth. API type check and seven focused independent SQL tests passed locally after the verifier optimization. All ten protected source/DSQL/KMS/S3/mapping definitions stayed identical in synth and deployed templates. Source schema/projector/recovery needed no changes; schema/transformer 3 and provider 6 are active.
+
+D1/D2/D3/D4 are validated. No financial algorithms, notification delivery behavior, operational states or write authority changed. No direct source data writes, manual deployment, source replacement or test notification occurred. Private actual records and full financial execution reports stayed outside Git; only safe counters/native metrics appear in public evidence. Original checkout's AGENTS.md, migration-plan and runbook AWS-auth edits remain intact.
+
+Closure: implementation and required production verification are complete. This final documentation change goes through quality/CLEAN/MERGEABLE and linear squash; no further code deployment is required. Later phases are intentionally out of scope.
+
+Final native health recheck after the successful independent gate: all eight DSQL alarms OK, stream mapping Enabled/OK. Source-authority and operational dependencies remain documented in the domain consumer inventory.
