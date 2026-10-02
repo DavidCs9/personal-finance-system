@@ -59,7 +59,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers(); 
 beforeEach(async () => {
   records = new Map(); evidence = new Map();
   await sql.exec(`TRUNCATE olbia.projection_state,olbia.card_profiles,${[...TABLE_NAMES,...NATIVE_LEDGER_TABLES,'bank_imports','bank_import_rows','bank_import_candidates'].map(table => `olbia.${table}`).join(',')}`);
-  await sql.query('DELETE FROM olbia.schema_migrations WHERE version=9');
+  await sql.query('DELETE FROM olbia.schema_migrations WHERE version IN (9,15)');
   vi.spyOn(connection, 'createPool').mockReturnValue({query:(s:string,v?:unknown[])=>sql.query(s,v)} as never);
   vi.spyOn(application, 'applicationStoreClient').mockReturnValue(sql);
   vi.stubEnv('DSQL_WEALTH_READ_MODE', 'guarded-sql'); vi.stubEnv('DSQL_PLANNING_READ_MODE', 'dynamodb');
@@ -202,4 +202,39 @@ describe('Patrimonio SQL migration', () => {
     expect(await wealth.listCanonicalSnapshotsDynamo(owner)).toHaveLength(1);
     expect(send.mock.calls.map(([command]) => command.input)).toMatchObject([{ ConsistentRead: true }, { ConsistentRead: true, ExclusiveStartKey: { PK: 'USER#owner', SK: 'WEALTH_SNAP#bitso#2026-08-06' } }]);
   });
+  it('rejects all old balance/audit/source and consumer paths after activation without financial queries or SDK fallback', async () => {
+    await seed();
+    vi.stubEnv('OLBIA_SQL_STORE_ENABLED', 'true');
+    const before = Object.fromEntries(await Promise.all(['wealth_snapshots', 'wealth_versions', 'liability_snapshots', 'liability_versions']
+      .map(async table => [table, (await sql.query(`SELECT * FROM olbia.${table} ORDER BY 1,2,3`)).rows])));
+    await sql.query('INSERT INTO olbia.schema_migrations VALUES (15,CURRENT_TIMESTAMP)');
+    const queries = vi.spyOn(sql, 'query');
+    const sdk = vi.mocked(DynamoDBDocumentClient.prototype.send); sdk.mockClear();
+    const paths = [
+      () => reads.readSqlWealthInputs(owner), () => reads.readSqlWealthAudit(owner),
+      () => reads.readConfiguredWealthInputs(owner), () => reads.readWealthAudit(owner),
+      () => reads.readSourceWealthInputs(owner), () => reads.readSourceWealthRecords(owner),
+      () => wealth.listCanonicalSnapshotsDynamo(owner), () => wealth.listCanonicalLiabilitySnapshotsDynamo(owner),
+      () => wealth.listWealthSnapshots(owner), () => wealth.listWealthSnapshotsForAccount(owner, 'bitso'),
+      () => wealth.getWealthOverview(owner, now), () => wealth.getWealthOverviewAsOf(owner, '2026-09-30'),
+      () => investmentHistory(owner, { range: 'all' }, now),
+    ];
+    for (const read of paths) {
+      queries.mockClear();
+      await expect(read()).rejects.toMatchObject({ name: 'MigrationPausedException' });
+      const statements = queries.mock.calls.map(([statement]) => statement);
+      expect(statements).not.toContain(reads.wealthReadStatement);
+      expect(statements).not.toContain(reads.wealthAuditStatement);
+      expect(sdk).not.toHaveBeenCalled();
+    }
+    for (const mode of ['dynamodb', 'shadow', 'guarded-sql']) {
+      vi.stubEnv('DSQL_WEALTH_READ_MODE', mode);
+      const legacy = vi.fn(async () => []);
+      await expect(reads.readConfiguredWealth('wealth-inputs', legacy, legacy)).rejects.toMatchObject({ name: 'MigrationPausedException' });
+      expect(legacy).not.toHaveBeenCalled();
+    }
+    for (const [table, rows] of Object.entries(before))
+      expect((await sql.query(`SELECT * FROM olbia.${table} ORDER BY 1,2,3`)).rows).toEqual(rows);
+  });
+
 });

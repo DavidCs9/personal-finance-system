@@ -8,6 +8,7 @@ import { readerPool, type ReadSqlClient } from '../events/sql-reads.js';
 import { observe, selectLedgerRead, type LedgerReadMode } from '../events/read-selection.js';
 import { listCanonicalSnapshotsDynamo, listCanonicalLiabilitySnapshotsDynamo } from './service.js';
 import { toPublicSnapshot, toPublicLiabilitySnapshot } from './records.js';
+import { assertLegacyWealthReadAvailable } from './legacy-read-guard.js';
 
 export interface WealthInputs {
   readonly snapshots: readonly WealthSnapshot[];
@@ -21,7 +22,8 @@ export const wealthReadMode = (): LedgerReadMode => {
 };
 export const readConfiguredWealth = <T>(query: 'wealth-inputs' | 'wealth-audit', sql: () => Promise<T>, source: () => Promise<T>): Promise<T> => {
   const mode = wealthReadMode();
-  return selectLedgerRead({ mode, sql, source, report: (outcome, selected) => observe(query, mode, outcome, selected) });
+  return assertLegacyWealthReadAvailable().then(() =>
+    selectLedgerRead({ mode, sql, source, report: (outcome, selected) => observe(query, mode, outcome, selected) }));
 };
 
 // One SQL snapshot and one bounded query for the complete financial input bundle.
@@ -34,6 +36,7 @@ export const wealthReadStatement = `SELECT source_item,'asset' AS kind,
   UNION ALL SELECT NULL,'card',id,name,cut_off_day,payment_due_day,institution,created_at,updated_at
     FROM olbia.card_profiles WHERE owner=$2 AND deleted_at IS NULL`;
 export const readSqlWealthInputs = async (owner: string, client: ReadSqlClient = readerPool()): Promise<WealthInputs> => {
+  await assertLegacyWealthReadAvailable(client);
   const rows = (await client.query(wealthReadStatement, [`USER#${owner}`, owner])).rows;
   // Other domains retain their projection completeness gate until their own normalization.
   if (rows.some(row => row.kind !== 'card' && !row.source_item)) throw new Error('Incomplete Patrimonio projection');
@@ -59,6 +62,7 @@ export const readConfiguredWealthInputs: WealthInputsReader = owner => readConfi
 
 export const wealthPrefixes = ['WEALTH_SNAP#', 'WEALTH_VER#', 'LIAB_SNAP#', 'LIAB_VER#', 'CARD#'] as const;
 export const readSourceWealthRecords = async (owner: string, prefixes: readonly string[] = wealthPrefixes): Promise<JsonObject[]> => {
+  await assertLegacyWealthReadAvailable();
   const records: JsonObject[] = [];
   for (const prefix of prefixes) {
     for await (const page of paginateQuery({ client: database }, { TableName: tableName, ConsistentRead: true,
@@ -69,9 +73,11 @@ export const readSourceWealthRecords = async (owner: string, prefixes: readonly 
 };
 export const wealthAuditStatement = `SELECT source_item FROM olbia.wealth_versions WHERE source_pk=$1
   UNION ALL SELECT source_item FROM olbia.liability_versions WHERE source_pk=$1`;
-export const readSqlWealthAudit = async (owner: string, client: ReadSqlClient = readerPool()): Promise<JsonObject[]> =>
-  (await client.query(wealthAuditStatement, [`USER#${owner}`])).rows.map(row => row.source_item as JsonObject)
+export const readSqlWealthAudit = async (owner: string, client: ReadSqlClient = readerPool()): Promise<JsonObject[]> => {
+  await assertLegacyWealthReadAvailable(client);
+  return (await client.query(wealthAuditStatement, [`USER#${owner}`])).rows.map(row => row.source_item as JsonObject)
     .sort((a, b) => String(a.SK).localeCompare(String(b.SK)));
+};
 // No new public audit endpoint: explicit retained audit reads support verification and future existing-contract consumers.
 export const readWealthAudit = (owner: string): Promise<JsonObject[]> => readConfiguredWealth('wealth-audit',
   () => readSqlWealthAudit(owner), () => readSourceWealthRecords(owner, ['WEALTH_VER#', 'LIAB_VER#']));
