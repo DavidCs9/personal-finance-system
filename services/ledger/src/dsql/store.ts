@@ -70,6 +70,14 @@ export class OlbiaSqlStore {
     if(entityForKey(key)==='import_records' && (await client.query('SELECT version FROM olbia.schema_migrations WHERE version=13')).rows.length) {
       throw namedError('MigrationPausedException','Las importaciones se están migrando. Intenta de nuevo en un momento.');
     }
+    // Stage the whole ledger boundary before migration 14, including targetless
+    // suppression claims. Tags and MSI freeze through their movement document.
+    const family=entityForKey(key);
+    if((['movements','movement_observations','movement_revisions'].includes(family??'') ||
+      family==='dedupe_claims' && !key.PK.startsWith('DEDUPE#CFDI_NOMINA#')) &&
+      (await client.query('SELECT version FROM olbia.schema_migrations WHERE version=14')).rows.length) {
+      throw namedError('MigrationPausedException','Los movimientos se están migrando. Intenta de nuevo en un momento.');
+    }
     const rows=projectRows(key,item);
     await client.query(`INSERT INTO olbia.projection_state (source_pk,source_sk,generation,source_hash,source_item,deleted,transformer_version,reconciled_at)
       VALUES ($1,$2,1,$3,$4,$5,$6,CURRENT_TIMESTAMP) ON CONFLICT (source_pk,source_sk) DO UPDATE SET

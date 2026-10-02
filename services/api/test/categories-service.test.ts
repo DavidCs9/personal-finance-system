@@ -15,6 +15,7 @@ const { listCategories, listMerchantRules, putCategoryCatalog, ensureDefaultCata
   await import('../src/categories/service.js');
 const { previewAgentCategoryEdit, previewBulkEdit, applyBulkEdit, undoBulkEdit, applyAgentCategoryEdits } =
   await import('../src/events/bulk-edits.js');
+const { patchEvent } = await import('../src/events/mutations.js');
 let sql: PGlite, store: OlbiaSqlStore;
 const run = <T>(callback: () => Promise<T>) => sql.transaction(client => withStoreClient(client as unknown as SqlClient, callback));
 const snapshot = (nextCategoryId: string | null, previousCategoryId: string | null = 'otros') => ({
@@ -41,6 +42,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 beforeEach(async () => {
   await sql.exec('TRUNCATE olbia.projection_state,olbia.movements,olbia.merchant_rules,olbia.movement_revisions,olbia.bulk_edit_operations,olbia.command_receipts,olbia.merchant_category_rules');
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
+  await sql.query('DELETE FROM olbia.schema_migrations WHERE version=14');
   await sql.query('DELETE FROM olbia.spend_categories');
   for (const c of DEFAULT_SPEND_CATEGORIES) await sql.query('INSERT INTO olbia.spend_categories VALUES ($1,$2,$3)', [c.id, c.name, c.sortOrder]);
   vi.stubEnv('OLBIA_SQL_STORE_ENABLED', 'true');
@@ -55,6 +57,21 @@ beforeEach(async () => {
 });
 
 describe('native SQL category catalog and membership', () => {
+  it('blocks actual single edits and bulk apply after ledger cutover without audit/rule/operation changes', async () => {
+    await seedOperation('ledger-cutover','shopping');
+    const tables=['projection_state','movements','movement_revisions','bulk_edit_operations','merchant_rules','command_receipts'];
+    const before=await Promise.all(tables.map(async table=>(await sql.query(`SELECT * FROM olbia.${table} ORDER BY 1,2`)).rows));
+    await sql.query('INSERT INTO olbia.schema_migrations VALUES (14,CURRENT_TIMESTAMP)');
+    await expect(run(()=>setEventCategory('event-1','owner','shopping',{updateRule:true})))
+      .rejects.toMatchObject({name:'MigrationPausedException'});
+    for(const body of [{action:'set_tags',tags:['retained']},{action:'set_personal_amount',personalAmountMinor:0},
+      {action:'set_msi',months:3},{action:'reject'},{action:'verify'}])
+      await expect(run(()=>patchEvent('event-1','owner',JSON.stringify(body))))
+        .rejects.toMatchObject({name:'MigrationPausedException'});
+    await expect(applyBulkEdit('owner','ledger-cutover','owner')).rejects.toMatchObject({name:'MigrationPausedException'});
+    expect(await Promise.all(tables.map(async table=>(await sql.query(`SELECT * FROM olbia.${table} ORDER BY 1,2`)).rows)))
+      .toEqual(before);
+  });
   it('reads and updates the catalog without document commands or runtime default overlays', async () => {
     vi.mocked(database.send).mockClear();
     await run(() => putCategoryCatalog([{ id: 'restaurantes', name: 'Comida', sortOrder: 1 }, { id: 'personal', name: 'Personal', sortOrder: 2 }]));
