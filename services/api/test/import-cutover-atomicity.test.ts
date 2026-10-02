@@ -25,7 +25,7 @@ afterAll(()=>sql.close());
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllEnvs();});
 beforeEach(async()=>{
   await sql.exec('TRUNCATE olbia.projection_state,olbia.movements,olbia.movement_observations,olbia.movement_revisions,olbia.movement_tags,olbia.msi_plans,olbia.msi_installments,olbia.dedupe_claims,olbia.import_records,olbia.command_receipts,olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates');
-  await sql.query('DELETE FROM olbia.schema_migrations WHERE version=13');
+  await sql.query('DELETE FROM olbia.schema_migrations WHERE version IN (13,14)');
   interruptCompletion=false;completions=0;
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
   vi.stubEnv('OLBIA_SQL_STORE_ENABLED','true');
@@ -43,7 +43,9 @@ beforeEach(async()=>{
   vi.spyOn(S3Client.prototype,'send').mockResolvedValue({Body:{transformToString:async()=>csv}} as never);
 });
 describe('whole import apply shares the native cutover transaction',()=>{
-  it.each(['amex','santander'] as const)('rolls back actual %s statement rows/claims on native completion failure and retries cleanly',async provider=>{
+  it.each([
+    ['amex','completion'],['santander','completion'],['amex','ledger-cutover'],['santander','ledger-cutover'],
+  ] as const)('rolls back actual %s statement apply on %s and retries cleanly',async(provider,failure)=>{
     const kind=provider==='amex'?'amex_statement' as const:'santander_statement' as const;
     const importId='a'.repeat(64);
     const row={identity:'original-statement-row',kind:'purchase' as const,merchantRaw:'ORIGINAL PURCHASE',amountMinor:100,
@@ -51,30 +53,32 @@ describe('whole import apply shares the native cutover transaction',()=>{
     await startBankImport({kind,importId,owner:'owner',status:'previewed',createdAt:'2026-08-01T12:00:00Z',
       accountLastFour:'1234',product:'Original product',period:{from:'2026-08-01',to:'2026-08-31'},
       source:{bucket:'test-evidence',key:'original.pdf',sha256:importId,contentType:'application/pdf'},rows:[row]});
-    await assertNativeCompletionRollbackAndRetry(kind,importId,()=>applyStatementImport({provider,importId,owner:'owner',decisionBody:undefined,rebuildRows:async()=>[row]}));
+    await assertNativeCompletionRollbackAndRetry(kind,importId,()=>applyStatementImport({provider,importId,owner:'owner',decisionBody:undefined,rebuildRows:async()=>[row]}),failure);
   });
-  it('rolls back actual CSV rows/claims on native completion failure and retries cleanly',async()=>{
+  it.each(['completion','ledger-cutover'] as const)('rolls back actual CSV apply on %s and retries cleanly',async failure=>{
     const importId=createHash('sha256').update(csv,'utf8').digest('hex');
     const document=parseSantanderCsv(csv);
     await startBankImport({kind:'santander_csv',importId,owner:'owner',status:'previewed',createdAt:'2026-08-01T12:00:00Z',
       accountLastFour:document.accountLastFour,source:{bucket:'test-evidence',key:'original.csv',sha256:importId,contentType:'text/csv'},
       rows:document.rows.map(row=>({...row,status:'new',candidateEventIds:[],candidates:[]}))});
-    await assertNativeCompletionRollbackAndRetry('santander_csv',importId,()=>applySantanderImport(importId,'owner',undefined));
+    await assertNativeCompletionRollbackAndRetry('santander_csv',importId,()=>applySantanderImport(importId,'owner',undefined),failure);
   });
 });
 
-const assertNativeCompletionRollbackAndRetry=async(kind:Parameters<typeof readBankImport>[0],importId:string,apply:()=>Promise<Record<string,unknown>>)=>{
+const assertNativeCompletionRollbackAndRetry=async(kind:Parameters<typeof readBankImport>[0],importId:string,apply:()=>Promise<Record<string,unknown>>,failure:'completion'|'ledger-cutover')=>{
   const baseline=(await sql.query('SELECT * FROM olbia.projection_state ORDER BY source_pk,source_sk')).rows;
   const capture=await readBankImport(kind,importId,'owner',sql);
   await sql.query('INSERT INTO olbia.schema_migrations VALUES (13,CURRENT_TIMESTAMP)');
-  interruptCompletion=true;
-  await expect(apply()).rejects.toMatchObject({name:'StorageUnavailableException'});
-  expect(completions).toBe(1);
+  interruptCompletion=failure==='completion';
+  if(failure==='ledger-cutover')await sql.query('INSERT INTO olbia.schema_migrations VALUES (14,CURRENT_TIMESTAMP)');
+  await expect(apply()).rejects.toMatchObject({name:failure==='completion'?'StorageUnavailableException':'MigrationPausedException'});
+  expect(completions).toBe(failure==='completion'?1:0);
   for(const table of ['movements','movement_observations','movement_revisions','dedupe_claims','command_receipts'])
     expect((await sql.query(`SELECT * FROM olbia.${table}`)).rows).toHaveLength(0);
   expect((await sql.query('SELECT * FROM olbia.projection_state ORDER BY source_pk,source_sk')).rows).toEqual(baseline);
   expect(await readBankImport(kind,importId,'owner',sql)).toEqual(capture);
   interruptCompletion=false;
+  await sql.query('DELETE FROM olbia.schema_migrations WHERE version=14');
   expect(await apply()).toMatchObject({summary:{created:1,linked:0,skipped:0}});
   for(const table of ['movements','movement_observations','dedupe_claims'])
     expect((await sql.query(`SELECT * FROM olbia.${table}`)).rows).toHaveLength(1);
@@ -84,6 +88,6 @@ const assertNativeCompletionRollbackAndRetry=async(kind:Parameters<typeof readBa
   expect(await apply()).toMatchObject({alreadyApplied:true,summary:{created:1,linked:0,skipped:0}});
   expect(await readBankImport(kind,importId,'owner',sql)).toEqual(applied);
   expect(vi.mocked(S3Client.prototype.send).mock.calls.length).toBe(s3Reads);
-  expect(completions).toBe(2);
+  expect(completions).toBe(failure==='completion'?2:1);
   expect((await sql.query('SELECT * FROM olbia.import_records')).rows).toEqual([]);
 };
