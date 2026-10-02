@@ -35,6 +35,6 @@ it('gives the deployed verifier read-only access to every supported evidence fam
   expect(statements.flatMap(actions).some(action=>/^s3:(?:Put|Delete|\*)/.test(action))).toBe(false);
   const functions=template.findResources('AWS::Lambda::Function');
   for(const resource of Object.values(functions))
-    expect(resource.Properties.Environment?.Variables).not.toHaveProperty('DSQL_LEDGER_READ_MODE');
+    expect(resource.Properties.Environment?.Variables ?? {}).not.toHaveProperty('DSQL_LEDGER_READ_MODE');
 
 },60_000);
