@@ -61,6 +61,11 @@ export class OlbiaSqlStore {
     if(entityForKey(key)==='monthly_plans' && (await client.query('SELECT version FROM olbia.schema_migrations WHERE version=11')).rows.length) {
       throw namedError('MigrationPausedException','El plan del mes se está migrando. Intenta de nuevo en un momento.');
     }
+    // Stage both halves of legacy CFDI ingestion before native UUID cutover.
+    if((entityForKey(key)==='payroll' || key.PK.startsWith('DEDUPE#CFDI_NOMINA#')) &&
+      (await client.query('SELECT version FROM olbia.schema_migrations WHERE version=12')).rows.length) {
+      throw namedError('MigrationPausedException','La nómina se está migrando. Intenta de nuevo en un momento.');
+    }
     const rows=projectRows(key,item);
     await client.query(`INSERT INTO olbia.projection_state (source_pk,source_sk,generation,source_hash,source_item,deleted,transformer_version,reconciled_at)
       VALUES ($1,$2,1,$3,$4,$5,$6,CURRENT_TIMESTAMP) ON CONFLICT (source_pk,source_sk) DO UPDATE SET
