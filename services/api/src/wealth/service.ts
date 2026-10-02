@@ -1,7 +1,7 @@
-import { applicationStoreClient, withApplicationTransaction } from '@finance/ledger/dsql-store';
+import { withNativeTransaction } from '@finance/ledger/dsql-store';
 import { createHash, randomUUID } from 'node:crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import {
   CAJITA_ACCOUNT_ID,
   cajitaEmergencyHolding,
@@ -21,27 +21,33 @@ import {
   type WealthSnapshot,
   type WealthSnapshotSource,
 } from '@finance/domain';
-import { isValidCardId, listCards } from '../cards/cards.js';
+import { isValidCardId } from '../cards/cards.js';
 import type { CardRecord } from '../cards/cards.js';
 import { database, rawSourceBucketName, s3, tableName } from '../http/clients.js';
-import type { JsonObject } from '../http/response.js';
+import { errorName, type JsonObject } from '../http/response.js';
 import { listPayslipsForYear } from '../imports/cfdi-nomina-flow.js';
 import { toPublicSnapshot, toPublicLiabilitySnapshot } from './records.js';
 import { readConfiguredWealthInputs, type WealthInputsReader } from './sql-reads.js';
 import { InvalidWealthSnapshotError, parseCajitaSnapshot, parseCardLiabilitySnapshot } from './input.js';
+import { insertNativeAssetCapture, insertNativeLiabilityCapture, validateAssetHoldings } from './native-writes.js';
 import { assertLegacyWealthReadAvailable } from './legacy-read-guard.js';
 import {
-  liabilitySnapshotKey,
   liabilitySnapshotSkPrefix,
-  liabilitySnapshotVersionKey,
   seededWealthAccounts,
-  wealthSnapshotKey,
   wealthSnapshotSkPrefix,
-  wealthSnapshotVersionKey,
 } from './keys.js';
 
 const evidenceObjectKey = (kind: 'manual' | 'api', owner: string, sha256: string): string =>
   kind === 'manual' ? `wealth-manual/${owner}/${sha256}.json` : `wealth-api/${owner}/${sha256}.json`;
+
+const storeOriginalEvidence = async (key: string, body: string): Promise<void> => {
+  try {
+    await s3.send(new PutObjectCommand({ Bucket: rawSourceBucketName, Key: key, Body: body,
+      ContentType: 'application/json; charset=utf-8', IfNoneMatch: '*' }));
+  } catch (error) {
+    if (errorName(error) !== 'PreconditionFailed') throw error;
+  }
+};
 
 export interface WealthBalanceAccount {
   readonly id: WealthAccountId;
@@ -378,7 +384,12 @@ export const persistWealthSnapshot = async (input: {
   }
   const capturedAt = new Date().toISOString();
   const day = dayKeyInZone(new Date(capturedAt), FINANCE_TIME_ZONE);
-  const totalMxnMinor = input.holdings.reduce((sum, holding) => sum + holding.valueMxnMinor, 0);
+  if (!WEALTH_ACCOUNTS.some(account => account.id === input.accountId) || !['manual', 'api', 'flex'].includes(input.source))
+    throw new InvalidWealthSnapshotError('Invalid capture account or source.');
+  if (input.fxRate !== undefined && (!Number.isFinite(input.fxRate) || input.fxRate <= 0))
+    throw new InvalidWealthSnapshotError('Invalid capture FX rate.');
+  const totalMxnMinor = validateAssetHoldings(input.holdings);
+  const id = randomUUID();
   const sourceHash = createHash('sha256').update(input.evidenceBody, 'utf8').digest('hex');
   const evidence = {
     bucket: rawSourceBucketName,
@@ -386,45 +397,7 @@ export const persistWealthSnapshot = async (input: {
     sha256: sourceHash,
     contentType: 'application/json' as const,
   };
-  await s3.send(new PutObjectCommand({
-    Bucket: rawSourceBucketName,
-    Key: evidence.key,
-    Body: input.evidenceBody,
-    ContentType: 'application/json; charset=utf-8',
-  }));
-
-  return withApplicationTransaction(async () => {
-  const key = wealthSnapshotKey(input.owner, input.accountId, day);
-  const existing = await database.send(new GetCommand({
-    TableName: tableName,
-    Key: key,
-    ConsistentRead: true,
-  }));
-  if (existing.Item) {
-    const previousCapturedAt = typeof existing.Item.capturedAt === 'string'
-      ? existing.Item.capturedAt
-      : capturedAt;
-    await database.send(new PutCommand({
-      TableName: tableName,
-      Item: {
-        ...wealthSnapshotVersionKey(input.owner, input.accountId, day, previousCapturedAt),
-        entityType: 'wealth_snapshot_version',
-        owner: input.owner,
-        accountId: input.accountId,
-        day,
-        capturedAt: previousCapturedAt,
-        supersededAt: capturedAt,
-        source: existing.Item.source,
-        currency: 'MXN',
-        totalMxnMinor: existing.Item.totalMxnMinor,
-        holdings: existing.Item.holdings,
-        ...(existing.Item.evidence ? { evidence: existing.Item.evidence } : {}),
-        ...(typeof existing.Item.fxRate === 'number' ? { fxRate: existing.Item.fxRate } : {}),
-        ...(typeof existing.Item.fxSource === 'string' ? { fxSource: existing.Item.fxSource } : {}),
-        versionId: randomUUID(),
-      },
-    }));
-  }
+  await storeOriginalEvidence(evidence.key, input.evidenceBody);
 
   const snapshot: WealthSnapshot = {
     accountId: input.accountId,
@@ -438,17 +411,7 @@ export const persistWealthSnapshot = async (input: {
     ...(input.fxSource ? { fxSource: input.fxSource } : {}),
     ...(typeof input.fxRate === 'number' ? { fxRate: input.fxRate } : {}),
   };
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: {
-      ...key,
-      entityType: 'wealth_snapshot',
-      owner: input.owner,
-      ...snapshot,
-    },
-  }));
-  return snapshot;
-  });
+  return withNativeTransaction(client => insertNativeAssetCapture(client, { id, owner: input.owner, snapshot }));
 };
 
 export const createCajitaSnapshot = async (body: string | undefined, owner: string): Promise<JsonObject> => {
@@ -504,46 +467,8 @@ export const createCardLiabilitySnapshot = async (
     sha256: sourceHash,
     contentType: 'application/json' as const,
   };
-  await s3.send(new PutObjectCommand({
-    Bucket: rawSourceBucketName,
-    Key: evidence.key,
-    Body: evidenceBody,
-    ContentType: 'application/json; charset=utf-8',
-  }));
-
-  return withApplicationTransaction(async () => {
-  const cards = await listCards(owner, applicationStoreClient());
-  if (!cards.some((card) => card.id === cardId)) {
-    throw new InvalidWealthSnapshotError('Card not found. Add the card under Fechas de corte first.');
-  }
-  const key = liabilitySnapshotKey(owner, cardId, day);
-  const existing = await database.send(new GetCommand({
-    TableName: tableName,
-    Key: key,
-    ConsistentRead: true,
-  }));
-  if (existing.Item) {
-    const previousCapturedAt = typeof existing.Item.capturedAt === 'string'
-      ? existing.Item.capturedAt
-      : capturedAt;
-    await database.send(new PutCommand({
-      TableName: tableName,
-      Item: {
-        ...liabilitySnapshotVersionKey(owner, cardId, day, previousCapturedAt),
-        entityType: 'wealth_liability_snapshot_version',
-        owner,
-        cardId,
-        day,
-        capturedAt: previousCapturedAt,
-        supersededAt: capturedAt,
-        source: existing.Item.source,
-        currency: 'MXN',
-        totalMxnMinor: existing.Item.totalMxnMinor,
-        ...(existing.Item.evidence ? { evidence: existing.Item.evidence } : {}),
-        versionId: randomUUID(),
-      },
-    }));
-  }
+  const id = randomUUID();
+  await storeOriginalEvidence(evidence.key, evidenceBody);
 
   const snapshot: CardLiabilitySnapshot = {
     cardId,
@@ -554,17 +479,8 @@ export const createCardLiabilitySnapshot = async (
     totalMxnMinor: input.amountMinor,
     evidence,
   };
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: {
-      ...key,
-      entityType: 'wealth_liability_snapshot',
-      owner,
-      ...snapshot,
-    },
-  }));
-  return snapshot as unknown as JsonObject;
-  });
+  return withNativeTransaction(async client =>
+    await insertNativeLiabilityCapture(client, { id, owner, snapshot }) as unknown as JsonObject);
 };
 
 export const assertCajitaAccountParam = (accountId: string): void => {

@@ -91,7 +91,7 @@ export const prepareWealthCopy = (input: RetainedWealth, allocateId: () => strin
   for (const original of originals.filter(o => o.version)) {
     const p = original.source, at = iso(p.supersededAt), key = identity(original.kind, p.accountId ?? p.cardId, p.day, at);
     const next = captureIds.get(key) ?? invalid();
-    if (next === original.id || successors.has(next) || at < iso(p.capturedAt)) invalid(); successors.add(next);
+    if (next === original.id || successors.has(next)) invalid(); successors.add(next);
     rows[original.kind === 'asset' ? 'asset_capture_replacements' : 'liability_capture_replacements'].push({
       [original.kind === 'asset' ? 'account_id' : 'card_id']: p.accountId ?? p.cardId, day: p.day,
       previous_capture_id: original.id, replacement_capture_id: next,

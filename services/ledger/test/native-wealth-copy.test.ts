@@ -49,6 +49,16 @@ beforeEach(async () => {
 });
 
 describe('native immutable wealth foundation', () => {
+  it('preserves an evidenced replacement that committed after a capture with a later timestamp', async () => {
+    const later = `${day}T13:00:00.000Z`;
+    await insertRetained(asset());
+    await insertRetained({ ...asset(true), SK: `WEALTH_VER#ibkr#${day}#${later}`, capturedAt: later, supersededAt: after });
+    await migrateWealth(pool);
+    expect((await sql.query(`SELECT prior.captured_at,next.captured_at AS replacement_at
+      FROM olbia.asset_capture_replacements r JOIN olbia.asset_captures prior ON prior.id=r.previous_capture_id
+      JOIN olbia.asset_captures next ON next.id=r.replacement_capture_id`)).rows)
+      .toEqual([{ captured_at: new Date(later), replacement_at: new Date(after) }]);
+  });
   it('keeps an explicit empty provider capture canonical and derives zero without manufacturing holdings', async () => {
     await insertRetained({ ...asset(), totalMxnMinor: 0, holdings: [] });
     await migrateWealth(pool);
