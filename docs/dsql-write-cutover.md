@@ -4,7 +4,7 @@ David approved a short coordinated pause and accepts up to one day of missed eve
 
 The implementation PR deployed all writers with SQL authority initially `dynamodb`. The cutover revision changed `infrastructure/lib/storage-cutover.ts` to `SQL_AUTHORITY = true`; persisted authority is now `sql`. All deliveries used PR → required quality → CLEAN/MERGEABLE → squash merge → deploy-production. No local release.
 
-The existing native SQL envelope ledger (`projection_state.source_item`) becomes authoritative. Olbia's bounded adapter preserves existing SDK command conditions/updates and financial workflows, fails closed for unsupported commands/families, and commits derived relational rows in the same transaction. Native transactions/OCC protect claims and audit chains. A single owner barrier serializes writes and authority changes; product identities cannot change authority. Bulk command receipts preserve the existing ten-minute token idempotence contract. Changed-row updates avoid rewriting unchanged MSI schedules.
+The existing native SQL envelope ledger (`projection_state.source_item`) is authoritative. Olbia's bounded adapter preserves existing SDK command conditions/updates and financial workflows, fails closed for unsupported commands/families, and commits derived relational rows in the same transaction. Native transactions/OCC protect claims and audit chains. A single owner barrier serializes writes and authority changes; product identities cannot change authority. Bulk command receipts preserve the existing ten-minute token idempotence contract. Changed-row updates avoid rewriting unchanged MSI schedules.
 
 There is no native DSQL translation for DynamoDB document commands or DynamoDB TTL. The small local adapter covers only inspected Olbia commands. The existing retry dispatcher runs every minute in SQL mode, sends durable pending retries to native SQS, and removes only expired top-level `expiresAt` records. Nested preview expiration stays audit data. Native AgentCore memory remains responsible for assistant content retention. S3 evidence, Cognito, SQS and other native integrations remain in place.
 
@@ -16,7 +16,17 @@ The dated DynamoDB backup `olbia-pre-sql-36946527155-1` is AVAILABLE. Native DSQ
 
 Normal usage can resume. Events missed during the accepted pause may be added later through authenticated Olbia operations. Frozen DynamoDB does not contain new SQL writes, so it is not an immediate lossless rollback target. See the [run record](autonomous-runs/2026-10-01-dsql-write-cutover.md) for test evidence, deployment links and the two native backup-permission failures resolved through reviewed PRs.
 
-## Coordinated workflow
+## Routine deployments after cutover
+
+Production continues through PR → required quality → CLEAN/MERGEABLE → squash/rebase merge → deploy-production. A routine deployment preserves persisted SQL authority and performs one complete verification pass after CloudFormation finishes. It does not pause writers, back up frozen DynamoDB again or re-activate SQL. Native daily SQL backups continue independently.
+
+The gate first invokes the deployed operator's read-only `status` action and requires `mode=sql`. Unexpected `dynamodb`/`paused` state or a failed invocation stops verification before maintenance starts; routine deployment cannot perform a cutover. The `deploy-<run>-<attempt>-sql` execution verifies authoritative SQL envelopes, relational rows and financial aggregates without replaying frozen DynamoDB. The read-only public/financial/original-evidence probe and explicitly rolled-back native write smoke each run once. Failed gates fail deploy-production without changing authority or deleting recovery data.
+
+The historical `dsql-write-cutover.py` and its tests remain as migration evidence; the routine workflow no longer invokes it. A future authority/recovery transition needs an explicit reviewed change, rather than restoring old migration commands to normal deployment. DynamoDB/table/PITR, the dated source backup, existing recovery infrastructure and the working SQL adapter remain retained.
+
+Timing baseline: the completed cutover used 86 seconds for quality and 1,274 seconds for deployment. The final SQL gate took 256 seconds; duplicate historical verification and the one-time backup/pause added most of the remaining time. About 7–9 minutes for the complete cleaned workflow is an estimate from that run, not a guarantee; record the actual cleanup deployment result in the [cleanup run](autonomous-runs/2026-10-01-dsql-deployment-cleanup.md).
+
+## Completed coordinated cutover (historical)
 
 1. Invoke the already-deployed authority operator to pause mutations; allow in-flight native requests to finish. Reads remain available, queued ingestion retries, and scheduled external side effects fail before starting while paused.
 2. Deploy the approved cutover revision: disable the DynamoDB projector mapping/daily reconciliation schedule and stream retry mapping, enable scheduled SQL retry recovery, remove application DynamoDB write grants, and allow SQL activation on the internal operator.
