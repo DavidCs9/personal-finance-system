@@ -1,5 +1,7 @@
 # DSQL retained operational state and display reads
 
+For current write authority and recovery, see [the coordinated SQL cutover](dsql-write-cutover.md). The phase evidence below records the earlier projection/read rollout.
+
 This phase adds schema/transformer 4 and bootstrap provider 7. DynamoDB remains every writer, strongly consistent freshness reference and authoritative decision. Shadow PR #164 and separate guarded promotion #165 both passed their approved production workflows and full independent verification with zero mismatches. Eligible API/probe display reads now use `operationalReadMode=guarded-sql`; production evidence is recorded below and in the run record. Existing movement/planning/payroll/Patrimonio/domain flags remain guarded.
 
 ## Exact source inventory

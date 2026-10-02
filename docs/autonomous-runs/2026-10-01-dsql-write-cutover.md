@@ -75,3 +75,16 @@ Implementation gate details: 496 movements/details; 19 original CFDI XMLs; 149 P
 - Decision: Add only existing-key decrypt to the deployment role through PR. Split the CI pause and DDB backup into pre-/post-deploy stages. The infrastructure update retains every source data definition and removes application DDB writes; it does not modify financial records. The dated native DDB backup remains mandatory before historical sync and SQL activation. This avoids another migration promotion cycle and a local permission shortcut.
 - Verification: Required quality and reviewed synth; source definitions unchanged, scoped key grant present, mode paused, DDB backup AVAILABLE, final historical/read gate, SQL native backup COMPLETED, native rolled-back smoke, activation and post-SQL gate. Native backup failure keeps authority paused.
 - Status: provisional; implementing the reviewed fix and resuming the paused cutover.
+
+
+### Reviewed backup fix delivery
+
+[PR #169](https://github.com/DavidCs9/personal-finance-system/pull/169) passed required quality/CLEAN/MERGEABLE and was squash merged as ee868546b0147f184560695a76b696f4aff2ae8e at 2026-10-02T00:17:05Z (2026-10-01 local). [Resumed production workflow 36945212405](https://github.com/DavidCs9/personal-finance-system/actions/runs/36945212405) owns deployment and native backups. Fourteen Python recovery/cutover tests pass, including pre-deploy pause without backup, required post-deploy source backup, SQL backup/smoke before activation, failure containment and preservation of established SQL authority. Synth confirms decrypt is scoped only to the existing data key. Authority remains paused pending deployment, backups and final verification; no local release/IAM change occurred.
+
+### D5 — Complete native encrypted-backup permissions
+- Context/evidence: Workflow 36945212405 successfully deployed the cutover configuration and scoped decrypt policy, then stopped at native source backup because GenerateDataKey was also required. Authority remains paused; no SQL activation or backup occurred. Both source mappings are disabled and source-write policies removed by the approved stack, so the retained financial source is stable.
+- Native documentation: [AWS Backup encryption](https://docs.aws.amazon.com/aws-backup/latest/devguide/encryption.html) explicitly requires both kms:Decrypt and kms:GenerateDataKey for encrypted DynamoDB backup. The first fix matched the first reported denial rather than verifying the complete native requirement.
+- Alternatives: Add only another action; use CDK's native grantEncryptDecrypt on the existing key; or manually change IAM (forbidden).
+- Decision/reason: Use the standard native CDK encrypted-key grant on the single existing key, with a regression assertion covering both required permissions and that resource scope. Preserve the corrected pause/deploy/backup/final-sync ordering. No key replacement, direct source mutation or local IAM release.
+- Verification: Required quality, static native grant/resource assertions, deployed source backup AVAILABLE, SQL backup COMPLETED and full before/after activation gates. Keep the pause on failure.
+- Status: provisional. D4's decrypt-only permission is superseded; its reviewed ordering correction remains valid.

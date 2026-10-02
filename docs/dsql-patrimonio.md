@@ -1,5 +1,7 @@
 # DSQL Patrimonio migration
 
+For current write authority and recovery, see [the coordinated SQL cutover](dsql-write-cutover.md). The phase evidence below records the earlier projection/read rollout.
+
 The completed [domain-read phase](dsql-domain-reads.md) enables guarded SQL for read-only categories/rules, standalone cards/cycles and worker/assistant movement consumers after separate verified shadow and promotion PRs. Its consumer inventory supersedes earlier remaining-read lists; all writes, authoritative decisions and strong freshness references remain in DynamoDB. Production evidence and rollback are recorded there.
 
 Schema/transformer version 3 adds retained canonical asset/liability snapshots and their audit versions to the existing projection. Bootstrap provider version 5 applies additive DDL and narrow SELECT grants. DynamoDB remains the write authority and strong freshness reference. Separate shadow and guarded deployments passed independent real-data verification. Guarded reads are active and select SQL results only after the same strong equality check.
