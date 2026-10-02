@@ -205,6 +205,7 @@ export class DsqlProjection extends Construct {
     plan.addSelection('ClusterBackup',{resources:[backup.BackupResource.fromArn(cluster.attrResourceArn)],role:backupRole});
     deployRole.addToPrincipalPolicy(new iam.PolicyStatement({actions:['backup:StartBackupJob','backup:DescribeBackupJob'],resources:['*']}));
     deployRole.addToPrincipalPolicy(new iam.PolicyStatement({actions:['iam:PassRole'],resources:[backupRole.roleArn],conditions:{StringEquals:{'iam:PassedToService':'backup.amazonaws.com'}}}));
+    props.encryptionKey.grantDecrypt(deployRole);
     deployRole.addToPrincipalPolicy(new iam.PolicyStatement({actions:['dynamodb:CreateBackup'],resources:[props.table.tableArn]}));
     deployRole.addToPrincipalPolicy(new iam.PolicyStatement({actions:['dynamodb:DescribeBackup'],resources:[`${props.table.tableArn}/backup/*`]}));
     new CfnOutput(Stack.of(this),'DsqlCutoverFunction',{value:operator.functionName});
