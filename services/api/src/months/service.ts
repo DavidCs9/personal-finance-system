@@ -1,44 +1,15 @@
-import { withApplicationTransaction } from '@finance/ledger/dsql-store';
-import { GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { database, tableName } from '../http/clients.js';
+import { applicationStoreClient, withApplicationTransaction } from '@finance/ledger/dsql-store';
 import type { JsonObject } from '../http/response.js';
 import { incomeFieldsForMonth } from '../imports/cfdi-nomina-flow.js';
-import { monthlyPlanKey, parseMonthlyPlan, type MonthlyPlanInput } from './monthly-plan.js';
-import { readConfiguredPlanning, readSqlPlanRecord } from './sql-reads.js';
-
-export const readMonthlyPlanRecordDynamo = async (owner: string, month: string): Promise<JsonObject | undefined> => {
-  const monthKey = monthlyPlanKey(owner, month);
-  const result = await database.send(new QueryCommand({
-      TableName: tableName,
-      KeyConditionExpression: '#pk = :pk AND #sk BETWEEN :monthPrefix AND :month',
-      ExpressionAttributeNames: {
-        '#pk': 'PK',
-        '#sk': 'SK',
-      },
-      ExpressionAttributeValues: {
-        ':pk': monthKey.PK,
-        ':monthPrefix': 'MONTH#',
-        ':month': monthKey.SK,
-      },
-      ConsistentRead: true,
-      ScanIndexForward: false,
-      Limit: 1,
-    }));
-  return result.Items?.[0];
-};
+import { isValidMonth, InvalidMonthlyPlanError, parseMonthlyPlan, type MonthlyPlanInput, type MonthlyPlanRecord } from './monthly-plan.js';
+import { readSqlPlanRecord } from './sql-reads.js';
 
 export const getMonthlyPlanFromReads = async (owner: string, month: string,
-  readRecord: (owner: string, month: string) => Promise<JsonObject | undefined>,
+  readRecord: (owner: string, month: string) => Promise<MonthlyPlanRecord | undefined>,
   readIncome: typeof incomeFieldsForMonth): Promise<JsonObject> => {
-  const [sourceItem, income] = await Promise.all([readRecord(owner, month), readIncome(owner, month)]);
-  const plan = sourceItem?.payload as JsonObject | undefined;
-  const sourceMonth = typeof sourceItem?.month === 'string'
-    ? sourceItem.month
-    : typeof sourceItem?.SK === 'string' && sourceItem.SK.startsWith('MONTH#')
-      ? sourceItem.SK.slice('MONTH#'.length)
-      : undefined;
-  const upcomingPayments =
-    plan && Array.isArray(plan.upcomingPayments) ? plan.upcomingPayments : [];
+  const [plan, income] = await Promise.all([readRecord(owner, month), readIncome(owner, month)]);
+  const sourceMonth = plan?.month;
+  const upcomingPayments = plan?.upcomingPayments ?? [];
   return {
     month,
     configured: income.configured,
@@ -70,36 +41,21 @@ export const getMonthlyPlanFromReads = async (owner: string, month: string,
 };
 
 export const getMonthlyPlan = (owner: string, month: string): Promise<JsonObject> =>
-  getMonthlyPlanFromReads(owner, month, (owner, month) => readConfiguredPlanning('plan',
-    () => readSqlPlanRecord(owner, month), () => readMonthlyPlanRecordDynamo(owner, month)), incomeFieldsForMonth);
+  getMonthlyPlanFromReads(owner, month, readSqlPlanRecord, incomeFieldsForMonth);
 
-const saveMonthlyPlanInternal = async (owner: string, month: string, input: MonthlyPlanInput): Promise<JsonObject> => {
+export const saveMonthlyPlan = async (owner: string, month: string, input: MonthlyPlanInput): Promise<JsonObject> => {
+  if (!isValidMonth(month)) throw new InvalidMonthlyPlanError('month is invalid.');
   const validated = parseMonthlyPlan(JSON.stringify(input));
-  const updatedAt = new Date().toISOString();
-  const existing = await database.send(new GetCommand({
-    TableName: tableName,
-    Key: monthlyPlanKey(owner, month),
-    ConsistentRead: true,
-  }));
-  const previous = existing.Item?.payload as JsonObject | undefined;
-  const payload = {
-    incomeMinor: typeof previous?.incomeMinor === 'number' ? previous.incomeMinor : 0,
-    currency: 'MXN' as const,
-    upcomingPayments: validated.upcomingPayments,
-    updatedAt,
-  };
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: {
-      ...monthlyPlanKey(owner, month),
-      entityType: 'monthly_plan',
-      month,
-      owner,
-      updatedAt,
-      payload,
-    },
-  }));
-  return getMonthlyPlan(owner, month);
+  return withApplicationTransaction(async () => {
+    const client = applicationStoreClient();
+    const parent = (await client.query(`INSERT INTO olbia.month_plans (month,owner,updated_at) VALUES ($1,$2,$3)
+      ON CONFLICT (month) DO UPDATE SET updated_at=EXCLUDED.updated_at
+      WHERE olbia.month_plans.owner=EXCLUDED.owner RETURNING month`, [month, owner, new Date().toISOString()])).rows[0];
+    if (!parent) throw new InvalidMonthlyPlanError('month is invalid.');
+    await client.query('DELETE FROM olbia.planned_payments WHERE month=$1', [month]);
+    for (const [order, payment] of validated.upcomingPayments.entries()) await client.query(`INSERT INTO olbia.planned_payments
+      (month,id,name,amount_mxn_minor,due_day,sort_order) VALUES ($1,$2,$3,$4,$5,$6)`,
+    [month,payment.id,payment.name,payment.amountMinor,payment.dueDay,order]);
+    return getMonthlyPlan(owner, month);
+  });
 };
-
-export const saveMonthlyPlan = (...args: Parameters<typeof saveMonthlyPlanInternal>): ReturnType<typeof saveMonthlyPlanInternal> => withApplicationTransaction(() => saveMonthlyPlanInternal(...args));

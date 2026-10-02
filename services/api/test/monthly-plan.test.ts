@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InvalidMonthlyPlanError, isValidMonth, monthlyPlanKey, parseMonthlyPlan } from "../src/months/monthly-plan.js";
+import { InvalidMonthlyPlanError, isValidMonth, parseMonthlyPlan } from "../src/months/monthly-plan.js";
 
 describe("monthly plan", () => {
   it("parses upcoming payments without requiring incomeMinor", () => {
@@ -32,9 +32,9 @@ describe("monthly plan", () => {
     }
   });
 
-  it("builds month keys", () => {
+  it("validates calendar month identity", () => {
     expect(isValidMonth("2026-07")).toBe(true);
-    expect(monthlyPlanKey("user-1", "2026-07")).toEqual({ PK: "USER#user-1", SK: "MONTH#2026-07" });
+    expect(isValidMonth("2026-13")).toBe(false);
   });
 
   it("rejects repeated payment identity even when the two amounts or names differ", () => {

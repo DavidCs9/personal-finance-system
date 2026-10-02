@@ -45,6 +45,18 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
         ) liabilities WHERE card_id=$1`, [card.id])).rows[0]?.count;
         if (String(retained) !== String(stillRetained)) throw new Error('Profile removal changed liability history');
         await client.query('UPDATE olbia.card_profiles SET deleted_at=NULL WHERE id=$1', [card.id]);
+        const plan = (await client.query('SELECT month,owner FROM olbia.month_plans ORDER BY month LIMIT 1')).rows[0];
+        if (!plan) throw new Error('No native month plan for smoke');
+        const upserted = (await client.query(`INSERT INTO olbia.month_plans (month,owner,updated_at) VALUES ($1,$2,CURRENT_TIMESTAMP)
+          ON CONFLICT (month) DO UPDATE SET updated_at=EXCLUDED.updated_at RETURNING month`, [plan.month,plan.owner])).rows[0];
+        if (upserted?.month !== plan.month) throw new Error('Native plan upsert failed');
+        await client.query('DELETE FROM olbia.planned_payments WHERE month=$1', [plan.month]);
+        await client.query(`INSERT INTO olbia.planned_payments (month,id,name,amount_mxn_minor,due_day,sort_order)
+          VALUES ($1,'sql-verification','SQL verification',1,31,0)`, [plan.month]);
+        const child = (await client.query('SELECT id,amount_mxn_minor FROM olbia.planned_payments WHERE month=$1', [plan.month])).rows[0];
+        if (child?.id !== 'sql-verification' || Number(child.amount_mxn_minor) !== 1) throw new Error('Native payment replacement failed');
+        await client.query('DELETE FROM olbia.planned_payments WHERE month=$1', [plan.month]);
+        if (!(await client.query('SELECT month FROM olbia.month_plans WHERE month=$1', [plan.month])).rows.length) throw new Error('Empty plan parent lost');
         const raw=(await client.query("SELECT source_item FROM olbia.projection_state WHERE source_sk='EVENT' AND deleted=false ORDER BY source_pk LIMIT 1")).rows[0]?.source_item as SourceItem|undefined;
         if(!raw) throw new Error('No retained movement for smoke');
         const key={PK:raw.PK,SK:raw.SK};const store=new OlbiaSqlStore(pool,process.env.METADATA_TABLE_NAME!);
@@ -66,7 +78,7 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
         });
         verified=true;throw rollback;
       });} catch(error) {if(error!==rollback) throw error;}
-      return {verified,rolledBack:true,nativeCategories:true,nativeCards:true};
+      return {verified,rolledBack:true,nativeCategories:true,nativeCards:true,nativeMonthPlans:true};
     }
     if(!['pause','activate'].includes(event.action)) throw new Error('Unknown operation');
     if(event.action==='activate' && process.env.OLBIA_ALLOW_SQL_ACTIVATION!=='true') throw new Error('SQL activation requires the approved cutover deployment');

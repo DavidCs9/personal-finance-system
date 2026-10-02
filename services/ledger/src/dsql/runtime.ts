@@ -125,6 +125,7 @@ const runMaintenance = async (event: MaintenanceInput): Promise<MaintenanceInput
         const count = await client.query(`SELECT count(*) AS count FROM olbia.${table}`);
         tableCounts[table] = String(count.rows[0].count);
       }
+      for (const table of ['month_plans','planned_payments']) tableCounts[table] = String((await client.query(`SELECT count(*) AS count FROM olbia.${table}`)).rows[0].count);
       tableCounts.card_profiles = String((await client.query('SELECT count(*) AS count FROM olbia.card_profiles')).rows[0].count);
       tableCounts.spend_categories = String((await client.query('SELECT count(*) AS count FROM olbia.spend_categories')).rows[0].count);
       tableCounts.merchant_rules = String((await client.query('SELECT count(*) AS count FROM olbia.merchant_rules')).rows[0].count);

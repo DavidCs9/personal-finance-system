@@ -11,9 +11,10 @@ import { verifyKey } from '../../ledger/src/dsql/verification.js';
 
 process.env.METADATA_TABLE_NAME ??= 'test-metadata';
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-evidence';
+const application = await import('../../ledger/src/dsql/store.js');
 const sqlReaders = await import('../src/events/sql-reads.js');
 const { readSqlPlanRecord, readSqlPayslipsForMonth, readSqlPayslipsForYear, planningReadMode, readConfiguredPlanning } = await import('../src/months/sql-reads.js');
-const { getMonthlyPlan, saveMonthlyPlan, getMonthlyPlanFromReads, readMonthlyPlanRecordDynamo } = await import('../src/months/service.js');
+const { getMonthlyPlan, saveMonthlyPlan, getMonthlyPlanFromReads } = await import('../src/months/service.js');
 const { incomeFieldsForMonth, listPayslipsForMonth, listPayslipsForMonthDynamo, listPayslipsForYear, getPayslip, ingestNominaXml } = await import('../src/imports/cfdi-nomina-flow.js');
 const { getWealthOverview, getWealthOverviewAsOf } = await import('../src/wealth/service.js');
 const { summarizeMonthFeed } = await import('../src/months/summary.js');
@@ -34,7 +35,16 @@ const plan = (month: string, upcomingPayments = [payment]): SourceItem => ({ PK:
 const payroll = (month: string, uuid: string, day = '15', tipoNomina = 'O'): SourceItem => ({ PK: `USER#${owner}`, SK: `PAYROLL#${month}#${uuid}`,
   owner, month, uuid, ingestedAt: '2026-09-20T20:01:02.456Z', source: { bucket: 'test-evidence', key: uuid, sha256: 'hash', contentType: 'application/xml' },
   payload: { ...baseline, month, uuid, fechaPago: `${month}-${day}`, tipoNomina } });
-const sync = (item: SourceKey) => reconcileKey(pool, async key => records.get(recordId(key)), item);
+const sync = async (item: SourceKey) => {
+  await reconcileKey(pool, async key => records.get(recordId(key)), item);
+  // Seed the native fixture once; frozen reconciliation never overwrites native edits.
+  const source = records.get(recordId(item));
+  if (!source || !item.SK.startsWith('MONTH#') || (await sql.query('SELECT month FROM olbia.month_plans WHERE month=$1',[source.month])).rows.length) return;
+  const payload = source.payload as any;
+  await sql.query('INSERT INTO olbia.month_plans VALUES ($1,$2,$3)',[source.month,source.owner,payload.updatedAt]);
+  for (const [order,payment] of payload.upcomingPayments.entries()) await sql.query('INSERT INTO olbia.planned_payments VALUES ($1,$2,$3,$4,$5,$6)',
+    [source.month,payment.id,payment.name,payment.amountMinor,payment.dueDay,order]);
+};
 
 beforeAll(async () => {
   sql = new PGlite();
@@ -45,9 +55,10 @@ afterAll(async () => { await sql.close(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 beforeEach(async () => {
   records = new Map();
-  await sql.exec(`TRUNCATE olbia.projection_state,${TABLE_NAMES.map(table => `olbia.${table}`).join(',')}`);
+  await sql.exec(`TRUNCATE olbia.projection_state,olbia.month_plans,olbia.planned_payments,${TABLE_NAMES.map(table => `olbia.${table}`).join(',')}`);
   vi.stubEnv('DSQL_PLANNING_READ_MODE', 'guarded-sql');
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now);
+  vi.spyOn(application, 'applicationStoreClient').mockReturnValue(sql);
   vi.spyOn(sqlReaders, 'readerPool').mockReturnValue(sql);
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(S3Client.prototype, 'send').mockResolvedValue({} as never);
@@ -109,8 +120,8 @@ describe('DSQL planning and payroll contracts', () => {
     expect(await getMonthlyPlan(owner, '2027-01')).toMatchObject({ inheritedFromMonth: '2026-11', upcomingPayments: [] });
     const saved = await saveMonthlyPlan(owner, '2027-01', { currency: 'MXN', upcomingPayments: [{ ...payment, amountMinor: 23456 }] });
     expect(saved).toMatchObject({ upcomingPayments: [{ ...payment, amountMinor: 23456 }] });
-    expect(saved.inheritedFromMonth).toBeUndefined(); // SQL is still stale; confirmed source wins.
-    expect(await readSqlPlanRecord(owner, '2027-01', sql)).toMatchObject({ month: '2026-11' });
+    expect(saved.inheritedFromMonth).toBeUndefined(); // The selected month is now native authority.
+    expect(await readSqlPlanRecord(owner, '2027-01', sql)).toMatchObject({ month: '2027-01', upcomingPayments: [{ ...payment, amountMinor: 23456 }] });
     await sync({ PK: `USER#${owner}`, SK: 'MONTH#2027-01' });
     expect(await readSqlPlanRecord(owner, '2027-01', sql)).toMatchObject({ month: '2027-01' });
     expect(await getMonthlyPlan(owner, '2026-09')).toMatchObject({ upcomingPayments: [payment] });
@@ -132,7 +143,7 @@ describe('DSQL planning and payroll contracts', () => {
     expect(deriveMonthCompensation(fields)).toMatchObject({ fondoMinor: 1141800, estimatedFondoMinor: 570900, compensationMinor: baseline.totalMinor * 3 + 1712700 });
     const second = payroll('2026-10', 'F', '30'); put(second); await sync(second);
     expect(await incomeFieldsForMonth(owner, '2026-10', now)).toMatchObject({ estimateActive: false, incomeMinor: baseline.totalMinor * 3 });
-    const sourcePlan = await getMonthlyPlanFromReads(owner, '2026-10', readMonthlyPlanRecordDynamo,
+    const sourcePlan = await getMonthlyPlanFromReads(owner, '2026-10', readSqlPlanRecord,
       (owner, month) => incomeFieldsForMonth(owner, month, now, listPayslipsForMonthDynamo));
     const sqlPlan = await getMonthlyPlanFromReads(owner, '2026-10', readSqlPlanRecord,
       (owner, month) => incomeFieldsForMonth(owner, month, now, readSqlPayslipsForMonth));
@@ -183,19 +194,19 @@ describe('DSQL planning and payroll contracts', () => {
     await expect(reconcileKey(interrupted, async () => fresh, fresh)).rejects.toThrow('before commit');
     expect(await readSqlPlanRecord(owner, '2026-10', sql)).toBeUndefined();
     const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await readConfiguredPlanning('plan', async () => { throw new Error('private row/token'); }, async () => fresh)).toEqual(fresh);
+    expect(await readConfiguredPlanning('payroll-month', async () => { throw new Error('private row/token'); }, async () => fresh)).toEqual(fresh);
     expect(logs.mock.calls.flat().join()).toContain('sql-error');
     expect(logs.mock.calls.flat().join()).not.toContain('private');
-    await expect(readConfiguredPlanning('plan', async () => fresh, async () => { throw new Error('source down'); })).rejects.toThrow('source down');
+    await expect(readConfiguredPlanning('payroll-month', async () => fresh, async () => { throw new Error('source down'); })).rejects.toThrow('source down');
     for (const mode of ['dynamodb', 'invalid']) {
       vi.stubEnv('DSQL_PLANNING_READ_MODE', mode);
       const sqlRead = vi.fn(async () => fresh);
       expect(planningReadMode()).toBe('dynamodb');
-      expect(await readConfiguredPlanning('plan', sqlRead, async () => fresh)).toEqual(fresh);
+      expect(await readConfiguredPlanning('payroll-month', sqlRead, async () => fresh)).toEqual(fresh);
       expect(sqlRead).not.toHaveBeenCalled();
     }
     vi.stubEnv('DSQL_PLANNING_READ_MODE', 'shadow');
-    await readConfiguredPlanning('plan', async () => fresh, async () => fresh);
+    await readConfiguredPlanning('payroll-month', async () => fresh, async () => fresh);
     expect(logs.mock.calls.at(-1)?.[0]).toContain('"SourceSelected":1');
   });
 

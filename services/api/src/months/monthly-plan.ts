@@ -16,10 +16,11 @@ export interface MonthlyPlanInput {
 
 export class InvalidMonthlyPlanError extends Error {}
 
-export const monthlyPlanKey = (principal: string, month: string) => ({
-  PK: `USER#${principal}`,
-  SK: `MONTH#${month}`,
-});
+export interface MonthlyPlanRecord {
+  readonly month: string;
+  readonly updatedAt: string;
+  readonly upcomingPayments: readonly PlannedPaymentRecord[];
+}
 
 export const parseMonthlyPlan = (body: string | undefined): MonthlyPlanInput => {
   let candidate: unknown;
