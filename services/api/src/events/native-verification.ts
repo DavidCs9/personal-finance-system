@@ -1,7 +1,7 @@
 import type { ReadSqlClient } from './sql-reads.js';
 import type { JsonObject } from '../http/response.js';
 import { samePublicResult } from './read-selection.js';
-import type { EventFeed } from './month-feed.js';
+import { spendMonthOf, type EventFeed } from './month-feed.js';
 import type { MonthSummary } from '@finance/domain';
 
 const iso = (value: unknown): string | undefined => value == null ? undefined : new Date(value as string | Date).toISOString();
@@ -104,12 +104,17 @@ export const verifyNativeLedgerState = async (client: ReadSqlClient, movements: 
     const normalizedCurrent = { ...current, categoryId: current?.categoryId ?? null };
     check(pick(expected, publicFields), pick(normalizedCurrent, publicFields));
   }
+  const monthMemberships = (await client.query('SELECT movement_id,month FROM olbia.movement_months ORDER BY movement_id,month')).rows;
+  const expectedMemberships = new Set(movements.flatMap(movement => [spendMonthOf(movement),
+    ...(((movement.msi as JsonObject | undefined)?.installments ?? []) as JsonObject[]).map(entry => String(entry.month))]
+    .map(month => `${movement.id}|${month}`)));
+  check([...expectedMemberships].sort(), monthMemberships.map(row => `${row.movement_id}|${row.month}`).sort());
   const unsupportedActiveCurrencies = parents.rows.filter(row => !['rejected', 'deferred_msi', 'pending_foreign'].includes(String(row.status))
     && row.currency !== 'MXN').length;
   check(0, unsupportedActiveCurrencies);
   return { movements: parents.rows.length, observations: observations.rows.length, revisions: revisions.rows.length,
     plans: plans.rows.length, installments: entries.rows.length, details, validatedRelations: constraints.rows.filter(row => row.convalidated === true).length,
-    unsupportedActiveCurrencies, mismatches };
+    monthMemberships: monthMemberships.length, unsupportedActiveCurrencies, mismatches };
 };
 
 /** Financial sums use SQL facts directly, including incomplete schedules and personal zero. */

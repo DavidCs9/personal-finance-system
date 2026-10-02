@@ -58,7 +58,8 @@ describe('SQL projection integrity', () => {
     expect(installments).toHaveLength(2);
     expect(installments[0]).toMatchObject({ payload: replacement.installments[0] });
     expect(await verifyKey(pool, readSource, key)).toBe('equal');
-    expect((await sql.query("SELECT * FROM olbia.movement_months WHERE month='2026-10'")).rows).toHaveLength(1);
+    // Recovery projections cannot populate the current native financial relation.
+    expect((await sql.query('SELECT * FROM olbia.movement_months')).rows).toEqual([]);
     setSource(movement()); await reconcileKey(pool, readSource, key);
     expect((await sql.query('SELECT * FROM olbia.msi_installments')).rows).toEqual([]);
     expect((await sql.query('SELECT * FROM olbia.movement_tags')).rows).toEqual([]);

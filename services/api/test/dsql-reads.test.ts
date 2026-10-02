@@ -234,4 +234,26 @@ describe('native SQL financial reads', () => {
     await expect(verifyNativeFinancialReads('owner', now)).rejects.toThrow('Snapshot unavailable');
     expect(DynamoDBDocumentClient.prototype.send).not.toHaveBeenCalled();
   });
+
+  it('keeps the SQL month relation current through new captures, timezone/date and installment edits, and detects frozen membership', async () => {
+    const id = await fixture.create(movement(1, {receivedAt:'2026-10-01T05:59:59.999Z',occurredAt:undefined}));
+    expect((await fixture.sql.query('SELECT movement_id,month FROM olbia.movement_months')).rows)
+      .toEqual([{movement_id:id,month:'2026-09'}]);
+    await fixture.sql.query('UPDATE olbia.ledger_movements SET occurred_at=$2 WHERE id=$1',[id,'2026-10-01T06:00:00Z']);
+    await fixture.run(async () => {
+      const {replaceInstallmentPlan} = await import('../../ledger/src/dsql/ledger-writes.js');
+      const {buildMsiSchedule} = await import('@finance/domain');
+      await replaceInstallmentPlan(currentStoreTransaction()!,id,buildMsiSchedule({principalMinor:40000,months:2,startMonth:'2029-01',origin:'manual'}));
+    });
+    expect((await fixture.sql.query('SELECT month FROM olbia.movement_months ORDER BY month')).rows)
+      .toEqual([{month:'2026-10'},{month:'2029-01'},{month:'2029-02'}]);
+    expect(await checkState()).toMatchObject({monthMemberships:3,mismatches:0});
+    await fixture.sql.query(`CREATE OR REPLACE VIEW olbia.movement_months AS
+      SELECT id AS movement_id,spend_month AS month FROM olbia.movements`);
+    expect((await checkState()).mismatches).toBeGreaterThan(0);
+    const {SCHEMA_STATEMENTS} = await import('../../ledger/src/dsql/schema.js');
+    await fixture.sql.query(SCHEMA_STATEMENTS.at(-1)!);
+    expect(await checkState()).toMatchObject({monthMemberships:3,mismatches:0});
+  });
+
 });
