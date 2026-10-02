@@ -71,9 +71,10 @@ export class OlbiaSqlStore {
       throw namedError('MigrationPausedException','Las importaciones se están migrando. Intenta de nuevo en un momento.');
     }
     // Stage the whole ledger boundary before migration 14, including targetless
-    // suppression claims. Tags and MSI freeze through their movement document.
+    // suppression claims and bulk preview/apply/undo state. Tags and MSI freeze
+    // through their movement document.
     const family=entityForKey(key);
-    if((['movements','movement_observations','movement_revisions'].includes(family??'') ||
+    if((['movements','movement_observations','movement_revisions','bulk_edit_operations'].includes(family??'') ||
       family==='dedupe_claims' && !key.PK.startsWith('DEDUPE#CFDI_NOMINA#')) &&
       (await client.query('SELECT version FROM olbia.schema_migrations WHERE version=14')).rows.length) {
       throw namedError('MigrationPausedException','Los movimientos se están migrando. Intenta de nuevo en un momento.');
