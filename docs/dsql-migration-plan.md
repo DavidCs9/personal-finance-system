@@ -1,5 +1,7 @@
 # Migración gradual del ledger a Aurora DSQL
 
+Routine deployment now follows [one SQL verification pass](dsql-write-cutover.md#routine-deployments-after-cutover). The completed pause/source-backup/activation sequence is historical; normal deployments preserve SQL authority and native daily backups.
+
 Current authority: SQL was activated on 2026-10-01 through the reviewed [write cutover](dsql-write-cutover.md). All application reads/writes and authoritative consumers use SQL; there is no DynamoDB fallback. The source table remains retained with PITR and a dated native backup, and native SQL backups are enabled. The earlier phases and checklists below are historical context; their DDB-authority, continuous-replication and display-mode rollback instructions are superseded. The [write-cutover run record](autonomous-runs/2026-10-01-dsql-write-cutover.md) records the actual production verification and accepted one-day event gap.
 
 Fecha: 2026-09-30, America/Chihuahua.

@@ -108,9 +108,6 @@ jobs:
           --parameters PersonalFinanceV1:OlbiaSystemPromptMaxTokens="$OLBIA_SYSTEM_PROMPT_MAX_TOKENS"
           --output cdk.out.github-diff
         working-directory: infrastructure
-      - name: Pause writers before SQL cutover
-        timeout-minutes: 50
-        run: python3 infrastructure/scripts/dsql-write-cutover.py prepare
       - run: >-
           npx cdk deploy PersonalFinanceV1
           --parameters PersonalFinanceV1:SesSenderEmail="$SES_SENDER_EMAIL"
@@ -130,18 +127,6 @@ jobs:
           role-to-assume: arn:aws:iam::225989371926:role/personal-finance-v1-github-deploy
           aws-region: us-east-2
           role-session-name: personal-finance-dsql-verify
-      - name: Preserve dated DynamoDB backup before final synchronization
-        timeout-minutes: 50
-        run: python3 infrastructure/scripts/dsql-write-cutover.py backup-source
-      - name: Verify DSQL bootstrap, historical projection and parity
+      - name: Verify authoritative SQL, financial contracts and evidence
         timeout-minutes: 55
         run: bash infrastructure/scripts/verify-dsql-deployment.sh
-      - name: Back up SQL and activate the approved write authority
-        timeout-minutes: 50
-        run: python3 infrastructure/scripts/dsql-write-cutover.py activate
-      - name: Verify authoritative SQL after activation
-        timeout-minutes: 55
-        run: |
-          if grep -q 'SQL_AUTHORITY = true;' infrastructure/lib/storage-cutover.ts; then
-            DSQL_VERIFICATION_PHASE=sql bash infrastructure/scripts/verify-dsql-deployment.sh
-          fi
