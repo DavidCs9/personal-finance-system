@@ -35,9 +35,6 @@ export const SCHEMA_STATEMENTS = [
     PRIMARY KEY (source_pk,source_sk,row_id))`),
   // Existing cards need the original envelope/timestamps for supporting Patrimonio reads.
   `ALTER TABLE olbia.cards ADD COLUMN IF NOT EXISTS source_item jsonb`,
-  `CREATE OR REPLACE VIEW olbia.movement_months AS
-    SELECT id AS movement_id, spend_month AS month FROM olbia.movements
-    UNION SELECT movement_id, month FROM olbia.msi_installments`,
   `INSERT INTO olbia.schema_migrations VALUES (1,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
   // Version 2 is additive: only new tables. Existing column definitions are unchanged.
   `INSERT INTO olbia.schema_migrations VALUES (2,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
