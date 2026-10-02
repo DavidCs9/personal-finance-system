@@ -78,6 +78,18 @@ export const SCHEMA_STATEMENTS = [
     payment_due_day integer NOT NULL CHECK (payment_due_day BETWEEN 1 AND 31),
     institution text CHECK (institution IN ('american_express_mx','santander_mx','nu_mx')),
     created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz)`,
+  `CREATE TABLE IF NOT EXISTS olbia.month_plans (
+    month text PRIMARY KEY CHECK (month ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
+    owner text NOT NULL CHECK (length(owner) > 0), updated_at timestamptz NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS olbia.planned_payments (
+    month text NOT NULL CONSTRAINT planned_payments_month_fk REFERENCES olbia.month_plans(month),
+    id text NOT NULL CHECK (length(id) BETWEEN 1 AND 128),
+    name text NOT NULL CHECK (length(trim(name)) > 0 AND length(name) <= 100),
+    amount_mxn_minor bigint NOT NULL CHECK (amount_mxn_minor BETWEEN 1 AND 9007199254740991),
+    due_day integer NOT NULL CHECK (due_day BETWEEN 1 AND 31),
+    sort_order integer NOT NULL CHECK (sort_order BETWEEN 0 AND 99),
+    PRIMARY KEY (month,id), CONSTRAINT planned_payments_order_key UNIQUE (month,sort_order))`,
+
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
@@ -98,6 +110,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   for (const [index, statement] of SCHEMA_STATEMENTS.entries()) await query(`schema-statement-${index + 1}`, statement);
   if (!options.transactionPool) throw new BootstrapFailure('card-copy-transaction-pool');
   await migrateCardProfiles(options.transactionPool);
+  await migrateMonthPlans(options.transactionPool);
   await ensureCardLiabilityRelationships({ query: (statement, params) => query('card-relationships', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   await ensureMovementCategoryForeignKey({ query: (statement, params) => query('category-fk', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   for (const [name, table, columns] of [
@@ -124,6 +137,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('tables-grant', `GRANT SELECT,INSERT,UPDATE,DELETE ON ${['projection_state', ...TABLE_NAMES].map((table) => `olbia.${table}`).join(',')} TO olbia_projector`);
   await query('read-grant', 'GRANT SELECT ON olbia.schema_migrations,olbia.movement_months,olbia.runtime_state TO olbia_projector');
   await query('catalog-projector-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_projector');
+  await query('plans-projector-read', 'GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO olbia_projector');
   await query('cards-projector-read', 'GRANT SELECT ON olbia.card_profiles TO olbia_projector');
   await query('rules-projector-read', 'GRANT SELECT ON olbia.merchant_rules TO olbia_projector');
   await query('projector-barrier-grant','GRANT SELECT,UPDATE ON olbia.application_barrier TO olbia_projector');
@@ -137,6 +151,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query('reader-schema-grant', 'GRANT USAGE ON SCHEMA olbia TO olbia_reader');
     await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments', 'monthly_plans', 'payroll', 'cards', 'wealth_snapshots', 'wealth_versions', 'liability_snapshots', 'liability_versions', 'categories', 'merchant_category_rules', 'ingestion_exceptions', 'import_records', 'push_subscriptions', 'assistant_threads'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
     await query('catalog-reader-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_reader');
+    await query('plans-reader-read', 'GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO olbia_reader');
     await query('cards-reader-read', 'GRANT SELECT ON olbia.card_profiles TO olbia_reader');
     await query('rules-reader-read', 'GRANT SELECT ON olbia.merchant_rules TO olbia_reader');
     for (const arn of options.readerRoleArns) {
@@ -167,6 +182,11 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (writer) await query(`write-${role}`,`GRANT SELECT,INSERT,UPDATE,DELETE ON ${['projection_state','application_barrier','command_receipts',...TABLE_NAMES].map(t=>`olbia.${t}`).join(',')} TO ${role}`);
     if (writer) await query(`view-${role}`,`GRANT SELECT ON olbia.movement_months TO ${role}`);
     await query(`catalog-read-${role}`, `GRANT SELECT ON olbia.spend_categories TO ${role}`);
+    await query(`plans-read-${role}`, `GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO ${role}`);
+    if (writer) {
+      await query(`plans-write-${role}`, `GRANT INSERT,UPDATE ON olbia.month_plans TO ${role}`);
+      await query(`payments-write-${role}`, `GRANT INSERT,DELETE ON olbia.planned_payments TO ${role}`);
+    }
     await query(`cards-read-${role}`, `GRANT SELECT ON olbia.card_profiles TO ${role}`);
     if (writer) await query(`cards-write-${role}`, `GRANT INSERT,UPDATE ON olbia.card_profiles TO ${role}`);
     await query(`rules-read-${role}`, `GRANT SELECT ON olbia.merchant_rules TO ${role}`);
@@ -238,4 +258,25 @@ export const ensureCardLiabilityRelationships = async (client: SqlClient, option
     await ensureValidatedConstraint(client, table, `${table}_card_fk`, 'FOREIGN KEY (card_id) REFERENCES olbia.card_profiles(id)', 'card-fk', options);
   }
   await client.query('INSERT INTO olbia.schema_migrations VALUES (10,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
+};
+
+/** Preserve empty parents; all native parents, ordered children and marker commit together. */
+export const migrateMonthPlans = async (pool: TransactionPool): Promise<void> => {
+  try {
+    await pool.transaction(async client => {
+      await client.query("UPDATE olbia.application_barrier SET generation=generation+1 WHERE id='storage'");
+      if ((await client.query('SELECT version FROM olbia.schema_migrations WHERE version=11')).rows.length) return;
+      if ((await client.query("SELECT month FROM olbia.monthly_plans WHERE jsonb_typeof(payload->'upcomingPayments') IS DISTINCT FROM 'array' LIMIT 1")).rows.length) {
+        throw new Error('Invalid retained payment list');
+      }
+      await client.query(`INSERT INTO olbia.month_plans (month,owner,updated_at)
+        SELECT month,owner,(payload->>'updatedAt')::timestamptz FROM olbia.monthly_plans`);
+      await client.query(`INSERT INTO olbia.planned_payments (month,id,name,amount_mxn_minor,due_day,sort_order)
+        SELECT plan.month,payment.item->>'id',payment.item->>'name',(payment.item->>'amountMinor')::bigint,
+          (payment.item->>'dueDay')::integer,(payment.position-1)::integer
+        FROM olbia.monthly_plans plan CROSS JOIN LATERAL jsonb_array_elements(plan.payload->'upcomingPayments')
+          WITH ORDINALITY AS payment(item,position)`);
+      await client.query('INSERT INTO olbia.schema_migrations VALUES (11,CURRENT_TIMESTAMP)');
+    });
+  } catch (error) { throw new BootstrapFailure('month-plan-copy', error); }
 };

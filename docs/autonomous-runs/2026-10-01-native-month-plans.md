@@ -18,6 +18,7 @@ Continue David's authorized autonomous normalization after completed categories/
 - Product/UI/Patrimonio guides and autonomous rules were read completely in this continuing run; reviewed monthly service, parser, planning verification and inheritance/payroll tests.
 - Fresh read-only live audit after immediate STS verification: six plans, eight payment rows, four explicit empty plans, one owner, zero duplicate payment IDs. All months, names, due days, amounts and update times satisfy the proposed constraints. Five legacy income fields remain evidence; operational income already comes from payroll. Private evidence is in `/tmp/olbia-native-month-plans/`.
 - Deploy a legacy-write guard and duplicate-ID validation first. Then migrate parents/children atomically with a marker under the existing native application barrier and migrate every plan consumer. Finish independent acceptance before proceeding.
+- Guard #179 passed required quality, was confirmed CLEAN/MERGEABLE and squash-merged. Production workflow `36971813168` completed quality/deploy-production and all gates successfully. Fresh independent read-only acceptance confirms every plan document/payment unchanged and migration 11 absent. Guard prerequisite satisfied. Created `codex/sql-native-month-plans` directly from fetched `origin/main` after that merge.
 
 ## Decisions
 
@@ -39,9 +40,18 @@ Continue David's authorized autonomous normalization after completed categories/
 - Consequences, verification, and revisit conditions: Plan editing may briefly return maintenance during the reviewed cutover; other financial domains continue. Test pre-marker writes, blocked late writes, mixed transaction rollback, atomic parent/child/marker rollback and interrupted replay. Release only after the guard is deployed.
 - Status: Decided before implementation.
 
+### D3 — Enforce native child identity, order and money precision
+
+- Context: A normalized child table must preserve API ordering and safe monetary precision, and cannot collapse a zero-child parent into a missing month.
+- Evidence and uncertainty: All eight real payments contain only the four documented fields. AWS CREATE TABLE supports native primary, UNIQUE, CHECK and foreign-key constraints. The monthly API uses MXN amounts and accepts safe positive integers, up to 100 payments; its calendar-month domain is the string YYYY-MM.
+- Alternatives and tradeoffs: Keep income/currency/document fields in operational parents; add an artificial date or payment slot identity; rely on application-only ordering; or model domain month/payment keys with native uniqueness and typed MXN amounts.
+- Decision and reason: Use `month_plans(month,owner,updated_at)` and `planned_payments(month,id,name,amount_mxn_minor,due_day,sort_order)`. Parent month is a validated domain key; child PK is `(month,id)`, native FK links its month, and UNIQUE `(month,sort_order)` with positions 0–99 preserves order and limits cardinality natively. Positive bigint amounts are bounded by JavaScript's safe-integer maximum. Currency is expressed by the MXN column and existing public contract. Replace a month's children atomically with its parent update under the existing barrier, preserving other months and explicit empty parents.
+- Consequences, verification, and revisit conditions: A bounded single SQL statement selects the latest eligible parent and LEFT JOINs its children; zero-child parents remain visible. No live envelope reconstruction or plan fallback survives. Migration copies parent and ordered child fields plus marker 11 atomically, and native UNIQUE/FK constraints apply before data copy. Verify exact real child identity/order/amount parity, empty and inherited months, rollback/replay, native constraints and every financial/report/worker gate. Preserve historical income in frozen evidence.
+- Status: Decided before implementation. Native capability reference: [AWS CREATE TABLE](https://docs.aws.amazon.com/aurora-dsql/latest/userguide/create-table-syntax-support.html).
+
 ## Verification results
 
-Guard implemented. All four guard integration cases and ten focused parser/service cases passed. All 480 workspace tests, workspace typechecks and CDK synthesis passed. Real-data preflight passed with six plans/eight payments, four explicit empty plans and no duplicate IDs. Required PR/quality/merge/deployment is next.
+Guard implemented. All four guard integration cases and ten focused parser/service cases passed. All 480 workspace tests, workspace typechecks and CDK synthesis passed. Real-data preflight passed with six plans/eight payments, four explicit empty plans and no duplicate IDs. Guard #179 is merged/deployed/accepted. Native implementation removes plan document operations and fallback, adds direct parent/child reads and atomic replacements, and extends native verification/smoke. Four migration/constraint tests and native service/financial tests pass. A test fixture initially routed reads outside its PGlite transaction and deadlocked; it now honors the same current transaction as production, and all six service tests pass. Workspace typechecks and synthesis passed; all 11 protected resource definitions are unchanged. All 485 workspace tests passed. Native PR and independent live acceptance are next.
 
 ## Outcome and remaining work
 

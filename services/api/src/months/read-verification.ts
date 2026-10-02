@@ -8,8 +8,8 @@ import { samePublicResult } from '../events/read-selection.js';
 import { readerPool, readSqlFeed } from '../events/sql-reads.js';
 import { feedFromPayloads } from '../events/month-feed.js';
 import { getPayslip, getPayslipDynamo, getPayslipSql, incomeFieldsForMonth, listPayslipsForMonthDynamo, listPayslipsForYearDynamo } from '../imports/cfdi-nomina-flow.js';
-import { getMonthlyPlan, getMonthlyPlanFromReads, readMonthlyPlanRecordDynamo } from './service.js';
-import { planningReadMode, planReadStatement, payrollReadStatement, readSqlPlanRecord, readSqlPayslipsForMonth, readSqlPayslipsForYear } from './sql-reads.js';
+import { getMonthlyPlan, getMonthlyPlanFromReads } from './service.js';
+import { planningReadMode, planReadStatement, payrollReadStatement, readSqlPlanRecord, readSqlAllPlanRecords, readSqlPayslipsForMonth, readSqlPayslipsForYear } from './sql-reads.js';
 import { summarizeMonthFeed } from './summary.js';
 import { getWealthOverview, getWealthOverviewAsOf } from '../wealth/service.js';
 import { readSourceWealthInputs } from '../wealth/sql-reads.js';
@@ -29,8 +29,27 @@ export const verifyPlanningReads = async (owner: string, movementPayloads: JsonO
     UNION ALL SELECT source_item FROM olbia.payroll WHERE source_pk=$1`, [`USER#${owner}`]);
   const sorted = (items: JsonObject[]) => [...items].sort((a, b) => String(a.SK).localeCompare(String(b.SK)));
   let mismatches = Number(!samePublicResult(sorted(source), sorted(projected.rows.map(row => row.source_item as JsonObject))));
+  // Frozen month documents remain separately verified evidence. Native plans
+  // supply every operational financial comparison, including after native edits.
+  const nativePlans = await readSqlAllPlanRecords(owner, client);
+  const parents = (await client.query('SELECT month,owner,updated_at FROM olbia.month_plans WHERE owner=$1 ORDER BY month', [owner])).rows;
+  mismatches += Number(!samePublicResult(parents.map(row => ({ ...row, updated_at: new Date(row.updated_at as string | Date).toISOString() })),
+    nativePlans.map(plan => ({ month: plan.month, owner, updated_at: plan.updatedAt }))));
+  const children = (await client.query(`SELECT payment.* FROM olbia.planned_payments payment JOIN olbia.month_plans plan ON plan.month=payment.month
+    WHERE plan.owner=$1 ORDER BY payment.month,payment.sort_order`, [owner])).rows;
+  mismatches += Number(!samePublicResult(children.map(row => ({ ...row, amount_mxn_minor: Number(row.amount_mxn_minor) })),
+    nativePlans.flatMap(plan => plan.upcomingPayments.map((payment, sort_order) => ({ month: plan.month, id: payment.id,
+      name: payment.name, amount_mxn_minor: payment.amountMinor, due_day: payment.dueDay, sort_order })))));
+  const invalidPlanReferences = Number((await client.query(`SELECT count(*) AS count FROM olbia.planned_payments payment
+    LEFT JOIN olbia.month_plans plan ON plan.month=payment.month WHERE plan.month IS NULL`)).rows[0]?.count);
+  mismatches += Number(invalidPlanReferences !== 0);
+  const nativeConstraints = (await client.query(`SELECT conname,convalidated FROM pg_constraint WHERE
+    conrelid IN ('olbia.month_plans'::regclass,'olbia.planned_payments'::regclass)
+    AND conname IN ('month_plans_pkey','planned_payments_pkey','planned_payments_month_fk','planned_payments_order_key') ORDER BY conname`)).rows;
+  mismatches += Number(!samePublicResult(nativeConstraints, ['month_plans_pkey','planned_payments_month_fk','planned_payments_order_key','planned_payments_pkey']
+    .map(conname => ({ conname, convalidated: true }))));
   const records = [...source, ...projected.rows.map(row => row.source_item as JsonObject)];
-  const months = new Set([...financialMonths, ...records.map(item => String(item.month))]);
+  const months = new Set([...financialMonths, ...nativePlans.map(plan => plan.month), ...records.map(item => String(item.month))]);
   const ordered = [...months].sort();
   // Include gaps and inheritance after the last stored plan, plus empty boundaries.
   for (let month = addCalendarMonths(ordered[0]!, -1); month <= addCalendarMonths(ordered.at(-1)!, 1); month = addCalendarMonths(month, 1)) months.add(month);
@@ -38,7 +57,7 @@ export const verifyPlanningReads = async (owner: string, movementPayloads: JsonO
   const sqlIncome: typeof incomeFieldsForMonth = (owner, month) => incomeFieldsForMonth(owner, month, now, readSqlPayslipsForMonth);
   let plans = 0, summaries = 0, compensation = 0, wealthCloses = 0;
   for (const month of [...months].sort()) {
-    const sourcePlan = await getMonthlyPlanFromReads(owner, month, readMonthlyPlanRecordDynamo, sourceIncome);
+    const sourcePlan = await getMonthlyPlanFromReads(owner, month, readSqlPlanRecord, sourceIncome);
     const sqlPlan = await getMonthlyPlanFromReads(owner, month, readSqlPlanRecord, sqlIncome);
     mismatches += Number(!samePublicResult(sourcePlan, sqlPlan)); plans++;
     const sourceMonthIncome = await sourceIncome(owner, month);
@@ -79,7 +98,7 @@ export const verifyPlanningReads = async (owner: string, movementPayloads: JsonO
     await getMonthlyPlanFromReads(owner, monthKeyInZone(now), readSqlPlanRecord, sqlIncome)));
   const queryPlans = [];
   for (const [query, statement, values] of [
-    ['plan', planReadStatement, [`USER#${owner}`, `MONTH#${monthKeyInZone(now)}`]],
+    ['plan', planReadStatement, [owner, monthKeyInZone(now)]],
     ['payroll', payrollReadStatement, [`USER#${owner}`, `PAYROLL#${monthKeyInZone(now).slice(0, 4)}-`, `PAYROLL#${monthKeyInZone(now).slice(0, 4)}.`]],
   ] as const) {
     const result = await client.query(`EXPLAIN ANALYZE VERBOSE ${statement}`, [...values]);
@@ -88,7 +107,8 @@ export const verifyPlanningReads = async (owner: string, movementPayloads: JsonO
       metrics: lines.filter(line => /(?:DPU|Planning Time|Execution Time)/i.test(line))
         .map(line => line.trim()).filter(line => /^[\w\s():.=,+-]+$/.test(line)) });
   }
-  return { mode: planningReadMode(), storedPlans: source.filter(item => String(item.SK).startsWith('MONTH#')).length,
+  return { mode: planningReadMode(), planAuthority: 'native-sql', storedPlans: nativePlans.length, plannedPayments: children.length,
+    explicitEmptyPlans: nativePlans.filter(plan => plan.upcomingPayments.length === 0).length, invalidPlanReferences, validatedPlanConstraints: nativeConstraints.filter(row => row.convalidated).length,
     storedPayroll: details, plans, summaries, compensation, payrollYears, wealthCloses, wealthOverview: 1, details, evidenceFiles,
     missingLookups: 1, mismatches, elapsedMs: Date.now() - started, queryPlans };
 };
