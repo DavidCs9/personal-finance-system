@@ -23,7 +23,7 @@ beforeAll(async()=>{sql=new PGlite();for(const ddl of SCHEMA_STATEMENTS)await sq
 afterAll(()=>sql.close());
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllEnvs();});
 beforeEach(async()=>{
-  statements=[];await sql.exec('TRUNCATE olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates');
+  statements=[];await sql.exec('TRUNCATE olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates CASCADE');
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
   vi.stubEnv('OLBIA_SQL_STORE_ENABLED','true');
   vi.spyOn(connection,'createPool').mockReturnValue({query:(s:string,v?:unknown[])=>{statements.push(s);return sql.query(s,v);},

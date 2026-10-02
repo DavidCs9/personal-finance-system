@@ -4,6 +4,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
+import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../../ledger/src/dsql/ledger-schema.js';
 import * as connection from '../../ledger/src/dsql/connection.js';
 import { currentStoreTransaction } from '../../ledger/src/dsql/store.js';
 import type { SqlClient } from '../../ledger/src/dsql/projection.js';
@@ -30,14 +31,18 @@ FECHA,CONSECUTIVO,CONCEPTO,IMPORTE
 const upload={body:Buffer.from('Original PDF').toString('base64'),isBase64Encoded:true,headers:{'content-type':'application/pdf'}};
 const id=createHash('sha256').update('Original PDF').digest('hex');
 let sql:PGlite,objects:Map<string,Buffer>,jobCounter:number;
-beforeAll(async()=>{sql=new PGlite();for(const ddl of SCHEMA_STATEMENTS)await sql.query(ddl);},30_000);
+beforeAll(async()=>{sql=new PGlite();for(const ddl of [...SCHEMA_STATEMENTS,...NATIVE_LEDGER_SCHEMA_STATEMENTS])await sql.query(ddl);
+  await sql.query(`ALTER TABLE olbia.ledger_movements ADD CONSTRAINT ledger_movements_primary_observation_fk ${LEDGER_PRIMARY_OBSERVATION_CONSTRAINT}`);},30_000);
 afterAll(()=>sql.close());
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllEnvs();});
 beforeEach(async()=>{
   objects=new Map();jobCounter=0;
-  await sql.exec('TRUNCATE olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates,olbia.projection_state,olbia.movements,olbia.movement_observations,olbia.movement_revisions,olbia.movement_tags,olbia.msi_plans,olbia.msi_installments,olbia.dedupe_claims,olbia.import_records,olbia.command_receipts');
+  await sql.exec(`TRUNCATE ${NATIVE_LEDGER_TABLES.map(t=>`olbia.${t}`).join(',')},olbia.projection_state,
+    olbia.movements,olbia.movement_observations,olbia.movement_revisions,olbia.movement_tags,olbia.msi_plans,
+    olbia.msi_installments,olbia.dedupe_claims,olbia.import_records,olbia.command_receipts,
+    olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates`);
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
-  await sql.query('INSERT INTO olbia.schema_migrations VALUES(13,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING');
+  await sql.query('INSERT INTO olbia.schema_migrations VALUES(13,CURRENT_TIMESTAMP),(14,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING');
   vi.stubEnv('OLBIA_SQL_STORE_ENABLED','true');vi.stubEnv('DSQL_OPERATIONAL_READ_MODE','dynamodb');
   vi.spyOn(connection,'createPool').mockReturnValue({query:(s:string,v?:unknown[])=>sql.query(s,v),
     transaction:(fn:(c:SqlClient)=>Promise<unknown>)=>sql.transaction(c=>fn(c as unknown as SqlClient))} as never);

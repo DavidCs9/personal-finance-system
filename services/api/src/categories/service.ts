@@ -1,6 +1,6 @@
-import { withApplicationTransaction } from '@finance/ledger/dsql-store';
+import { applicationStoreClient, withNativeTransaction } from '@finance/ledger/dsql-store';
 import { randomUUID } from 'node:crypto';
-import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { insertLedgerRevision, readLedgerMovements, setMovementCategory } from '@finance/ledger/native-ledger';
 import {
   isValidCategoryId,
   resolveCategoryId,
@@ -10,7 +10,6 @@ import {
 import { listCategories, listMerchantRules } from './sql-reads.js';
 import { saveMerchantRule } from './merchant-rules.js';
 import { InvalidCategoryError, requireCatalogCategories, saveCategoryCatalog } from './catalog.js';
-import { database, tableName } from '../http/clients.js';
 
 export { InvalidCategoryError };
 
@@ -39,23 +38,10 @@ const setEventCategoryInternal = async (
     throw new InvalidCategoryError(`Categoría inválida: ${categoryId}`);
   }
   await requireCatalogCategories([categoryId]);
-  const existing = await database.send(new GetCommand({
-    TableName: tableName,
-    Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
-  }));
-  if (!existing.Item?.payload || typeof existing.Item.payload !== 'object') return undefined;
-  const payload = existing.Item.payload as Record<string, unknown>;
+  const payload = (await readLedgerMovements(applicationStoreClient(), { ids: [eventId] }))[0];
+  if (!payload) return undefined;
   const previous = (payload.categoryId as string | null | undefined) ?? null;
-  const updated = await database.send(new UpdateCommand({
-    TableName: tableName,
-    Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
-    UpdateExpression: categoryId === null
-      ? 'REMOVE #payload.#categoryId'
-      : 'SET #payload.#categoryId = :categoryId',
-    ExpressionAttributeNames: { '#payload': 'payload', '#categoryId': 'categoryId' },
-    ...(categoryId === null ? {} : { ExpressionAttributeValues: { ':categoryId': categoryId } }),
-    ReturnValues: 'ALL_NEW',
-  }));
+  await setMovementCategory(applicationStoreClient(), eventId, categoryId);
   const revision = {
     id: randomUUID(),
     observedPurchaseId: eventId,
@@ -66,15 +52,7 @@ const setEventCategoryInternal = async (
       categoryId: { previous, next: categoryId },
     },
   };
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: {
-      PK: `EVENT#${eventId}`,
-      SK: `REVISION#${revision.createdAt}#${revision.id}`,
-      entityType: 'event_revision',
-      payload: revision,
-    },
-  }));
+  await insertLedgerRevision(applicationStoreClient(), { ...revision, movementId: eventId });
   if (options?.updateRule && categoryId && typeof payload.merchantRaw === 'string') {
     await upsertMerchantRule({
       merchantRaw: payload.merchantRaw,
@@ -82,18 +60,18 @@ const setEventCategoryInternal = async (
       source: options.source ?? 'human',
     });
   }
-  const nextPayload = updated.Attributes?.payload as Record<string, unknown>;
+  const nextPayload = (await readLedgerMovements(applicationStoreClient(), { ids: [eventId] }))[0];
   return {
     ...nextPayload,
     categoryId: (nextPayload.categoryId as string | undefined) ?? null,
   };
 };
 
-export const putCategoryCatalog = (...args:Parameters<typeof putCategoryCatalogInternal>):ReturnType<typeof putCategoryCatalogInternal> => withApplicationTransaction(()=>putCategoryCatalogInternal(...args));
+export const putCategoryCatalog = (...args:Parameters<typeof putCategoryCatalogInternal>):ReturnType<typeof putCategoryCatalogInternal> => withNativeTransaction(()=>putCategoryCatalogInternal(...args));
 
-export const upsertMerchantRule = (...args:Parameters<typeof upsertMerchantRuleInternal>):ReturnType<typeof upsertMerchantRuleInternal> => withApplicationTransaction(()=>upsertMerchantRuleInternal(...args));
+export const upsertMerchantRule = (...args:Parameters<typeof upsertMerchantRuleInternal>):ReturnType<typeof upsertMerchantRuleInternal> => withNativeTransaction(()=>upsertMerchantRuleInternal(...args));
 
 // Retained API name; a catalog read never seeds or mutates data.
 export const ensureDefaultCatalog = listCategories;
 
-export const setEventCategory = (...args:Parameters<typeof setEventCategoryInternal>):ReturnType<typeof setEventCategoryInternal> => withApplicationTransaction(()=>setEventCategoryInternal(...args));
+export const setEventCategory = (...args:Parameters<typeof setEventCategoryInternal>):ReturnType<typeof setEventCategoryInternal> => withNativeTransaction(()=>setEventCategoryInternal(...args));

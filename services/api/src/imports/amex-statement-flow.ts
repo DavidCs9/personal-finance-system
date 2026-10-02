@@ -31,7 +31,8 @@ import {
 } from './statement-shared.js';
 import { rawSourceBucketName, s3, textract } from '../http/clients.js';
 import { type JsonObject } from '../http/response.js';
-import { allStoredEvents, localDate } from '../events/queries.js';
+import { localDate } from '../events/queries.js';
+import { bankLedgerEvents } from './bank-ledger.js';
 import { markDeferredMsi } from '../events/mutations.js';
 
 const amexSourceKey = (owner: string, sha256: string): string =>
@@ -40,7 +41,7 @@ const amexSourceKey = (owner: string, sha256: string): string =>
 const buildAmexPreviewRows = async (
   document: AmexStatementDocument,
 ): Promise<readonly StatementPreviewRow[]> => {
-  const events = await allStoredEvents();
+  const events = await bankLedgerEvents();
   const purchaseCharges = document.charges.filter((charge) => !charge.msi);
   const claimed = await claimedStatementIdentities(
     'amex',
@@ -146,44 +147,15 @@ export const getAmexImport = async (importId: string, owner: string): Promise<Js
   return statementImportResponse(current);
 };
 
-export const applyAmexImport = async (
-  importId: string,
-  owner: string,
-  decisionBody: string | undefined,
-): Promise<JsonObject> => {
-  const result = await applyStatementImport({
-    provider: 'amex',
-    importId,
-    owner,
-    decisionBody,
-    rebuildRows: async () => {
-      const stored = await readBankImport('amex_statement', importId, owner);
-      if (!stored) throw new InvalidAmexStatementError('La previsualización ya no está disponible.');
-      const extraction = await loadStatementTextractExtraction(stored);
-      return buildAmexPreviewRows(parseAmexStatementExtraction(extraction));
+export const applyAmexImport = async (importId: string, owner: string, decisionBody: string | undefined): Promise<JsonObject> =>
+  applyStatementImport({ provider: 'amex', importId, owner, decisionBody,
+    prepareRows: async (stored) => {
+      const document = parseAmexStatementExtraction(await loadStatementTextractExtraction(stored));
+      return { rebuildRows: () => buildAmexPreviewRows(document), afterRows: async () => ({
+        deferredMsi: await applyAmexDeferralCredits({ owner, accountLastFour: document.accountLastFour, deferralCredits: document.deferralCredits }),
+      }) };
     },
   });
-
-  const stored = await readBankImport('amex_statement', importId, owner);
-  if (!stored) throw new InvalidAmexStatementError('La previsualización ya no está disponible.');
-  const accountLastFour = String(stored.accountLastFour ?? '');
-  try {
-    const extraction = await loadStatementTextractExtraction(stored);
-    const document = parseAmexStatementExtraction(extraction);
-    const deferred = await applyAmexDeferralCredits({
-      owner,
-      accountLastFour: document.accountLastFour || accountLastFour,
-      deferralCredits: document.deferralCredits,
-    });
-    const summary = {
-      ...(result.summary as JsonObject),
-      deferredMsi: deferred,
-    };
-    return { ...result, summary };
-  } catch {
-    return result;
-  }
-};
 
 const applyAmexDeferralCredits = async (input: {
   readonly owner: string;
@@ -191,7 +163,7 @@ const applyAmexDeferralCredits = async (input: {
   readonly deferralCredits: AmexStatementDocument['deferralCredits'];
 }): Promise<number> => {
   if (input.deferralCredits.length === 0) return 0;
-  const events = await allStoredEvents();
+  const events = await bankLedgerEvents();
   const candidates = events.filter((event) => {
     if (event.institution !== 'american_express_mx') return false;
     if (event.status === 'rejected' || event.status === 'deferred_msi') return false;

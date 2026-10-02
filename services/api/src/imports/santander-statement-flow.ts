@@ -29,7 +29,8 @@ import {
 } from './statement-shared.js';
 import { rawSourceBucketName, s3, textract } from '../http/clients.js';
 import { type JsonObject } from '../http/response.js';
-import { allStoredEvents, localDate } from '../events/queries.js';
+import { localDate } from '../events/queries.js';
+import { bankLedgerEvents } from './bank-ledger.js';
 
 const santanderStatementSourceKey = (owner: string, sha256: string): string =>
   `manual-imports/santander-statement/${owner}/${sha256}.pdf`;
@@ -37,7 +38,7 @@ const santanderStatementSourceKey = (owner: string, sha256: string): string =>
 const buildSantanderStatementPreviewRows = async (
   document: SantanderStatementDocument,
 ): Promise<readonly StatementPreviewRow[]> => {
-  const events = await allStoredEvents();
+  const events = await bankLedgerEvents();
   const identities = document.charges.map((charge) => charge.identity);
   const claimed = await claimedStatementIdentities('santander', identities);
   const purchaseRows = document.charges
@@ -160,10 +161,8 @@ export const applySantanderStatementImport = async (
   importId,
   owner,
   decisionBody,
-  rebuildRows: async () => {
-    const stored = await readBankImport('santander_statement', importId, owner);
-    if (!stored) throw new InvalidSantanderStatementError('La previsualización ya no está disponible.');
-    const extraction = await loadStatementTextractExtraction(stored);
-    return buildSantanderStatementPreviewRows(parseSantanderStatementExtraction(extraction));
+  prepareRows: async (stored) => {
+    const document = parseSantanderStatementExtraction(await loadStatementTextractExtraction(stored));
+    return { rebuildRows: () => buildSantanderStatementPreviewRows(document) };
   },
 });

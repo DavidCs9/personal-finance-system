@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { bootstrapSchema as realBootstrapSchema, ensureMovementCategoryForeignKey, ensureCardLiabilityRelationships } from '../src/dsql/schema.js';
+import { bootstrapSchema as realBootstrapSchema, ensureMovementCategoryForeignKey, ensureCardLiabilityRelationships, ensureLedgerPrimaryObservation } from '../src/dsql/schema.js';
 import type { SqlClient } from '../src/dsql/projection.js';
 
 const bootstrapSchema = (client: SqlClient, roleArns: readonly string[], options: Parameters<typeof realBootstrapSchema>[2] = {}) =>
   realBootstrapSchema(client, roleArns, { transactionPool: { transaction: callback => callback({ query: (s,v) =>
     s.includes('AS count FROM olbia.payroll') ? Promise.resolve({ rows: [{ count: 2 }] }) : client.query(s,v) }) }, ...options });
 const ready = (statement: string) => ({ rows:
+  statement.includes('WHERE version=14') ? [{ version: 14 }] :
   statement.includes('pg_constraint') ? [{ convalidated: true }] :
   statement.includes('indisvalid') ? [{ indisvalid: true }] :
   statement.includes('pg_roles') ? [{ rolname: 'olbia_projector' }] : [],
@@ -134,4 +135,22 @@ it('does not mark liability relationships complete until every native constraint
   }));
   await expect(ensureCardLiabilityRelationships({ query })).rejects.toThrow('card-fk-validation');
   expect(query.mock.calls.some(([statement]) => statement.includes('VALUES (10,'))).toBe(false);
+});
+
+
+it('validates native primary ownership before activation and completes grants/indexes before atomic copy', async () => {
+  const query = vi.fn(async (statement: string) => ready(statement));
+  await bootstrapSchema({query}, [], {applicationRoleArns:['arn:aws:iam::225989371926:role/product']});
+  const statements = query.mock.calls.map(([statement]) => statement);
+  const activation = statements.findIndex(statement => statement.includes('WHERE version=14'));
+  expect(activation).toBeGreaterThan(statements.findIndex(statement => statement.includes('ledger_revisions_movement_idx')));
+  expect(activation).toBeGreaterThan(statements.findIndex(statement => statement.startsWith('GRANT INSERT ON olbia.ledger_observations')));
+  expect(statements).toContain('GRANT UPDATE (status,applied_at,undone_at) ON olbia.ledger_bulk_operations TO olbia_application');
+  const failure = vi.fn(async (statement: string) => ({ rows:
+    statement.includes('pg_constraint') ? [{convalidated:false}] :
+    statement.startsWith('ALTER TABLE ASYNC') ? [{job_id:'ownership-job'}] :
+    statement.includes('sys.jobs') ? [{status:'failed'}] : [],
+  }));
+  await expect(ensureLedgerPrimaryObservation({query:failure})).rejects.toThrow('ledger-primary-validation');
+  expect(failure.mock.calls.map(([statement]) => statement).join()).not.toContain('schema_migrations');
 });

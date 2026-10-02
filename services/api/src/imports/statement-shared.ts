@@ -1,14 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { withApplicationTransaction } from '@finance/ledger/dsql-store';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { BatchGetCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import type { MsiPlan } from '@finance/domain';
-import { eventMonthIndexKeys, msiPlanPurchaseOccurredAt, reconciliationPartition } from '@finance/ledger';
+import { msiPlanPurchaseOccurredAt } from '@finance/ledger';
 import { buildPlanFromCreateDecision, matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
 import { InvalidAmexStatementError } from './amex-statement.js';
 import { InvalidSantanderStatementError } from './santander-statement.js';
 import {
-  statementClaimKey,
   statementMsiApplyAction,
   statementPreviewSummary,
   statementPurchaseApplyAction,
@@ -17,10 +14,11 @@ import {
   type StatementProvider,
 } from './statement-reconciliation.js';
 import type { TextractStatementExtraction } from './textract-document.js';
-import { database, rawSourceBucketName, s3, tableName } from '../http/clients.js';
+import { rawSourceBucketName, s3 } from '../http/clients.js';
 import { errorName, type JsonObject } from '../http/response.js';
 import { isValidMonth } from '../months/monthly-plan.js';
-import { allStoredEvents, toPublicEvent } from '../events/queries.js';
+import { toPublicEvent } from '../events/public-event.js';
+import { assertPreparedImport, bankLedgerEvents, bankPlanEvidence, bankRowPosition, claimedBankRows, createBankMovement, linkBankEvidence, withBankApplyTransaction } from './bank-ledger.js';
 import { persistEventMsi } from '../events/mutations.js';
 import { readBankImport,completeBankImport,statementImportKind, type BankImportRecord } from './import-sql.js';
 
@@ -60,26 +58,7 @@ export const claimedStatementIdentities = async (
   provider: StatementProvider,
   identities: readonly string[],
 ): Promise<ReadonlySet<string>> => {
-  const claimed = new Set<string>();
-  for (let offset = 0; offset < identities.length; offset += 100) {
-    let requestKeys: Record<string, unknown>[] = identities
-      .slice(offset, offset + 100)
-      .map((identity) => statementClaimKey(provider, identity));
-    let attempts = 0;
-    do {
-      if (attempts > 0) await new Promise((resolve) => setTimeout(resolve, 25 * (2 ** attempts)));
-      const result = await database.send(new BatchGetCommand({
-        RequestItems: { [tableName]: { Keys: requestKeys, ProjectionExpression: 'PK' } },
-      }));
-      for (const item of result.Responses?.[tableName] ?? []) claimed.add(String(item.PK));
-      requestKeys = result.UnprocessedKeys?.[tableName]?.Keys ?? [];
-      attempts += 1;
-      if (attempts >= 6 && requestKeys.length > 0) {
-        throw new Error('Unable to verify statement dedupe keys after multiple attempts.');
-      }
-    } while (requestKeys.length > 0);
-  }
-  return claimed;
+  return claimedBankRows(statementImportKind(provider), identities);
 };
 
 export const classifyMsiEvidenceRow = (
@@ -262,225 +241,36 @@ const parseStatementDecisions = (body: string | undefined): Readonly<Record<stri
   }
 };
 
-export const claimAndCreateStatementEvent = async (input: {
-  readonly provider: StatementProvider;
-  readonly owner: string;
-  readonly accountLastFour: string;
-  readonly row: StatementPreviewRow;
-  readonly source: JsonObject;
-  readonly appliedAt: string;
-  readonly msi?: MsiPlan;
+const claimAndCreateStatementEvent = async (input: {
+  readonly provider: StatementProvider; readonly record: BankImportRecord;
+  readonly row: StatementPreviewRow; readonly appliedAt: string; readonly msi?: MsiPlan;
 }): Promise<JsonObject | undefined> => {
-  const institution = input.provider === 'amex' ? 'american_express_mx' : 'santander_mx';
-  const captureSource = input.provider === 'amex' ? 'amex_statement' : 'santander_statement';
-  const parserVersion = input.provider === 'amex'
-    ? 'amex-mx-statement-textract-v1'
-    : 'santander-mx-statement-textract-v1';
-  const id = randomUUID();
-  const observationId = randomUUID();
-  const evidenceOccurredAt = `${input.row.occurredOn}T12:00:00.000Z`;
-  const occurredAt = msiPlanPurchaseOccurredAt(input.row.occurredOn, input.msi?.installments[0]?.month);
-  const amountMinor = input.msi?.principalMinor ?? input.row.amountMinor;
-  const purchase: JsonObject = {
-    id,
-    institution,
-    eventType: 'card_purchase',
-    status: input.msi?.needsScheduleCompletion ? 'needs_review' : 'accepted',
-    account: {
-      institution,
-      accountId: `${institution}:${input.accountLastFour}`,
-      displayName: input.provider === 'amex'
-        ? `American Express · ${input.accountLastFour}`
-        : `Santander · ${input.accountLastFour}`,
-      lastFour: input.accountLastFour,
-    },
-    amount: { amountMinor, currency: 'MXN' },
-    merchantRaw: input.row.merchantRaw,
-    occurredAt,
-    receivedAt: input.appliedAt,
-    ingestedAt: input.appliedAt,
-    source: input.source,
-    parserVersion,
-    parseWarnings: input.msi?.needsScheduleCompletion
-      ? ['MSI sin plan completo: confirma meses y cuota.']
-      : [],
-    captureSource,
-    captureSources: [captureSource],
-    observationCount: 1,
-    primaryObservationId: observationId,
-    hasRawEmail: false,
-    ...(input.msi ? { msi: input.msi } : {}),
-  };
-  const claim = statementClaimKey(input.provider, input.row.identity);
-  try {
-    await database.send(new TransactWriteCommand({ TransactItems: [
-      { Put: {
-        TableName: tableName,
-        Item: {
-          ...claim,
-          entityType: `${captureSource}_dedupe`,
-          identity: input.row.identity,
-          owner: input.owner,
-          eventId: id,
-          createdAt: input.appliedAt,
-        },
-        ConditionExpression: 'attribute_not_exists(PK)',
-      } },
-      { Put: {
-        TableName: tableName,
-        Item: {
-          PK: `EVENT#${id}`,
-          SK: 'EVENT',
-          GSI1PK: 'EVENTS',
-          GSI1SK: input.appliedAt,
-          GSI2PK: reconciliationPartition(purchase as Parameters<typeof reconciliationPartition>[0]),
-          GSI2SK: `${occurredAt}#${id}`,
-          ...eventMonthIndexKeys({ eventId: id, occurredAt, receivedAt: input.appliedAt }),
-          reconciliationAt: occurredAt,
-          entityType: 'observed_purchase',
-          payload: purchase,
-        },
-        ConditionExpression: 'attribute_not_exists(PK)',
-      } },
-      { Put: {
-        TableName: tableName,
-        Item: {
-          PK: `EVENT#${id}`,
-          SK: `OBSERVATION#${evidenceOccurredAt}#${observationId}`,
-          entityType: 'event_observation',
-          payload: {
-            id: observationId,
-            eventId: id,
-            captureSource,
-            observedAt: input.appliedAt,
-            reconciliationAt: evidenceOccurredAt,
-            institution,
-            eventType: 'card_purchase',
-            account: purchase.account,
-            amount: purchase.amount,
-            merchantRaw: input.row.merchantRaw,
-            occurredAt: evidenceOccurredAt,
-            source: input.source,
-            parserVersion,
-            parseWarnings: purchase.parseWarnings,
-          },
-        },
-        ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
-      } },
-    ] }));
-    return purchase;
-  } catch (error) {
-    if (errorName(error) === 'TransactionCanceledException') return undefined;
-    throw error;
-  }
+  const { provider, record, row, appliedAt, msi } = input;
+  const institution = provider === 'amex' ? 'american_express_mx' : 'santander_mx';
+  return createBankMovement({ record, row, event: {
+    id: randomUUID(), institution, eventType: 'card_purchase',
+    status: msi?.needsScheduleCompletion ? 'needs_review' : 'accepted',
+    account: { institution, accountId: `${institution}:${record.accountLastFour}`, lastFour: record.accountLastFour,
+      displayName: provider === 'amex' ? `American Express · ${record.accountLastFour}` : `Santander · ${record.accountLastFour}` },
+    amount: { amountMinor: msi?.principalMinor ?? row.amountMinor, currency: 'MXN' }, merchantRaw: row.merchantRaw,
+    occurredAt: msiPlanPurchaseOccurredAt(row.occurredOn, msi?.installments[0]?.month),
+    receivedAt: appliedAt, ingestedAt: appliedAt, source: record.source,
+    parserVersion: provider === 'amex' ? 'amex-mx-statement-textract-v1' : 'santander-mx-statement-textract-v1',
+    parseWarnings: msi?.needsScheduleCompletion ? ['MSI sin plan completo: confirma meses y cuota.'] : [], ...(msi ? { msi } : {}),
+  } });
 };
 
-export const claimAndLinkStatementEvidence = async (input: {
-  readonly provider: StatementProvider;
-  readonly owner: string;
-  readonly eventId: string;
-  readonly row: StatementPreviewRow;
-  readonly source: JsonObject;
-  readonly appliedAt: string;
-}): Promise<boolean> => {
-  const institution = input.provider === 'amex' ? 'american_express_mx' : 'santander_mx';
-  const captureSource = input.provider === 'amex' ? 'amex_statement' : 'santander_statement';
-  const parserVersion = input.provider === 'amex'
-    ? 'amex-mx-statement-textract-v1'
-    : 'santander-mx-statement-textract-v1';
-  const revisionId = randomUUID();
-  const observationId = randomUUID();
-  const reconciliationAt = `${input.row.occurredOn}T12:00:00.000Z`;
-  const claim = statementClaimKey(input.provider, input.row.identity);
-  try {
-    await database.send(new TransactWriteCommand({ TransactItems: [
-      { Put: {
-        TableName: tableName,
-        Item: {
-          ...claim,
-          entityType: `${captureSource}_dedupe`,
-          identity: input.row.identity,
-          owner: input.owner,
-          createdAt: input.appliedAt,
-          eventId: input.eventId,
-        },
-        ConditionExpression: 'attribute_not_exists(PK)',
-      } },
-      { Update: {
-        TableName: tableName,
-        Key: { PK: `EVENT#${input.eventId}`, SK: 'EVENT' },
-        UpdateExpression: 'SET #payload.#count = if_not_exists(#payload.#count, :one) + :one, #payload.#sources = list_append(if_not_exists(#payload.#sources, :empty), :source), #payload.#reconciledAt = :reconciledAt',
-        ConditionExpression: 'attribute_exists(PK)',
-        ExpressionAttributeNames: {
-          '#payload': 'payload',
-          '#count': 'observationCount',
-          '#sources': 'captureSources',
-          '#reconciledAt': 'reconciledAt',
-        },
-        ExpressionAttributeValues: {
-          ':one': 1,
-          ':empty': [],
-          ':source': [captureSource],
-          ':reconciledAt': input.appliedAt,
-        },
-      } },
-      { Put: {
-        TableName: tableName,
-        Item: {
-          PK: `EVENT#${input.eventId}`,
-          SK: `OBSERVATION#${reconciliationAt}#${observationId}`,
-          entityType: 'event_observation',
-          payload: {
-            id: observationId,
-            eventId: input.eventId,
-            captureSource,
-            observedAt: input.appliedAt,
-            reconciliationAt,
-            institution,
-            eventType: 'card_purchase',
-            amount: { amountMinor: input.row.amountMinor, currency: 'MXN' },
-            merchantRaw: input.row.merchantRaw,
-            occurredAt: reconciliationAt,
-            source: input.source,
-            parserVersion,
-            parseWarnings: [],
-          },
-        },
-        ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
-      } },
-      { Put: {
-        TableName: tableName,
-        Item: {
-          PK: `EVENT#${input.eventId}`,
-          SK: `REVISION#${input.appliedAt}#${revisionId}`,
-          entityType: 'event_revision',
-          payload: {
-            id: revisionId,
-            observedPurchaseId: input.eventId,
-            createdAt: input.appliedAt,
-            changedBy: input.owner,
-            reason: input.provider === 'amex'
-              ? 'Conciliado con estado de cuenta Amex.'
-              : 'Conciliado con estado de cuenta Santander.',
-            changes: { reconciliation: { previous: null, next: { source: input.source, reconciledAt: input.appliedAt } } },
-          },
-        },
-      } },
-    ] }));
-    return true;
-  } catch (error) {
-    if (errorName(error) === 'TransactionCanceledException') return false;
-    throw error;
-  }
-};
-
-const applyStatementImportInternal = async (input: {
-  readonly provider: StatementProvider;
-  readonly importId: string;
-  readonly owner: string;
+export type StatementApplyInput = {
+  readonly provider: StatementProvider; readonly importId: string; readonly owner: string;
   readonly decisionBody: string | undefined;
-  readonly rebuildRows: () => Promise<readonly StatementPreviewRow[]>;
-}): Promise<JsonObject> => {
+  readonly prepareRows: (record: BankImportRecord) => Promise<{
+    readonly rebuildRows: () => Promise<readonly StatementPreviewRow[]>;
+    readonly afterRows?: () => Promise<{ readonly deferredMsi: number }>;
+  }>;
+};
+
+const applyStatementImportInternal = async (input: StatementApplyInput,
+  prepared: BankImportRecord, work: Awaited<ReturnType<StatementApplyInput['prepareRows']>>): Promise<JsonObject> => {
   const invalid = input.provider === 'amex' ? InvalidAmexStatementError : InvalidSantanderStatementError;
   const kind=statementImportKind(input.provider);
   if (!/^[a-f0-9]{64}$/.test(input.importId)) throw new invalid('Identificador de importación inválido.');
@@ -512,13 +302,13 @@ const applyStatementImportInternal = async (input: {
     throw new invalid('La previsualización aún no está lista.');
   }
 
-  const accountLastFour = String(stored.accountLastFour ?? '');
+  assertPreparedImport(stored, prepared);
   const previewRows = stored.rows as readonly StatementPreviewRow[];
   const previewByIdentity = new Map(previewRows.map((row) => [row.identity, row]));
   const decisions = parseStatementDecisions(input.decisionBody);
-  const currentRows = await input.rebuildRows();
+  const currentRows = await work.rebuildRows();
   const appliedAt = new Date().toISOString();
-  let eventsSnapshot = await allStoredEvents();
+  let eventsSnapshot = await bankLedgerEvents();
   let createdCount = 0;
   let linked = 0;
   let skipped = 0;
@@ -527,6 +317,7 @@ const applyStatementImportInternal = async (input: {
   const created: JsonObject[] = [];
 
   for (const row of currentRows) {
+    bankRowPosition(stored, row);
     const preview = previewByIdentity.get(row.identity);
     if (row.kind === 'msi') {
       const evidence: EvidenceLine = {
@@ -554,7 +345,7 @@ const applyStatementImportInternal = async (input: {
             skipped += 1;
             continue;
           }
-          const updated = await persistEventMsi(fallback.eventId, input.owner, fallback.previous, fallback.next, msiNote);
+          const updated = await persistEventMsi(fallback.eventId, input.owner, fallback.previous, fallback.next, msiNote, bankPlanEvidence(stored, row, fallback.next));
           if (updated) {
             msiConfirmed += 1;
             linked += 1;
@@ -564,7 +355,7 @@ const applyStatementImportInternal = async (input: {
           } else skipped += 1;
           continue;
         }
-        const updated = await persistEventMsi(match.eventId, input.owner, match.previous, match.next, msiNote);
+        const updated = await persistEventMsi(match.eventId, input.owner, match.previous, match.next, msiNote, bankPlanEvidence(stored, row, match.next));
         if (updated) {
           msiConfirmed += 1;
           linked += 1;
@@ -578,7 +369,7 @@ const applyStatementImportInternal = async (input: {
         // Prefer confirming an existing plan (merchant+principal) over opening a duplicate.
         const existing = matchEvidenceLine(evidence, eventsSnapshot);
         if (existing.kind === 'confirm') {
-          const updated = await persistEventMsi(existing.eventId, input.owner, existing.previous, existing.next, msiNote);
+          const updated = await persistEventMsi(existing.eventId, input.owner, existing.previous, existing.next, msiNote, bankPlanEvidence(stored, row, existing.next));
           if (updated) {
             msiConfirmed += 1;
             linked += 1;
@@ -599,10 +390,8 @@ const applyStatementImportInternal = async (input: {
         });
         const purchase = await claimAndCreateStatementEvent({
           provider: input.provider,
-          owner: input.owner,
-          accountLastFour,
+          record: stored,
           row,
-          source,
           appliedAt,
           msi: plan,
         });
@@ -621,10 +410,8 @@ const applyStatementImportInternal = async (input: {
     if (action.kind === 'create') {
       const purchase = await claimAndCreateStatementEvent({
         provider: input.provider,
-        owner: input.owner,
-        accountLastFour,
+        record: stored,
         row,
-        source,
         appliedAt,
       });
       if (purchase) {
@@ -633,13 +420,9 @@ const applyStatementImportInternal = async (input: {
         eventsSnapshot = [...eventsSnapshot, purchase];
       } else skipped += 1;
     } else if (action.kind === 'link') {
-      if (await claimAndLinkStatementEvidence({
-        provider: input.provider,
-        owner: input.owner,
-        eventId: action.eventId,
-        row,
-        source,
-        appliedAt,
+      if (await linkBankEvidence({ record: stored, row, eventId: action.eventId, appliedAt,
+        parserVersion: input.provider === 'amex' ? 'amex-mx-statement-textract-v1' : 'santander-mx-statement-textract-v1',
+        reason: input.provider === 'amex' ? 'Conciliado con estado de cuenta Amex.' : 'Conciliado con estado de cuenta Santander.',
       })) linked += 1;
       else skipped += 1;
     } else {
@@ -647,11 +430,20 @@ const applyStatementImportInternal = async (input: {
     }
   }
 
-  const summary = { created: createdCount, linked, skipped, msiConfirmed, createdUnplanned };
+  const extra = await work.afterRows?.();
+  const summary = { created: createdCount, linked, skipped, msiConfirmed, createdUnplanned, ...extra };
   await completeBankImport(kind,input.importId,input.owner,appliedAt,summary);
   return { importId: input.importId, created, summary };
 };
 
-// Financial rows, claims and the import completion share the cutover barrier.
-export const applyStatementImport = (...args: Parameters<typeof applyStatementImportInternal>): ReturnType<typeof applyStatementImportInternal> =>
-  withApplicationTransaction(() => applyStatementImportInternal(...args));
+// Load immutable evidence once; only current financial decisions repeat under OCC retry.
+export const applyStatementImport = async (input: StatementApplyInput): Promise<JsonObject> => {
+  const invalid = input.provider === 'amex' ? InvalidAmexStatementError : InvalidSantanderStatementError;
+  if (!/^[a-f0-9]{64}$/.test(input.importId)) throw new invalid('Identificador de importación inválido.');
+  const prepared = await readBankImport(statementImportKind(input.provider), input.importId, input.owner);
+  if (!prepared) throw new invalid('La previsualización ya no está disponible.');
+  if (prepared.status === 'applied') return { importId: input.importId, created: [], summary: prepared.result, alreadyApplied: true };
+  if (prepared.status !== 'previewed') throw new invalid('La previsualización aún no está lista.');
+  const work = await input.prepareRows(prepared);
+  return withBankApplyTransaction(() => applyStatementImportInternal(input, prepared, work));
+};

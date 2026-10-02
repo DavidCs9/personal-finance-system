@@ -3,7 +3,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import type { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import { InvalidApplePayCaptureError, parseApplePayCapture } from './apple-pay-input.js';
-import { saveObservedEvent } from '@finance/ledger';
+import { captureObservedEvent } from '@finance/ledger/native-ledger';
 import { notifyObservedPurchasePush } from '@finance/notify';
 
 const database = createApplicationStore();
@@ -53,10 +53,8 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       parserVersion: 'apple-pay-shortcut-v2',
       parseWarnings: [] as string[],
     };
-    const saved = await saveObservedEvent({
-      database,
-      tableName,
-      dedupeKey: `apple_pay_shortcut:${input.requestId}`,
+    const saved = await captureObservedEvent({
+      token: input.requestId,
       captureSource: 'apple_pay_shortcut',
       reconciliationAt: input.occurredAt,
       event: purchase,

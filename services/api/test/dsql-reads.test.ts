@@ -1,171 +1,259 @@
-import { PGlite } from '@electric-sql/pglite';
+import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
-import { reconcileKey, type SqlClient, type TransactionPool } from '../../ledger/src/dsql/projection.js';
-import { TABLE_NAMES, type SourceItem } from '../../ledger/src/dsql/model.js';
+import { S3Client } from '@aws-sdk/client-s3';
+import { nativeFixture } from './fixtures/native-ledger.js';
+import { appendLedgerObservation, insertLedgerRevision } from '../../ledger/src/dsql/ledger-writes.js';
+import { saveNativeCapture } from '../../ledger/src/dsql/ledger-capture.js';
+import { readLedgerMovements } from '../../ledger/src/dsql/ledger-reads.js';
+import { currentStoreTransaction } from '../../ledger/src/dsql/store.js';
+import { reconcileKey } from '../../ledger/src/dsql/projection.js';
+import type { SqlClient, TransactionPool } from '../../ledger/src/dsql/projection.js';
+import type { ObservedEventInput } from '../../ledger/src/observed-events.js';
 
-process.env.METADATA_TABLE_NAME ??= 'test-metadata-table';
-process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-raw-bucket';
-const { readSqlFeed, readSqlDetail } = await import('../src/events/sql-reads.js');
-const { feedFromPayloads } = await import('../src/events/month-feed.js');
-const { readSourceDetail, readCurrentMovementPayloads } = await import('../src/events/source-reads.js');
-const { selectLedgerRead, samePublicResult, ledgerReadMode } = await import('../src/events/read-selection.js');
-const { summarizeMonthFeed } = await import('../src/months/summary.js');
-
-type Payload = Record<string, unknown>;
-const movement = (id: string, patch: Payload = {}): Payload => ({
-  id, institution: 'santander_mx', eventType: 'card_purchase', status: 'accepted',
-  amount: { amountMinor: 40000, currency: 'MXN' }, merchantRaw: 'Actual source pattern',
-  receivedAt: '2026-10-01T02:00:00.123Z', source: { bucket: 'original', key: `email/${id}`, contentType: 'message/rfc822' }, ...patch,
+const harness = vi.hoisted(() => ({ pool: undefined as unknown as SqlClient & TransactionPool }));
+vi.mock('../../ledger/src/dsql/connection.js', () => ({ createPool: vi.fn(() => harness.pool) }));
+let fixture: Awaited<ReturnType<typeof nativeFixture>>;
+let readers: typeof import('../src/events/sql-reads.js');
+let queries: typeof import('../src/events/queries.js');
+let verification: typeof import('../src/events/native-verification.js');
+let summarize: typeof import('../src/months/summary.js')['summarizeMonthFeed'];
+const uid = (n: number) => `00000000-0000-0000-0000-${String(n).padStart(12, '0')}`;
+const movement = (n: number, patch: Partial<ObservedEventInput> = {}): Partial<ObservedEventInput> => ({
+  id: uid(n), occurredAt: undefined, receivedAt: '2026-10-01T02:00:00.123Z',
+  amount: { amountMinor: 40000, currency: 'MXN' }, ...patch,
 });
-const msi = (month: string) => ({ months: 2, principalMinor: 60000, cuotaMinor: 30000, status: 'active',
-  installments: [{ index: 1, month, amountMinor: 30000, status: 'spent' },
-    { index: 2, month: '2026-10', amountMinor: 30000, status: 'committed' }] });
-let sql: PGlite;
-let pool: TransactionPool;
-const write = async (payload: Payload, sk = 'EVENT', id = String(payload.id)) => {
-  const item: SourceItem = { PK: `EVENT#${id}`, SK: sk, payload };
-  await reconcileKey(pool, async () => item, item);
-};
+const msi = (patch = {}) => ({ months: 2, principalMinor: 60000, cuotaMinor: 30000, origin: 'manual', status: 'active',
+  installments: [{ index: 1, month: '2026-09', amountMinor: 30000, status: 'spent' },
+    { index: 2, month: '2026-10', amountMinor: 30000, status: 'committed' }], ...patch });
+const plan = { configured: true, incomeMinor: 100000, upcomingPayments: [] };
+const now = new Date('2026-09-30T20:00:00Z');
+const checkState = () => readLedgerMovements(fixture.pool).then(movements =>
+  verification.verifyNativeLedgerState(fixture.pool, movements, id => readers.readSqlDetail(id, fixture.pool)));
 beforeAll(async () => {
-  sql = new PGlite();
-  for (const statement of SCHEMA_STATEMENTS) await sql.query(statement);
-  pool = { transaction: callback => sql.transaction(client => callback(client as unknown as SqlClient)) };
+  vi.stubEnv('METADATA_TABLE_NAME', 'test-metadata'); vi.stubEnv('RAW_EMAIL_BUCKET_NAME', 'test-evidence');
+  fixture = await nativeFixture(); harness.pool = fixture.pool;
+  readers = await import('../src/events/sql-reads.js'); queries = await import('../src/events/queries.js');
+  verification = await import('../src/events/native-verification.js');
+  summarize = (await import('../src/months/summary.js')).summarizeMonthFeed;
 }, 30_000);
-beforeEach(async () => { await sql.exec(`TRUNCATE olbia.projection_state,${TABLE_NAMES.map(table => `olbia.${table}`).join(',')}`); });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
-afterAll(async () => { await sql.close(); });
-
-describe('DSQL public ledger reads', () => {
-  it('preserves month boundaries, states, Mi parte, MSI spent/committed semantics and the existing range order', async () => {
-    const items = [
-      movement('zero', { personalAmountMinor: 0, tags: ['shared'] }),
-      movement('pending', { status: 'pending_foreign', amount: { amountMinor: 1200, currency: 'USD' } }),
-      movement('rejected', { status: 'rejected' }),
-      movement('deferred', { status: 'deferred_msi' }),
-      movement('prior', { receivedAt: '2026-08-01T12:00:00Z', msi: msi('2026-09') }),
-      movement('future-index', { receivedAt: '2026-11-01T12:00:00Z', msi: msi('2026-09') }),
-      movement('outside-window', { receivedAt: '2024-08-01T12:00:00Z', msi: msi('2026-09') }),
-      movement('october', { receivedAt: '2026-10-01T06:00:00Z' }),
-    ];
-    for (const payload of items) await write(payload);
-    const september = await readSqlFeed(['2026-09'], sql);
-    expect(september.events.map(event => event.id)).toEqual(['zero', 'rejected', 'pending', 'deferred']);
-    expect(september.msiRelated.map(event => event.id)).toEqual(['prior', 'future-index']);
-    expect(september).toEqual(feedFromPayloads(['2026-09'], items));
-    expect(await readSqlFeed(['2026-09', '2026-10', '2026-09'], sql)).toEqual(feedFromPayloads(['2026-09', '2026-10'], items));
-    expect(await readSqlFeed(['2030-01'], sql)).toEqual({ events: [], msiRelated: [] });
-    expect(await readSqlFeed([], sql)).toEqual({ events: [], msiRelated: [] });
-    const summary = summarizeMonthFeed('2026-09', { configured: true, incomeMinor: 100000, upcomingPayments: [] }, september, new Date('2026-09-30T20:00:00Z'));
-    expect(summary.discretionarySpentMinor).toBe(0);
-    expect(summary.msiSpentMinor).toBe(60000);
-    expect(summary.spentMinor).toBe(60000);
-  });
-
-  it('loads detail, revisions and observations in source sort-key order and keeps evidence reachable', async () => {
-    await write(movement('detail'));
-    await write({ id: 'old', createdAt: '2026-09-01T12:00:00.001Z', changes: { tags: [] } }, 'REVISION#01', 'detail');
-    await write({ id: 'new', createdAt: '2026-09-02T12:00:00.002Z', changes: { tags: ['work'] } }, 'REVISION#02', 'detail');
-    await write({ id: 'observed', captureSource: 'bank_email', source: { bucket: 'original', key: 'bank-mail' } }, 'OBSERVATION#01', 'detail');
-    const detail = await readSqlDetail('detail', sql);
-    expect(detail).toMatchObject({ id: 'detail', hasRawEmail: true, observationCount: 1,
-      revisions: [{ id: 'new' }, { id: 'old' }], observations: [{ id: 'observed' }] });
-    expect(await readSqlDetail("missing' OR '1'='1", sql)).toBeUndefined();
-  });
-
-  it('returns confirmed creations, edits, month moves and deletions while SQL is behind, then selects SQL after convergence', async () => {
-    const stale = movement('edited');
-    await write(stale);
-    const current = [movement('edited', { receivedAt: '2026-10-01T06:00:00Z', personalAmountMinor: 1000, tags: ['updated'] }), movement('new')];
-    const report = vi.fn();
-    const read = () => selectLedgerRead({ mode: 'guarded-sql', sql: () => readSqlFeed(['2026-09'], sql),
-      source: async () => feedFromPayloads(['2026-09'], current), report });
-    expect((await read()).events.map(event => event.id)).toEqual(['new']);
-    expect(report).toHaveBeenLastCalledWith('mismatch', 'dynamodb');
-    for (const payload of current) await write(payload);
-    await read();
-    expect(report).toHaveBeenLastCalledWith('equal', 'sql');
-    const deleted = await selectLedgerRead({ mode: 'guarded-sql', sql: () => readSqlDetail('edited', sql), source: async () => undefined, report });
-    expect(deleted).toBeUndefined();
-    expect(report).toHaveBeenLastCalledWith('mismatch', 'dynamodb');
-    const revised = { ...await readSqlDetail('new', sql), revisions: [{ id: 'just-confirmed' }] };
-    expect(await selectLedgerRead({ mode: 'guarded-sql', sql: () => readSqlDetail('new', sql), source: async () => revised, report })).toEqual(revised);
-    expect(report).toHaveBeenLastCalledWith('mismatch', 'dynamodb');
-  });
-
-  it('fails back on SQL errors, propagates source failures, and restores DynamoDB without connecting SQL', async () => {
-    const source = vi.fn(async () => ({ amountMinor: 1 }));
-    const unavailable = vi.fn(() => { throw new Error('private token/driver row'); });
-    const report = vi.fn();
-    expect(await selectLedgerRead({ mode: 'guarded-sql', sql: unavailable, source, report })).toEqual({ amountMinor: 1 });
-    expect(report).toHaveBeenCalledWith('sql-error', 'dynamodb');
-    expect(report.mock.calls.flat().join()).not.toContain('private');
-    await expect(selectLedgerRead({ mode: 'guarded-sql', sql: source, source: async () => { throw new Error('source unavailable'); } })).rejects.toThrow('source unavailable');
-    unavailable.mockClear();
-    await selectLedgerRead({ mode: 'dynamodb', sql: unavailable, source });
-    expect(unavailable).not.toHaveBeenCalled();
-    vi.stubEnv('DSQL_LEDGER_READ_MODE', 'typo');
-    expect(ledgerReadMode()).toBe('dynamodb');
-    await selectLedgerRead({ mode: 'shadow', sql: source, source, report });
-    expect(report).toHaveBeenLastCalledWith('equal', 'dynamodb');
-    expect(samePublicResult({ a: null, b: 0 }, { b: 0, a: null })).toBe(true);
-    expect(samePublicResult({ a: null }, {})).toBe(false);
-    expect(samePublicResult([1, 2], [2, 1])).toBe(false);
-  });
-
-  it('paginates strong base-table scans through empty pages and source detail through all provenance pages', async () => {
-    const send = vi.spyOn(DynamoDBDocumentClient.prototype, 'send');
-    send.mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { PK: 'unrelated', SK: 'page' } } as never)
-      .mockResolvedValueOnce({ Items: [{ payload: movement('latest') }] } as never);
-    expect((await readCurrentMovementPayloads()).map(event => event.id)).toEqual(['latest']);
-    expect(send.mock.calls.map(([command]) => command.input)).toMatchObject([
-      { ConsistentRead: true, FilterExpression: 'begins_with(PK,:prefix) AND SK=:event' },
-      { ConsistentRead: true, ExclusiveStartKey: { PK: 'unrelated', SK: 'page' } },
-    ]);
-    send.mockReset();
-    send.mockResolvedValueOnce({ Items: [{ SK: 'REVISION#02', payload: { id: 'new' } }], LastEvaluatedKey: { PK: 'EVENT#latest', SK: 'REVISION#02' } } as never)
-      .mockResolvedValueOnce({ Items: [{ SK: 'OBSERVATION#01', payload: { id: 'obs' } }, { SK: 'EVENT', payload: movement('latest') }] } as never);
-    expect(await readSourceDetail('latest')).toMatchObject({ id: 'latest', revisions: [{ id: 'new' }], observations: [{ id: 'obs' }] });
-    expect(send.mock.calls.map(([command]) => command.input)).toMatchObject([
-      { ConsistentRead: true, ScanIndexForward: false }, { ConsistentRead: true, ExclusiveStartKey: { PK: 'EVENT#latest', SK: 'REVISION#02' } },
-    ]);
-  });
+beforeEach(async () => {
+  await fixture.reset();
+  await fixture.sql.exec('TRUNCATE olbia.movements');
+  vi.spyOn(DynamoDBDocumentClient.prototype, 'send').mockRejectedValue(new Error('Retired financial document path') as never);
 });
+afterEach(() => vi.restoreAllMocks());
+afterAll(async () => { await fixture.sql.close(); vi.unstubAllEnvs(); });
 
+describe('native SQL financial reads', () => {
+  it('uses actual cuota relationships beyond 24 months, while preserving financial boundaries, statuses, personal zero and range order', async () => {
+    for (const item of [movement(8, { personalAmountMinor: 0, tags: ['shared'] }),
+      movement(7, { status: 'rejected' }), movement(6, { status: 'pending_foreign', amount: { amountMinor: 1200, currency: 'USD' } }),
+      movement(5, { status: 'deferred_msi' }), movement(4, { receivedAt: '2026-08-01T12:00:00Z', msi: msi() }),
+      movement(3, { receivedAt: '2020-08-01T12:00:00Z', msi: msi() }),
+      movement(2, { receivedAt: '2026-11-01T12:00:00Z', msi: msi() }),
+      movement(1, { receivedAt: '2026-10-01T06:00:00Z' })]) await fixture.create(item);
+    const feed = await queries.listEventsForMonth('2026-09');
+    expect(feed.events.map(event => event.id)).toEqual([8, 7, 6, 5].map(uid));
+    expect(feed.msiRelated.map(event => event.id)).toEqual([4, 3, 2].map(uid));
+    const range = await queries.listEventsForMonths(['2026-09', '2026-10', '2026-09']);
+    expect(range.events.map(event => event.id)).toEqual([8, 7, 6, 5, 1].map(uid));
+    expect(range.msiRelated.map(event => event.id)).toEqual([4, 3, 2].map(uid));
+    expect(await queries.listEventsForMonths([])).toEqual({ events: [], msiRelated: [] });
+    expect(await queries.listEventsForMonth('2030-01')).toEqual({ events: [], msiRelated: [] });
+    const summary = summarize('2026-09', plan, feed, now);
+    expect(summary).toMatchObject({ discretionarySpentMinor: 0, msiSpentMinor: 90000, spentMinor: 90000, uncertainMinor: 0 });
+    expect(await verification.verifyNativeMonthSummary(fixture.pool, '2026-09', feed, summary)).toEqual({ mismatches: 0 });
+    expect(await checkState()).toMatchObject({ movements: 8, observations: 8, plans: 3, mismatches: 0, unsupportedActiveCurrencies: 0 });
+    expect(DynamoDBDocumentClient.prototype.send).not.toHaveBeenCalled();
+  });
 
-it('stages old financial readers unchanged before activation and refuses every old path after marker 14', async () => {
-  const {withStoreClient} = await import('../../ledger/src/dsql/store.js');
-  const queries = await import('../src/events/queries.js');
-  const {readSourceFeed} = await import('../src/events/source-reads.js');
-  await write(movement('guarded'));
-  const before = (await sql.query('SELECT * FROM olbia.projection_state ORDER BY source_pk,source_sk')).rows;
-  expect(await readSqlFeed(['2026-09'], sql)).toMatchObject({events:[{id:'guarded'}]});
-  expect(await readSqlDetail('guarded', sql)).toMatchObject({id:'guarded'});
-  vi.stubEnv('OLBIA_SQL_STORE_ENABLED','true');
-  vi.stubEnv('DSQL_LEDGER_READ_MODE','guarded-sql');
-  const sdk = vi.spyOn(DynamoDBDocumentClient.prototype, 'send').mockImplementation(async command => {
-    const input = (command as {input:{ProjectionExpression?:string}}).input;
-    return {Items:[input.ProjectionExpression === 'payload' ? {payload:movement('guarded')} :
-      {PK:'EVENT#guarded',SK:'EVENT',payload:movement('guarded')}]} as never;
+  it('preserves audit order separately from capture order and keeps original evidence reachable after current edits', async () => {
+    const id = await fixture.create(movement(1, { parseWarnings: ['Original warning'], source: { bucket: 'original', key: 'email/one',
+      sha256: 'a'.repeat(64), contentType: 'message/rfc822' } }));
+    const observed = randomUUID();
+    await fixture.pool.transaction(async client => {
+      await appendLedgerObservation(client, { id: observed, movementId: id, captureSource: 'apple_pay_shortcut',
+        observedAt: '2026-10-02T12:00:00.000Z', reconciliationAt: '2026-08-01T12:00:00.000Z', institution: 'santander_mx',
+        eventType: 'card_purchase', amount: { amountMinor: 1200, currency: 'USD' }, merchantRaw: 'Original foreign assertion',
+        source: { kind: 'shortcut', note: 'original' }, parserVersion: 'shortcut-v1', parseWarnings: ['Capture warning'] });
+      for (const [revision, createdAt] of [['old', '2026-09-01T12:00:00.001Z'], ['new', '2026-09-02T12:00:00.002Z']])
+        await insertLedgerRevision(client, { id: revision, movementId: id, createdAt, changedBy: 'owner', changes: { tags: { next: [] } } });
+      await client.query('UPDATE olbia.ledger_movements SET personal_amount_minor=0 WHERE id=$1', [id]);
+    });
+    const detail = await queries.getEventDetail(id);
+    expect(detail).toMatchObject({ id, personalAmountMinor: 0, hasRawEmail: true, observationCount: 2,
+      captureSources: ['email', 'apple_pay_shortcut'], revisions: [{ id: 'new' }, { id: 'old' }] });
+    expect((detail!.observations as Record<string, unknown>[]).map(row => row.id)).toEqual([
+      (await readLedgerMovements(fixture.pool))[0].primaryObservationId, observed,
+    ]);
+    const send = vi.spyOn(S3Client.prototype, 'send').mockResolvedValue({ Body: { transformToString: async () => 'original email' } } as never);
+    expect(await queries.readRawEmail(id)).toBe('original email');
+    expect(send.mock.calls[0][0].input).toMatchObject({ Bucket: 'original', Key: 'email/one' });
+    expect(await checkState()).toMatchObject({ details: 1, observations: 2, revisions: 2, mismatches: 0 });
+    expect(await queries.getEventDetail("missing' OR '1'='1")).toBeUndefined();
+    expect(await queries.getEventDetail(uid(999))).toBeUndefined();
   });
-  await withStoreClient(sql, async () => {
-    expect(await queries.allStoredEvents()).toHaveLength(1);
-    expect(await readCurrentMovementPayloads()).toHaveLength(1);
+
+  it('serves native-only creations, edits and month moves while ignoring stale recovery records and old mode flags', async () => {
+    const id = await fixture.create(movement(1));
+    const frozen = { PK: `EVENT#${id}`, SK: 'EVENT', reconciliationAt: '2026-10-01T02:00:00.123Z',
+      payload: { id, receivedAt: '2026-10-01T02:00:00.123Z',
+      amount: { amountMinor: 999999, currency: 'MXN' }, eventType: 'card_purchase', status: 'accepted', merchantRaw: 'Frozen', institution: 'santander_mx' } };
+    await reconcileKey(fixture.pool, async () => frozen, frozen);
+    await fixture.pool.query('UPDATE olbia.ledger_movements SET personal_amount_minor=0,received_at=$2 WHERE id=$1', [id, '2026-10-01T06:00:00Z']);
+    const next = await fixture.create(movement(2));
+    for (const mode of ['dynamodb', 'shadow', 'guarded-sql', 'invalid']) {
+      vi.stubEnv('DSQL_LEDGER_READ_MODE', mode);
+      expect((await queries.listEventsForMonth('2026-09')).events.map(row => row.id)).toEqual([next]);
+      expect((await queries.listEventsForMonth('2026-10')).events).toMatchObject([{ id, personalAmountMinor: 0, amount: { amountMinor: 40000 } }]);
+    }
+    expect(await checkState()).toMatchObject({ movements: 2, mismatches: 0 });
+    expect((await fixture.sql.query<{ payload: unknown }>('SELECT payload FROM olbia.movements')).rows[0].payload).toEqual(frozen.payload);
+    expect(DynamoDBDocumentClient.prototype.send).not.toHaveBeenCalled();
   });
-  await sql.query('INSERT INTO olbia.schema_migrations VALUES (14,CURRENT_TIMESTAMP)');
-  sdk.mockClear();
-  const statements:string[] = [];
-  const client:SqlClient = {query:(statement,values)=>{statements.push(statement);return sql.query(statement,values);}};
-  await withStoreClient(client, async () => {
-    for (const read of [()=>readSqlFeed(['2026-09'],client),()=>readSqlDetail('guarded',client),
-      ()=>queries.allStoredEvents(),()=>queries.listEventsForMonthsDynamo(['2026-09']),
-      ()=>readCurrentMovementPayloads(),()=>readSourceFeed(['2026-09']),()=>readSourceDetail('guarded'),
-      ()=>queries.getEventDetailDynamo('guarded'),()=>queries.listEventsForMonths(['2026-09']),()=>queries.getEventDetail('guarded')])
-      await expect(read()).rejects.toMatchObject({name:'MigrationPausedException'});
+
+  it('propagates native SQL failures without consulting recovery documents or financial SDK fallbacks', async () => {
+    const id = await fixture.create(movement(1));
+    vi.spyOn(fixture.pool, 'query').mockRejectedValue(new Error('SQL unavailable'));
+    await expect(queries.listEventsForMonth('2026-09')).rejects.toThrow('SQL unavailable');
+    await expect(queries.getEventDetail(id)).rejects.toThrow('SQL unavailable');
+    await expect(queries.allStoredEvents()).rejects.toThrow('SQL unavailable');
+    vi.mocked(fixture.pool.query).mockClear();
+    expect(await queries.getEventDetail('invalid-id')).toBeUndefined();
+    expect(await queries.listEventsForMonths([])).toEqual({ events: [], msiRelated: [] });
+    expect(fixture.pool.query).not.toHaveBeenCalled();
+    expect(DynamoDBDocumentClient.prototype.send).not.toHaveBeenCalled();
   });
-  expect(sdk).not.toHaveBeenCalled();
-  expect(statements.every(statement=>statement==='SELECT version FROM olbia.schema_migrations WHERE version=14')).toBe(true);
-  expect((await sql.query('SELECT * FROM olbia.projection_state ORDER BY source_pk,source_sk')).rows).toEqual(before);
-  await sql.query('DELETE FROM olbia.schema_migrations WHERE version=14');
+
+  it('independently detects missing history, wrong mapped money, changed quota totals and removed required relationships', async () => {
+    const schedule = msi();
+    const id = await fixture.create(movement(1, { msi: msi({ installments: [
+      { ...schedule.installments[0], occurredOn: '2026-09-01', confirmedAt: '2026-09-01T12:00:00.123Z' }, schedule.installments[1],
+    ] }) }));
+    expect(await checkState()).toMatchObject({ mismatches: 0 });
+    const movements = await readLedgerMovements(fixture.pool);
+    const actual = (await readers.readSqlDetail(id, fixture.pool))!;
+    expect((await verification.verifyNativeLedgerState(fixture.pool, movements, async () => ({ ...actual, observations: [] }))).mismatches).toBeGreaterThan(0);
+    expect((await verification.verifyNativeLedgerState(fixture.pool, movements, async () => ({ ...actual, amount: { amountMinor: 1, currency: 'MXN' } }))).mismatches).toBeGreaterThan(0);
+    const feed = await readers.readSqlFeed(['2026-09'], fixture.pool);
+    const summary = summarize('2026-09', plan, feed, now);
+    expect((await verification.verifyNativeMonthSummary(fixture.pool, '2026-09', feed, { ...summary, spentMinor: 0 })).mismatches).toBeGreaterThan(0);
+    expect((await verification.verifyNativeMonthSummary(fixture.pool, '2026-09', { events: [], msiRelated: [] }, summary)).mismatches).toBeGreaterThan(0);
+    await fixture.sql.query('ALTER TABLE olbia.installment_entries DROP CONSTRAINT installment_entries_evidence_fk');
+    try { expect((await checkState()).mismatches).toBeGreaterThan(0); }
+    finally { await fixture.sql.query(`ALTER TABLE olbia.installment_entries ADD CONSTRAINT installment_entries_evidence_fk
+      FOREIGN KEY (evidence_import_kind,evidence_content_sha256,evidence_row_position)
+      REFERENCES olbia.bank_import_rows(kind,content_sha256,position) MATCH FULL`); }
+  });
+
+  it('counts review uncertainty and spent cuotas while excluding rejected/deferred plans and incomplete commitments', async () => {
+    await fixture.create(movement(1, { status: 'needs_review', personalAmountMinor: 1000 }));
+    await fixture.create(movement(2, { status: 'needs_review', receivedAt: '2020-01-01T12:00:00Z', msi: msi({ needsScheduleCompletion: true }) }));
+    await fixture.create(movement(3, { status: 'rejected', msi: msi() }));
+    await fixture.create(movement(4, { status: 'deferred_msi', msi: msi() }));
+    const cancelled = msi();
+    await fixture.create(movement(5, { msi: msi({ status: 'cancelled', installments: [
+      cancelled.installments[0], { ...cancelled.installments[1], status: 'cancelled' },
+    ] }) }));
+    const september = await queries.listEventsForMonth('2026-09');
+    const summary = summarize('2026-09', plan, september, now);
+    expect(summary).toMatchObject({ spentMinor: 61000, uncertainMinor: 31000 });
+    expect(await verification.verifyNativeMonthSummary(fixture.pool, '2026-09', september, summary)).toEqual({ mismatches: 0 });
+    const october = await queries.listEventsForMonth('2026-10');
+    const later = summarize('2026-10', plan, october, now);
+    expect(later.msiCommittedMinor).toBe(0);
+    expect(await verification.verifyNativeMonthSummary(fixture.pool, '2026-10', october, later)).toEqual({ mismatches: 0 });
+    expect(await checkState()).toMatchObject({ mismatches: 0 });
+  });
+
+  it('keeps pending foreign evidence valid but fails verification for an unsupported active foreign amount', async () => {
+    const id = await fixture.create(movement(1, { status: 'pending_foreign', amount: { amountMinor: 1200, currency: 'USD' } }));
+    expect(await checkState()).toMatchObject({ mismatches: 0, unsupportedActiveCurrencies: 0 });
+    await fixture.pool.query("UPDATE olbia.ledger_movements SET status='accepted' WHERE id=$1", [id]);
+    expect(await checkState()).toMatchObject({ mismatches: 1, unsupportedActiveCurrencies: 1 });
+  });
+
+  it('opens the linked bank email after shortcut-first promotion and preserves generic manual source access', async () => {
+    const at = '2026-10-02T12:00:00.123Z';
+    const apple: ObservedEventInput = { id: uid(1), institution: 'santander_mx', eventType: 'card_purchase',
+      status: 'pending_foreign', amount: { amountMinor: 1200, currency: 'USD' }, merchantRaw: 'Adobe Systems',
+      occurredAt: at, receivedAt: at, ingestedAt: at, parserVersion: 'shortcut', parseWarnings: [],
+      source: { bucket: 'original', key: 'shortcut.json', sha256: 'a'.repeat(64), contentType: 'application/json' } };
+    await fixture.pool.transaction(client => saveNativeCapture(client, { token: 'shortcut', captureSource: 'apple_pay_shortcut', event: apple, reconciliationAt: at }));
+    const posted = { ...apple, id: uid(2), status: 'accepted', amount: { amountMinor: 24000, currency: 'MXN' },
+      parserVersion: 'bank-email', source: { ...apple.source, key: 'posted.eml', contentType: 'message/rfc822' } };
+    const result = await fixture.pool.transaction(client => saveNativeCapture(client, { token: 'email', captureSource: 'email', event: posted, reconciliationAt: at }));
+    expect(result).toMatchObject({ eventId: uid(1), reconciled: true });
+    const detail = await queries.getEventDetail(uid(1));
+    expect(detail).toMatchObject({ captureSource: 'apple_pay_shortcut', hasRawEmail: true, source: { key: 'shortcut.json' }, observationCount: 2 });
+    const send = vi.spyOn(S3Client.prototype, 'send').mockResolvedValue({ Body: { transformToString: async () => 'original source' } } as never);
+    expect(await queries.readRawEmail(uid(1))).toBe('original source');
+    expect(send.mock.calls[0][0].input).toMatchObject({ Bucket: 'original', Key: 'posted.eml' });
+    const manual = { ...posted, id: uid(3), merchantRaw: 'Manual capture', source: { ...apple.source, key: 'manual.json' } };
+    await fixture.pool.transaction(client => saveNativeCapture(client, { token: 'manual', captureSource: 'manual', event: manual, reconciliationAt: at }));
+    expect(await queries.readRawEmail(uid(3))).toBe('original source');
+    expect(send.mock.calls[1][0].input).toMatchObject({ Bucket: 'original', Key: 'manual.json' });
+    expect(await checkState()).toMatchObject({ movements: 2, observations: 3, mismatches: 0 });
+    await fixture.pool.query(`UPDATE olbia.ledger_observations SET evidence_bucket=NULL,evidence_key=NULL,
+      evidence_sha256=NULL,evidence_content_type=NULL WHERE movement_id=$1 AND capture_source='email'`, [uid(1)]);
+    await expect(queries.readRawEmail(uid(1))).rejects.toThrow('Missing raw source');
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('verifies the financial phase through one native read snapshot with no writes and clears its context after errors', async () => {
+    await fixture.create(movement(1, { personalAmountMinor: 0 }));
+    const before = await fixture.snapshot();
+    const { verifyNativeFinancialReads } = await import('../src/events/read-verification.js');
+    const transaction = fixture.pool.transaction.bind(fixture.pool);
+    const statements: string[] = [];
+    const snapshot = vi.spyOn(fixture.pool, 'transaction').mockImplementation(callback => transaction(client =>
+      callback({ query: (statement, values) => { statements.push(statement); return client.query(statement, values); } })));
+    const outside = vi.spyOn(fixture.pool, 'query').mockRejectedValue(new Error('Read escaped the transaction'));
+    const result = await verifyNativeFinancialReads('owner', now);
+    expect(result).toMatchObject({ movements: 1, details: 1, mismatches: 0, missingLookups: 2 });
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    const connection = await import('../../ledger/src/dsql/connection.js');
+    expect(connection.createPool).toHaveBeenCalledWith('olbia_operational_verifier', expect.any(Object));
+    expect(outside).not.toHaveBeenCalled();
+    expect(statements.every(statement => /^(SELECT|WITH|EXPLAIN)/.test(statement.trim()))).toBe(true);
+    expect(currentStoreTransaction()).toBeUndefined();
+    outside.mockRestore(); snapshot.mockClear();
+    await readers.withLedgerReadSnapshot(() => readers.withLedgerReadSnapshot(async () => {
+      expect(currentStoreTransaction()).toBeDefined();
+      const { operationalVerificationPool } = await import('../src/operational/verification.js');
+      expect(operationalVerificationPool()).toBe(currentStoreTransaction());
+      expect((await queries.allStoredEvents()).length).toBe(1);
+    }));
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    expect(currentStoreTransaction()).toBeUndefined();
+    await expect(readers.withLedgerReadSnapshot(async () => { throw new Error('Verification interrupted'); })).rejects.toThrow('Verification interrupted');
+    expect(currentStoreTransaction()).toBeUndefined();
+    expect(await fixture.snapshot()).toEqual(before);
+    snapshot.mockRejectedValue(new Error('Snapshot unavailable'));
+    await expect(verifyNativeFinancialReads('owner', now)).rejects.toThrow('Snapshot unavailable');
+    expect(DynamoDBDocumentClient.prototype.send).not.toHaveBeenCalled();
+  });
+
+  it('keeps the SQL month relation current through new captures, timezone/date and installment edits, and detects frozen membership', async () => {
+    const id = await fixture.create(movement(1, {receivedAt:'2026-10-01T05:59:59.999Z',occurredAt:undefined}));
+    expect((await fixture.sql.query('SELECT movement_id,month FROM olbia.movement_months')).rows)
+      .toEqual([{movement_id:id,month:'2026-09'}]);
+    await fixture.sql.query('UPDATE olbia.ledger_movements SET occurred_at=$2 WHERE id=$1',[id,'2026-10-01T06:00:00Z']);
+    await fixture.run(async () => {
+      const {replaceInstallmentPlan} = await import('../../ledger/src/dsql/ledger-writes.js');
+      const {buildMsiSchedule} = await import('@finance/domain');
+      await replaceInstallmentPlan(currentStoreTransaction()!,id,buildMsiSchedule({principalMinor:40000,months:2,startMonth:'2029-01',origin:'manual'}));
+    });
+    expect((await fixture.sql.query('SELECT month FROM olbia.movement_months ORDER BY month')).rows)
+      .toEqual([{month:'2026-10'},{month:'2029-01'},{month:'2029-02'}]);
+    expect(await checkState()).toMatchObject({monthMemberships:3,mismatches:0});
+    await fixture.sql.query(`CREATE OR REPLACE VIEW olbia.movement_months AS
+      SELECT id AS movement_id,spend_month AS month FROM olbia.movements`);
+    expect((await checkState()).mismatches).toBeGreaterThan(0);
+    const {SCHEMA_STATEMENTS} = await import('../../ledger/src/dsql/schema.js');
+    await fixture.sql.query(SCHEMA_STATEMENTS.at(-1)!);
+    expect(await checkState()).toMatchObject({monthMemberships:3,mismatches:0});
+  });
+
 });

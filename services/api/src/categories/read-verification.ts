@@ -1,9 +1,10 @@
 import { aggregateSpendByCategory, aggregateSpendByMerchant, resolveCategoryId, daysInCalendarMonth,
   cardRemindersForDay, cardCyclePushMessage, dailyBalancePushMessage, addCalendarMonths, type PayslipSummary } from '@finance/domain';
 import type { JsonObject } from '../http/response.js';
+import { readLedgerMovements } from '@finance/ledger/native-ledger';
 import { readerPool } from '../events/sql-reads.js';
 import { samePublicResult } from '../events/read-selection.js';
-import { feedFromPayloads } from '../events/month-feed.js';
+import { feedFromMovements } from '../events/month-feed.js';
 import { readSqlCategories, readSqlMerchantRules, categoryReadStatement, ruleReadStatement,
   listCategories, listMerchantRules } from './sql-reads.js';
 import { listCards } from '../cards/cards.js';
@@ -45,15 +46,15 @@ export const verifyDomainReads = async (owner: string, movements: readonly JsonO
     source: rule.source, updated_at: rule.updatedAt,
   })));
   const invalidReferences = (await client.query(`SELECT count(*) AS count FROM (
-    SELECT category_id FROM olbia.movements WHERE category_id IS NOT NULL
+    SELECT category_id FROM olbia.ledger_movements WHERE category_id IS NOT NULL
     UNION ALL SELECT category_id FROM olbia.merchant_rules WHERE category_id IS NOT NULL
   ) references_to_categories LEFT JOIN olbia.spend_categories category ON category.id=references_to_categories.category_id
     WHERE category.id IS NULL`)).rows[0]?.count;
   check(0, Number(invalidReferences));
   const constraints = (await client.query(`SELECT conname,convalidated FROM pg_constraint WHERE
-    (conrelid='olbia.movements'::regclass AND conname='movements_category_fk') OR
+    (conrelid='olbia.ledger_movements'::regclass AND conname='ledger_movements_category_id_fkey') OR
     (conrelid='olbia.merchant_rules'::regclass AND conname='merchant_rules_category_fk') ORDER BY conname`)).rows;
-  check(constraints, [{ conname: 'merchant_rules_category_fk', convalidated: true }, { conname: 'movements_category_fk', convalidated: true }]);
+  check(constraints, [{ conname: 'ledger_movements_category_id_fkey', convalidated: true }, { conname: 'merchant_rules_category_fk', convalidated: true }]);
   const cardRows = (await client.query('SELECT * FROM olbia.card_profiles WHERE owner=$1 AND deleted_at IS NULL ORDER BY id COLLATE "C"', [owner])).rows;
   check(cardRows.map(row => ({ ...row, created_at: new Date(row.created_at as string | Date).toISOString(),
     updated_at: new Date(row.updated_at as string | Date).toISOString() })), [...cards].sort((a, b) => Buffer.compare(Buffer.from(a.id), Buffer.from(b.id))).map(card => ({
@@ -74,7 +75,7 @@ export const verifyDomainReads = async (owner: string, movements: readonly JsonO
     AND conname IN ('liability_snapshots_card_fk','liability_snapshots_card_required','liability_versions_card_fk','liability_versions_card_required') ORDER BY conname`)).rows;
   check(cardConstraints, ['liability_snapshots_card_fk','liability_snapshots_card_required','liability_versions_card_fk','liability_versions_card_required']
     .map(conname => ({ conname, convalidated: true })));
-  const sqlMovements = (await client.query('SELECT payload FROM olbia.movements')).rows.map(row => row.payload as JsonObject);
+  const sqlMovements = await readLedgerMovements(client);
   const merchants = new Set([...movements.map(m => String(m.merchantRaw)), ...rules.map(r => r.merchantKey),
     ...rules.filter(r => r.pattern).map(r => `prefix ${r.pattern} suffix`)]);
   for (const merchant of merchants) check(resolveCategoryId(merchant, rules), resolveCategoryId(merchant, sqlRules));
@@ -91,8 +92,8 @@ export const verifyDomainReads = async (owner: string, movements: readonly JsonO
   const url = 'https://finance.castrodavid.dev/';
   for (const month of months) {
     const requested = [month, ...[1, 2, 3].map(offset => addCalendarMonths(month, -offset))];
-    const sourceEvents = deduplicateFeed(feedFromPayloads(requested, movements));
-    const sqlEvents = deduplicateFeed(feedFromPayloads(requested, sqlMovements));
+    const sourceEvents = deduplicateFeed(feedFromMovements(requested, movements));
+    const sqlEvents = deduplicateFeed(feedFromMovements(requested, sqlMovements));
     check(sourceEvents, sqlEvents);
     const names = new Map(categories.map(c => [c.id, c.name])), sqlNames = new Map(sqlCategories.map(c => [c.id, c.name]));
     check(aggregateSpendByCategory(sourceEvents, month, names), aggregateSpendByCategory(sqlEvents, month, sqlNames));
@@ -110,7 +111,7 @@ export const verifyDomainReads = async (owner: string, movements: readonly JsonO
       renderMonthlyCloseEmail(sqlFacts, fallbackMonthlyCloseAnalysis(sqlFacts), url)); reports++;
     // Planning has its own independent gate; share the selected plan so only this phase's movement input varies.
     const plan = await getMonthlyPlan(owner, month);
-    const sourceFeed = feedFromPayloads([month], movements), sqlFeed = feedFromPayloads([month], sqlMovements);
+    const sourceFeed = feedFromMovements([month], movements), sqlFeed = feedFromMovements([month], sqlMovements);
     for (let day = 1; day <= daysInCalendarMonth(month); day++) {
       const dayKey = `${month}-${String(day).padStart(2, '0')}`, clock = new Date(`${dayKey}T13:00:00.000Z`);
       const sourceSummary = summarizeMonthFeed(month, plan, sourceFeed, clock);

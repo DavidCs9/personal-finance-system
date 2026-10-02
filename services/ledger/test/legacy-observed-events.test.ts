@@ -6,7 +6,7 @@ import {
   reconciliationPartition,
   saveObservedEvent,
   type SaveObservedEventInput,
-} from '../src/observed-events.js';
+} from './fixtures/legacy-observed-events.js';
 
 const event = {
   id: 'apple-event-1',

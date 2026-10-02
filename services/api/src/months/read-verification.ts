@@ -6,7 +6,7 @@ import { database, s3, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
 import { samePublicResult } from '../events/read-selection.js';
 import { readerPool, readSqlFeed } from '../events/sql-reads.js';
-import { feedFromPayloads } from '../events/month-feed.js';
+import { feedFromMovements } from '../events/month-feed.js';
 import { getPayslip,getPayslipSql,incomeFieldsForMonth,listPayslipsForYear,toPublicPayslip } from '../imports/cfdi-nomina-flow.js';
 import { readSqlAllPayrollRecords } from '../imports/payroll-sql.js';
 import { getMonthlyPlan, getMonthlyPlanFromReads } from './service.js';
@@ -85,7 +85,7 @@ export const verifyPlanningReads = async (owner: string, movementPayloads: JsonO
     const sqlMonthIncome = await sqlIncome(owner, month);
     mismatches += Number(!samePublicResult(sourceMonthIncome, sqlMonthIncome));
     mismatches += Number(!samePublicResult(deriveMonthCompensation(sourceMonthIncome), deriveMonthCompensation(sqlMonthIncome))); compensation++;
-    mismatches += Number(!samePublicResult(summarizeMonthFeed(month, sourcePlan, feedFromPayloads([month], movementPayloads), now),
+    mismatches += Number(!samePublicResult(summarizeMonthFeed(month, sourcePlan, feedFromMovements([month], movementPayloads), now),
       summarizeMonthFeed(month, sqlPlan, await readSqlFeed([month], client), now))); summaries++;
     const day = monthCloseDay(month);
     mismatches += Number(!samePublicResult(await getWealthOverviewAsOf(owner, day, listPayslipsForYear, readSourceWealthInputs),

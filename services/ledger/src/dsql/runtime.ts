@@ -10,6 +10,7 @@ import { verifyKeyDetails } from './verification.js';
 import { bootstrapSchema, BootstrapFailure } from './schema.js';
 import { createPool } from './connection.js';
 import { authorityFrom } from './store.js';
+import { NATIVE_LEDGER_TABLES } from './ledger-schema.js';
 export { createPool } from './connection.js';
 
 const required = (name: string): string => {
@@ -58,7 +59,8 @@ export const schemaHandler = async (event: {
     const runtime = createPool();
     try {
       const version = await runtime.query('SELECT version FROM olbia.schema_migrations WHERE version=$1', [PROJECTION_VERSION]);
-      if (version.rows.length !== 1) throw new Error('Schema smoke failed');
+      if (version.rows.length !== 1 || (await runtime.query('SELECT version FROM olbia.schema_migrations WHERE version=14')).rows.length !== 1) throw new Error('Schema smoke failed');
+      for (const table of NATIVE_LEDGER_TABLES) await runtime.query(`SELECT 1 FROM olbia.${table} LIMIT 1`);
     } finally { await runtime.end(); }
   } catch (error) {
     throw error instanceof BootstrapFailure ? error : new BootstrapFailure(stage, error);
@@ -125,7 +127,7 @@ const runMaintenance = async (event: MaintenanceInput): Promise<MaintenanceInput
         const count = await client.query(`SELECT count(*) AS count FROM olbia.${table}`);
         tableCounts[table] = String(count.rows[0].count);
       }
-      for (const table of ['month_plans','planned_payments','payslips','payslip_lines','bank_imports','bank_import_rows','bank_import_candidates']) tableCounts[table] = String((await client.query(`SELECT count(*) AS count FROM olbia.${table}`)).rows[0].count);
+      for (const table of [...NATIVE_LEDGER_TABLES,'month_plans','planned_payments','payslips','payslip_lines','bank_imports','bank_import_rows','bank_import_candidates']) tableCounts[table] = String((await client.query(`SELECT count(*) AS count FROM olbia.${table}`)).rows[0].count);
       tableCounts.card_profiles = String((await client.query('SELECT count(*) AS count FROM olbia.card_profiles')).rows[0].count);
       tableCounts.spend_categories = String((await client.query('SELECT count(*) AS count FROM olbia.spend_categories')).rows[0].count);
       tableCounts.merchant_rules = String((await client.query('SELECT count(*) AS count FROM olbia.merchant_rules')).rows[0].count);
@@ -136,7 +138,7 @@ const runMaintenance = async (event: MaintenanceInput): Promise<MaintenanceInput
         count: Number(row.count), amountMinor: String(row.amount_minor), personalAmountMinor: String(row.personal_amount_minor),
       }]));
       const captured = await client.query('SELECT count(*) AS count, max(stream_delivered_at) AS latest FROM olbia.projection_state WHERE stream_sequence IS NOT NULL');
-      return { tableCounts, sqlTotals, capturedKeys: String(captured.rows[0].count), latestStreamDelivery: captured.rows[0].latest };
+      return { tableCounts, sqlTotals, financialTotalsAuthority: 'frozen-recovery', capturedKeys: String(captured.rows[0].count), latestStreamDelivery: captured.rows[0].latest };
     });
     output.summary = summary;
     if (canonicalJson(summary.sqlTotals) !== canonicalJson(output.sourceTotals)) output.lag = (output.lag ?? 0) + 1;

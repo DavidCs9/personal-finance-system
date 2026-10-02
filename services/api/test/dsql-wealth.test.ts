@@ -1,3 +1,6 @@
+import * as connection from '../../ledger/src/dsql/connection.js';
+import { prepareNativeLedgerFixture } from './fixtures/native-ledger.js';
+import { NATIVE_LEDGER_TABLES } from '../../ledger/src/dsql/ledger-schema.js';
 import { createHash } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
@@ -48,14 +51,16 @@ const seed = async () => {
 };
 beforeAll(async () => {
   sql = new PGlite(); for (const statement of SCHEMA_STATEMENTS) await sql.query(statement.includes('CREATE TABLE IF NOT EXISTS olbia.cards (') ? statement.replace(',source_item jsonb', '') : statement);
+  await prepareNativeLedgerFixture(sql);
   pool = { transaction: callback => sql.transaction(client => callback(client as unknown as SqlClient)) };
 }, 30_000);
 afterAll(async () => { await sql.close(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 beforeEach(async () => {
   records = new Map(); evidence = new Map();
-  await sql.exec(`TRUNCATE olbia.projection_state,olbia.card_profiles,${TABLE_NAMES.map(table => `olbia.${table}`).join(',')}`);
+  await sql.exec(`TRUNCATE olbia.projection_state,olbia.card_profiles,${[...TABLE_NAMES,...NATIVE_LEDGER_TABLES,'bank_imports','bank_import_rows','bank_import_candidates'].map(table => `olbia.${table}`).join(',')}`);
   await sql.query('DELETE FROM olbia.schema_migrations WHERE version=9');
+  vi.spyOn(connection, 'createPool').mockReturnValue({query:(s:string,v?:unknown[])=>sql.query(s,v)} as never);
   vi.spyOn(application, 'applicationStoreClient').mockReturnValue(sql);
   vi.stubEnv('DSQL_WEALTH_READ_MODE', 'guarded-sql'); vi.stubEnv('DSQL_PLANNING_READ_MODE', 'dynamodb');
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now);

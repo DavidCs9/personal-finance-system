@@ -23,7 +23,7 @@ beforeAll(async()=>{
 },30_000);
 afterAll(()=>sql.close());
 beforeEach(async()=>{
-  await sql.exec('TRUNCATE olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates,olbia.import_records,olbia.projection_state');
+  await sql.exec('TRUNCATE olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates,olbia.import_records,olbia.projection_state CASCADE');
   await sql.query('DELETE FROM olbia.schema_migrations WHERE version=13');
   await store.send(new PutCommand({TableName:'metadata',Item:receipt}));
 });
@@ -99,7 +99,7 @@ describe('native bank import migration',()=>{
     await expect(sql.query("DELETE FROM olbia.bank_imports WHERE kind='amex_statement'")).rejects.toThrow();
     await expect(sql.query("UPDATE olbia.bank_import_rows SET amount_mxn_minor=9007199254740992")).rejects.toThrow();
     await expect(sql.query("UPDATE olbia.bank_import_candidates SET row_position=1")).rejects.toThrow();
-    await sql.exec('TRUNCATE olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates');
+    await sql.exec('TRUNCATE olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates CASCADE');
     await sql.query('DELETE FROM olbia.schema_migrations WHERE version=13');
     await sql.query('UPDATE olbia.import_records SET source_item=$1',[JSON.stringify({...receipt,rows:Array.from({length:2998},(_,i)=>({...row,identity:String(i)}))})]);
     await expect(migrateBankImports(pool)).rejects.toThrow('bank-import-copy');

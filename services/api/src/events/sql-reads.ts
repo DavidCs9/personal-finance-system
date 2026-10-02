@@ -1,38 +1,39 @@
-import { currentStoreTransaction } from '@finance/ledger/dsql-store';
+import { currentStoreTransaction, withStoreClient } from '@finance/ledger/dsql-store';
 import { createPool } from '@finance/ledger/dsql-connection';
 import type { JsonObject } from '../http/response.js';
-import { candidateMonthsFor, feedFromPayloads, type EventFeed } from './month-feed.js';
-import { assertLegacyLedgerReadAvailable } from './legacy-read-guard.js';
+import { feedFromMovements, type EventFeed } from './month-feed.js';
+import { isLedgerMovementId, ledgerMovementReadStatement, readLedgerMovements, readLedgerDetail } from '@finance/ledger/native-ledger';
 import { toPublicEvent } from './public-event.js';
 
 export interface ReadSqlClient { query(statement: string, values?: unknown[]): Promise<{ rows: JsonObject[] }> }
 let pool: ReturnType<typeof createPool> | undefined;
-export const readerPool = (): ReadSqlClient => currentStoreTransaction() ?? (pool ??= createPool('olbia_reader', {
+let verifierPool: ReturnType<typeof createPool> | undefined;
+const nativeReaderPool = () => pool ??= createPool('olbia_reader', {
   connectionTimeoutMillis: 1_500, queryTimeoutMillis: 3_000,
-}));
+});
+export const readerPool = (): ReadSqlClient => currentStoreTransaction() ?? nativeReaderPool();
 
-export const monthReadStatement = `SELECT m.payload FROM olbia.movements m
-  WHERE m.spend_month=ANY($2::text[]) AND (m.spend_month=ANY($1::text[]) OR EXISTS (
-    SELECT 1 FROM olbia.msi_installments i WHERE i.source_pk=m.source_pk AND i.source_sk=m.source_sk AND i.month=ANY($1::text[])))`;
+/** Provider-managed read snapshot; no write barrier, custom lock or manual retry. */
+export const withLedgerReadSnapshot = <T>(callback: () => Promise<T>): Promise<T> =>
+  currentStoreTransaction() ? callback() : nativeReaderPool().transaction(client => withStoreClient(client, callback));
 
-export const readSqlFeed = async (months: readonly string[], client: ReadSqlClient = readerPool()): Promise<EventFeed> => {
-  await assertLegacyLedgerReadAvailable(client);
-  const requested = [...new Set(months)];
-  if (!requested.length) return { events: [], msiRelated: [] };
-  const result = await client.query(monthReadStatement, [requested, candidateMonthsFor(requested)]);
-  return feedFromPayloads(requested, result.rows.map(row => row.payload as JsonObject));
+/** The deployed verifier alone can read frozen recovery assertions in the same snapshot. */
+export const withLedgerVerificationSnapshot = <T>(callback: () => Promise<T>): Promise<T> => {
+  if (currentStoreTransaction()) return callback();
+  verifierPool ??= createPool('olbia_operational_verifier', { connectionTimeoutMillis: 1_500, queryTimeoutMillis: 3_000 });
+  return verifierPool.transaction(client => withStoreClient(client, callback));
 };
 
-export const readSqlDetail = async (eventId: string, client: ReadSqlClient = readerPool()): Promise<JsonObject | undefined> => {
-  await assertLegacyLedgerReadAvailable(client);
-  // One statement supplies a consistent SQL snapshot of the movement and its provenance.
-  const result = await client.query(`SELECT source_sk,payload,'movement' AS kind FROM olbia.movements WHERE source_pk=$1 AND source_sk='EVENT'
-    UNION ALL SELECT source_sk,payload,'revision' AS kind FROM olbia.movement_revisions WHERE source_pk=$1
-    UNION ALL SELECT source_sk,payload,'observation' AS kind FROM olbia.movement_observations WHERE source_pk=$1
-    ORDER BY source_sk DESC`, [`EVENT#${eventId}`]);
-  const movement = result.rows.find(row => row.kind === 'movement')?.payload as JsonObject | undefined;
-  if (!movement) return undefined;
-  return toPublicEvent(movement,
-    result.rows.filter(row => row.kind === 'revision').map(row => row.payload as JsonObject),
-    result.rows.filter(row => row.kind === 'observation').map(row => row.payload as JsonObject));
+export const monthReadStatement = ledgerMovementReadStatement;
+
+export const readSqlFeed = async (months: readonly string[], client?: ReadSqlClient): Promise<EventFeed> => {
+  const requested = [...new Set(months)];
+  if (!requested.length) return { events: [], msiRelated: [] };
+  return feedFromMovements(requested, await readLedgerMovements(client ?? readerPool(), { months: requested }));
+};
+
+export const readSqlDetail = async (eventId: string, client?: ReadSqlClient): Promise<JsonObject | undefined> => {
+  if (!isLedgerMovementId(eventId)) return undefined;
+  const detail = await readLedgerDetail(client ?? readerPool(), eventId);
+  return detail ? toPublicEvent(detail, detail.revisions as JsonObject[], detail.observations as JsonObject[]) : undefined;
 };

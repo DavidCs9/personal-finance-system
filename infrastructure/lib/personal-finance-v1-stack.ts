@@ -450,8 +450,7 @@ export class PersonalFinanceV1Stack extends Stack {
     rawEmailBucket.grantRead(apiFunction);
     rawEmailBucket.grantPut(apiFunction);
     if (SQL_AUTHORITY) metadataTable.grantReadData(apiFunction); else metadataTable.grantReadWriteData(apiFunction);
-    // Shadow rollout passed real feed/detail/summary equivalence. Preserve source fallback for stream lag.
-    const ledgerReadMode = 'guarded-sql';
+    // Financial readers use the native ledger directly.
     // Plans and payroll use their native SQL authority directly.
     // Production shadow gate verified all retained canonical/audit records, financial histories and original evidence.
     const wealthReadMode = 'guarded-sql';
@@ -459,9 +458,7 @@ export class PersonalFinanceV1Stack extends Stack {
     // Independent production shadow gate passed complete operational envelopes and public/expiration contracts.
     const operationalReadMode = 'guarded-sql';
     apiFunction.addEnvironment('DSQL_OPERATIONAL_READ_MODE', operationalReadMode);
-    const workerLedgerReadMode = 'guarded-sql';
     apiFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
-    apiFunction.addEnvironment('DSQL_LEDGER_READ_MODE', ledgerReadMode);
     dsqlProjection.grantReader(apiFunction);
     const readVerificationFunction = new NodejsFunction(this, 'DsqlReadVerification', {
       ...lambdaDefaults, functionName: 'personal-finance-v1-dsql-read-verification',
@@ -469,9 +466,11 @@ export class PersonalFinanceV1Stack extends Stack {
       timeout: Duration.minutes(10), memorySize: 512,
       logGroup: this.createLogGroup('DsqlReadVerificationLogGroup', 'personal-finance-v1-dsql-read-verification'),
       environment: { ...dataStorageEnvironment, AGENT_OWNER_SUB: agentOwnerSub.valueAsString,
-        DSQL_LEDGER_READ_MODE: ledgerReadMode, DSQL_WEALTH_READ_MODE: wealthReadMode, DSQL_OPERATIONAL_READ_MODE: operationalReadMode },
+        DSQL_WEALTH_READ_MODE: wealthReadMode, DSQL_OPERATIONAL_READ_MODE: operationalReadMode },
     });
     metadataTable.grantReadData(readVerificationFunction);
+    rawEmailBucket.grantRead(readVerificationFunction, 'inbound/*');
+    rawEmailBucket.grantRead(readVerificationFunction, 'manual-entries/*');
     rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/cfdi-nomina/*');
     rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/amex/*');
     rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/santander/*');
@@ -508,7 +507,6 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     metadataTable.grantReadData(agentToolsFunction);
-    agentToolsFunction.addEnvironment('DSQL_LEDGER_READ_MODE', workerLedgerReadMode);
     agentToolsFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     dsqlProjection.grantReader(agentToolsFunction);
 
@@ -1127,7 +1125,6 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     if (SQL_AUTHORITY) metadataTable.grantReadData(dailyBalancePushFunction); else metadataTable.grantReadWriteData(dailyBalancePushFunction);
-    dailyBalancePushFunction.addEnvironment('DSQL_LEDGER_READ_MODE', workerLedgerReadMode);
     dsqlProjection.grantReader(dailyBalancePushFunction);
     vapidSecret.grantRead(dailyBalancePushFunction);
     new scheduler.Schedule(this, 'DailyBalancePushSchedule', {
@@ -1379,7 +1376,6 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     if (SQL_AUTHORITY) metadataTable.grantReadData(monthlyCloseEmailFunction); else metadataTable.grantReadWriteData(monthlyCloseEmailFunction);
-    monthlyCloseEmailFunction.addEnvironment('DSQL_LEDGER_READ_MODE', workerLedgerReadMode);
     monthlyCloseEmailFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     dsqlProjection.grantReader(monthlyCloseEmailFunction);
     monthlyCloseEmailFunction.addToRolePolicy(new iam.PolicyStatement({
@@ -1453,6 +1449,7 @@ export class PersonalFinanceV1Stack extends Stack {
     for (const fn of [ingestionFunction,retryDispatcherFunction,apiFunction,agentProxyFunction,agentChatBufferedFunction,applePayCaptureFunction,
       dailyBalancePushFunction,cardCyclePushFunction,bitsoSyncFunction,ibkrSyncFunction,monthEndBalanceReminderFunction,monthlyCloseEmailFunction,agentTagMutationFunction]) dsqlProjection.grantApplicationStore(fn);
     for (const fn of [readVerificationFunction,agentToolsFunction]) dsqlProjection.grantApplicationStore(fn,'reader');
+
 
     const apiIntegration = new HttpLambdaIntegration('ApiLambdaIntegration', apiFunction, {
       scopePermissionToRoute: false,
