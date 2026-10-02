@@ -1,4 +1,4 @@
-import { withApplicationTransaction } from '@finance/ledger/dsql-store';
+import { applicationStoreClient, withApplicationTransaction } from '@finance/ledger/dsql-store';
 import { createHash, randomUUID } from 'node:crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
@@ -21,7 +21,7 @@ import {
   type WealthSnapshot,
   type WealthSnapshotSource,
 } from '@finance/domain';
-import { isValidCardId, listCardsDynamo } from '../cards/cards.js';
+import { isValidCardId, listCards } from '../cards/cards.js';
 import type { CardRecord } from '../cards/cards.js';
 import { database, rawSourceBucketName, s3, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
@@ -482,10 +482,6 @@ export const createCardLiabilitySnapshot = async (
   if (!isValidCardId(cardId)) {
     throw new InvalidWealthSnapshotError('cardId is invalid.');
   }
-  const cards = await listCardsDynamo({ database, tableName, owner });
-  if (!cards.some((card) => card.id === cardId)) {
-    throw new InvalidWealthSnapshotError('Card not found. Add the card under Fechas de corte first.');
-  }
   const input = parseCardLiabilitySnapshot(body);
   const capturedAt = new Date().toISOString();
   const day = dayKeyInZone(new Date(capturedAt), FINANCE_TIME_ZONE);
@@ -513,6 +509,10 @@ export const createCardLiabilitySnapshot = async (
   }));
 
   return withApplicationTransaction(async () => {
+  const cards = await listCards(owner, applicationStoreClient());
+  if (!cards.some((card) => card.id === cardId)) {
+    throw new InvalidWealthSnapshotError('Card not found. Add the card under Fechas de corte first.');
+  }
   const key = liabilitySnapshotKey(owner, cardId, day);
   const existing = await database.send(new GetCommand({
     TableName: tableName,

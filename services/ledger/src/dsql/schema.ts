@@ -1,5 +1,5 @@
 import { TABLE_COLUMNS, TABLE_NAMES, OPERATIONAL_TABLE_NAMES } from './model.js';
-import type { SqlClient } from './projection.js';
+import type { SqlClient, TransactionPool } from './projection.js';
 import { isOCCError } from '@aws/aurora-dsql-node-postgres-connector';
 import { DEFAULT_SPEND_CATEGORIES } from '@finance/domain';
 
@@ -69,10 +69,19 @@ export const SCHEMA_STATEMENTS = [
     FROM olbia.merchant_category_rules WHERE NOT EXISTS (SELECT 1 FROM olbia.schema_migrations WHERE version=7)
     ON CONFLICT (merchant_key) DO NOTHING`,
   `INSERT INTO olbia.schema_migrations VALUES (7,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
+  // Version 9 copy/marker runs atomically under the application barrier below.
+  `CREATE TABLE IF NOT EXISTS olbia.card_profiles (
+    id text PRIMARY KEY CHECK (id ~ '^[a-zA-Z0-9_-]{1,128}$'),
+    owner text NOT NULL CHECK (length(owner) > 0),
+    name text NOT NULL CHECK (length(trim(name)) > 0 AND length(name) <= 100),
+    cut_off_day integer NOT NULL CHECK (cut_off_day BETWEEN 1 AND 31),
+    payment_due_day integer NOT NULL CHECK (payment_due_day BETWEEN 1 AND 31),
+    institution text CHECK (institution IN ('american_express_mx','santander_mx','nu_mx')),
+    created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz)`,
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
-  now?: () => number; pause?: (ms: number) => Promise<void>; indexWaitMs?: number; readerRoleArns?: readonly string[]; operationalVerifierRoleArns?: readonly string[]; applicationRoleArns?: readonly string[]; storeReaderRoleArns?: readonly string[]; cutoverRoleArns?: readonly string[];
+  transactionPool?: TransactionPool; now?: () => number; pause?: (ms: number) => Promise<void>; indexWaitMs?: number; readerRoleArns?: readonly string[]; operationalVerifierRoleArns?: readonly string[]; applicationRoleArns?: readonly string[]; storeReaderRoleArns?: readonly string[]; cutoverRoleArns?: readonly string[];
 } = {}): Promise<void> => {
   const now = options.now ?? Date.now;
   const pause = options.pause ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -87,6 +96,9 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     }
   };
   for (const [index, statement] of SCHEMA_STATEMENTS.entries()) await query(`schema-statement-${index + 1}`, statement);
+  if (!options.transactionPool) throw new BootstrapFailure('card-copy-transaction-pool');
+  await migrateCardProfiles(options.transactionPool);
+  await ensureCardLiabilityRelationships({ query: (statement, params) => query('card-relationships', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   await ensureMovementCategoryForeignKey({ query: (statement, params) => query('category-fk', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   for (const [name, table, columns] of [
     ['movements_month_idx', 'movements', 'spend_month,id'],
@@ -112,6 +124,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('tables-grant', `GRANT SELECT,INSERT,UPDATE,DELETE ON ${['projection_state', ...TABLE_NAMES].map((table) => `olbia.${table}`).join(',')} TO olbia_projector`);
   await query('read-grant', 'GRANT SELECT ON olbia.schema_migrations,olbia.movement_months,olbia.runtime_state TO olbia_projector');
   await query('catalog-projector-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_projector');
+  await query('cards-projector-read', 'GRANT SELECT ON olbia.card_profiles TO olbia_projector');
   await query('rules-projector-read', 'GRANT SELECT ON olbia.merchant_rules TO olbia_projector');
   await query('projector-barrier-grant','GRANT SELECT,UPDATE ON olbia.application_barrier TO olbia_projector');
   for (const arn of roleArns) {
@@ -124,6 +137,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query('reader-schema-grant', 'GRANT USAGE ON SCHEMA olbia TO olbia_reader');
     await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments', 'monthly_plans', 'payroll', 'cards', 'wealth_snapshots', 'wealth_versions', 'liability_snapshots', 'liability_versions', 'categories', 'merchant_category_rules', 'ingestion_exceptions', 'import_records', 'push_subscriptions', 'assistant_threads'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
     await query('catalog-reader-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_reader');
+    await query('cards-reader-read', 'GRANT SELECT ON olbia.card_profiles TO olbia_reader');
     await query('rules-reader-read', 'GRANT SELECT ON olbia.merchant_rules TO olbia_reader');
     for (const arn of options.readerRoleArns) {
       if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid reader role ARN');
@@ -153,6 +167,8 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (writer) await query(`write-${role}`,`GRANT SELECT,INSERT,UPDATE,DELETE ON ${['projection_state','application_barrier','command_receipts',...TABLE_NAMES].map(t=>`olbia.${t}`).join(',')} TO ${role}`);
     if (writer) await query(`view-${role}`,`GRANT SELECT ON olbia.movement_months TO ${role}`);
     await query(`catalog-read-${role}`, `GRANT SELECT ON olbia.spend_categories TO ${role}`);
+    await query(`cards-read-${role}`, `GRANT SELECT ON olbia.card_profiles TO ${role}`);
+    if (writer) await query(`cards-write-${role}`, `GRANT INSERT,UPDATE ON olbia.card_profiles TO ${role}`);
     await query(`rules-read-${role}`, `GRANT SELECT ON olbia.merchant_rules TO ${role}`);
     if (writer) await query(`catalog-write-${role}`, `GRANT INSERT,UPDATE ON olbia.spend_categories TO ${role}`);
     if (writer) await query(`rules-write-${role}`, `GRANT INSERT,UPDATE ON olbia.merchant_rules TO ${role}`);
@@ -165,35 +181,61 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
 
 };
 
-/** Native DSQL validates historical relationships asynchronously, before release succeeds. */
-export const ensureMovementCategoryForeignKey = async (client: SqlClient, options: {
+/** DML copy + marker share the same OCC dependency as every legacy card writer. */
+export const migrateCardProfiles = async (pool: TransactionPool): Promise<void> => {
+  try {
+    await pool.transaction(async client => {
+      await client.query("UPDATE olbia.application_barrier SET generation=generation+1 WHERE id='storage'");
+      if ((await client.query('SELECT version FROM olbia.schema_migrations WHERE version=9')).rows.length) return;
+      await client.query(`INSERT INTO olbia.card_profiles
+        (id,owner,name,cut_off_day,payment_due_day,institution,created_at,updated_at)
+        SELECT id,owner,name,cut_off_day,payment_due_day,payload->>'institution',
+          (source_item->>'createdAt')::timestamptz,(source_item->>'updatedAt')::timestamptz FROM olbia.cards`);
+      await client.query('INSERT INTO olbia.schema_migrations VALUES (9,CURRENT_TIMESTAMP)');
+    });
+  } catch (error) { throw new BootstrapFailure('card-copy', error); }
+};
+
+/** Native DSQL validates existing rows asynchronously before release succeeds. */
+const ensureValidatedConstraint = async (client: SqlClient, table: string, name: string, definition: string, stage: string, options: {
   now?: () => number; pause?: (ms: number) => Promise<void>; waitMs?: number;
 } = {}): Promise<void> => {
-  const name = 'movements_category_fk';
   const now = options.now ?? Date.now, pause = options.pause ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
-  const state = () => client.query('SELECT convalidated FROM pg_constraint WHERE conrelid=$1::regclass AND conname=$2', ['olbia.movements', name]);
+  const state = () => client.query('SELECT convalidated FROM pg_constraint WHERE conrelid=$1::regclass AND conname=$2', [`olbia.${table}`, name]);
   try {
     let constraint = (await state()).rows[0];
     if (!constraint) {
-      await client.query(`ALTER TABLE olbia.movements ADD CONSTRAINT ${name} FOREIGN KEY (category_id)
-        REFERENCES olbia.spend_categories(id) NOT VALID`);
+      await client.query(`ALTER TABLE olbia.${table} ADD CONSTRAINT ${name} ${definition} NOT VALID`);
       constraint = (await state()).rows[0];
     }
     if (constraint?.convalidated !== true) {
-      const job = (await client.query(`ALTER TABLE ASYNC olbia.movements VALIDATE CONSTRAINT ${name}`)).rows[0]?.job_id;
-      if (typeof job !== 'string' || !job) throw new BootstrapFailure('category-fk-job');
+      const job = (await client.query(`ALTER TABLE ASYNC olbia.${table} VALIDATE CONSTRAINT ${name}`)).rows[0]?.job_id;
+      if (typeof job !== 'string' || !job) throw new BootstrapFailure(`${stage}-job`);
       const deadline = now() + (options.waitMs ?? 180_000);
       for (;;) {
         if ((await state()).rows[0]?.convalidated === true) break;
         const status = (await client.query('SELECT status FROM sys.jobs WHERE job_id=$1', [job])).rows[0]?.status;
-        if (status === 'failed') throw new BootstrapFailure('category-fk-validation');
-        if (now() >= deadline) throw new BootstrapFailure('category-fk-timeout');
+        if (status === 'failed') throw new BootstrapFailure(`${stage}-validation`);
+        if (now() >= deadline) throw new BootstrapFailure(`${stage}-timeout`);
         await pause(1_000);
       }
     }
-    await client.query('INSERT INTO olbia.schema_migrations VALUES (8,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   } catch (error) {
     if (error instanceof BootstrapFailure) throw error;
-    throw new BootstrapFailure('category-fk', error);
+    throw new BootstrapFailure(stage, error);
   }
+};
+
+export const ensureMovementCategoryForeignKey = async (client: SqlClient, options: Parameters<typeof ensureValidatedConstraint>[5] = {}): Promise<void> => {
+  await ensureValidatedConstraint(client, 'movements', 'movements_category_fk',
+    'FOREIGN KEY (category_id) REFERENCES olbia.spend_categories(id)', 'category-fk', options);
+  await client.query('INSERT INTO olbia.schema_migrations VALUES (8,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
+};
+
+export const ensureCardLiabilityRelationships = async (client: SqlClient, options: Parameters<typeof ensureValidatedConstraint>[5] = {}): Promise<void> => {
+  for (const table of ['liability_snapshots', 'liability_versions']) {
+    await ensureValidatedConstraint(client, table, `${table}_card_required`, 'CHECK (card_id IS NOT NULL)', 'card-required', options);
+    await ensureValidatedConstraint(client, table, `${table}_card_fk`, 'FOREIGN KEY (card_id) REFERENCES olbia.card_profiles(id)', 'card-fk', options);
+  }
+  await client.query('INSERT INTO olbia.schema_migrations VALUES (10,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 };

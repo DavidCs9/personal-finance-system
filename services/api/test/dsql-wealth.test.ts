@@ -3,13 +3,14 @@ import { PGlite } from '@electric-sql/pglite';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { S3Client } from '@aws-sdk/client-s3';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
+import { SCHEMA_STATEMENTS, migrateCardProfiles } from '../../ledger/src/dsql/schema.js';
 import { TABLE_NAMES, projectRows, type SourceItem, type SourceKey } from '../../ledger/src/dsql/model.js';
 import { reconcileKey, type TransactionPool, type SqlClient } from '../../ledger/src/dsql/projection.js';
 import { verifyKey } from '../../ledger/src/dsql/verification.js';
 
 process.env.METADATA_TABLE_NAME ??= 'test';
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-evidence';
+const application = await import('../../ledger/src/dsql/store.js');
 const sqlReaders = await import('../src/events/sql-reads.js');
 const wealth = await import('../src/wealth/service.js');
 const reads = await import('../src/wealth/sql-reads.js');
@@ -26,7 +27,7 @@ const put = (item: SourceItem) => records.set(identity(item), item);
 const sync = (key: SourceKey) => reconcileKey(pool, async key => records.get(identity(key)), key);
 const card = (id = 'amex'): SourceItem => ({ PK: `USER#${owner}`, SK: `CARD#${id}`, owner,
   createdAt: '2026-08-01T12:00:00.123Z', updatedAt: '2026-09-01T12:00:00.456Z',
-  payload: { id, name: id, cutOffDay: 10, paymentDueDay: 28, institution: 'amex' } });
+  payload: { id, name: id, cutOffDay: 10, paymentDueDay: 28, institution: 'american_express_mx' } });
 const snapshot = (accountId: string, day: string, total = 10000): SourceItem => ({ PK: `USER#${owner}`, SK: `WEALTH_SNAP#${accountId}#${day}`,
   owner, accountId, day, capturedAt: `${day}T12:00:00.123Z`, source: accountId === 'ibkr' ? 'flex' : 'api', currency: 'MXN', totalMxnMinor: total,
   holdings: [{ id: `${accountId}:same-symbol`, symbol: 'SAME', name: 'Position', currency: accountId === 'ibkr' ? 'USD' : 'SOL',
@@ -43,6 +44,7 @@ const seed = async () => {
     put({ ...item, ...(item.day ? { evidence: { bucket: 'test-evidence', key: sha256, sha256 } } : {}) });
   }
   for (const item of records.values()) { await sync(item); await sync(item); }
+  await migrateCardProfiles(pool);
 };
 beforeAll(async () => {
   sql = new PGlite(); for (const statement of SCHEMA_STATEMENTS) await sql.query(statement.includes('CREATE TABLE IF NOT EXISTS olbia.cards (') ? statement.replace(',source_item jsonb', '') : statement);
@@ -52,7 +54,9 @@ afterAll(async () => { await sql.close(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 beforeEach(async () => {
   records = new Map(); evidence = new Map();
-  await sql.exec(`TRUNCATE olbia.projection_state,${TABLE_NAMES.map(table => `olbia.${table}`).join(',')}`);
+  await sql.exec(`TRUNCATE olbia.projection_state,olbia.card_profiles,${TABLE_NAMES.map(table => `olbia.${table}`).join(',')}`);
+  await sql.query('DELETE FROM olbia.schema_migrations WHERE version=9');
+  vi.spyOn(application, 'applicationStoreClient').mockReturnValue(sql);
   vi.stubEnv('DSQL_WEALTH_READ_MODE', 'guarded-sql'); vi.stubEnv('DSQL_PLANNING_READ_MODE', 'dynamodb');
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now);
   vi.spyOn(sqlReaders, 'readerPool').mockReturnValue(sql); vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -106,9 +110,14 @@ describe('Patrimonio SQL migration', () => {
     const facts = await buildMonthlyCloseFacts(owner, '2026-09', now);
     expect(facts.wealth).toMatchObject({ assetsMxnMinor: 35000, liabilitiesMxnMinor: 0, netMxnMinor: 35000, priorNetMxnMinor: 25000, netDeltaMinor: 10000 });
     records.delete(identity(card()));
-    expect((await wealth.getWealthOverview(owner, now)).liabilities).toEqual([]); // deleted profile wins during lag
+    expect((await wealth.getWealthOverview(owner, now)).liabilities).toHaveLength(1); // frozen envelopes are not profile authority
+    await sql.query("UPDATE olbia.card_profiles SET deleted_at=CURRENT_TIMESTAMP WHERE id='amex'");
+    expect((await wealth.getWealthOverview(owner, now)).liabilities).toEqual([]);
     await sync(card());
     expect((await reads.readSqlWealthInputs(owner)).cards).toEqual([]);
+    const captures = [...records.values()].filter(item => item.SK.startsWith('LIAB_'));
+    await expect(wealth.createCardLiabilitySnapshot('amex', '{"amountMinor":0}', owner)).rejects.toThrow('Card not found');
+    expect([...records.values()].filter(item => item.SK.startsWith('LIAB_'))).toEqual(captures);
   });
   it('uses one bounded SQL attempt per complete report/history read, propagates source failures and supports shadow/rollback', async () => {
     await seed();
@@ -133,7 +142,7 @@ describe('Patrimonio SQL migration', () => {
     expect(vi.mocked(console.log).mock.calls.at(-1)?.[0]).toContain('"SqlSelected":1');
   });
   it('preserves source manual writes, same-day prior audit snapshots and zero captures while projection lags', async () => {
-    put(card()); await sync(card());
+    put(card()); await sync(card()); await migrateCardProfiles(pool);
     await wealth.createCajitaSnapshot('{"amountMinor":10000}', owner);
     await wealth.createCardLiabilitySnapshot('amex', '{"amountMinor":10000}', owner);
     vi.setSystemTime(new Date('2026-10-01T05:59:59.456Z'));

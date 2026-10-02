@@ -18,6 +18,8 @@ Continue David's authorized autonomous normalization work after the completed ca
 - Created `codex/sql-native-card-guard` directly from fetched `origin/main` at `2d7ed0a`.
 - Reviewed card CRUD, configured/source/wealth reads, manual liability creation, card-cycle tests and the table audit.
 - First deploy a legacy-writer guard and transactional delete; then migrate profiles atomically under the existing native application barrier, migrate consumers and enforce liability FKs. Finish acceptance before selecting another slice.
+- Guard PR #177 passed required quality, was confirmed CLEAN/MERGEABLE, and was squash-merged. Production workflow `36968893541` completed quality/deploy-production and all live gates successfully. Fresh read-only acceptance confirms all three profiles and 25 liability records remained exactly unchanged, including valid issuer values. The guard prerequisite is satisfied.
+- Created `codex/sql-native-card-profiles` directly from fetched `origin/main` after that merge.
 
 ## Decisions
 
@@ -37,14 +39,23 @@ Continue David's authorized autonomous normalization work after the completed ca
 - Alternatives and tradeoffs: Cascade/delete liability history, reject profile removal, or retain the card identity with an inactive/deleted timestamp and exclude it from active readers.
 - Decision and reason: Native `card_profiles` will retain identity with `deleted_at`; API deletion deactivates the profile and active readers preserve existing behavior. Liability FKs keep historical references intact. Recreation of the same ID reactivates it and preserves existing creation/recreation behavior at the API boundary.
 - Consequences, verification, and revisit conditions: Inactive profiles do not count toward the three-card limit or current calculations. No balances become expenses or commitments. Test delete/recreate, as-of calculations and reminders against current contracts; preserve all original evidence and versions.
-- Status: Decided; implementation follows guard deployment.
+- Status: Implemented and locally validated; native release pending.
+
+### D3 — Make profile columns and liability membership native SQL contracts
+
+- Context: Keeping document-shaped card APIs or allowing null/missing liability parents would leave this domain only partially normalized.
+- Evidence and uncertainty: The fresh live baseline has three valid profiles and 25 non-null resolving liability parents. Native DSQL supports CHECK/FK constraints and asynchronous validation of existing tables; the installed official connector supplies transaction conflict retries. Owner predicates preserve the existing access binding, not a multiuser product.
+- Alternatives and tradeoffs: Preserve SDK/table arguments and envelope readers; use application-only relationship checks; or migrate card APIs/readers to domain arguments and typed columns with native required-parent CHECKs and FKs.
+- Decision and reason: Use `card_profiles(id,owner,name,cut_off_day,payment_due_day,institution,created_at,updated_at,deleted_at)` with validated ID/name/day/issuer constraints. Card CRUD accepts domain arguments only. Every current and versioned liability requires a non-null card ID and a validated FK. Keep the existing barrier to serialize max-three creation, delete/reactivate and liability captures; validate active card membership inside the capture transaction using the application SQL identity.
+- Consequences, verification, and revisit conditions: There is no document or fallback profile authority. Wealth still reads its other unnormalized domains through existing contracts, but every wealth path uses native profiles. Keep its complete financial bundle in one SQL statement using typed card columns rather than rebuilding an envelope. Verify migration atomicity/replay, constraints, deletion/reactivation, transaction rollback, zero balances, as-of reports and reminders. Preserve frozen evidence separately from live authority.
+- Status: Implemented; focused migration/CRUD/financial/constraint tests passed. Full release checks and live acceptance pending.
 
 ## Verification results
 
 - Guard integration tests: all four passed, covering normal pre-marker editing, blocked post-marker writes with preserved evidence, mixed-transaction rollback, and aborted migration rollback.
 - All 466 workspace tests, workspace typechecks and CDK synthesis passed. No infrastructure resource definitions changed.
 - Fresh read-only production preflight passed after immediate STS identity verification: three profiles, 22 liability snapshots, three liability versions, zero missing parents, and migration 9 absent. Profile IDs, owner binding, names, days and timestamps satisfy the proposed native constraints. Private evidence is retained outside Git in `/tmp/olbia-native-cards/`.
-- Next: PR/quality/linear merge/deploy the guard before releasing the native copy and consumers.
+- Native implementation now removes SDK/document profile operations and the retired domain fallback flag, preserves one-statement wealth inputs, and adds validated required-parent relationships plus native rolled-back smoke. Focused tests passed. Broad tests found an expected infrastructure bootstrap-version assertion needing update; the assertion was updated and the focused infrastructure suite passed. The native migration fixture also needed an explicit query result type; workspace typechecks then passed. Final checks passed: all 474 workspace tests, all workspace typechecks, CDK synthesis, and unchanged definitions for all 11 stateful/protected resources (including retained tables, buckets, keys, cluster, vault and secrets). The last domain verification cleanup passed its focused seven tests and API typecheck. Native PR and independent live acceptance are next.
 
 ## Outcome and remaining work
 

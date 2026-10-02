@@ -36,6 +36,7 @@ describe('CloudFormation DSQL bootstrap diagnostics', () => {
       statement.includes('pg_constraint') ? [{ convalidated: true }] :
       statement.includes('indisvalid') ? [{ indisvalid: true }] : statement.includes('pg_roles') ? [{ rolname: 'olbia_projector' }] : [],
     }), release: () => {} } as never);
+    vi.spyOn(AuroraDSQLPool.prototype, 'transaction').mockImplementation(async callback => callback({ query: async () => ({ rows: [] }) } as never));
     vi.spyOn(AuroraDSQLPool.prototype, 'query').mockRejectedValue(Object.assign(new Error('private IAM detail'), { code: '28000' }));
     await expect(schemaHandler({ RequestType: 'Create', ResourceProperties: {} })).rejects.toThrow('runtime-connect-and-smoke (28000)');
   });

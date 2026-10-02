@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { bootstrapSchema, ensureMovementCategoryForeignKey } from '../src/dsql/schema.js';
+import { bootstrapSchema as realBootstrapSchema, ensureMovementCategoryForeignKey, ensureCardLiabilityRelationships } from '../src/dsql/schema.js';
 import type { SqlClient } from '../src/dsql/projection.js';
 
+const bootstrapSchema = (client: SqlClient, roleArns: readonly string[], options: Parameters<typeof realBootstrapSchema>[2] = {}) =>
+  realBootstrapSchema(client, roleArns, { transactionPool: { transaction: callback => callback(client) }, ...options });
 const ready = (statement: string) => ({ rows:
   statement.includes('pg_constraint') ? [{ convalidated: true }] :
   statement.includes('indisvalid') ? [{ indisvalid: true }] :
@@ -118,4 +120,14 @@ it('separates product write permissions from the authority operator and keeps en
   expect(statements).toContain('GRANT UPDATE ON olbia.runtime_state TO olbia_cutover');
   expect(statements.filter(statement=>statement.includes('TO olbia_store_reader')).join()).not.toMatch(/INSERT|UPDATE|DELETE/);
   expect(statements.filter(statement=>statement.includes('TO olbia_application')).join()).toContain('olbia.movement_months');
+});
+
+it('does not mark liability relationships complete until every native constraint is validated', async () => {
+  const query = vi.fn(async (statement: string, values?: unknown[]) => ({ rows:
+    statement.includes('pg_constraint') ? [{ convalidated: values?.[1] !== 'liability_versions_card_fk' }] :
+    statement.startsWith('ALTER TABLE ASYNC') ? [{ job_id: 'card-job' }] :
+    statement.includes('sys.jobs') ? [{ status: 'failed' }] : [],
+  }));
+  await expect(ensureCardLiabilityRelationships({ query })).rejects.toThrow('card-fk-validation');
+  expect(query.mock.calls.some(([statement]) => statement.includes('VALUES (10,'))).toBe(false);
 });

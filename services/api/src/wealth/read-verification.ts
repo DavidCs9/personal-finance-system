@@ -133,7 +133,7 @@ export const verifyWealthReads = async (owner: string, financialMonths: readonly
   mismatches += Number(!samePublicResult(await getWealthOverview(owner, now), await getWealthOverview(owner, now, sqlPayroll, sqlReader)));
   const queryPlans = [];
   for (const [query, statement] of [['wealth-inputs', wealthReadStatement], ['wealth-audit', wealthAuditStatement]]) {
-    const result = await client.query(`EXPLAIN ANALYZE VERBOSE ${statement}`, [`USER#${owner}`]);
+    const result = await client.query(`EXPLAIN ANALYZE VERBOSE ${statement}`, query === 'wealth-inputs' ? [`USER#${owner}`, owner] : [`USER#${owner}`]);
     const lines = result.rows.map(row => String(row['QUERY PLAN']));
     queryPlans.push({ query, scanTypes: [...new Set(lines.flatMap(line => line.match(/(?:Index Only Scan|Index Scan|Seq Scan|Bitmap Heap Scan)/g) ?? []))],
       metrics: lines.filter(line => /(?:DPU|Planning Time|Execution Time)/i.test(line)).map(line => line.trim()).filter(line => /^[\w\s():.=,+-]+$/.test(line)) });

@@ -52,7 +52,7 @@ export const handler = async (): Promise<{
 
   for (const [owner, ownerSubscriptions] of byOwner) {
     users += 1;
-    const cards = await listCards({ database, tableName, owner });
+    const cards = await listCards(owner);
     const due = cardRemindersForDay(cards, month, dayOfMonth);
     if (due.length === 0) continue;
 

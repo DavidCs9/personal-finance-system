@@ -28,6 +28,23 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
           [rule.merchant_key, rule.id, category.id])).rows[0];
           if (nativeRule?.id !== rule.id || nativeRule.category_id !== category.id) throw new Error('Native rule upsert failed');
         }
+        const card = (await client.query('SELECT * FROM olbia.card_profiles WHERE deleted_at IS NULL ORDER BY id LIMIT 1')).rows[0];
+        if (!card) throw new Error('No native profile for smoke');
+        const updated = (await client.query(`INSERT INTO olbia.card_profiles
+          (id,owner,name,cut_off_day,payment_due_day,institution,created_at,updated_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name RETURNING id,name`,
+        [card.id,card.owner,'SQL verification',card.cut_off_day,card.payment_due_day,card.institution,card.created_at,card.updated_at])).rows[0];
+        if (updated?.id !== card.id || updated.name !== 'SQL verification') throw new Error('Native profile upsert failed');
+        const retained = (await client.query(`SELECT count(*) AS count FROM (
+          SELECT card_id FROM olbia.liability_snapshots UNION ALL SELECT card_id FROM olbia.liability_versions
+        ) liabilities WHERE card_id=$1`, [card.id])).rows[0]?.count;
+        await client.query('UPDATE olbia.card_profiles SET deleted_at=CURRENT_TIMESTAMP WHERE id=$1', [card.id]);
+        if ((await client.query('SELECT id FROM olbia.card_profiles WHERE id=$1 AND deleted_at IS NULL', [card.id])).rows.length) throw new Error('Inactive profile was visible');
+        const stillRetained = (await client.query(`SELECT count(*) AS count FROM (
+          SELECT card_id FROM olbia.liability_snapshots UNION ALL SELECT card_id FROM olbia.liability_versions
+        ) liabilities WHERE card_id=$1`, [card.id])).rows[0]?.count;
+        if (String(retained) !== String(stillRetained)) throw new Error('Profile removal changed liability history');
+        await client.query('UPDATE olbia.card_profiles SET deleted_at=NULL WHERE id=$1', [card.id]);
         const raw=(await client.query("SELECT source_item FROM olbia.projection_state WHERE source_sk='EVENT' AND deleted=false ORDER BY source_pk LIMIT 1")).rows[0]?.source_item as SourceItem|undefined;
         if(!raw) throw new Error('No retained movement for smoke');
         const key={PK:raw.PK,SK:raw.SK};const store=new OlbiaSqlStore(pool,process.env.METADATA_TABLE_NAME!);
@@ -49,7 +66,7 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
         });
         verified=true;throw rollback;
       });} catch(error) {if(error!==rollback) throw error;}
-      return {verified,rolledBack:true,nativeCategories:true};
+      return {verified,rolledBack:true,nativeCategories:true,nativeCards:true};
     }
     if(!['pause','activate'].includes(event.action)) throw new Error('Unknown operation');
     if(event.action==='activate' && process.env.OLBIA_ALLOW_SQL_ACTIVATION!=='true') throw new Error('SQL activation requires the approved cutover deployment');
