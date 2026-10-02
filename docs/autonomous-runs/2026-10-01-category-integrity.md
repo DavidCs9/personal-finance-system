@@ -31,7 +31,7 @@ David authorized indefinite autonomous work and asked to select one item and fin
 - Alternatives and tradeoffs: Adapter-only validation is smaller but does not normalize the selected domain; direct SQL category authority requires migrating catalog readers/writers and adapting verification.
 - Decision and reason: Deliver a real canonical SQL category catalog and membership integrity as one coherent slice, retaining only needed migration/recovery evidence.
 - Consequences, verification, and revisit conditions: Gate all catalog consumers and assignment paths. Verify parity and failure atomicity, as well as native live data and deployment gates. Do not expand into unrelated tables' normalization.
-- Status: Locally validated; production acceptance pending.
+- Status: Validated in production.
 
 ### D2 — Restore recorded valid classifications when cleaning invalid assignments
 
@@ -49,7 +49,7 @@ David authorized indefinite autonomous work and asked to select one item and fin
 - Alternatives and tradeoffs: Rewrite all financial storage in one change; preserve document writes forever; or move catalog authority now, keep frozen migration evidence, then enforce clean assignment relationships.
 - Decision and reason: Create `spend_categories` with domain key/typed required columns/checks; seed once through versioned reviewed bootstrap; migrate all catalog consumers/writers and reject adapter catalog mutations. Retain old catalog projection/envelopes only as frozen recovery evidence. Repair through existing deployed `undo_category_edit` operations, then deliver validated native assignment FKs through a follow-up reviewed deployment.
 - Consequences, verification, and revisit conditions: There is one live catalog authority, no dual writing. Existing projection gates still check frozen evidence; native catalog shape/query checks replace obsolete live catalog source parity. Final completion requires zero unknown current assignments and native validated constraints. Deleting retained migration evidence is not in this slice.
-- Status: Implementing.
+- Status: Validated in production.
 
 ### D4 — Normalize merchant rules before enforcing their category relationship
 
@@ -58,7 +58,7 @@ David authorized indefinite autonomous work and asked to select one item and fin
 - Alternatives and tradeoffs: Remove empty-rule support, keep an application-only relationship, add a duplicated FK column, or finish native rule storage alongside category integrity.
 - Decision and reason: Move rules to a native `merchant_rules` table keyed by normalized merchant key, with typed rule fields and nullable `category_id`. Preserve the public empty-string contract at the boundary and existing rule IDs/tie precedence. Seed once from frozen rule evidence and migrate all readers/writers. Then validate native rule and movement category FKs.
 - Consequences, verification, and revisit conditions: One live rule authority; no rule document writes or source fallback. Preserve original provider/provenance data as frozen evidence. Verify migration parity on actual rules, exact/pattern precedence, null semantics, required columns, and FK protection of every current category assignment. This completes the selected category domain without broad movement normalization.
-- Status: Decided; implementing in follow-up branch from merged #174.
+- Status: Validated in production after #176.
 
 ## Verification results
 
@@ -71,7 +71,7 @@ David authorized indefinite autonomous work and asked to select one item and fin
 
 ## Outcome and remaining work
 
-Active. Local implementation and checks complete. Catalog and role-fix PRs passed quality, merged linearly and deployed successfully. Audited cleanup is complete. Native rules/FK deployment and final live acceptance remain.
+Complete. Catalog/rule authority, membership guards, audited cleanup and validated native category relationships are deployed and independently verified. All production gates passed.
 
 Release checkpoint: #174 passed required `quality`, was `CLEAN`/`MERGEABLE`, and squash-merged as `fbab8bf`; main workflow `36964498465` completed successfully: SQL reconciliation, independent financial/evidence probes, and rolled-back write smoke all passed with zero mismatches. Follow-up branch `codex/category-relationships` starts directly from that fetched main commit.
 
@@ -80,3 +80,7 @@ Cleanup checkpoint: seven original operations restored 11 movements. The first n
 Follow-up implementation checkpoint: native `merchant_rules` readers/writers replace source selection and document envelopes; stable IDs, nullable assignment and UTF-8 precedence are preserved. The new native rule FK and asynchronous validated movement FK protect current assignments. The deployment gate checks both FK states and unknown references; its rolled-back smoke now covers native upserts. All 462 workspace tests passed across the checked rebased suites (API 247, ledger 88); type checks and CDK synthesis passed, with eight protected stateful definitions unchanged. All 174 actual rule keys satisfy the native normalized-key CHECK. Foreign-key release awaits completion of audited cleanup after #175 deployment.
 
 Cleanup acceptance: #175 was `CLEAN`/`MERGEABLE`, squash-merged as `c7764b7`, and workflow `36965735387` completed successfully. Rechecked partial repair state, retried the same idempotent IAM-bound undo tools, and finished all ten operations. A SELECT-only independent snapshot confirms zero unknown movement categories, 13 restored nulls/two `otros`, all 405 prior revisions byte-equivalent after canonical timestamp serialization, exactly 15 new category-only audit revisions (420 total), and unchanged financial/status/merchant/timestamp/tag fields across all 499 movements. Native catalog is unchanged. Private before/after evidence remains outside Git in `/tmp/olbia-category-integrity/`. This satisfies the prerequisite for #176; its initial quality passed with CLEAN/MERGEABLE state. Final documentation update will rerun quality before merge.
+
+Native acceptance checkpoint: #176 passed final quality, was CLEAN/MERGEABLE and squash-merged as `2d7ed0a`. GitHub workflow `36966786509` deployed the schema/application successfully and is running the final financial/evidence gates. Independent SELECT-only native acceptance confirms 13 categories, all 174 migrated rules exactly equal to their frozen source fields/IDs/timestamps, both category FKs validated, zero invalid references and migration version 8 present. No financial/schema writes were issued locally.
+
+Final acceptance: workflow `36966786509` completed successfully. Production SQL reconciliation, independent financial/evidence verification and rolled-back native catalog/rule write smoke passed. The public verification report confirms native SQL catalog/rule authority, two validated category FKs, zero invalid references and zero mismatches. A final independent before/after check after deployment and smoke confirms all 499 movements' financial/status/tag fields unchanged, all 405 original revisions preserved and exactly 15 audited restoration revisions. This completes the selected slice end to end. Retained category/rule projections remain frozen recovery evidence. Broader movement/card/other-domain normalization continues as separately bounded slices under David's ongoing authorization.

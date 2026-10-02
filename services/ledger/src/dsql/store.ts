@@ -52,6 +52,11 @@ export class OlbiaSqlStore {
     if(!entityForKey(key)) throw namedError('ValidationException','Unsupported Olbia record family.');
     if(entityForKey(key)==='categories') throw namedError('ValidationException','The category catalog uses native SQL operations.');
     if(entityForKey(key)==='merchant_category_rules') throw namedError('ValidationException','Merchant rules use native SQL operations.');
+    // Deploy this guard before migration 9 copies profiles under the shared
+    // application barrier. Older runtimes must not write frozen card evidence.
+    if(entityForKey(key)==='cards' && (await client.query('SELECT version FROM olbia.schema_migrations WHERE version=9')).rows.length) {
+      throw namedError('MigrationPausedException','La tarjeta se está migrando. Intenta de nuevo en un momento.');
+    }
     const rows=projectRows(key,item);
     await client.query(`INSERT INTO olbia.projection_state (source_pk,source_sk,generation,source_hash,source_item,deleted,transformer_version,reconciled_at)
       VALUES ($1,$2,1,$3,$4,$5,$6,CURRENT_TIMESTAMP) ON CONFLICT (source_pk,source_sk) DO UPDATE SET
