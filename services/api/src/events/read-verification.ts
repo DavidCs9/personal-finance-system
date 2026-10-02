@@ -11,6 +11,8 @@ import type { JsonObject } from '../http/response.js';
 import { verifyDomainReads } from '../categories/read-verification.js';
 import { verifyWealthReads } from '../wealth/read-verification.js';
 import { verifyPlanningReads } from '../months/read-verification.js';
+import { verifyNativeLedgerProvenance } from './provenance-verification.js';
+import { collectLedgerEvidence, verifyLedgerEvidence } from './evidence-verification.js';
 
 /** One internally consistent financial phase; later domains use their own bounded snapshot. */
 export const verifyNativeFinancialReads = (owner: string, now: Date) => withLedgerReadSnapshot(async () => {
@@ -80,6 +82,12 @@ export const verifyLedgerReads = async () => {
   if (!owner) throw new Error('Missing verification owner');
   const { orderedMonths, ...financial } = await verifyNativeFinancialReads(owner, now);
   let mismatches = financial.mismatches;
+  const { provenance, evidenceAssertions } = await withLedgerReadSnapshot(async () => ({
+    provenance: await verifyNativeLedgerProvenance(readerPool()), evidenceAssertions: await collectLedgerEvidence(readerPool()),
+  }));
+  mismatches += provenance.mismatches;
+  const evidence = await verifyLedgerEvidence(evidenceAssertions);
+  mismatches += evidence.mismatches;
   // Refresh current movement input in the same snapshot as each phase's SQL comparisons.
   const planning = await withLedgerReadSnapshot(async () => verifyPlanningReads(owner, [...await allStoredEvents()], orderedMonths, now));
   mismatches += planning.mismatches;
@@ -89,8 +97,9 @@ export const verifyLedgerReads = async () => {
   mismatches += domain.mismatches;
   const operational = await withLedgerReadSnapshot(() => verifyOperationalReads(owner, now));
   mismatches += operational.mismatches;
-  return { ...financial, operational, verified: mismatches === 0, mode: 'native-sql', planning, wealth, domain,
+  return { ...financial, provenance, evidence, operational, verified: mismatches === 0, mode: 'native-sql', planning, wealth, domain,
     mismatches, elapsedMs: Date.now() - started, phaseDurationsMs: { financial: financial.elapsedMs,
+      provenance: provenance.elapsedMs, evidence: evidence.elapsedMs,
       planning: planning.elapsedMs, wealth: wealth.elapsedMs, domain: domain.elapsedMs, operational: operational.elapsedMs } };
 };
 

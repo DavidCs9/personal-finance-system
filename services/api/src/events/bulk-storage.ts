@@ -1,6 +1,7 @@
 import { applicationStoreClient } from '@finance/ledger/dsql-store';
 import { isLedgerMovementId } from '@finance/ledger/native-ledger';
 import type { BulkEditOperation, BulkEditSnapshot } from './bulk-edits.js';
+import type { ReadSqlClient } from './sql-reads.js';
 
 const timestamp = (value: unknown) => new Date(value as string | Date).toISOString();
 const money = (value: unknown): number => {
@@ -12,9 +13,9 @@ export const bulkAmount = (members: readonly Pick<BulkEditSnapshot, 'amountMinor
   money(members.reduce((sum, member) => sum + member.amountMinor, 0));
 
 /** Original assertions are immutable; the amount is derived from ordered member facts. */
-export const readBulkOperation = async (owner: string, id: string): Promise<BulkEditOperation | undefined> => {
+export const readBulkOperation = async (owner: string, id: string, client?: ReadSqlClient): Promise<BulkEditOperation | undefined> => {
   if (!isLedgerMovementId(id)) return undefined;
-  const row = (await applicationStoreClient().query(`SELECT operation.*,
+  const row = (await (client ?? applicationStoreClient()).query(`SELECT operation.*,
     (SELECT COALESCE(jsonb_agg(to_jsonb(member) ORDER BY member.position),'[]'::jsonb)
       FROM olbia.ledger_bulk_members member WHERE member.operation_id=operation.id) AS members
     FROM olbia.ledger_bulk_operations operation WHERE operation.id=$1 AND operation.owner=$2`, [id, owner])).rows[0];

@@ -126,9 +126,9 @@ export const NATIVE_LEDGER_SCHEMA_STATEMENTS = [
     movement_id uuid NOT NULL, installment_index integer NOT NULL,
     import_kind text NOT NULL, content_sha256 text NOT NULL, row_position integer NOT NULL,
     PRIMARY KEY (movement_id,installment_index,import_kind,content_sha256,row_position),
-    FOREIGN KEY (movement_id,installment_index)
+    CONSTRAINT installment_evidence_candidates_entry_fk FOREIGN KEY (movement_id,installment_index)
       REFERENCES olbia.installment_entries(movement_id,installment_index),
-    FOREIGN KEY (import_kind,content_sha256,row_position)
+    CONSTRAINT installment_evidence_candidates_row_fk FOREIGN KEY (import_kind,content_sha256,row_position)
       REFERENCES olbia.bank_import_rows(kind,content_sha256,position))`,
   `CREATE TABLE IF NOT EXISTS olbia.source_claims (
     capture_source text NOT NULL CHECK (capture_source IN ${captureKinds}),
