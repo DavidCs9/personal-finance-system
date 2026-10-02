@@ -66,6 +66,10 @@ export class OlbiaSqlStore {
       (await client.query('SELECT version FROM olbia.schema_migrations WHERE version=12')).rows.length) {
       throw namedError('MigrationPausedException','La nómina se está migrando. Intenta de nuevo en un momento.');
     }
+    // Deploy before migration 13 copies native import captures and ordered rows.
+    if(entityForKey(key)==='import_records' && (await client.query('SELECT version FROM olbia.schema_migrations WHERE version=13')).rows.length) {
+      throw namedError('MigrationPausedException','Las importaciones se están migrando. Intenta de nuevo en un momento.');
+    }
     const rows=projectRows(key,item);
     await client.query(`INSERT INTO olbia.projection_state (source_pk,source_sk,generation,source_hash,source_item,deleted,transformer_version,reconciled_at)
       VALUES ($1,$2,1,$3,$4,$5,$6,CURRENT_TIMESTAMP) ON CONFLICT (source_pk,source_sk) DO UPDATE SET
