@@ -85,10 +85,15 @@ export class OlbiaSqlStore {
     if(entityForKey(key)==='import_records' && (await client.query('SELECT version FROM olbia.schema_migrations WHERE version=13')).rows.length) {
       throw namedError('MigrationPausedException','Las importaciones se están migrando. Intenta de nuevo en un momento.');
     }
+    const family=entityForKey(key);
+    // Freeze both daily wealth balances and prior captures before migration 15.
+    if(['wealth_snapshots','wealth_versions','liability_snapshots','liability_versions'].includes(family??'') &&
+      (await client.query('SELECT version FROM olbia.schema_migrations WHERE version=15')).rows.length) {
+      throw paused();
+    }
     // Stage the whole ledger boundary before migration 14, including targetless
     // suppression claims and bulk preview/apply/undo state. Tags and MSI freeze
     // through their movement document.
-    const family=entityForKey(key);
     if((['movements','movement_observations','movement_revisions','bulk_edit_operations'].includes(family??'') ||
       family==='dedupe_claims' && !key.PK.startsWith('DEDUPE#CFDI_NOMINA#')) &&
       (await client.query('SELECT version FROM olbia.schema_migrations WHERE version=14')).rows.length) {

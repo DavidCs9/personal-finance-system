@@ -29,6 +29,7 @@ import { listPayslipsForYear } from '../imports/cfdi-nomina-flow.js';
 import { toPublicSnapshot, toPublicLiabilitySnapshot } from './records.js';
 import { readConfiguredWealthInputs, type WealthInputsReader } from './sql-reads.js';
 import { InvalidWealthSnapshotError, parseCajitaSnapshot, parseCardLiabilitySnapshot } from './input.js';
+import { assertLegacyWealthReadAvailable } from './legacy-read-guard.js';
 import {
   liabilitySnapshotKey,
   liabilitySnapshotSkPrefix,
@@ -71,6 +72,7 @@ export interface WealthBalanceOverview {
 }
 
 export const listCanonicalSnapshotsDynamo = async (owner: string): Promise<readonly WealthSnapshot[]> => {
+  await assertLegacyWealthReadAvailable();
   const items: Record<string, unknown>[] = [];
   let exclusiveStartKey: Record<string, unknown> | undefined;
   do {
@@ -180,6 +182,7 @@ const netWorthHistoryPoints = (
 };
 
 export const listCanonicalLiabilitySnapshotsDynamo = async (owner: string): Promise<readonly CardLiabilitySnapshot[]> => {
+  await assertLegacyWealthReadAvailable();
   const items: Record<string, unknown>[] = [];
   let exclusiveStartKey: Record<string, unknown> | undefined;
   do {
