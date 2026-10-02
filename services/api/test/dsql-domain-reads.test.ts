@@ -39,13 +39,16 @@ const seed = async () => {
       { index: 1, month: '2026-09', amountMinor: 30000, status: 'spent' }, { index: 2, month: '2026-10', amountMinor: 30000, status: 'committed' } ] } }),
   ] as SourceItem[]) { records.set(identity(item), item); await sync(item); }
   for (const c of DEFAULT_SPEND_CATEGORIES) await sync({ PK: 'CATEGORY_CATALOG', SK: `CAT#${c.id}` });
+  await sql.query(`INSERT INTO olbia.merchant_rules SELECT merchant_key,id,payload->>'pattern',category_id,
+    payload->>'source',(payload->>'updatedAt')::timestamptz FROM olbia.merchant_category_rules`);
 };
 beforeAll(async () => { sql = new PGlite(); for (const statement of SCHEMA_STATEMENTS) await sql.query(statement);
+  await sql.query('ALTER TABLE olbia.movements ADD CONSTRAINT movements_category_fk FOREIGN KEY (category_id) REFERENCES olbia.spend_categories(id)');
   pool = { transaction: fn => sql.transaction(client => fn(client as unknown as SqlClient)) }; }, 30_000);
 afterAll(async () => sql.close());
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 beforeEach(async () => {
-  records = new Map(); await sql.exec(`TRUNCATE olbia.projection_state,${TABLE_NAMES.map(t => `olbia.${t}`).join(',')}`);
+  records = new Map(); await sql.exec(`TRUNCATE olbia.projection_state,olbia.merchant_rules,${TABLE_NAMES.map(t => `olbia.${t}`).join(',')}`);
   vi.stubEnv('DSQL_DOMAIN_READ_MODE', 'guarded-sql'); vi.stubEnv('DSQL_LEDGER_READ_MODE', 'guarded-sql');
   vi.stubEnv('DSQL_PLANNING_READ_MODE', 'dynamodb'); vi.stubEnv('DSQL_WEALTH_READ_MODE', 'dynamodb');
   vi.spyOn(readers, 'readerPool').mockReturnValue(sql); vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -65,22 +68,23 @@ beforeEach(async () => {
   });
 });
 describe('remaining domain SQL reads', () => {
-  it('preserves effective defaults/overrides, paginated rules and source key order for exact/longest/equal-pattern precedence', async () => {
+  it('preserves catalog overrides and merchant-key order for exact/longest/equal-pattern precedence', async () => {
     await seed(); expect(await listCategories()).toEqual(await readSqlCategories(sql));
     expect(await listCategories()).toContainEqual({ id: 'shopping', name: 'Compras propias', sortOrder: 1 });
     expect(await listMerchantRules()).toEqual(await readSqlMerchantRules(sql));
     expect(resolveCategoryId('shop', await listMerchantRules())).toBe('shopping');
     expect(resolveCategoryId('shared shop', await listMerchantRules())).toBe('shopping');
     const exact = { ...rule('shared shop'), categoryId: 'salud' }; records.set(identity(exact), exact);
-    expect(await resolveCategoryForMerchant('Shared Shop')).toBe('salud'); // authoritative classification reads source during lag
-    await sync(exact); expect(resolveCategoryId('Shared Shop', await listMerchantRules())).toBe('salud');
+    expect(await resolveCategoryForMerchant('Shared Shop')).toBe('shopping'); // frozen source is no longer rule authority
+    await sql.query(`INSERT INTO olbia.merchant_rules VALUES ('shared shop','exact',NULL,'salud','human',CURRENT_TIMESTAMP)`);
+    expect(resolveCategoryId('Shared Shop', await listMerchantRules())).toBe('salud');
     const commands = (DynamoDBDocumentClient.prototype.send as any).mock.calls.map(([c]: any[]) => c.input);
     expect(commands.filter((c: any) => c.KeyConditionExpression).every((c: any) => c.ConsistentRead)).toBe(true);
   });
-  it('keeps the native catalog authoritative while legacy rules/cards handle lag and card limits', async () => {
+  it('keeps native categories/rules authoritative while legacy cards handle lag and card limits', async () => {
     await seed(); const original = await readSqlCards('owner', sql); expect(original[0]).toMatchObject({ institution: 'santander_mx', createdAt: '2026-09-01T12:00:00.123Z' });
     records.delete('CATEGORY_CATALOG|CAT#shopping'); expect(await listCategories()).toContainEqual({ id: 'shopping', name: 'Compras propias', sortOrder: 1 });
-    records.delete('CATEGORY_RULES|RULE#a'); expect((await listMerchantRules()).map(r => r.id)).not.toContain('a');
+    records.delete('CATEGORY_RULES|RULE#a'); expect((await listMerchantRules()).map(r => r.id)).toContain('a');
     await sql.query("DELETE FROM olbia.cards WHERE row_id='c'");
     // Use the real mocked SDK client so max-three validation exercises the source path, not a fake input.
     const { database } = await import('../src/http/clients.js');
@@ -94,8 +98,13 @@ describe('remaining domain SQL reads', () => {
     await seed(); const movements = [...records.values()].filter(r => r.SK === 'EVENT').map(r => r.payload as Record<string, unknown>);
     const run = () => verifyDomainReads('owner', movements, ['2026-09', '2026-10'], new Date('2026-10-01T06:00:00Z'));
     expect(await run()).toMatchObject({ effectiveCategories: 13, rules: 3, cards: 3, mismatches: 0, reports: 4 });
-    await sql.query("UPDATE olbia.merchant_category_rules SET category_id='salud' WHERE row_id='a'");
+    // Frozen projection corruption is detected by the separate maintenance gate.
+    // The product reader uses the canonical typed rule column immediately.
+    await sql.query("UPDATE olbia.merchant_rules SET category_id='salud' WHERE merchant_key='a'");
+    expect(resolveCategoryId('shop', await listMerchantRules())).toBe('salud');
+    await sql.query("ALTER TABLE olbia.movements DROP CONSTRAINT movements_category_fk");
     expect((await run()).mismatches).toBeGreaterThan(0);
+    await sql.query('ALTER TABLE olbia.movements ADD CONSTRAINT movements_category_fk FOREIGN KEY (category_id) REFERENCES olbia.spend_categories(id)');
     await sql.query("UPDATE olbia.cards SET source_item=jsonb_set(source_item,'{payload,name}','\"Corrupt\"') WHERE row_id='a'");
     const { database } = await import('../src/http/clients.js'); expect((await listCards({ database, tableName: 'test', owner: 'owner' }))[0].name).toBe('a');
     expect((await run()).mismatches).toBeGreaterThan(0);
@@ -127,13 +136,15 @@ describe('remaining domain SQL reads', () => {
     expect(await patchEvent('oct', 'owner', '{"action":"reject"}')).toBeUndefined();
     expect(query).not.toHaveBeenCalled();
   });
-  it('skips SQL entirely in rollback, selects source in shadow and propagates source failure', async () => {
+  it('keeps rules on SQL across legacy mode flags and propagates SQL failure without a source fallback', async () => {
     await seed(); const query = vi.spyOn(sql, 'query'); vi.stubEnv('DSQL_DOMAIN_READ_MODE', 'dynamodb');
-    await listMerchantRules(); const { database } = await import('../src/http/clients.js'); await listCards({ database, tableName: 'test', owner: 'owner' });
+    await listMerchantRules(); expect(query).toHaveBeenCalledTimes(1);
+    query.mockClear(); const { database } = await import('../src/http/clients.js'); await listCards({ database, tableName: 'test', owner: 'owner' });
     expect(query).not.toHaveBeenCalled(); vi.stubEnv('DSQL_DOMAIN_READ_MODE', 'shadow'); await listMerchantRules();
-    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('"SourceSelected":1'));
     vi.mocked(DynamoDBDocumentClient.prototype.send).mockRejectedValue(new Error('Source unavailable') as never);
-    await expect(listMerchantRules()).rejects.toThrow('Source unavailable');
+    expect(await listMerchantRules()).toHaveLength(3);
     expect(await listCategories()).toHaveLength(13);
+    query.mockRejectedValue(new Error('SQL unavailable'));
+    await expect(listMerchantRules()).rejects.toThrow('SQL unavailable');
   });
 });

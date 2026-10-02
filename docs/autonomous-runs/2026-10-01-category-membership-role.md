@@ -21,12 +21,12 @@ Follow the binding SQL-native and single-owner north stars, preserve previous re
 - Alternatives and tradeoffs: Grant every mutation runtime the product-reader role, or perform write validation through the already-authorized application client.
 - Decision and reason: Use `applicationStoreClient()` for membership. It reuses a current transaction and otherwise selects the correct existing write identity. No additional IAM grants or broader product-reader authority are needed.
 - Consequences, verification, and revisit conditions: Integration tests must exercise membership outside an API transaction and prove it never opens a reader identity. Recheck the failed operation after deploy, retry the same idempotent undo and verify all financial fields and original revisions.
-- Status: Implementing.
+- Status: Validated in production.
 
 ## Verification results
 
-All 455 workspace tests passed; API type check and CDK synthesis passed. The regression test exercises standalone membership with the product-reader identity unavailable, and confirms membership uses the application connection. No infrastructure policy change is required. Production acceptance pending.
+All 455 workspace tests passed; API type check and CDK synthesis passed. The regression test exercises standalone membership with the product-reader identity unavailable, and confirms membership uses the application connection. No infrastructure policy change is required. PR #175 passed required quality, was CLEAN/MERGEABLE, squash-merged as `c7764b7` and deployed through workflow `36965735387`. SQL/financial/evidence/rollback gates passed with zero mismatches. Standalone nonnull undo calls now succeed; all remaining audited restorations completed without duplicate revisions.
 
 ## Outcome and remaining work
 
-Active; this fixes a release-discovered role dependency, then the category integrity run continues.
+Complete. The role gap is fixed and production-verified. The category integrity run continues with native rule/relationship deployment.

@@ -186,3 +186,7 @@ Each implementation slice needs a reviewed PR, required quality check and the ex
 The audit's recommendation is to start with **category integrity and the core ledger**, while defining import-row provenance before adding MSI evidence constraints. The observed model has substantial redundancy and weak database enforcement, but the live comparison gives a trustworthy baseline for a controlled redesign.
 
 Run record: [normalization audit](autonomous-runs/2026-10-01-normalization-audit.md).
+
+## Implementation progress after the audit
+
+The inventory and findings above describe the captured snapshot. The first normalization slice is tracked in [the category integrity run](autonomous-runs/2026-10-01-category-integrity.md) and [native category design](sql-native-categories.md). #174 deployed the authoritative `spend_categories` catalog and membership guards; #175 fixed the standalone mutation SQL identity. Both passed required quality and production acceptance. All 15 unknown category assignments were then restored through ten audited domain undo operations: zero invalid current assignments, unchanged financial fields/tags and all original revisions preserved. Native merchant rules and validated assignment FKs are prepared in #176; their production acceptance remains pending. Frozen category/rule projections are recovery evidence, never the final design.

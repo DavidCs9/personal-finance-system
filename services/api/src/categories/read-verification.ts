@@ -6,7 +6,6 @@ import type { JsonObject } from '../http/response.js';
 import { readerPool } from '../events/sql-reads.js';
 import { samePublicResult } from '../events/read-selection.js';
 import { feedFromPayloads } from '../events/month-feed.js';
-import { listMerchantRulesDynamo, readMerchantRuleRecords } from './source-reads.js';
 import { readSqlCategories, readSqlMerchantRules, domainReadMode, categoryReadStatement, ruleReadStatement,
   listCategories, listMerchantRules } from './sql-reads.js';
 import { listCards, listCardsDynamo } from '../cards/cards.js';
@@ -26,14 +25,15 @@ import { spendingRangeFromEvents } from '../agent/spending-range.js';
 /** Independent SQL/source content and worker calculations. Never send notifications or use fallback to pass parity. */
 export const verifyDomainReads = async (owner: string, movements: readonly JsonObject[], financialMonths: readonly string[], now: Date) => {
   const started = Date.now(), client = readerPool();
-  const [categories, rules, sqlRules, cards, sqlCards, ruleRecords] = await Promise.all([
-    readSqlCategories(client), listMerchantRulesDynamo(), readSqlMerchantRules(client),
-    listCardsDynamo({ database, tableName, owner }), readSqlCards(owner, client), readMerchantRuleRecords(),
+  const [categories, rules, cards, sqlCards] = await Promise.all([
+    readSqlCategories(client), readSqlMerchantRules(client),
+    listCardsDynamo({ database, tableName, owner }), readSqlCards(owner, client),
   ]);
   const sqlCategories = categories;
+  const sqlRules = rules;
   let mismatches = 0;
   const check = (source: unknown, sql: unknown) => { mismatches += Number(!samePublicResult(source, sql)); };
-  check(rules, sqlRules); check(cards, sqlCards);
+  check(cards, sqlCards);
   // Native catalog: independently check column mapping and shape. Frozen migration
   // envelopes are not a competing category authority or a fallback.
   const categoryRows = (await client.query('SELECT * FROM olbia.spend_categories ORDER BY id')).rows;
@@ -42,9 +42,21 @@ export const verifyDomainReads = async (owner: string, movements: readonly JsonO
   })));
   check(true, categories.length > 0 && categories.every(c => typeof c.id === 'string' && typeof c.name === 'string'
     && c.name.trim().length > 0 && Number.isInteger(c.sortOrder)));
-  const ruleRows = (await client.query("SELECT * FROM olbia.merchant_category_rules WHERE source_pk='CATEGORY_RULES' ORDER BY source_sk")).rows;
-  check(ruleRows, ruleRecords.map(item => ({ source_pk: item.PK, source_sk: item.SK, row_id: item.id,
-    id: item.id, merchant_key: item.merchantKey, category_id: item.categoryId ?? null, payload: item })));
+  const ruleRows = (await client.query('SELECT * FROM olbia.merchant_rules ORDER BY merchant_key COLLATE "C"')).rows;
+  check(ruleRows.map(row => ({ ...row, updated_at: new Date(row.updated_at as string | Date).toISOString() })), rules.map(rule => ({
+    merchant_key: rule.merchantKey, id: rule.id, pattern: rule.pattern ?? null, category_id: rule.categoryId || null,
+    source: rule.source, updated_at: rule.updatedAt,
+  })));
+  const invalidReferences = (await client.query(`SELECT count(*) AS count FROM (
+    SELECT category_id FROM olbia.movements WHERE category_id IS NOT NULL
+    UNION ALL SELECT category_id FROM olbia.merchant_rules WHERE category_id IS NOT NULL
+  ) references_to_categories LEFT JOIN olbia.spend_categories category ON category.id=references_to_categories.category_id
+    WHERE category.id IS NULL`)).rows[0]?.count;
+  check(0, Number(invalidReferences));
+  const constraints = (await client.query(`SELECT conname,convalidated FROM pg_constraint WHERE
+    (conrelid='olbia.movements'::regclass AND conname='movements_category_fk') OR
+    (conrelid='olbia.merchant_rules'::regclass AND conname='merchant_rules_category_fk') ORDER BY conname`)).rows;
+  check(constraints, [{ conname: 'merchant_rules_category_fk', convalidated: true }, { conname: 'movements_category_fk', convalidated: true }]);
   const sourceCards: JsonObject[] = [];
   for await (const page of paginateQuery({ client: database }, { TableName: tableName, ConsistentRead: true,
     KeyConditionExpression: 'PK=:pk AND begins_with(SK,:prefix)',
@@ -116,7 +128,9 @@ export const verifyDomainReads = async (owner: string, movements: readonly JsonO
     queryPlans.push({ query, scanTypes: [...new Set(lines.flatMap(line => line.match(/(?:Index Only Scan|Index Scan|Seq Scan|Bitmap Heap Scan)/g) ?? []))],
       metrics: lines.filter(line => /(?:DPU|Planning Time|Execution Time)/i.test(line)).map(line => line.trim()).filter(line => /^[\w\s():.=,+-]+$/.test(line)) });
   }
-  return { mode: domainReadMode(), categoryAuthority: 'native-sql', persistedCategories: categories.length, effectiveCategories: categories.length,
+  return { mode: domainReadMode(), categoryAuthority: 'native-sql', ruleAuthority: 'native-sql', invalidCategoryReferences: Number(invalidReferences),
+    validatedCategoryForeignKeys: constraints.filter(row => row.convalidated === true).length,
+    persistedCategories: categories.length, effectiveCategories: categories.length,
     rules: rules.length, cards: cards.length, merchantChecks: merchants.size, months: months.length, assistantChecks,
     reports, dailyMessages, cycleDays, cycleMessages, mismatches, elapsedMs: Date.now() - started, queryPlans };
 };

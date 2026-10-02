@@ -33,6 +33,7 @@ describe('CloudFormation DSQL bootstrap diagnostics', () => {
   it('distinguishes runtime IAM failures after a successful schema', async () => {
     vi.stubEnv('DSQL_ENDPOINT', 'example.dsql.us-east-2.on.aws');
     vi.spyOn(AuroraDSQLPool.prototype, 'connect').mockResolvedValue({ query: async (statement: string) => ({ rows:
+      statement.includes('pg_constraint') ? [{ convalidated: true }] :
       statement.includes('indisvalid') ? [{ indisvalid: true }] : statement.includes('pg_roles') ? [{ rolname: 'olbia_projector' }] : [],
     }), release: () => {} } as never);
     vi.spyOn(AuroraDSQLPool.prototype, 'query').mockRejectedValue(Object.assign(new Error('private IAM detail'), { code: '28000' }));

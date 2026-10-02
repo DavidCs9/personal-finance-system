@@ -57,6 +57,18 @@ export const SCHEMA_STATEMENTS = [
     WHERE NOT EXISTS (SELECT 1 FROM olbia.schema_migrations WHERE version=6)
     ON CONFLICT (id) DO NOTHING`),
   `INSERT INTO olbia.schema_migrations VALUES (6,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
+  // Version 7: native merchant rules. NULL is no assignment, never a fake category.
+  `CREATE TABLE IF NOT EXISTS olbia.merchant_rules (
+    merchant_key text PRIMARY KEY CHECK (merchant_key ~ '^[a-z0-9]+( [a-z0-9]+)*$'),
+    id text NOT NULL CHECK (length(id) > 0), pattern text,
+    category_id text CONSTRAINT merchant_rules_category_fk REFERENCES olbia.spend_categories(id),
+    source text NOT NULL CHECK (source IN ('seed','human','llm_residual','agent_confirmed')),
+    updated_at timestamptz NOT NULL)`,
+  `INSERT INTO olbia.merchant_rules (merchant_key,id,pattern,category_id,source,updated_at)
+    SELECT merchant_key,id,NULLIF(payload->>'pattern',''),NULLIF(category_id,''),payload->>'source',(payload->>'updatedAt')::timestamptz
+    FROM olbia.merchant_category_rules WHERE NOT EXISTS (SELECT 1 FROM olbia.schema_migrations WHERE version=7)
+    ON CONFLICT (merchant_key) DO NOTHING`,
+  `INSERT INTO olbia.schema_migrations VALUES (7,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
@@ -75,6 +87,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     }
   };
   for (const [index, statement] of SCHEMA_STATEMENTS.entries()) await query(`schema-statement-${index + 1}`, statement);
+  await ensureMovementCategoryForeignKey({ query: (statement, params) => query('category-fk', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   for (const [name, table, columns] of [
     ['movements_month_idx', 'movements', 'spend_month,id'],
     ['installments_month_idx', 'msi_installments', 'month,movement_id'],
@@ -99,6 +112,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('tables-grant', `GRANT SELECT,INSERT,UPDATE,DELETE ON ${['projection_state', ...TABLE_NAMES].map((table) => `olbia.${table}`).join(',')} TO olbia_projector`);
   await query('read-grant', 'GRANT SELECT ON olbia.schema_migrations,olbia.movement_months,olbia.runtime_state TO olbia_projector');
   await query('catalog-projector-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_projector');
+  await query('rules-projector-read', 'GRANT SELECT ON olbia.merchant_rules TO olbia_projector');
   await query('projector-barrier-grant','GRANT SELECT,UPDATE ON olbia.application_barrier TO olbia_projector');
   for (const arn of roleArns) {
     if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid runtime role ARN');
@@ -110,6 +124,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query('reader-schema-grant', 'GRANT USAGE ON SCHEMA olbia TO olbia_reader');
     await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments', 'monthly_plans', 'payroll', 'cards', 'wealth_snapshots', 'wealth_versions', 'liability_snapshots', 'liability_versions', 'categories', 'merchant_category_rules', 'ingestion_exceptions', 'import_records', 'push_subscriptions', 'assistant_threads'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
     await query('catalog-reader-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_reader');
+    await query('rules-reader-read', 'GRANT SELECT ON olbia.merchant_rules TO olbia_reader');
     for (const arn of options.readerRoleArns) {
       if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid reader role ARN');
       await query('reader-iam-grant', `AWS IAM GRANT olbia_reader TO '${arn}'`);
@@ -138,7 +153,9 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (writer) await query(`write-${role}`,`GRANT SELECT,INSERT,UPDATE,DELETE ON ${['projection_state','application_barrier','command_receipts',...TABLE_NAMES].map(t=>`olbia.${t}`).join(',')} TO ${role}`);
     if (writer) await query(`view-${role}`,`GRANT SELECT ON olbia.movement_months TO ${role}`);
     await query(`catalog-read-${role}`, `GRANT SELECT ON olbia.spend_categories TO ${role}`);
+    await query(`rules-read-${role}`, `GRANT SELECT ON olbia.merchant_rules TO ${role}`);
     if (writer) await query(`catalog-write-${role}`, `GRANT INSERT,UPDATE ON olbia.spend_categories TO ${role}`);
+    if (writer) await query(`rules-write-${role}`, `GRANT INSERT,UPDATE ON olbia.merchant_rules TO ${role}`);
     if (operator) await query(`control-${role}`,`GRANT UPDATE ON olbia.runtime_state TO ${role}`);
     for (const arn of arns) {
       if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid application role ARN');
@@ -146,4 +163,37 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     }
   }
 
+};
+
+/** Native DSQL validates historical relationships asynchronously, before release succeeds. */
+export const ensureMovementCategoryForeignKey = async (client: SqlClient, options: {
+  now?: () => number; pause?: (ms: number) => Promise<void>; waitMs?: number;
+} = {}): Promise<void> => {
+  const name = 'movements_category_fk';
+  const now = options.now ?? Date.now, pause = options.pause ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
+  const state = () => client.query('SELECT convalidated FROM pg_constraint WHERE conrelid=$1::regclass AND conname=$2', ['olbia.movements', name]);
+  try {
+    let constraint = (await state()).rows[0];
+    if (!constraint) {
+      await client.query(`ALTER TABLE olbia.movements ADD CONSTRAINT ${name} FOREIGN KEY (category_id)
+        REFERENCES olbia.spend_categories(id) NOT VALID`);
+      constraint = (await state()).rows[0];
+    }
+    if (constraint?.convalidated !== true) {
+      const job = (await client.query(`ALTER TABLE ASYNC olbia.movements VALIDATE CONSTRAINT ${name}`)).rows[0]?.job_id;
+      if (typeof job !== 'string' || !job) throw new BootstrapFailure('category-fk-job');
+      const deadline = now() + (options.waitMs ?? 180_000);
+      for (;;) {
+        if ((await state()).rows[0]?.convalidated === true) break;
+        const status = (await client.query('SELECT status FROM sys.jobs WHERE job_id=$1', [job])).rows[0]?.status;
+        if (status === 'failed') throw new BootstrapFailure('category-fk-validation');
+        if (now() >= deadline) throw new BootstrapFailure('category-fk-timeout');
+        await pause(1_000);
+      }
+    }
+    await client.query('INSERT INTO olbia.schema_migrations VALUES (8,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
+  } catch (error) {
+    if (error instanceof BootstrapFailure) throw error;
+    throw new BootstrapFailure('category-fk', error);
+  }
 };

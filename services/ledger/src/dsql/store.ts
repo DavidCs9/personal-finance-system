@@ -51,6 +51,7 @@ export class OlbiaSqlStore {
   private async save(client:SqlClient,key:SourceKey,item:SourceItem|undefined,previous:SourceItem|undefined):Promise<void> {
     if(!entityForKey(key)) throw namedError('ValidationException','Unsupported Olbia record family.');
     if(entityForKey(key)==='categories') throw namedError('ValidationException','The category catalog uses native SQL operations.');
+    if(entityForKey(key)==='merchant_category_rules') throw namedError('ValidationException','Merchant rules use native SQL operations.');
     const rows=projectRows(key,item);
     await client.query(`INSERT INTO olbia.projection_state (source_pk,source_sk,generation,source_hash,source_item,deleted,transformer_version,reconciled_at)
       VALUES ($1,$2,1,$3,$4,$5,$6,CURRENT_TIMESTAMP) ON CONFLICT (source_pk,source_sk) DO UPDATE SET

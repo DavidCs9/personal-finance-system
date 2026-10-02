@@ -14,6 +14,20 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
       const rollback=new Error('Smoke rollback');let verified=false;
       try {await pool.transaction(async client=>{
         await client.query("UPDATE olbia.application_barrier SET generation=generation+1 WHERE id='storage'");
+        const category = (await client.query('SELECT id,name,sort_order FROM olbia.spend_categories ORDER BY id LIMIT 1')).rows[0];
+        if (!category) throw new Error('No native catalog category for smoke');
+        const nativeCategory = (await client.query(`INSERT INTO olbia.spend_categories (id,name,sort_order) VALUES ($1,$2,$3)
+          ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,sort_order=EXCLUDED.sort_order RETURNING id`,
+        [category.id, 'SQL verification', category.sort_order])).rows[0];
+        if (nativeCategory?.id !== category.id) throw new Error('Native catalog upsert failed');
+        const rule = (await client.query('SELECT merchant_key,id FROM olbia.merchant_rules ORDER BY merchant_key LIMIT 1')).rows[0];
+        if (rule) {
+          const nativeRule = (await client.query(`INSERT INTO olbia.merchant_rules
+            (merchant_key,id,pattern,category_id,source,updated_at) VALUES ($1,$2,NULL,$3,'human',CURRENT_TIMESTAMP)
+            ON CONFLICT (merchant_key) DO UPDATE SET category_id=EXCLUDED.category_id RETURNING id,category_id`,
+          [rule.merchant_key, rule.id, category.id])).rows[0];
+          if (nativeRule?.id !== rule.id || nativeRule.category_id !== category.id) throw new Error('Native rule upsert failed');
+        }
         const raw=(await client.query("SELECT source_item FROM olbia.projection_state WHERE source_sk='EVENT' AND deleted=false ORDER BY source_pk LIMIT 1")).rows[0]?.source_item as SourceItem|undefined;
         if(!raw) throw new Error('No retained movement for smoke');
         const key={PK:raw.PK,SK:raw.SK};const store=new OlbiaSqlStore(pool,process.env.METADATA_TABLE_NAME!);
@@ -35,7 +49,7 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
         });
         verified=true;throw rollback;
       });} catch(error) {if(error!==rollback) throw error;}
-      return {verified,rolledBack:true};
+      return {verified,rolledBack:true,nativeCategories:true};
     }
     if(!['pause','activate'].includes(event.action)) throw new Error('Unknown operation');
     if(event.action==='activate' && process.env.OLBIA_ALLOW_SQL_ACTIVATION!=='true') throw new Error('SQL activation requires the approved cutover deployment');
