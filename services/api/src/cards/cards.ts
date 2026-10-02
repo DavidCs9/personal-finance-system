@@ -1,10 +1,8 @@
-import { withApplicationTransaction } from '@finance/ledger/dsql-store';
-import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { DeleteCommand, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { applicationStoreClient, withApplicationTransaction } from '@finance/ledger/dsql-store';
 import { INSTITUTIONS, isInstitution } from '@finance/domain';
+import { readSqlCards, toNativeCardRecord } from './sql-reads.js';
 
-export const listCards = async (input: Parameters<typeof listCardsDynamo>[0]): Promise<readonly CardRecord[]> =>
-  (await import('./sql-reads.js')).readConfiguredCards(input);
+export const listCards = readSqlCards;
 
 export const MAX_CARDS = 3;
 
@@ -26,11 +24,6 @@ export interface CardInput {
 }
 
 export class InvalidCardError extends Error {}
-
-export const cardKey = (owner: string, cardId: string): { readonly PK: string; readonly SK: string } => ({
-  PK: `USER#${owner}`,
-  SK: `CARD#${cardId}`,
-});
 
 export const parseCardInput = (rawBody: string | undefined): CardInput => {
   let parsed: unknown;
@@ -73,104 +66,41 @@ export const parseCardInput = (rawBody: string | undefined): CardInput => {
 export const isValidCardId = (cardId: string): boolean =>
   typeof cardId === 'string' && cardId.length >= 1 && cardId.length <= 128 && /^[a-zA-Z0-9_-]+$/.test(cardId);
 
-export const listCardsDynamo = async (input: {
-  readonly database: DynamoDBDocumentClient;
-  readonly tableName: string;
-  readonly owner: string;
-}): Promise<readonly CardRecord[]> => {
-  const cards: CardRecord[] = [];
-  let exclusiveStartKey: Record<string, unknown> | undefined;
-  do {
-    const result = await input.database.send(new QueryCommand({
-      TableName: input.tableName,
-      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
-      ExpressionAttributeValues: {
-        ':pk': `USER#${input.owner}`,
-        ':prefix': 'CARD#',
-      },
-      ExclusiveStartKey: exclusiveStartKey,
-      ConsistentRead: true,
-    }));
-    for (const item of result.Items ?? []) {
-      const record = toCardRecord(item);
-      if (record) cards.push(record);
-    }
-    exclusiveStartKey = result.LastEvaluatedKey;
-  } while (exclusiveStartKey);
-  return [...cards].sort((left, right) => left.name.localeCompare(right.name, 'es') || left.id.localeCompare(right.id));
-};
-
-const saveCardInternal = async (input: {
-  readonly database: DynamoDBDocumentClient;
-  readonly tableName: string;
-  readonly owner: string;
-  readonly cardId: string;
-  readonly body: CardInput;
+/** Card mutations use domain keys and typed SQL columns in the shared domain transaction. */
+export const saveCard = async (input: {
+  readonly owner: string; readonly cardId: string; readonly body: CardInput;
 }): Promise<CardRecord> => {
-  if (!isValidCardId(input.cardId)) {
-    throw new InvalidCardError('cardId is invalid.');
-  }
-  const key = cardKey(input.owner, input.cardId);
-  const existing = await input.database.send(new GetCommand({
-    TableName: input.tableName,
-    Key: key,
-    ConsistentRead: true,
-  }));
-  const now = new Date().toISOString();
-  const isCreate = !existing.Item;
-  if (isCreate) {
-    const current = await listCardsDynamo({
-      database: input.database,
-      tableName: input.tableName,
-      owner: input.owner,
-    });
-    if (current.length >= MAX_CARDS) {
-      throw new InvalidCardError(`At most ${MAX_CARDS} cards are allowed.`);
+  if (!isValidCardId(input.cardId)) throw new InvalidCardError('cardId is invalid.');
+  const body = parseCardInput(JSON.stringify(input.body));
+  return withApplicationTransaction(async () => {
+    const client = applicationStoreClient();
+    const existing = (await client.query('SELECT owner,created_at,deleted_at FROM olbia.card_profiles WHERE id=$1', [input.cardId])).rows[0];
+    if (existing && existing.owner !== input.owner) throw new InvalidCardError('Card not found.');
+    if (!existing || existing.deleted_at !== null) {
+      const count = Number((await client.query('SELECT count(*) AS count FROM olbia.card_profiles WHERE owner=$1 AND deleted_at IS NULL', [input.owner])).rows[0]?.count);
+      if (count >= MAX_CARDS) throw new InvalidCardError(`At most ${MAX_CARDS} cards are allowed.`);
     }
-  }
-  const createdAt = typeof existing.Item?.createdAt === 'string' ? existing.Item.createdAt : now;
-  const record: CardRecord = {
-    id: input.cardId,
-    name: input.body.name,
-    cutOffDay: input.body.cutOffDay,
-    paymentDueDay: input.body.paymentDueDay,
-    ...(input.body.institution ? { institution: input.body.institution } : {}),
-    createdAt,
-    updatedAt: now,
-  };
-  await input.database.send(new PutCommand({
-    TableName: input.tableName,
-    Item: {
-      ...key,
-      entityType: 'card_cycle',
-      owner: input.owner,
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt,
-      payload: {
-        id: record.id,
-        name: record.name,
-        cutOffDay: record.cutOffDay,
-        paymentDueDay: record.paymentDueDay,
-        ...(record.institution ? { institution: record.institution } : {}),
-      },
-    },
-  }));
-  return record;
+    const now = new Date().toISOString();
+    const createdAt = existing && existing.deleted_at === null ? existing.created_at : now;
+    const row = (await client.query(`INSERT INTO olbia.card_profiles
+      (id,owner,name,cut_off_day,payment_due_day,institution,created_at,updated_at,deleted_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULL) ON CONFLICT (id) DO UPDATE SET
+      name=EXCLUDED.name,cut_off_day=EXCLUDED.cut_off_day,payment_due_day=EXCLUDED.payment_due_day,
+      institution=EXCLUDED.institution,created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at,deleted_at=NULL
+      WHERE olbia.card_profiles.owner=EXCLUDED.owner RETURNING *`,
+    [input.cardId, input.owner, body.name, body.cutOffDay, body.paymentDueDay, body.institution ?? null, createdAt, now])).rows[0];
+    if (!row) throw new InvalidCardError('Card not found.');
+    return toNativeCardRecord(row);
+  });
 };
 
-const deleteCardInternal = async (input: {
-  readonly database: DynamoDBDocumentClient;
-  readonly tableName: string;
-  readonly owner: string;
-  readonly cardId: string;
-}): Promise<void> => {
-  if (!isValidCardId(input.cardId)) {
-    throw new InvalidCardError('cardId is invalid.');
-  }
-  await input.database.send(new DeleteCommand({
-    TableName: input.tableName,
-    Key: cardKey(input.owner, input.cardId),
-  }));
+/** Retain identity for historical liability FKs; current readers omit inactive profiles. */
+export const deleteCard = async (input: { readonly owner: string; readonly cardId: string }): Promise<void> => {
+  if (!isValidCardId(input.cardId)) throw new InvalidCardError('cardId is invalid.');
+  await withApplicationTransaction(async () => {
+    await applicationStoreClient().query(`UPDATE olbia.card_profiles SET deleted_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+      WHERE id=$1 AND owner=$2 AND deleted_at IS NULL`, [input.cardId, input.owner]);
+  });
 };
 
 export const toPublicCard = (card: CardRecord): Record<string, unknown> => ({
@@ -182,28 +112,3 @@ export const toPublicCard = (card: CardRecord): Record<string, unknown> => ({
   createdAt: card.createdAt,
   updatedAt: card.updatedAt,
 });
-
-export const toCardRecord = (item: Record<string, unknown>): CardRecord | undefined => {
-  const payload = item.payload;
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
-  const body = payload as Record<string, unknown>;
-  if (typeof body.id !== 'string' || typeof body.name !== 'string') return undefined;
-  if (!Number.isInteger(body.cutOffDay) || !Number.isInteger(body.paymentDueDay)) return undefined;
-  const institution = typeof body.institution === 'string' && isInstitution(body.institution)
-    && body.institution !== 'amazon_web_services'
-    ? body.institution
-    : undefined;
-  return {
-    id: body.id,
-    name: body.name,
-    cutOffDay: Number(body.cutOffDay),
-    paymentDueDay: Number(body.paymentDueDay),
-    ...(institution ? { institution } : {}),
-    createdAt: typeof item.createdAt === 'string' ? item.createdAt : new Date(0).toISOString(),
-    updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : new Date(0).toISOString(),
-  };
-};
-
-export const saveCard = (...args: Parameters<typeof saveCardInternal>): ReturnType<typeof saveCardInternal> => withApplicationTransaction(() => saveCardInternal(...args));
-
-export const deleteCard = (...args: Parameters<typeof deleteCardInternal>): ReturnType<typeof deleteCardInternal> => withApplicationTransaction(() => deleteCardInternal(...args));

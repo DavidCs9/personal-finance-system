@@ -6,7 +6,7 @@ Plan operativo de la tab **Patrimonio** (activos − deudas de tarjeta = neto) d
 
 - Hero en vista total: **Neto** = activos − saldos pendientes de tarjetas.
 - Activos: Cajita Nu, Fondo de ahorro, Bitso, IBKR.
-- Pasivos: hasta 3 tarjetas (`CARD#`); captura **manual** del saldo pendiente total (incluye MSI), como aparece en la app/estado de cuenta.
+- Pasivos: hasta 3 perfiles activos de tarjeta (`card_profiles.id`); captura **manual** del saldo pendiente total (incluye MSI), como aparece en la app/estado de cuenta.
 - Las tarjetas de Resumen siguen siendo solo ciclo (corte/pago). El saldo vive en Patrimonio, no en el sheet de ciclos.
 - Tab propia, hermana de Resumen y Movimientos.
 - Reporte en **MXN**; moneda nativa queda en holdings.
@@ -30,7 +30,7 @@ Plan operativo de la tab **Patrimonio** (activos − deudas de tarjeta = neto) d
 
 - `GET /wealth` — cuentas sembradas (incl. fondo derivado), pasivos por tarjeta, `assetsMxnMinor`, `liabilitiesMxnMinor`, `netMxnMinor`, `totalMxnMinor` (= assets, alias), historial.
 - `POST /wealth/accounts/nu_cajita_emergencia/snapshots` — `{ amountMinor }` MXN (> 0).
-- `POST /wealth/liabilities/{cardId}/snapshots` — `{ amountMinor }` MXN (≥ 0); exige `CARD#{cardId}` existente.
+- `POST /wealth/liabilities/{cardId}/snapshots` — `{ amountMinor }` MXN (≥ 0); exige un perfil SQL activo para `cardId`.
 - `POST /wealth/sync/bitso` — sync manual (JWT owner); secret `{ apiKey, apiSecret, owner }`.
 - `POST /wealth/sync/ibkr` — sync manual; secret `{ flexToken, flexQueryId, banxicoToken, owner }`.
 

@@ -49,7 +49,7 @@ export const schemaHandler = async (event: {
   try {
     const client = await admin.connect();
     try { await bootstrapSchema(client as SqlClient, event.ResourceProperties.RuntimeRoleArns ?? [], {
-      readerRoleArns: event.ResourceProperties.ReaderRoleArns, operationalVerifierRoleArns: event.ResourceProperties.OperationalVerifierRoleArns,
+      transactionPool: admin, readerRoleArns: event.ResourceProperties.ReaderRoleArns, operationalVerifierRoleArns: event.ResourceProperties.OperationalVerifierRoleArns,
       applicationRoleArns: event.ResourceProperties.ApplicationRoleArns,storeReaderRoleArns:event.ResourceProperties.StoreReaderRoleArns,cutoverRoleArns:event.ResourceProperties.CutoverRoleArns,
     }); }
     finally { client.release(); }
@@ -125,6 +125,7 @@ const runMaintenance = async (event: MaintenanceInput): Promise<MaintenanceInput
         const count = await client.query(`SELECT count(*) AS count FROM olbia.${table}`);
         tableCounts[table] = String(count.rows[0].count);
       }
+      tableCounts.card_profiles = String((await client.query('SELECT count(*) AS count FROM olbia.card_profiles')).rows[0].count);
       tableCounts.spend_categories = String((await client.query('SELECT count(*) AS count FROM olbia.spend_categories')).rows[0].count);
       tableCounts.merchant_rules = String((await client.query('SELECT count(*) AS count FROM olbia.merchant_rules')).rows[0].count);
       const totals = await client.query(`SELECT spend_month,currency,count(*) AS count,

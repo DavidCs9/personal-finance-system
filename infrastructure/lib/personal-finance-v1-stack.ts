@@ -456,13 +456,11 @@ export class PersonalFinanceV1Stack extends Stack {
     const planningReadMode = 'guarded-sql';
     // Production shadow gate verified all retained canonical/audit records, financial histories and original evidence.
     const wealthReadMode = 'guarded-sql';
-    // Remaining read-only domain consumers start in shadow; authoritative decisions stay source-only.
-    const domainReadMode = 'guarded-sql';
+    // Categories, merchant rules and card profiles now read native SQL directly.
     // Independent production shadow gate passed complete operational envelopes and public/expiration contracts.
     const operationalReadMode = 'guarded-sql';
     apiFunction.addEnvironment('DSQL_OPERATIONAL_READ_MODE', operationalReadMode);
     const workerLedgerReadMode = 'guarded-sql';
-    apiFunction.addEnvironment('DSQL_DOMAIN_READ_MODE', domainReadMode);
     apiFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     apiFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
     apiFunction.addEnvironment('DSQL_LEDGER_READ_MODE', ledgerReadMode);
@@ -473,7 +471,7 @@ export class PersonalFinanceV1Stack extends Stack {
       timeout: Duration.minutes(10), memorySize: 512,
       logGroup: this.createLogGroup('DsqlReadVerificationLogGroup', 'personal-finance-v1-dsql-read-verification'),
       environment: { ...dataStorageEnvironment, AGENT_OWNER_SUB: agentOwnerSub.valueAsString,
-        DSQL_LEDGER_READ_MODE: ledgerReadMode, DSQL_PLANNING_READ_MODE: planningReadMode, DSQL_WEALTH_READ_MODE: wealthReadMode, DSQL_DOMAIN_READ_MODE: domainReadMode, DSQL_OPERATIONAL_READ_MODE: operationalReadMode },
+        DSQL_LEDGER_READ_MODE: ledgerReadMode, DSQL_PLANNING_READ_MODE: planningReadMode, DSQL_WEALTH_READ_MODE: wealthReadMode, DSQL_OPERATIONAL_READ_MODE: operationalReadMode },
     });
     metadataTable.grantReadData(readVerificationFunction);
     rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/cfdi-nomina/*');
@@ -512,7 +510,6 @@ export class PersonalFinanceV1Stack extends Stack {
     agentToolsFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
     agentToolsFunction.addEnvironment('DSQL_LEDGER_READ_MODE', workerLedgerReadMode);
     agentToolsFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
-    agentToolsFunction.addEnvironment('DSQL_DOMAIN_READ_MODE', domainReadMode);
     dsqlProjection.grantReader(agentToolsFunction);
 
     const agentTagMutationFunction = new NodejsFunction(this, 'AgentTagMutationFunction', {
@@ -1173,7 +1170,6 @@ export class PersonalFinanceV1Stack extends Stack {
     });
     if (SQL_AUTHORITY) metadataTable.grantReadData(cardCyclePushFunction); else metadataTable.grantReadWriteData(cardCyclePushFunction);
     cardCyclePushFunction.addEnvironment('RAW_EMAIL_BUCKET_NAME', rawEmailBucket.bucketName);
-    cardCyclePushFunction.addEnvironment('DSQL_DOMAIN_READ_MODE', domainReadMode);
     dsqlProjection.grantReader(cardCyclePushFunction);
     vapidSecret.grantRead(cardCyclePushFunction);
     new scheduler.Schedule(this, 'CardCyclePushSchedule', {
@@ -1388,7 +1384,6 @@ export class PersonalFinanceV1Stack extends Stack {
     monthlyCloseEmailFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
     monthlyCloseEmailFunction.addEnvironment('DSQL_LEDGER_READ_MODE', workerLedgerReadMode);
     monthlyCloseEmailFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
-    monthlyCloseEmailFunction.addEnvironment('DSQL_DOMAIN_READ_MODE', domainReadMode);
     dsqlProjection.grantReader(monthlyCloseEmailFunction);
     monthlyCloseEmailFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ses:SendEmail'],

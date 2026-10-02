@@ -15,7 +15,7 @@ vi.mock('../src/http/clients.js', () => ({
 }));
 vi.mock('../src/cards/cards.js', () => ({
   isValidCardId: vi.fn().mockReturnValue(true),
-  listCardsDynamo: listCards,
+  listCards,
 }));
 vi.mock('../src/imports/cfdi-nomina-flow.js', () => ({ listPayslipsForYear }));
 

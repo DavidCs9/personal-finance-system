@@ -136,11 +136,7 @@ app.errorHandler(Error, async (error) => {
 });
 
 app.get('/cards', async ({ event }) => {
-  const cards = await listCards({
-    database,
-    tableName,
-    owner: ownerOf(asHttpEvent(event)),
-  });
+  const cards = await listCards(ownerOf(asHttpEvent(event)));
   return json(HttpStatusCodes.OK, { cards: cards.map(toPublicCard) });
 });
 
@@ -149,8 +145,6 @@ app.put('/cards/:cardId', async ({ event, params }) => {
   if (!isValidCardId(cardId)) return json(HttpStatusCodes.BAD_REQUEST, { message: 'cardId is invalid.' });
   const input = parseCardInput(requestBody(asHttpEvent(event)));
   const saved = await saveCard({
-    database,
-    tableName,
     owner: ownerOf(asHttpEvent(event)),
     cardId,
     body: input,
@@ -162,8 +156,6 @@ app.delete('/cards/:cardId', async ({ event, params }) => {
   const cardId = params.cardId;
   if (!isValidCardId(cardId)) return json(HttpStatusCodes.BAD_REQUEST, { message: 'cardId is invalid.' });
   await deleteCard({
-    database,
-    tableName,
     owner: ownerOf(asHttpEvent(event)),
     cardId,
   });

@@ -1,15 +1,13 @@
-import { paginateQuery } from '@aws-sdk/lib-dynamodb';
 import { aggregateSpendByCategory, aggregateSpendByMerchant, resolveCategoryId, daysInCalendarMonth,
   cardRemindersForDay, cardCyclePushMessage, dailyBalancePushMessage, addCalendarMonths, type PayslipSummary } from '@finance/domain';
-import { database, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
 import { readerPool } from '../events/sql-reads.js';
 import { samePublicResult } from '../events/read-selection.js';
 import { feedFromPayloads } from '../events/month-feed.js';
-import { readSqlCategories, readSqlMerchantRules, domainReadMode, categoryReadStatement, ruleReadStatement,
+import { readSqlCategories, readSqlMerchantRules, categoryReadStatement, ruleReadStatement,
   listCategories, listMerchantRules } from './sql-reads.js';
-import { listCards, listCardsDynamo } from '../cards/cards.js';
-import { readSqlCards, cardReadStatement } from '../cards/sql-reads.js';
+import { listCards } from '../cards/cards.js';
+import { cardReadStatement } from '../cards/sql-reads.js';
 import { deduplicateFeed } from '../analytics/events.js';
 import { summarizeMonthFeed } from '../months/summary.js';
 import { getMonthlyPlan } from '../months/service.js';
@@ -25,15 +23,14 @@ import { spendingRangeFromEvents } from '../agent/spending-range.js';
 /** Independent SQL/source content and worker calculations. Never send notifications or use fallback to pass parity. */
 export const verifyDomainReads = async (owner: string, movements: readonly JsonObject[], financialMonths: readonly string[], now: Date) => {
   const started = Date.now(), client = readerPool();
-  const [categories, rules, cards, sqlCards] = await Promise.all([
+  const [categories, rules, cards] = await Promise.all([
     readSqlCategories(client), readSqlMerchantRules(client),
-    listCardsDynamo({ database, tableName, owner }), readSqlCards(owner, client),
+    listCards(owner),
   ]);
   const sqlCategories = categories;
   const sqlRules = rules;
   let mismatches = 0;
   const check = (source: unknown, sql: unknown) => { mismatches += Number(!samePublicResult(source, sql)); };
-  check(cards, sqlCards);
   // Native catalog: independently check column mapping and shape. Frozen migration
   // envelopes are not a competing category authority or a fallback.
   const categoryRows = (await client.query('SELECT * FROM olbia.spend_categories ORDER BY id')).rows;
@@ -57,20 +54,32 @@ export const verifyDomainReads = async (owner: string, movements: readonly JsonO
     (conrelid='olbia.movements'::regclass AND conname='movements_category_fk') OR
     (conrelid='olbia.merchant_rules'::regclass AND conname='merchant_rules_category_fk') ORDER BY conname`)).rows;
   check(constraints, [{ conname: 'merchant_rules_category_fk', convalidated: true }, { conname: 'movements_category_fk', convalidated: true }]);
-  const sourceCards: JsonObject[] = [];
-  for await (const page of paginateQuery({ client: database }, { TableName: tableName, ConsistentRead: true,
-    KeyConditionExpression: 'PK=:pk AND begins_with(SK,:prefix)',
-    ExpressionAttributeValues: { ':pk': `USER#${owner}`, ':prefix': 'CARD#' } })) sourceCards.push(...page.Items ?? []);
-  const cardRows = (await client.query('SELECT * FROM olbia.cards WHERE source_pk=$1 ORDER BY source_sk', [`USER#${owner}`])).rows;
-  check(cardRows, sourceCards.map(item => { const p = item.payload as JsonObject; return {
-    source_pk: item.PK, source_sk: item.SK, row_id: p.id, id: p.id, owner: item.owner, name: p.name,
-    cut_off_day: p.cutOffDay, payment_due_day: p.paymentDueDay, payload: p, source_item: item,
-  }; }));
+  const cardRows = (await client.query('SELECT * FROM olbia.card_profiles WHERE owner=$1 AND deleted_at IS NULL ORDER BY id COLLATE "C"', [owner])).rows;
+  check(cardRows.map(row => ({ ...row, created_at: new Date(row.created_at as string | Date).toISOString(),
+    updated_at: new Date(row.updated_at as string | Date).toISOString() })), [...cards].sort((a, b) => Buffer.compare(Buffer.from(a.id), Buffer.from(b.id))).map(card => ({
+    id: card.id, owner, name: card.name, cut_off_day: card.cutOffDay, payment_due_day: card.paymentDueDay,
+    institution: card.institution ?? null, created_at: card.createdAt, updated_at: card.updatedAt, deleted_at: null,
+  })));
+  check(true, cards.length <= 3 && cards.every(card => /^[a-zA-Z0-9_-]{1,128}$/.test(card.id)
+    && card.name.trim().length > 0 && card.name.length <= 100 && Number.isInteger(card.cutOffDay)
+    && card.cutOffDay >= 1 && card.cutOffDay <= 31 && Number.isInteger(card.paymentDueDay)
+    && card.paymentDueDay >= 1 && card.paymentDueDay <= 31));
+  const invalidCardReferences = Number((await client.query(`SELECT count(*) AS count FROM (
+    SELECT card_id,owner FROM olbia.liability_snapshots UNION ALL SELECT card_id,owner FROM olbia.liability_versions
+  ) liabilities LEFT JOIN olbia.card_profiles card ON card.id=liabilities.card_id
+    WHERE card.id IS NULL OR card.owner <> liabilities.owner OR liabilities.owner IS NULL`)).rows[0]?.count);
+  check(0, invalidCardReferences);
+  const cardConstraints = (await client.query(`SELECT conname,convalidated FROM pg_constraint WHERE
+    conrelid IN ('olbia.liability_snapshots'::regclass,'olbia.liability_versions'::regclass)
+    AND conname IN ('liability_snapshots_card_fk','liability_snapshots_card_required','liability_versions_card_fk','liability_versions_card_required') ORDER BY conname`)).rows;
+  check(cardConstraints, ['liability_snapshots_card_fk','liability_snapshots_card_required','liability_versions_card_fk','liability_versions_card_required']
+    .map(conname => ({ conname, convalidated: true })));
   const sqlMovements = (await client.query('SELECT payload FROM olbia.movements')).rows.map(row => row.payload as JsonObject);
   const merchants = new Set([...movements.map(m => String(m.merchantRaw)), ...rules.map(r => r.merchantKey),
     ...rules.filter(r => r.pattern).map(r => `prefix ${r.pattern} suffix`)]);
   for (const merchant of merchants) check(resolveCategoryId(merchant, rules), resolveCategoryId(merchant, sqlRules));
   const sourceWealth = await readSourceWealthInputs(owner), sqlWealth = await readSqlWealthInputs(owner, client);
+  const sqlCards = sqlWealth.cards; check(cards, sqlCards);
   const sourceReader: WealthInputsReader = async () => sourceWealth, sqlReader: WealthInputsReader = async () => sqlWealth;
   const months = [...new Set([...financialMonths, '2026-02', '2028-02'])].sort();
   const years = [...new Set(months.flatMap(month => [month.slice(0, 4), addCalendarMonths(month, -3).slice(0, 4)]))];
@@ -119,16 +128,17 @@ export const verifyDomainReads = async (owner: string, movements: readonly JsonO
     }
   }
   // Configured readers checked after independent comparisons; fallback never conceals corrupt SQL above.
-  check(categories, await listCategories()); check(rules, await listMerchantRules()); check(cards, await listCards({ database, tableName, owner }));
+  check(categories, await listCategories()); check(rules, await listMerchantRules()); check(cards, await listCards(owner));
   const queryPlans = [];
   for (const [query, statement, values] of [['categories', categoryReadStatement, []], ['merchant-rules', ruleReadStatement, []],
-    ['cards', cardReadStatement, [`USER#${owner}`]]] as const) {
+    ['cards', cardReadStatement, [owner]]] as const) {
     const result = await client.query(`EXPLAIN ANALYZE VERBOSE ${statement}`, [...values]);
     const lines = result.rows.map(row => String(row['QUERY PLAN']));
     queryPlans.push({ query, scanTypes: [...new Set(lines.flatMap(line => line.match(/(?:Index Only Scan|Index Scan|Seq Scan|Bitmap Heap Scan)/g) ?? []))],
       metrics: lines.filter(line => /(?:DPU|Planning Time|Execution Time)/i.test(line)).map(line => line.trim()).filter(line => /^[\w\s():.=,+-]+$/.test(line)) });
   }
-  return { mode: domainReadMode(), categoryAuthority: 'native-sql', ruleAuthority: 'native-sql', invalidCategoryReferences: Number(invalidReferences),
+  return { mode: 'native-sql', categoryAuthority: 'native-sql', ruleAuthority: 'native-sql', cardAuthority: 'native-sql', invalidCardReferences,
+    validatedCardConstraints: cardConstraints.filter(row => row.convalidated === true).length, invalidCategoryReferences: Number(invalidReferences),
     validatedCategoryForeignKeys: constraints.filter(row => row.convalidated === true).length,
     persistedCategories: categories.length, effectiveCategories: categories.length,
     rules: rules.length, cards: cards.length, merchantChecks: merchants.size, months: months.length, assistantChecks,
