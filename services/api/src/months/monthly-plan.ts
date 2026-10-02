@@ -39,6 +39,9 @@ export const parseMonthlyPlan = (body: string | undefined): MonthlyPlanInput => 
     throw new InvalidMonthlyPlanError("upcomingPayments must contain at most 100 items.");
   }
   const upcomingPayments = input.upcomingPayments.map((payment, index) => parsePayment(payment, index));
+  if (new Set(upcomingPayments.map(payment => payment.id)).size !== upcomingPayments.length) {
+    throw new InvalidMonthlyPlanError("Hay pagos repetidos. Revisa la lista antes de guardar.");
+  }
   return { currency: "MXN", upcomingPayments };
 };
 
