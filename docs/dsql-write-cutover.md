@@ -10,9 +10,9 @@ There is no native DSQL translation for DynamoDB document commands or DynamoDB T
 
 ## Coordinated workflow
 
-1. Invoke the already-deployed authority operator to pause mutations; allow in-flight native requests to finish and take a dated DynamoDB backup. Reads remain available, queued ingestion retries, and scheduled external side effects fail before starting while paused.
+1. Invoke the already-deployed authority operator to pause mutations; allow in-flight native requests to finish. Reads remain available, queued ingestion retries, and scheduled external side effects fail before starting while paused.
 2. Deploy the approved cutover revision: disable the DynamoDB projector mapping/daily reconciliation schedule and stream retry mapping, enable scheduled SQL retry recovery, remove application DynamoDB write grants, and allow SQL activation on the internal operator.
-3. Run final historical reconciliation and independent financial, operational, public-read and original-evidence gates while paused. Verify real native SQL create/update/delete/recreation/conditional cancellation using a retained record in an explicitly rolled-back transaction.
+3. Take a dated native DynamoDB backup using the reviewed deployment role’s scoped encryption-key permission, then run final historical reconciliation and independent financial, operational, public-read and original-evidence gates while paused. Verify real native SQL create/update/delete/recreation/conditional cancellation using a retained record in an explicitly rolled-back transaction.
 4. Complete an on-demand native AWS Backup of the final SQL cluster, then activate the single persisted SQL flag. Subsequent deployments preserve SQL authority.
 5. Repeat independent reads and envelope/relational verification against authoritative SQL. SQL reads and writes never fall back to frozen DynamoDB; stale stream/replay reconciliation cannot overwrite SQL after activation. Scheduled native SQL backups retain seven daily recovery points.
 

@@ -69,6 +69,9 @@ def main(phase):
         # All writers are already routed through deployed per-command authority checks.
         # Allow in-flight native DynamoDB requests to finish; subsequent work is paused.
         time.sleep(60)
+        print('Writers paused; reviewed infrastructure update installs encrypted-backup permission')
+    elif phase=='backup-source':
+        if mode!='paused': raise RuntimeError('Expected paused authority for source backup')
         backup=aws('dynamodb','create-backup','--table-name',outputs['DsqlSourceTable'],'--backup-name','olbia-pre-sql-'+run)
         wait_backup('dynamodb',backup['BackupDetails']['BackupArn'])
         print('Dated DynamoDB backup AVAILABLE; table retained')

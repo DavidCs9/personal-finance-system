@@ -108,7 +108,7 @@ jobs:
           --parameters PersonalFinanceV1:OlbiaSystemPromptMaxTokens="$OLBIA_SYSTEM_PROMPT_MAX_TOKENS"
           --output cdk.out.github-diff
         working-directory: infrastructure
-      - name: Pause writers and preserve DynamoDB before SQL cutover
+      - name: Pause writers before SQL cutover
         timeout-minutes: 50
         run: python3 infrastructure/scripts/dsql-write-cutover.py prepare
       - run: >-
@@ -130,6 +130,9 @@ jobs:
           role-to-assume: arn:aws:iam::225989371926:role/personal-finance-v1-github-deploy
           aws-region: us-east-2
           role-session-name: personal-finance-dsql-verify
+      - name: Preserve dated DynamoDB backup before final synchronization
+        timeout-minutes: 50
+        run: python3 infrastructure/scripts/dsql-write-cutover.py backup-source
       - name: Verify DSQL bootstrap, historical projection and parity
         timeout-minutes: 55
         run: bash infrastructure/scripts/verify-dsql-deployment.sh
