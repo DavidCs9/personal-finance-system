@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { withNativeTransaction } from '@finance/ledger/dsql-store';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { MsiPlan } from '@finance/domain';
 import { msiPlanPurchaseOccurredAt } from '@finance/ledger';
@@ -19,7 +18,7 @@ import { errorName, type JsonObject } from '../http/response.js';
 import { isValidMonth } from '../months/monthly-plan.js';
 import { localDate, toPublicEvent } from '../events/queries.js';
 import { persistEventMsi } from '../events/mutations.js';
-import { assertPreparedImport, bankLedgerEvents, bankPlanEvidence, bankRowPosition, claimedBankRows, createBankMovement, linkBankEvidence } from './bank-ledger.js';
+import { assertPreparedImport, bankLedgerEvents, bankPlanEvidence, bankRowPosition, claimedBankRows, createBankMovement, linkBankEvidence, withBankApplyTransaction } from './bank-ledger.js';
 import { readBankImport, startBankImport, completeBankImport, type BankImportRecord } from './import-sql.js';
 
 interface SantanderPreviewRow extends SantanderCsvRow {
@@ -387,5 +386,5 @@ export const applySantanderImport = async (importId: string, owner: string, deci
   if (createHash('sha256').update(sourceBody, 'utf8').digest('hex') !== importId)
     throw new Error('The stored Santander CSV hash does not match the import identifier.');
   const document = parseSantanderCsv(sourceBody);
-  return withNativeTransaction(() => applySantanderImportInternal(importId, owner, decisionBody, prepared, document));
+  return withBankApplyTransaction(() => applySantanderImportInternal(importId, owner, decisionBody, prepared, document));
 };

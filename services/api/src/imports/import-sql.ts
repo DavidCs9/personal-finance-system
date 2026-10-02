@@ -1,4 +1,5 @@
 import { applicationStoreClient,withNativeTransaction } from '@finance/ledger/dsql-store';
+import { reserveLedgerMutations } from '@finance/ledger/native-ledger';
 import { readerPool,type ReadSqlClient } from '../events/sql-reads.js';
 import type { StatementCandidate,StatementPreviewRow,StatementRowStatus,StatementProvider } from './statement-reconciliation.js';
 
@@ -73,6 +74,7 @@ export const readBankImport=async(kind:BankImportKind,importId:string,owner:stri
 
 const putHeader=async(client:ReadSqlClient,record:BankImportRecord):Promise<void>=>{
   if(record.source.sha256!==record.importId)throw new BankImportError('La evidencia no coincide con la importación.');
+  reserveLedgerMutations(1);
   const saved=await client.query(`INSERT INTO olbia.bank_imports (kind,content_sha256,owner,status,created_at,previewed_at,applied_at,account_last_four,product,
     period_start,period_end,evidence_bucket,evidence_key,evidence_content_type,textract_job_id,extraction_key,textract_answers,error_message,
     result_created,result_linked,result_skipped,result_msi_confirmed,result_created_unplanned)

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { withNativeTransaction } from '@finance/ledger/dsql-store';
 import { appendLedgerObservation, insertLedgerMovement, insertLedgerRevision, insertSourceClaim,
   markMovementReconciled, readLedgerDetail, readLedgerMovements, readSourceClaim,
+  withLedgerMutationBudget, reserveLedgerMutations, LedgerMutationBudgetError,
   type BankRowEvidence } from '@finance/ledger/native-ledger';
 import type { MsiPlan } from '@finance/domain';
 import type { ObservedEventInput } from '@finance/ledger/native-ledger';
@@ -9,6 +10,14 @@ import { readerPool } from '../events/sql-reads.js';
 import { BankImportError, type BankImportKind, type BankImportRecord, type BankImportRow } from './import-sql.js';
 
 export const bankClaimToken = (identity: string): string => createHash('sha256').update(identity).digest('hex');
+export const withBankApplyTransaction = async <T>(callback: () => Promise<T>): Promise<T> => {
+  try { return await withNativeTransaction(() => withLedgerMutationBudget(callback)); }
+  catch (error) {
+    if (error instanceof LedgerMutationBudgetError)
+      throw new BankImportError('El archivo tiene demasiadas filas para guardarlo en una sola operación.');
+    throw error;
+  }
+};
 export const bankLedgerEvents = () => readLedgerMovements(readerPool());
 export const claimedBankRows = async (kind: BankImportKind, identities: readonly string[]): Promise<ReadonlySet<string>> => {
   if (!identities.length) return new Set();
@@ -78,8 +87,10 @@ export const linkBankEvidence = (input: {
     occurredAt: at, source: record.source, parserVersion: input.parserVersion, parseWarnings: [],
     rowNumber: row.rowNumber, bankTransactionId: row.transactionId });
   await markMovementReconciled(client, eventId, appliedAt);
-  if (record.kind === 'santander_csv') await client.query(
-    'UPDATE olbia.ledger_movements SET bank_transaction_id=$2 WHERE id=$1', [eventId, row.transactionId ?? row.identity]);
+  if (record.kind === 'santander_csv') {
+    reserveLedgerMutations(1);
+    await client.query('UPDATE olbia.ledger_movements SET bank_transaction_id=$2 WHERE id=$1', [eventId, row.transactionId ?? row.identity]);
+  }
   const reconciliation = { source: record.source, reconciledAt: appliedAt,
     ...(record.kind === 'santander_csv' ? { rowNumber: row.rowNumber, transactionId: row.transactionId } : {}) };
   await insertLedgerRevision(client, { id: randomUUID(), movementId: eventId, createdAt: appliedAt,

@@ -1,6 +1,7 @@
 import { normalizeEventTags, type MsiPlan } from '@finance/domain';
 import type { CaptureSource,ObservedEventInput } from '../observed-events.js';
 import type { SqlClient } from './projection.js';
+import { ledgerMutationBudgetActive, reserveLedgerMutations } from './ledger-budget.js';
 
 type Row=Record<string,unknown>;
 export class InvalidLedgerWriteError extends Error {}
@@ -36,14 +37,17 @@ export interface NativeClaimInput {
 export const readSourceClaim=async(client:SqlClient,kind:CaptureSource,token:string):Promise<Row|undefined>=>
   (await client.query('SELECT * FROM olbia.source_claims WHERE capture_source=$1 AND token=$2',[kind,token])).rows[0];
 export const insertSourceClaim=async(client:SqlClient,input:NativeClaimInput):Promise<void>=>{
+  reserveLedgerMutations(1);
   await client.query(`INSERT INTO olbia.source_claims
     (capture_source,token,created_at,owner,row_identity,fingerprint,reconciled,outcome,movement_id,observation_id)
     VALUES ($1,$2,$3,$4,$5,$6,$7,'linked',$8,$9)`,[input.captureSource,input.token,input.createdAt,
     optional(input.owner),optional(input.rowIdentity),optional(input.fingerprint),optional(input.reconciled),input.movementId,input.observationId]);
 };
-export const claimIgnoredEmail=async(client:SqlClient,token:string,createdAt:string):Promise<boolean>=>
-  (await client.query(`INSERT INTO olbia.source_claims (capture_source,token,created_at,outcome)
+export const claimIgnoredEmail=async(client:SqlClient,token:string,createdAt:string):Promise<boolean>=>{
+  reserveLedgerMutations(1);
+  return (await client.query(`INSERT INTO olbia.source_claims (capture_source,token,created_at,outcome)
     VALUES ('email',$1,$2,'suppressed') ON CONFLICT (capture_source,token) DO NOTHING RETURNING token`,[token,createdAt])).rows.length===1;
+};
 
 export const insertLedgerMovement=async(client:SqlClient,event:ObservedEventInput,primaryObservationId:string,reconciliationAt:string,
   evidence:readonly BankRowEvidence[]=[]):Promise<void>=>{
@@ -54,6 +58,7 @@ export const insertLedgerMovement=async(client:SqlClient,event:ObservedEventInpu
     'primaryObservationId','hasRawEmail']);
   known(event.amount,['amountMinor','currency']);
   assertMoney(event.amount.amountMinor);warnings(event.parseWarnings);
+  reserveLedgerMutations(1);
   await client.query(`INSERT INTO olbia.ledger_movements
     (id,primary_observation_id,institution,event_type,status,amount_minor,currency,merchant_raw,occurred_at,
       received_at,ingested_at,reconciliation_at,reconciled_at,account_present,account_id,account_name,
@@ -76,6 +81,7 @@ export const appendLedgerObservation=async(client:SqlClient,input:NativeObservat
   known(input.amount,['amountMinor','currency']);
   assertMoney(input.amount.amountMinor);warnings(input.parseWarnings);
   const metadata={...input.source};for(const key of ['bucket','key','sha256','contentType','kind'])delete metadata[key];
+  reserveLedgerMutations(1+input.parseWarnings.length);
   await client.query(`INSERT INTO olbia.ledger_observations
     (id,movement_id,position,capture_source,observed_at,reconciliation_at,institution,event_type,amount_minor,
       currency,merchant_raw,occurred_at,account_present,account_id,account_name,account_institution,account_last_four,
@@ -93,37 +99,48 @@ export const appendLedgerObservation=async(client:SqlClient,input:NativeObservat
 };
 
 export const replaceMovementWarnings=async(client:SqlClient,id:string,values:readonly string[]):Promise<void>=>{
-  warnings(values);await client.query('DELETE FROM olbia.ledger_movement_warnings WHERE movement_id=$1',[id]);
+  warnings(values);
+  if(ledgerMutationBudgetActive())reserveLedgerMutations(values.length+Number((await client.query(
+    'SELECT count(*) AS count FROM olbia.ledger_movement_warnings WHERE movement_id=$1',[id])).rows[0].count));
+  await client.query('DELETE FROM olbia.ledger_movement_warnings WHERE movement_id=$1',[id]);
   for(const [position,message] of values.entries())await client.query('INSERT INTO olbia.ledger_movement_warnings VALUES ($1,$2,$3)',[id,position,message]);
 };
 export const replaceMovementTags=async(client:SqlClient,id:string,values:readonly string[]):Promise<void>=>{
-  const tags=normalizeEventTags(values);await client.query('DELETE FROM olbia.ledger_tags WHERE movement_id=$1',[id]);
+  const tags=normalizeEventTags(values);
+  if(ledgerMutationBudgetActive())reserveLedgerMutations(tags.length+Number((await client.query(
+    'SELECT count(*) AS count FROM olbia.ledger_tags WHERE movement_id=$1',[id])).rows[0].count));
+  await client.query('DELETE FROM olbia.ledger_tags WHERE movement_id=$1',[id]);
   for(const [position,tag] of tags.entries())await client.query('INSERT INTO olbia.ledger_tags VALUES ($1,$2,$3)',[id,position,tag]);
 };
 export const setMovementCategory=async(client:SqlClient,id:string,categoryId:string|null):Promise<void>=>{
+  reserveLedgerMutations(1);
   if(!(await client.query('UPDATE olbia.ledger_movements SET category_id=$2 WHERE id=$1 RETURNING id',[id,categoryId])).rows.length)
     throw new LedgerPreconditionError('Movement no longer exists');
 };
 export const setMovementPersonalAmount=async(client:SqlClient,id:string,value:number|undefined):Promise<void>=>{
   if(value!==undefined)assertMoney(value);
+  reserveLedgerMutations(1);
   const updated=await client.query(`UPDATE olbia.ledger_movements SET personal_amount_minor=$2 WHERE id=$1 AND
     ($2::bigint IS NULL OR (status<>'pending_foreign' AND NOT EXISTS
       (SELECT 1 FROM olbia.installment_plans p WHERE p.movement_id=$1))) RETURNING id`,[id,optional(value)]);
   if(!updated.rows.length)throw new LedgerPreconditionError('Movement is not available for Mi parte');
 };
 export const setMovementStatus=async(client:SqlClient,id:string,status:string,parseWarnings?:readonly string[]):Promise<void>=>{
+  reserveLedgerMutations(1);
   const result=await client.query(`UPDATE olbia.ledger_movements SET status=$2 WHERE id=$1
     AND (status<>'pending_foreign' OR $2='rejected') RETURNING id`,[id,status]);
   if(!result.rows.length)throw new LedgerPreconditionError('Movement status changed or awaits posted MXN');
   if(parseWarnings!==undefined)await replaceMovementWarnings(client,id,parseWarnings);
 };
 export const markMovementReconciled=async(client:SqlClient,id:string,at:string):Promise<void>=>{
+  reserveLedgerMutations(1);
   if(!(await client.query('UPDATE olbia.ledger_movements SET reconciled_at=$2 WHERE id=$1 RETURNING id',[id,at])).rows.length)
     throw new LedgerPreconditionError('Movement no longer exists');
 };
 export const promoteForeignAuthorization=async(client:SqlClient,id:string,event:ObservedEventInput,reconciliationAt:string):Promise<void>=>{
   assertMoney(event.amount.amountMinor);
   if(event.amount.currency!=='MXN')invalid();
+  reserveLedgerMutations(1);
   const updated=await client.query(`UPDATE olbia.ledger_movements SET amount_minor=$2,currency='MXN',status=$3,
     merchant_raw=$4,occurred_at=COALESCE($5,occurred_at),reconciliation_at=$6,reconciled_at=$7,
     account_present=CASE WHEN $8 THEN $8 ELSE account_present END,
@@ -140,13 +157,16 @@ export interface NativeRevisionInput {
   readonly changes:Readonly<Record<string,{readonly previous?:unknown;readonly next?:unknown}>>;
 }
 export const insertLedgerRevision=async(client:SqlClient,input:NativeRevisionInput):Promise<void>=>{
+  reserveLedgerMutations(1);
   await client.query(`INSERT INTO olbia.ledger_revisions
     (id,movement_id,created_at,changed_by,reason,operation_id,source,changes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
   [input.id,input.movementId,input.createdAt,input.changedBy,optional(input.reason),optional(input.operationId),optional(input.source),JSON.stringify(input.changes)]);
 };
 
 export const replaceInstallmentPlan=async(client:SqlClient,id:string,plan:MsiPlan|undefined,evidence:readonly BankRowEvidence[]=[]):Promise<void>=>{
-  const parent=(await client.query('SELECT personal_amount_minor,status FROM olbia.ledger_movements WHERE id=$1',[id])).rows[0];
+  const parent=(await client.query(`SELECT personal_amount_minor,status,
+    EXISTS(SELECT 1 FROM olbia.installment_plans WHERE movement_id=$1) AS has_plan
+    FROM olbia.ledger_movements WHERE id=$1`,[id])).rows[0];
   if(!parent)throw new LedgerPreconditionError('Movement no longer exists');
   if(plan && (parent.personal_amount_minor!==null || parent.status==='pending_foreign'))throw new LedgerPreconditionError('Movement is not available for MSI');
   const previous=(await client.query('SELECT * FROM olbia.installment_entries WHERE movement_id=$1',[id])).rows;
@@ -180,6 +200,8 @@ export const replaceInstallmentPlan=async(client:SqlClient,id:string,plan:MsiPla
     entries.push({item,provenance});
   }
   if([...confirmations.keys()].some(index=>!plan?.installments.some(item=>item.index===index)))invalid();
+  reserveLedgerMutations(previous.length+candidates.length+Number(parent.has_plan)+
+    (plan?1+entries.length+retainedCandidates.length:0));
   await client.query('DELETE FROM olbia.installment_evidence_candidates WHERE movement_id=$1',[id]);
   await client.query('DELETE FROM olbia.installment_entries WHERE movement_id=$1',[id]);
   await client.query('DELETE FROM olbia.installment_plans WHERE movement_id=$1',[id]);

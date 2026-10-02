@@ -5,6 +5,7 @@ import { buildMsiSchedule } from '@finance/domain';
 import { nativeFixture } from './fixtures/native-ledger.js';
 import { currentStoreTransaction } from '../../ledger/src/dsql/store.js';
 import { readLedgerDetail } from '../../ledger/src/dsql/ledger-reads.js';
+import { appendLedgerObservation, insertLedgerRevision } from '../../ledger/src/dsql/ledger-writes.js';
 import type { SqlClient, TransactionPool } from '../../ledger/src/dsql/projection.js';
 import type { BankImportKind, BankImportRecord } from '../src/imports/import-sql.js';
 import type { StatementPreviewRow } from '../src/imports/statement-reconciliation.js';
@@ -49,8 +50,84 @@ const apply = (record: BankImportRecord, rows: readonly StatementPreviewRow[], d
     provider: record.kind === 'amex_statement' ? 'amex' : 'santander', importId: record.importId, owner: record.owner,
     decisionBody, prepareRows: async () => ({ rebuildRows: async () => rows, afterRows }),
   });
+const budgetRows = (count: number): StatementPreviewRow[] => Array.from({ length: count }, (_, i) => ({ ...row,
+  identity: `budget-plan-${i}`, kind: 'msi', msi: true, merchantRaw: `Budget purchase ${i}`,
+  amountMinor: 10000 + i * 10000, installmentIndex: 1, installmentMonths: 48,
+  originalAmountMinor: (10000 + i * 10000) * 48, status: 'needs_decision' }));
+const planDecisions = (rows: readonly StatementPreviewRow[]) => JSON.stringify({ decisions: Object.fromEntries(rows.map(r =>
+  [r.identity, { action: 'create_plan', months: 48, cuotaMinor: r.amountMinor }])) });
 
 describe('native bank financial authority and exact provenance', () => {
+  it.each(['amex_statement', 'santander_statement'] as const)('%s rejects a whole over-budget MSI apply and permits a smaller retry', async kind => {
+    const rows = budgetRows(59), record = await save(kind, rows);
+    const before = await fixture.snapshot();
+    await expect(apply(record, rows, planDecisions(rows))).rejects.toThrow('demasiadas filas');
+    expect(await fixture.snapshot()).toEqual(before);
+    expect(await imports.readBankImport(kind, record.importId, record.owner)).toEqual(record);
+    // Undecided rows remain skipped; printed n/N rows intentionally interpret explicit "skip" as accept-as-printed.
+    const decisions = JSON.stringify({ decisions: { [rows[0].identity]: { action: 'create_plan', months: 48, cuotaMinor: rows[0].amountMinor } } });
+    expect(await apply(record, rows, decisions)).toMatchObject({ summary: { created: 1, skipped: 58 } });
+    expect((await fixture.sql.query('SELECT * FROM olbia.installment_entries')).rows).toHaveLength(48);
+  }, 20_000);
+
+  it('CSV rejects an over-budget plan apply with unchanged preview, source assertions and financial history', async () => {
+    const sourceBody = csv.replace('Total de movimientos: 1', 'Total de movimientos: 59').replace(
+      '01/Ago/2026,2621340486795734,ORIGINAL PURCHASE,$ 1.00', Array.from({ length: 59 }, (_, i) =>
+        `01/Ago/2026,${2621340486795000 + i},AMAZON A MESES,$ ${100 + i * 100}.00`).join('\n'));
+    vi.spyOn(S3Client.prototype, 'send').mockResolvedValue({ Body: { transformToString: async () => sourceBody } } as never);
+    const preview = await csvFlow.previewSantanderImport(sourceBody, 'owner');
+    const rows = preview.rows as StatementPreviewRow[];
+    expect(rows).toHaveLength(59);
+    const record = await imports.readBankImport('santander_csv', String(preview.importId), 'owner');
+    const before = await fixture.snapshot();
+    await expect(csvFlow.applySantanderImport(String(preview.importId), 'owner', planDecisions(rows))).rejects.toThrow('demasiadas filas');
+    expect(await fixture.snapshot()).toEqual(before);
+    expect(await imports.readBankImport('santander_csv', String(preview.importId), 'owner')).toEqual(record);
+  }, 20_000);
+
+  it('includes Amex deferral warning replacements in the same budget and rolls back earlier plan creations', async () => {
+    const purchase = await fixture.create({ parseWarnings: Array.from({ length: 500 }, (_, i) => `Original warning ${i}`) });
+    const rows = budgetRows(39), record = await save('amex_statement', rows);
+    const before = await fixture.snapshot();
+    await expect(apply(record, rows, planDecisions(rows), async () => ({
+      deferredMsi: Number(await edits.markDeferredMsi(purchase, 'owner', 'actual-deferral')),
+    }))).rejects.toThrow('demasiadas filas');
+    expect(await fixture.snapshot()).toEqual(before);
+    expect((await imports.readBankImport(record.kind, record.importId, record.owner))!.status).toBe('previewed');
+  }, 20_000);
+
+  it('reserves final import completion and rolls back a financial transaction that otherwise exactly fills the row budget', async () => {
+    const record = await save('amex_statement', [row]);
+    const before = await fixture.snapshot();
+    await expect(apply(record, [row], undefined, async () => {
+      const id = String((await bank.bankLedgerEvents())[0].id);
+      const client = currentStoreTransaction()!;
+      await appendLedgerObservation(client, { id: randomUUID(), movementId: id, captureSource: 'amex_statement',
+        observedAt: at, reconciliationAt: at, institution: 'american_express_mx', eventType: 'card_purchase',
+        merchantRaw: 'Original shop', amount: { amountMinor: 10000, currency: 'MXN' }, source: record.source,
+        parserVersion: 'retained-parser', parseWarnings: Array.from({ length: 2994 }, (_, i) => `Source diagnostic ${i}`) });
+      await insertLedgerRevision(client, { id: randomUUID(), movementId: id, createdAt: at, changedBy: 'owner', changes: {} });
+      return { deferredMsi: 0 };
+    })).rejects.toThrow('demasiadas filas');
+    expect(await fixture.snapshot()).toEqual(before);
+    expect(await imports.readBankImport(record.kind, record.importId, record.owner)).toEqual(record);
+  }, 20_000);
+
+  it('gives a near-limit successful apply a fresh budget on provider callback retry', async () => {
+    const rows = budgetRows(57), record = await save('santander_statement', rows);
+    const original = fixture.pool.transaction.bind(fixture.pool); let attempts = 0;
+    vi.spyOn(fixture.pool, 'transaction').mockImplementation(async fn => {
+      try { return await original(async client => { attempts++; const result = await fn(client);
+        if (attempts === 1) throw new Error('Simulated OCC retry'); return result; }); }
+      catch (error) { if (attempts !== 1) throw error; return original(async client => { attempts++; return fn(client); }); }
+    });
+    expect(await apply(record, rows, planDecisions(rows))).toMatchObject({ summary: { created: 57, skipped: 0 } });
+    expect(attempts).toBe(2);
+    expect((await fixture.sql.query('SELECT * FROM olbia.ledger_movements')).rows).toHaveLength(57);
+    expect((await fixture.sql.query('SELECT * FROM olbia.installment_entries')).rows).toHaveLength(57 * 48);
+    expect((await imports.readBankImport(record.kind, record.importId, record.owner))!.status).toBe('applied');
+  }, 20_000);
+
   it.each(['amex_statement', 'santander_statement', 'santander_csv'] as const)('%s links original gross evidence without changing personal zero or annotations', async kind => {
     const id = await fixture.create({ institution: kind === 'amex_statement' ? 'american_express_mx' : 'santander_mx',
       occurredAt: at, personalAmountMinor: 0, tags: ['shared'], categoryId: 'shopping' });

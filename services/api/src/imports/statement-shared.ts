@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { withNativeTransaction } from '@finance/ledger/dsql-store';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { MsiPlan } from '@finance/domain';
 import { msiPlanPurchaseOccurredAt } from '@finance/ledger';
@@ -19,7 +18,7 @@ import { rawSourceBucketName, s3 } from '../http/clients.js';
 import { errorName, type JsonObject } from '../http/response.js';
 import { isValidMonth } from '../months/monthly-plan.js';
 import { toPublicEvent } from '../events/public-event.js';
-import { assertPreparedImport, bankLedgerEvents, bankPlanEvidence, bankRowPosition, claimedBankRows, createBankMovement, linkBankEvidence } from './bank-ledger.js';
+import { assertPreparedImport, bankLedgerEvents, bankPlanEvidence, bankRowPosition, claimedBankRows, createBankMovement, linkBankEvidence, withBankApplyTransaction } from './bank-ledger.js';
 import { persistEventMsi } from '../events/mutations.js';
 import { readBankImport,completeBankImport,statementImportKind, type BankImportRecord } from './import-sql.js';
 
@@ -446,5 +445,5 @@ export const applyStatementImport = async (input: StatementApplyInput): Promise<
   if (prepared.status === 'applied') return { importId: input.importId, created: [], summary: prepared.result, alreadyApplied: true };
   if (prepared.status !== 'previewed') throw new invalid('La previsualización aún no está lista.');
   const work = await input.prepareRows(prepared);
-  return withNativeTransaction(() => applyStatementImportInternal(input, prepared, work));
+  return withBankApplyTransaction(() => applyStatementImportInternal(input, prepared, work));
 };
