@@ -20,6 +20,21 @@ export const applicationStoreClient=():SqlClient => context.getStore()??storePoo
 export const currentStoreTransaction=() => context.getStore();
 const namedError=(name:string,message:string):Error => Object.assign(new Error(message),{name});
 const paused=() => namedError('MigrationPausedException','Olbia está en mantenimiento. Intenta de nuevo más tarde.');
+
+/** Native domain work shares the activation barrier and the connector's OCC retry. */
+export const runNativeTransaction=async <T>(pool:TransactionPool,callback:(client:SqlClient)=>Promise<T>):Promise<T> => {
+  const existing=context.getStore();if(existing)return callback(existing);
+  return pool.transaction(async client=>{
+    await client.query("UPDATE olbia.application_barrier SET generation=generation+1 WHERE id='storage'");
+    if((await client.query("SELECT mode FROM olbia.runtime_state WHERE id='storage'")).rows[0]?.mode!=='sql')throw paused();
+    return context.run(client,()=>callback(client));
+  });
+};
+export const withNativeTransaction=async <T>(callback:(client:SqlClient)=>Promise<T>):Promise<T> => {
+  const existing=context.getStore();if(existing)return callback(existing);
+  try{return await runNativeTransaction(storePool(),callback);}
+  catch(error){if((error as {code?:string}).code)throw namedError('StorageUnavailableException','Olbia storage is unavailable.');throw error;}
+};
 export const authorityFrom = async (client:SqlClient):Promise<StorageAuthority> => {
   const result=await client.query("SELECT mode FROM olbia.runtime_state WHERE id='storage'");
   const mode=result.rows[0]?.mode;

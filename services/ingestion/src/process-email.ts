@@ -1,4 +1,4 @@
-import { createApplicationStore } from '@finance/ledger/dsql-store';
+import { createApplicationStore, withNativeTransaction } from '@finance/ledger/dsql-store';
 import { createHash, randomUUID } from 'node:crypto';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
@@ -8,7 +8,7 @@ import { PutCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dy
 import type { SQSHandler } from 'aws-lambda';
 import { ingestionExceptionAlert, type IngestionExceptionAlertInput } from './notifications.js';
 import { maybeAutoAmexMsi } from '@finance/domain';
-import { saveObservedEvent } from '@finance/ledger';
+import { captureObservedEvent, claimIgnoredEmail, SourceClaimUnavailableError } from '@finance/ledger/native-ledger';
 import { notifyObservedPurchasePush } from '@finance/notify';
 import { emailParsers, header, shouldIgnoreEmail } from './parsers.js';
 import type { ParsedPurchase } from './types.js';
@@ -50,7 +50,7 @@ const ingest = async (job: IngestionJob): Promise<void> => {
 
   const source = { bucket: job.source.bucket, key: job.source.key, sha256, contentType: 'message/rfc822' as const };
   if (shouldIgnoreEmail(email)) {
-    const claimed = await claimIgnoredSource(tableName, dedupeKey);
+    const claimed = await withNativeTransaction(client => claimIgnoredEmail(client, dedupeKey, new Date().toISOString()));
     if (!claimed) return;
     console.info(JSON.stringify({ message: 'Administrative email ignored', sourceKey: job.source.key }));
     return;
@@ -147,14 +147,24 @@ const ingest = async (job: IngestionJob): Promise<void> => {
     parseWarnings,
     ...(autoMsi ? { msi: autoMsi } : {}),
   };
-  const saved = await saveObservedEvent({
-    database,
-    tableName,
-    dedupeKey,
-    captureSource: 'email',
-    event: purchase,
-    reconciliationAt: job.receivedAt,
-  });
+  let saved;
+  try {
+    saved = await captureObservedEvent({
+      token: dedupeKey,
+      captureSource: 'email',
+      event: purchase,
+      reconciliationAt: job.receivedAt,
+    });
+  } catch (error) {
+    if (error instanceof SourceClaimUnavailableError &&
+      ['suppressed', 'unresolved_suppression'].includes(error.outcome)) {
+      if (job.retryExceptionId) await markRetryFailed(tableName, job.retryExceptionId,
+        'La fuente conserva una supresión previa; no se creó un movimiento.');
+      console.info(JSON.stringify({ message: 'Previously suppressed SES email ignored', dedupeKey }));
+      return;
+    }
+    throw error;
+  }
   if (saved.duplicate) {
     if (job.retryExceptionId) await markRetryCompleted(tableName, job.retryExceptionId, saved.eventId);
     console.info(JSON.stringify({ message: 'Duplicate SES email ignored', dedupeKey }));
@@ -198,20 +208,6 @@ const enqueueBedrockFallback = async (
     sourceKey: job.source.key,
     institution: institutionHint,
   }));
-};
-
-const claimIgnoredSource = async (tableName: string, dedupeKey: string): Promise<boolean> => {
-  try {
-    await database.send(new PutCommand({
-      TableName: tableName,
-      Item: { PK: `DEDUPE#${dedupeKey}`, SK: 'CLAIM', entityType: 'source_dedupe_claim', createdAt: new Date().toISOString() },
-      ConditionExpression: 'attribute_not_exists(PK)',
-    }));
-    return true;
-  } catch (error) {
-    if (errorName(error) === 'ConditionalCheckFailedException') return false;
-    throw error;
-  }
 };
 
 const markRetryCompleted = async (tableName: string, exceptionId: string, eventId: string): Promise<void> => {

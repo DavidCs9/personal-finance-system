@@ -3,7 +3,7 @@ import { GetCommand, PutCommand, UpdateCommand, DeleteCommand, TransactWriteComm
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
 import { OlbiaSqlStore } from '../src/dsql/store.js';
-import { saveObservedEvent, type CaptureSource, type SaveObservedEventInput } from '../src/observed-events.js';
+import { saveObservedEvent, type CaptureSource, type SaveObservedEventInput } from './fixtures/legacy-observed-events.js';
 import type { SqlClient } from '../src/dsql/projection.js';
 import type { SourceItem } from '../src/dsql/model.js';
 
