@@ -24,7 +24,9 @@ const claims: SourceItem[]=['email-fingerprint','apple_pay_shortcut:request','MA
     entityType:'source_dedupe_claim',eventId:'movement',observationId:'observation',createdAt:at}));
 const ignored: SourceItem={PK:'DEDUPE#ignored-email',SK:'CLAIM',entityType:'source_dedupe_claim',createdAt:at};
 const missingTarget: SourceItem={...claims[4],PK:'DEDUPE#AMEX_STATEMENT#missing-target',eventId:'missing-movement'};
-const records=[movement,observation,revision,...claims,ignored,missingTarget];
+const operation: SourceItem={PK:'BULK_EDIT#owner',SK:'OP#preview',entityType:'bulk_edit_operation',
+  payload:{operationId:'preview',owner:'owner',status:'pending',createdAt:at,events:[]}};
+const records=[movement,observation,revision,...claims,ignored,missingTarget,operation];
 const key=(item: SourceItem)=>({TableName:'metadata',Key:{PK:item.PK,SK:item.SK}});
 const put=(Item: SourceItem)=>new PutCommand({TableName:'metadata',Item});
 const mark=()=>sql.query('INSERT INTO olbia.schema_migrations VALUES (14,CURRENT_TIMESTAMP)');
@@ -32,8 +34,7 @@ const tables=['projection_state','movements','movement_observations','movement_r
   'msi_plans','msi_installments','dedupe_claims','bulk_edit_operations','exception_claims','command_receipts'];
 const snapshot=async()=>Object.fromEntries(await Promise.all(tables.map(async table=>[table,
   (await sql.query(`SELECT * FROM olbia.${table} ORDER BY 1,2,3`)).rows])));
-const operation: SourceItem={PK:'BULK_EDIT#owner',SK:'OP#preview',entityType:'bulk_edit_operation',
-  payload:{operationId:'preview',owner:'owner',status:'pending',createdAt:at,events:[]}};
+const unrelated: SourceItem={PK:'EXCEPTION_DEDUPE#other',SK:'CLAIM',entityType:'ingestion_exception_claim',createdAt:at};
 beforeAll(async()=>{
   sql=new PGlite();for(const statement of SCHEMA_STATEMENTS)await sql.query(statement);
   store=new OlbiaSqlStore({query:(s,v)=>sql.query(s,v),transaction:fn=>sql.transaction(c=>fn(c as unknown as SqlClient))},'metadata');
@@ -68,21 +69,20 @@ describe('complete core ledger cutover prerequisite',()=>{
       expect((await store.send(new GetCommand(key(item)))).Item).toEqual(item);
     }
     expect(await snapshot()).toEqual(before);
-    await store.send(put(operation));
-    await store.send(put({PK:'EXCEPTION_DEDUPE#other',SK:'CLAIM',entityType:'ingestion_exception_claim',createdAt:at}));
-    expect((await store.send(new GetCommand(key(operation)))).Item).toEqual(operation);
+    await store.send(put(unrelated));
+    expect((await store.send(new GetCommand(key(unrelated)))).Item).toEqual(unrelated);
   });
   it('rolls back earlier unrelated writes, projections and receipts in mixed and sequential transactions',async()=>{
     for(const item of records)await store.send(put(item));
     const before=await snapshot();await mark();
     const generation=(await sql.query('SELECT generation FROM olbia.application_barrier')).rows;
-    for(const item of [movement,observation,revision,ignored]){
+    for(const item of [movement,observation,revision,ignored,operation]){
       await expect(store.send(new TransactWriteCommand({ClientRequestToken:'late-ledger',TransactItems:[
-        {Put:{TableName:'metadata',Item:operation}}, {Delete:{...key(item)}}
+        {Put:{TableName:'metadata',Item:unrelated}}, {Delete:{...key(item)}}
       ]}))).rejects.toMatchObject({name:'MigrationPausedException'});
       await expect(store.transaction(async()=>{
         await store.send(new TransactWriteCommand({ClientRequestToken:'earlier-operation',TransactItems:[
-          {Put:{TableName:'metadata',Item:operation}}]}));
+          {Put:{TableName:'metadata',Item:unrelated}}]}));
         await store.send(new DeleteCommand(key(item)));
       })).rejects.toMatchObject({name:'MigrationPausedException'});
     }

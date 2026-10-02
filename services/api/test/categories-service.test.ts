@@ -5,6 +5,7 @@ import { OlbiaSqlStore, withStoreClient, currentStoreTransaction } from '../../l
 import type { SqlClient } from '../../ledger/src/dsql/projection.js';
 import { DEFAULT_SPEND_CATEGORIES } from '@finance/domain';
 import { PutCommand } from '@aws-sdk/lib-dynamodb';
+import { eventMonthIndexKeys } from '@finance/ledger';
 
 process.env.METADATA_TABLE_NAME ??= 'test-metadata-table';
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-raw-bucket';
@@ -50,15 +51,18 @@ beforeEach(async () => {
   vi.spyOn(storeClients, 'applicationStoreClient').mockImplementation(() => currentStoreTransaction() ?? sql);
   vi.spyOn(database as any, 'send').mockImplementation(command => store.send(command));
   await store.send(new PutCommand({ TableName: process.env.METADATA_TABLE_NAME!, Item: {
-    PK: 'EVENT#event-1', SK: 'EVENT', entityType: 'observed_purchase', payload: { id: 'event-1', institution: 'santander_mx',
+    PK: 'EVENT#event-1', SK: 'EVENT', entityType: 'observed_purchase',
+    ...eventMonthIndexKeys({eventId:'event-1',occurredAt:'2026-10-01T12:00:00Z',receivedAt:'2026-10-01T12:00:00Z'}),
+    payload: { id: 'event-1', institution: 'santander_mx',
       eventType: 'card_purchase', status: 'accepted', amount: { amountMinor: 100, currency: 'MXN' }, merchantRaw: 'Shop',
       categoryId: 'otros', occurredAt: '2026-10-01T12:00:00Z', receivedAt: '2026-10-01T12:00:00Z' },
   } }));
 });
 
 describe('native SQL category catalog and membership', () => {
-  it('blocks actual single edits and bulk apply after ledger cutover without audit/rule/operation changes', async () => {
+  it('blocks actual single edits and bulk preview/apply/undo after ledger cutover without audit/rule/operation changes', async () => {
     await seedOperation('ledger-cutover','shopping');
+    await seedOperation('ledger-undo','otros','shopping','applied');
     const tables=['projection_state','movements','movement_revisions','bulk_edit_operations','merchant_rules','command_receipts'];
     const before=await Promise.all(tables.map(async table=>(await sql.query(`SELECT * FROM olbia.${table} ORDER BY 1,2`)).rows));
     await sql.query('INSERT INTO olbia.schema_migrations VALUES (14,CURRENT_TIMESTAMP)');
@@ -69,6 +73,14 @@ describe('native SQL category catalog and membership', () => {
       await expect(run(()=>patchEvent('event-1','owner',JSON.stringify(body))))
         .rejects.toMatchObject({name:'MigrationPausedException'});
     await expect(applyBulkEdit('owner','ledger-cutover','owner')).rejects.toMatchObject({name:'MigrationPausedException'});
+    await expect(undoBulkEdit('owner','ledger-undo','owner')).rejects.toMatchObject({name:'MigrationPausedException'});
+    await expect(previewBulkEdit('owner', {
+      selection: { fromDay:'2026-10-01',toDay:'2026-10-01',statuses:['accepted'] },
+      change: { categoryId:'shopping' },
+    })).rejects.toMatchObject({name:'MigrationPausedException'});
+    await expect(previewAgentCategoryEdit('owner', {
+      categoryId:'shopping',eventIds:['event-1'],onlyUncategorized:false,
+    })).rejects.toMatchObject({name:'MigrationPausedException'});
     expect(await Promise.all(tables.map(async table=>(await sql.query(`SELECT * FROM olbia.${table} ORDER BY 1,2`)).rows)))
       .toEqual(before);
   });
