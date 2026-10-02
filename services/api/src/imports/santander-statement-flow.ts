@@ -1,7 +1,6 @@
-import { terminalImportDisplay, readTerminalImportDisplay } from '../operational/import-display.js';
+import { readBankImport, startBankImport, saveStatementPreview, failBankImport, type BankImportRecord } from './import-sql.js';
 import { createHash } from 'node:crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import {
   InvalidSantanderStatementError,
   parseSantanderStatementExtraction,
@@ -25,11 +24,11 @@ import {
   loadStatementTextractExtraction,
   persistTextractExtraction,
   requestBinaryBody,
-  statementPreviewResponse,
+  statementImportResponse,
   type StatementImportEvent,
 } from './statement-shared.js';
-import { database, rawSourceBucketName, s3, tableName, textract } from '../http/clients.js';
-import { errorMessage, type JsonObject } from '../http/response.js';
+import { rawSourceBucketName, s3, textract } from '../http/clients.js';
+import { type JsonObject } from '../http/response.js';
 import { allStoredEvents, localDate } from '../events/queries.js';
 
 const santanderStatementSourceKey = (owner: string, sha256: string): string =>
@@ -77,6 +76,8 @@ export const previewSantanderStatementImport = async (
     throw new InvalidSantanderStatementError('Sube el PDF del estado de cuenta Santander.');
   }
   const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const existing = await readBankImport('santander_statement', sha256, owner);
+  if (existing?.status === 'applied' || existing?.status === 'processing') return statementImportResponse(existing);
   const source = {
     bucket: rawSourceBucketName,
     key: santanderStatementSourceKey(owner, sha256),
@@ -94,151 +95,60 @@ export const previewSantanderStatementImport = async (
     rawSourceBucketName,
     source.key,
     'santander',
+    existing?.textractJobId,
   );
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: {
-      PK: `USER#${owner}`,
-      SK: `IMPORT#SANTANDER_STATEMENT#${sha256}`,
-      entityType: 'santander_statement_import',
-      owner,
-      status: 'processing',
-      createdAt: new Date().toISOString(),
-      source,
-      textractJobId,
-    },
-  }));
-  return {
-    importId: sha256,
-    status: 'processing',
-    message: 'Leyendo el PDF con Textract. Consulta el estado en unos segundos.',
-  };
+  const saved = await startBankImport({
+    kind: 'santander_statement', importId: sha256, owner, status: 'processing',
+    createdAt: new Date().toISOString(), source, textractJobId, rows: [],
+  });
+  return statementImportResponse(saved, 'Leyendo el PDF con Textract. Consulta el estado en unos segundos.');
 };
 
-export const getSantanderStatementImport = async (importId: string, owner: string, sourceOnly = false): Promise<JsonObject> => {
-  if (!/^[a-f0-9]{64}$/.test(importId)) {
-    throw new InvalidSantanderStatementError('Identificador de importación inválido.');
+export const getSantanderStatementImport = async (importId: string, owner: string): Promise<JsonObject> => {
+  if (!/^[a-f0-9]{64}$/.test(importId)) throw new InvalidSantanderStatementError('Identificador de importación inválido.');
+  const stored = await readBankImport('santander_statement', importId, owner);
+  if (!stored) throw new InvalidSantanderStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
+  if (stored.status !== 'processing') return statementImportResponse(stored);
+  const jobId = stored.textractJobId;
+  if (!jobId) throw new Error('Missing native statement Textract job.');
+  let job;
+  try { job = await getTextractAnalysisJobStatus(textract, jobId); }
+  catch (error) {
+    if (!(error instanceof TextractDocumentError)) throw error;
+    const current = await failBankImport('santander_statement', importId, owner, jobId, error.message);
+    if (current.status !== 'failed' || current.textractJobId !== jobId) return statementImportResponse(current);
+    throw error;
   }
-  const stored = await database.send(new GetCommand({
-    TableName: tableName,
-    Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
-    ConsistentRead: true,
-  }));
-  if (!stored.Item || stored.Item.owner !== owner) {
-    throw new InvalidSantanderStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
-  }
-  if (stored.Item.status === 'previewed' || stored.Item.status === 'applied') {
-    const display = sourceOnly ? terminalImportDisplay(importId, 'SANTANDER_STATEMENT', stored.Item) : await readTerminalImportDisplay(owner, importId, 'SANTANDER_STATEMENT');
-    return display ?? getSantanderStatementImport(importId, owner, true);
-  }
-  if (stored.Item.status === 'failed') {
-    throw new InvalidSantanderStatementError(
-      typeof stored.Item.errorMessage === 'string'
-        ? stored.Item.errorMessage
-        : 'No se pudo leer el estado Santander.',
-    );
-  }
-
-  const jobId = typeof stored.Item.textractJobId === 'string' ? stored.Item.textractJobId : undefined;
-  if (!jobId) throw new InvalidSantanderStatementError('Falta el trabajo de Textract para este import.');
-
-  const job = await getTextractAnalysisJobStatus(textract, jobId);
-  if (job.status === 'IN_PROGRESS') {
-    return {
-      importId,
-      status: 'processing',
-      message: 'Textract sigue leyendo el PDF…',
-    };
-  }
+  if (job.status === 'IN_PROGRESS') return statementImportResponse(stored);
   if (job.status === 'FAILED') {
     const message = job.statusMessage ?? 'Textract falló al leer el PDF.';
-    await database.send(new UpdateCommand({
-      TableName: tableName,
-      Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
-      UpdateExpression: 'SET #status = :status, #errorMessage = :errorMessage',
-      ExpressionAttributeNames: { '#status': 'status', '#errorMessage': 'errorMessage' },
-      ExpressionAttributeValues: { ':status': 'failed', ':errorMessage': message },
-    }));
+    const current = await failBankImport('santander_statement', importId, owner, jobId, message);
+    if (current.status !== 'failed' || current.textractJobId !== jobId) return statementImportResponse(current);
     throw new TextractDocumentError(message);
   }
 
-  const source = stored.Item.source as JsonObject;
-  const sourceKey = typeof source.key === 'string'
-    ? source.key
-    : santanderStatementSourceKey(owner, importId);
   let extractionKey: string | undefined;
   let answers: Readonly<Record<string, string>> = {};
+  let preview: Pick<BankImportRecord, 'accountLastFour' | 'product' | 'period' | 'rows' | 'extractionKey' | 'textractAnswers'>;
   try {
     const extraction = await fetchTextractStatementExtraction(textract, jobId, 'santander');
-    answers = extraction.answers;
-    console.info('Santander Textract extraction ready', {
-      importId,
-      jobId,
-      answers: Object.keys(extraction.answers),
-      tables: extraction.tables.length,
-      lines: extraction.lines.length,
-    });
-    extractionKey = await persistTextractExtraction(sourceKey, extraction);
-    const document = parseSantanderStatementExtraction(extraction);
+    extractionKey = await persistTextractExtraction(stored.source.key, extraction);
+    const retained = await loadStatementTextractExtraction({source: stored.source, extractionKey});
+    answers = retained.answers;
+    const document = parseSantanderStatementExtraction(retained);
     const rows = await buildSantanderStatementPreviewRows(document);
-    await database.send(new UpdateCommand({
-      TableName: tableName,
-      Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
-      UpdateExpression: 'SET #status = :status, #accountLastFour = :accountLastFour, #product = :product, #period = :period, #rows = :rows, #extractionKey = :extractionKey, #textractAnswers = :textractAnswers',
-      ExpressionAttributeNames: {
-        '#status': 'status',
-        '#accountLastFour': 'accountLastFour',
-        '#product': 'product',
-        '#period': 'period',
-        '#rows': 'rows',
-        '#extractionKey': 'extractionKey',
-        '#textractAnswers': 'textractAnswers',
-      },
-      ExpressionAttributeValues: {
-        ':status': 'previewed',
-        ':accountLastFour': document.accountLastFour,
-        ':product': document.product,
-        ':period': document.period,
-        ':rows': rows,
-        ':extractionKey': extractionKey,
-        ':textractAnswers': extraction.answers,
-      },
-    }));
-    return statementPreviewResponse(importId, document, rows);
+    preview = { accountLastFour: document.accountLastFour, product: document.product,
+      period: document.period, rows, extractionKey, textractAnswers: answers };
   } catch (error) {
-    const message = errorMessage(error);
-    await database.send(new UpdateCommand({
-      TableName: tableName,
-      Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
-      UpdateExpression: extractionKey
-        ? 'SET #status = :status, #errorMessage = :errorMessage, #extractionKey = :extractionKey, #textractAnswers = :textractAnswers'
-        : 'SET #status = :status, #errorMessage = :errorMessage',
-      ExpressionAttributeNames: {
-        '#status': 'status',
-        '#errorMessage': 'errorMessage',
-        ...(extractionKey
-          ? { '#extractionKey': 'extractionKey', '#textractAnswers': 'textractAnswers' }
-          : {}),
-      },
-      ExpressionAttributeValues: {
-        ':status': 'failed',
-        ':errorMessage': message,
-        ...(extractionKey
-          ? {
-              ':extractionKey': extractionKey,
-              ':textractAnswers': answers,
-            }
-          : {}),
-      },
-    }));
-    if (
-      error instanceof InvalidSantanderStatementError
-      || error instanceof TextractDocumentError
-    ) {
-      throw error;
-    }
-    throw new InvalidSantanderStatementError(message);
+    // Transient storage/query failures leave processing retryable; only document failures end the job.
+    if (!(error instanceof InvalidSantanderStatementError) && !(error instanceof TextractDocumentError)) throw error;
+    const current = await failBankImport('santander_statement', importId, owner, jobId, error.message,
+      extractionKey ? { extractionKey, textractAnswers: answers } : {});
+    if (current.status !== 'failed' || current.textractJobId !== jobId) return statementImportResponse(current);
+    throw error;
   }
+  const current = await saveStatementPreview('santander_statement', importId, owner, jobId, preview);
+  return statementImportResponse(current);
 };
 
 export const applySantanderStatementImport = async (
@@ -251,12 +161,9 @@ export const applySantanderStatementImport = async (
   owner,
   decisionBody,
   rebuildRows: async () => {
-    const stored = await database.send(new GetCommand({
-      TableName: tableName,
-      Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER_STATEMENT#${importId}` },
-      ConsistentRead: true,
-    }));
-    const extraction = await loadStatementTextractExtraction(stored.Item as JsonObject);
+    const stored = await readBankImport('santander_statement', importId, owner);
+    if (!stored) throw new InvalidSantanderStatementError('La previsualización ya no está disponible.');
+    const extraction = await loadStatementTextractExtraction(stored);
     return buildSantanderStatementPreviewRows(parseSantanderStatementExtraction(extraction));
   },
 });

@@ -244,18 +244,3 @@ export const statementPreviewSummary = (rows: readonly StatementPreviewRow[]) =>
     msi: rows.filter((row) => row.kind === "msi").length,
   };
 };
-
-export const statementImportCompletionUpdate = (
-  appliedAt: string,
-  result: {
-    readonly created: number;
-    readonly linked: number;
-    readonly skipped: number;
-    readonly msiConfirmed: number;
-    readonly createdUnplanned: number;
-  },
-) => ({
-  UpdateExpression: "SET #status = :status, #appliedAt = :appliedAt, #result = :result",
-  ExpressionAttributeNames: { "#status": "status", "#appliedAt": "appliedAt", "#result": "result" },
-  ExpressionAttributeValues: { ":status": "applied", ":appliedAt": appliedAt, ":result": result },
-});

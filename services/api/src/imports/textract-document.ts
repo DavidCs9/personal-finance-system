@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   GetDocumentAnalysisCommand,
   StartDocumentAnalysisCommand,
@@ -60,11 +61,13 @@ export const startTextractDocumentAnalysis = async (
   bucket: string,
   key: string,
   provider: StatementProvider,
+  previousJobId?: string,
 ): Promise<string> => {
   const result = await client.send(new StartDocumentAnalysisCommand({
     DocumentLocation: { S3Object: { Bucket: bucket, Name: key } },
     FeatureTypes: ["TABLES", "QUERIES"],
     QueriesConfig: { Queries: [...statementQueries(provider)] },
+    ClientRequestToken: createHash('sha256').update(JSON.stringify([bucket, key, provider, statementQueries(provider), previousJobId ?? 'initial'])).digest('hex'),
   }));
   if (!result.JobId) throw new TextractDocumentError("Textract no devolvió un JobId.");
   return result.JobId;
@@ -74,7 +77,13 @@ export const getTextractAnalysisJobStatus = async (
   client: TextractClient,
   jobId: string,
 ): Promise<{ readonly status: TextractJobStatus; readonly statusMessage?: string }> => {
-  const result = await client.send(new GetDocumentAnalysisCommand({ JobId: jobId, MaxResults: 1 }));
+  let result;
+  try {
+    result = await client.send(new GetDocumentAnalysisCommand({ JobId: jobId, MaxResults: 1 }));
+  } catch (error) {
+    if ((error as Error).name === 'InvalidJobIdException') throw new TextractDocumentError('El trabajo de lectura ya no está disponible. Vuelve a seleccionar el PDF.');
+    throw error;
+  }
   const status = (result.JobStatus ?? "FAILED") as TextractJobStatus;
   return { status, statusMessage: result.StatusMessage };
 };

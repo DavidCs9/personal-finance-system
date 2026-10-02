@@ -8,6 +8,7 @@ import type { JsonObject } from '../http/response.js';
 import { operationalReadMode, isRetainedLive, publicExceptions, publicSubscriptions, readOperationalPartition, readOperationalItem,
   sqlOperationalPartition } from './reads.js';
 import { terminalImportDisplay } from './import-display.js';
+import { verifyNativeImports } from '../imports/read-verification.js';
 
 // Independent inventory/columns: intentionally does not use projector classification or transformation as oracle.
 export const operationalFamilies = ['dedupe_claims', 'exception_claims', 'ingestion_exceptions', 'ingestion_retries', 'import_records', 'bulk_edit_operations', 'delivery_records', 'push_subscriptions', 'assistant_threads'] as const;
@@ -108,14 +109,16 @@ export const verifyOperationalReads = async (owner: string, now: Date, client: R
     const row = targets.get('import_records')!.find(row => row.source_pk === item.PK && row.source_sk === item.SK);
     check(terminalImportDisplay(id, family, item), terminalImportDisplay(id, family, row?.source_item as JsonObject | undefined)); publicResponses++;
   }
-  for (const family of ['ingestion_exceptions', 'import_records', 'push_subscriptions', 'assistant_threads'] as const) {
+  for (const family of ['ingestion_exceptions', 'push_subscriptions', 'assistant_threads'] as const) {
     for (const item of source.filter(item => operationalFamily(item) === family)) {
       // Raw input-only adapters: no PDF polling, retry dispatch, native memory backfill or delivery.
       check(item, await readOperationalItem(family, { database, tableName }, String(item.PK), String(item.SK))); configuredReads++;
     }
   }
-  for (const family of ['ingestion_exceptions', 'import_records', 'push_subscriptions', 'assistant_threads'] as const) {
+  for (const family of ['ingestion_exceptions', 'push_subscriptions', 'assistant_threads'] as const) {
     check(undefined, await readOperationalItem(family, { database, tableName }, `USER#${owner}`, '__missing_operational_verification__')); publicResponses++;
   }
-  return { mode: operationalReadMode(), retained, sourcePages, targetPages, publicResponses, configuredReads, expirationChecks, mismatches, elapsedMs: Date.now() - started };
+  const imports = await verifyNativeImports(owner, source.filter(item=>operationalFamily(item)==='import_records'), client);
+  mismatches += imports.mismatches;
+  return { mode: operationalReadMode(), imports, retained, sourcePages, targetPages, publicResponses, configuredReads, expirationChecks, mismatches, elapsedMs: Date.now() - started };
 };

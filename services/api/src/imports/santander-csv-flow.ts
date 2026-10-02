@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { withApplicationTransaction } from '@finance/ledger/dsql-store';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { BatchGetCommand, GetCommand, PutCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { BatchGetCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import type { MsiPlan } from '@finance/domain';
 import { eventMonthIndexKeys, msiPlanPurchaseOccurredAt, reconciliationPartition } from '@finance/ledger';
 import { buildPlanFromCreateDecision, isSantanderMsiRow, matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
@@ -10,7 +10,6 @@ import {
   merchantsMatch,
   parseSantanderCsv,
   santanderApplyAction,
-  santanderImportCompletionUpdate,
   type SantanderCsvDocument,
   type SantanderCsvRow,
   type SantanderReconciliationDecision,
@@ -21,6 +20,7 @@ import { errorName, type JsonObject } from '../http/response.js';
 import { isValidMonth } from '../months/monthly-plan.js';
 import { allStoredEvents, localDate, toPublicEvent } from '../events/queries.js';
 import { persistEventMsi } from '../events/mutations.js';
+import { readBankImport, startBankImport, completeBankImport } from './import-sql.js';
 
 interface SantanderPreviewRow extends SantanderCsvRow {
   readonly status: SantanderReconciliationStatus;
@@ -140,6 +140,10 @@ export const previewSantanderImport = async (body: string | undefined, owner: st
   const document = parseSantanderCsv(body);
   const sourceHash = createHash('sha256').update(body, 'utf8').digest('hex');
   const importId = sourceHash;
+  const existing = await readBankImport('santander_csv', importId, owner);
+  if (existing?.status === 'applied') {
+    return previewPayload(importId, document, existing.rows as readonly SantanderPreviewRow[]);
+  }
   const source = {
     bucket: rawSourceBucketName,
     key: csvSourceKey(owner, sourceHash),
@@ -154,22 +158,12 @@ export const previewSantanderImport = async (body: string | undefined, owner: st
   }));
   const rows = await classifySantanderRows(document);
   const previewedAt = new Date().toISOString();
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: {
-      PK: `USER#${owner}`,
-      SK: `IMPORT#SANTANDER#${importId}`,
-      entityType: 'santander_csv_import',
-      owner,
-      importId,
-      status: 'previewed',
-      previewedAt,
-      source,
-      accountLastFour: document.accountLastFour,
-      rows,
-    },
-  }));
-  return previewPayload(importId, document, rows);
+  const saved = await startBankImport({
+    kind: 'santander_csv', importId, owner, status: 'previewed',
+    createdAt: previewedAt, previewedAt, source,
+    accountLastFour: document.accountLastFour, rows,
+  });
+  return previewPayload(importId, document, saved.rows as readonly SantanderPreviewRow[]);
 };
 
 const claimAndCreateCsvEvent = async (
@@ -409,16 +403,16 @@ const parseImportDecisions = (body: string | undefined): Readonly<Record<string,
 
 const applySantanderImportInternal = async (importId: string, owner: string, decisionBody: string | undefined): Promise<JsonObject> => {
   if (!/^[a-f0-9]{64}$/.test(importId)) throw new InvalidSantanderCsvError('Identificador de importación inválido.');
-  const stored = await database.send(new GetCommand({
-    TableName: tableName,
-    Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER#${importId}` },
-    ConsistentRead: true,
-  }));
-  const source = stored.Item?.source as JsonObject | undefined;
-  if (!stored.Item || stored.Item.owner !== owner || typeof source?.key !== 'string') {
+  const stored = await readBankImport('santander_csv', importId, owner);
+  const source = stored?.source;
+  if (!stored || !source) {
     throw new InvalidSantanderCsvError('La previsualización ya no está disponible. Vuelve a seleccionar el CSV.');
   }
-  const object = await s3.send(new GetObjectCommand({ Bucket: rawSourceBucketName, Key: source.key }));
+  if (stored.status === 'applied') {
+    return { importId, created: [], summary: stored.result, alreadyApplied: true };
+  }
+  if (stored.status !== 'previewed') throw new InvalidSantanderCsvError('Vuelve a seleccionar el CSV para revisar la importación.');
+  const object = await s3.send(new GetObjectCommand({ Bucket: source.bucket, Key: source.key }));
   if (!object.Body) throw new Error('The Santander CSV source did not contain a body.');
   const sourceBody = await object.Body.transformToString('utf8');
   const actualHash = createHash('sha256').update(sourceBody, 'utf8').digest('hex');
@@ -427,7 +421,7 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
   const decisions = parseImportDecisions(decisionBody);
   const document = parseSantanderCsv(sourceBody);
   const rows = await classifySantanderRows(document);
-  const previewRows = Array.isArray(stored.Item.rows) ? stored.Item.rows as readonly SantanderPreviewRow[] : [];
+  const previewRows = stored.rows as readonly SantanderPreviewRow[];
   const previewByIdentity = new Map(previewRows.map((row) => [row.identity, row]));
   const appliedAt = new Date().toISOString();
   const created: JsonObject[] = [];
@@ -556,11 +550,7 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
       skipped += 1;
     }
   }
-  await database.send(new UpdateCommand({
-    TableName: tableName,
-    Key: { PK: `USER#${owner}`, SK: `IMPORT#SANTANDER#${importId}` },
-    ...santanderImportCompletionUpdate(appliedAt, { created: created.length, linked, skipped }),
-  }));
+  await completeBankImport('santander_csv', importId, owner, appliedAt, { created: created.length, linked, skipped, msiConfirmed });
   return {
     importId,
     created,

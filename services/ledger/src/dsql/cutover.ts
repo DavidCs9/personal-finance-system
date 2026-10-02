@@ -3,7 +3,7 @@ import { createPool } from './connection.js';
 import { OlbiaSqlStore, authorityFrom, withStoreClient } from './store.js';
 import { canonicalJson, type SourceItem } from './model.js';
 import { verifyKeyDetails } from './verification.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 // Internal IAM-only deployed operator. Product identities cannot update authority.
 // Activation is allowed only by the approved cutover rollout's environment flag.
@@ -74,6 +74,31 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
           VALUES ($1::uuid,0,'otro_pago','002','','',0)`,[smokeUuid]);
         const zeroLine = (await client.query('SELECT amount_mxn_minor FROM olbia.payslip_lines WHERE payslip_uuid=$1::uuid',[smokeUuid])).rows[0];
         if (Number(zeroLine?.amount_mxn_minor) !== 0) throw new Error('Native zero payroll line lost');
+        const importSource = (await client.query('SELECT * FROM olbia.bank_imports ORDER BY kind,content_sha256 LIMIT 1')).rows[0];
+        if (!importSource) throw new Error('No native import for smoke');
+        const smokeHash = createHash('sha256').update(randomUUID()).digest('hex');
+        const insertImport = `INSERT INTO olbia.bank_imports
+          (kind,content_sha256,owner,status,created_at,previewed_at,account_last_four,evidence_bucket,evidence_key,evidence_content_type)
+          VALUES ('santander_csv',$1,$2,'previewed',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,$3,$4,$5,'text/csv')
+          ON CONFLICT (kind,content_sha256) DO NOTHING RETURNING content_sha256`;
+        const importValues = [smokeHash,importSource.owner,importSource.account_last_four,importSource.evidence_bucket,importSource.evidence_key];
+        if ((await client.query(insertImport,importValues)).rows[0]?.content_sha256 !== smokeHash) throw new Error('Native import insertion failed');
+        if ((await client.query(insertImport,importValues)).rows.length) throw new Error('Duplicate native import changed');
+        await client.query(`INSERT INTO olbia.bank_import_rows
+          (kind,content_sha256,position,identity,occurred_on,merchant_raw,amount_mxn_minor,status)
+          VALUES ('santander_csv',$1,0,'verification-zero','2026-01-01','SQL verification',0,'matched'),
+          ('santander_csv',$1,1,'verification-credit','2026-01-02','SQL verification',-1,'excluded')`,[smokeHash]);
+        await client.query(`INSERT INTO olbia.bank_import_candidates
+          (kind,content_sha256,row_position,position,movement_id,merchant_raw)
+          VALUES ('santander_csv',$1,0,0,'historical-verification',NULL)`,[smokeHash]);
+        const importedRows = (await client.query(`SELECT position,amount_mxn_minor FROM olbia.bank_import_rows
+          WHERE kind='santander_csv' AND content_sha256=$1 ORDER BY position`,[smokeHash])).rows;
+        if (importedRows.length !== 2 || Number(importedRows[0].amount_mxn_minor) !== 0 || Number(importedRows[1].amount_mxn_minor) !== -1) throw new Error('Native signed import rows lost');
+        await client.query("DELETE FROM olbia.bank_import_candidates WHERE kind='santander_csv' AND content_sha256=$1",[smokeHash]);
+        await client.query("DELETE FROM olbia.bank_import_rows WHERE kind='santander_csv' AND content_sha256=$1",[smokeHash]);
+        const finishedImport = (await client.query(`UPDATE olbia.bank_imports SET status='applied',applied_at=CURRENT_TIMESTAMP,
+          result_created=0,result_linked=0,result_skipped=2 WHERE kind='santander_csv' AND content_sha256=$1 RETURNING status,result_skipped`,[smokeHash])).rows[0];
+        if (finishedImport?.status !== 'applied' || finishedImport.result_skipped !== 2) throw new Error('Native import completion failed');
         const raw=(await client.query("SELECT source_item FROM olbia.projection_state WHERE source_sk='EVENT' AND deleted=false ORDER BY source_pk LIMIT 1")).rows[0]?.source_item as SourceItem|undefined;
         if(!raw) throw new Error('No retained movement for smoke');
         const key={PK:raw.PK,SK:raw.SK};const store=new OlbiaSqlStore(pool,process.env.METADATA_TABLE_NAME!);
@@ -95,7 +120,7 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
         });
         verified=true;throw rollback;
       });} catch(error) {if(error!==rollback) throw error;}
-      return {verified,rolledBack:true,nativeCategories:true,nativeCards:true,nativeMonthPlans:true,nativePayroll:true};
+      return {verified,rolledBack:true,nativeCategories:true,nativeCards:true,nativeMonthPlans:true,nativePayroll:true,nativeImports:true};
     }
     if(!['pause','activate'].includes(event.action)) throw new Error('Unknown operation');
     if(event.action==='activate' && process.env.OLBIA_ALLOW_SQL_ACTIVATION!=='true') throw new Error('SQL activation requires the approved cutover deployment');

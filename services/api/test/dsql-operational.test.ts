@@ -10,7 +10,6 @@ const readers = await import('../src/events/sql-reads.js');
 const reads = await import('../src/operational/reads.js');
 const verify = await import('../src/operational/verification.js');
 const exceptions = await import('../src/exceptions/service.js');
-const { getAmexImport, applyAmexImport } = await import('../src/imports/amex-statement-flow.js');
 let sql: PGlite, pool: TransactionPool, records: SourceItem[], calls: unknown[];
 const now = new Date('2026-10-01T12:00:00.000Z');
 const exception = (n: number, patch = {}): SourceItem => ({ PK: `EXCEPTION#${n}`, SK: 'EXCEPTION', GSI1PK: 'EXCEPTIONS', GSI1SK: new Date(now.getTime() - n * 1000).toISOString(),
@@ -22,6 +21,7 @@ afterAll(async () => sql.close());
 beforeEach(async () => {
   records = []; calls = [];
   await sql.exec(`TRUNCATE olbia.projection_state,${TABLE_NAMES.map(t => `olbia.${t}`).join(',')}`);
+  await sql.query('INSERT INTO olbia.schema_migrations VALUES (13,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING');
   vi.spyOn(readers, 'readerPool').mockReturnValue(sql as unknown as ReadSqlClient);
   vi.stubEnv('DSQL_OPERATIONAL_READ_MODE', 'guarded-sql');
   vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -87,12 +87,9 @@ describe('guarded operational displays and independent gate', () => {
     const gate = await verify.verifyOperationalReads('owner', now, sql as never);
     expect(gate.mismatches).toBe(0); expect(gate.retained.bulk_edit_operations).toBe(1); expect(gate.expirationChecks).toBeGreaterThan(9);
   });
-  it('uses guarded SQL only for terminal PDF rendering; authoritative apply and retry never consult SQL', async () => {
-    const id = 'a'.repeat(64);
-    records = [{ PK: 'USER#owner', SK: `IMPORT#AMEX#${id}`, owner: 'owner', entityType: 'amex_statement_import', status: 'previewed', product: 'Amex', accountLastFour: '1234', period: { from: '2026-09-01', to: '2026-09-30' }, rows: [] }];
-    await sync(); const query = vi.spyOn(sql, 'query');
-    expect(await getAmexImport(id, 'owner')).toMatchObject({ importId: id }); expect(query).toHaveBeenCalled();
-    query.mockClear(); await expect(applyAmexImport(id, 'owner', undefined)).rejects.toThrow(); expect(query).not.toHaveBeenCalled();
-    await expect(exceptions.requestRetry('missing', 'owner')).rejects.toThrow('Exception not found'); expect(query).not.toHaveBeenCalled();
+  it('keeps exception retry on its authoritative path regardless of display read mode', async () => {
+    const query = vi.spyOn(sql, 'query');
+    await expect(exceptions.requestRetry('missing', 'owner')).rejects.toThrow('Exception not found');
+    expect(query).not.toHaveBeenCalled();
   });
 });

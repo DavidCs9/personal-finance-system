@@ -107,6 +107,55 @@ export const SCHEMA_STATEMENTS = [
     sat_type text NOT NULL CHECK (length(sat_type)>0), code text NOT NULL, concept text NOT NULL,
     amount_mxn_minor bigint NOT NULL CHECK (amount_mxn_minor BETWEEN 0 AND 9007199254740991),
     PRIMARY KEY (payslip_uuid,position))`,
+  `CREATE TABLE IF NOT EXISTS olbia.bank_imports (
+    kind text NOT NULL CHECK (kind IN ('amex_statement','santander_statement','santander_csv')),
+    content_sha256 text NOT NULL CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
+    owner text NOT NULL CHECK (length(owner)>0),
+    status text NOT NULL CHECK (status IN ('processing','previewed','applied','failed')),
+    created_at timestamptz NOT NULL, previewed_at timestamptz, applied_at timestamptz,
+    account_last_four text CHECK (account_last_four ~ '^[0-9]{4}$'), product text,
+    period_start date, period_end date,
+    evidence_bucket text NOT NULL CHECK (length(evidence_bucket)>0),
+    evidence_key text NOT NULL CHECK (length(evidence_key)>0),
+    evidence_content_type text NOT NULL CHECK (length(evidence_content_type)>0),
+    textract_job_id text CHECK (length(textract_job_id)>0), extraction_key text CHECK (length(extraction_key)>0),
+    textract_answers jsonb CHECK (jsonb_typeof(textract_answers)='object'),
+    error_message text,
+    result_created integer CHECK (result_created>=0), result_linked integer CHECK (result_linked>=0),
+    result_skipped integer CHECK (result_skipped>=0), result_msi_confirmed integer CHECK (result_msi_confirmed>=0),
+    result_created_unplanned integer CHECK (result_created_unplanned>=0),
+    PRIMARY KEY (kind,content_sha256),
+    CHECK ((period_start IS NULL AND period_end IS NULL) OR (period_start IS NOT NULL AND period_end IS NOT NULL AND period_start<=period_end)),
+    CHECK (status NOT IN ('previewed','applied') OR (account_last_four IS NOT NULL AND (kind='santander_csv' OR (product IS NOT NULL AND period_start IS NOT NULL)))),
+    CHECK (status<>'processing' OR (kind<>'santander_csv' AND textract_job_id IS NOT NULL)),
+    CHECK (status<>'applied' OR (applied_at IS NOT NULL AND result_created IS NOT NULL AND result_linked IS NOT NULL AND result_skipped IS NOT NULL)))`,
+  `CREATE TABLE IF NOT EXISTS olbia.bank_import_rows (
+    kind text NOT NULL, content_sha256 text NOT NULL,
+    position integer NOT NULL CHECK (position BETWEEN 0 AND 2997),
+    identity text NOT NULL CHECK (length(identity)>0),
+    occurred_on date NOT NULL, merchant_raw text NOT NULL CHECK (length(merchant_raw)>0),
+    amount_mxn_minor bigint NOT NULL CHECK (amount_mxn_minor BETWEEN -9007199254740991 AND 9007199254740991),
+    status text NOT NULL CHECK (status IN ('new','matched','ambiguous','duplicate','excluded','needs_decision','skipped')),
+    row_kind text CHECK (row_kind IN ('purchase','msi')), is_credit boolean,
+    installment_index integer CHECK (installment_index BETWEEN 1 AND 48),
+    installment_months integer CHECK (installment_months BETWEEN 1 AND 48),
+    original_amount_mxn_minor bigint CHECK (original_amount_mxn_minor BETWEEN 1 AND 9007199254740991),
+    row_number integer CHECK (row_number>0), occurrence integer CHECK (occurrence>0), bank_transaction_id text,
+    selected_movement_id text CHECK (length(selected_movement_id)>0),
+    PRIMARY KEY (kind,content_sha256,position),
+    CONSTRAINT bank_import_rows_identity_key UNIQUE (kind,content_sha256,identity),
+    CONSTRAINT bank_import_rows_import_fk FOREIGN KEY (kind,content_sha256) REFERENCES olbia.bank_imports(kind,content_sha256),
+    CHECK (kind='santander_csv' OR row_kind IS NOT NULL),
+    CHECK (installment_index IS NULL OR installment_months IS NULL OR installment_index<=installment_months))`,
+  `CREATE TABLE IF NOT EXISTS olbia.bank_import_candidates (
+    kind text NOT NULL, content_sha256 text NOT NULL, row_position integer NOT NULL,
+    position integer NOT NULL CHECK (position BETWEEN 0 AND 2997),
+    movement_id text NOT NULL CHECK (length(movement_id)>0),
+    merchant_raw text, occurred_at timestamptz,
+    PRIMARY KEY (kind,content_sha256,row_position,position),
+    CONSTRAINT bank_import_candidates_movement_key UNIQUE (kind,content_sha256,row_position,movement_id),
+    CONSTRAINT bank_import_candidates_row_fk FOREIGN KEY (kind,content_sha256,row_position) REFERENCES olbia.bank_import_rows(kind,content_sha256,position),
+    CHECK (merchant_raw IS NOT NULL OR occurred_at IS NULL))`,
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
@@ -129,6 +178,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await migrateCardProfiles(options.transactionPool);
   await migrateMonthPlans(options.transactionPool);
   await migratePayroll(options.transactionPool);
+  await migrateBankImports(options.transactionPool);
   await ensureCardLiabilityRelationships({ query: (statement, params) => query('card-relationships', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   await ensureMovementCategoryForeignKey({ query: (statement, params) => query('category-fk', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   for (const [name, table, columns] of [
@@ -158,6 +208,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('catalog-projector-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_projector');
   await query('plans-projector-read', 'GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO olbia_projector');
   await query('payroll-projector-read', 'GRANT SELECT ON olbia.payslips,olbia.payslip_lines TO olbia_projector');
+  await query('imports-projector-read', 'GRANT SELECT ON olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates TO olbia_projector');
   await query('cards-projector-read', 'GRANT SELECT ON olbia.card_profiles TO olbia_projector');
   await query('rules-projector-read', 'GRANT SELECT ON olbia.merchant_rules TO olbia_projector');
   await query('projector-barrier-grant','GRANT SELECT,UPDATE ON olbia.application_barrier TO olbia_projector');
@@ -173,6 +224,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query('catalog-reader-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_reader');
     await query('plans-reader-read', 'GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO olbia_reader');
     await query('payroll-reader-read', 'GRANT SELECT ON olbia.payslips,olbia.payslip_lines TO olbia_reader');
+    await query('imports-reader-read', 'GRANT SELECT ON olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates TO olbia_reader');
     await query('cards-reader-read', 'GRANT SELECT ON olbia.card_profiles TO olbia_reader');
     await query('rules-reader-read', 'GRANT SELECT ON olbia.merchant_rules TO olbia_reader');
     for (const arn of options.readerRoleArns) {
@@ -186,6 +238,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (!existing.rows.length) await query('operational-verifier-create', `CREATE ROLE ${role} WITH LOGIN`);
     await query('operational-verifier-schema', `GRANT USAGE ON SCHEMA olbia TO ${role}`);
     await query('operational-verifier-select', `GRANT SELECT ON ${OPERATIONAL_TABLE_NAMES.map(table => `olbia.${table}`).join(',')} TO ${role}`);
+    await query('imports-verifier-select', `GRANT SELECT ON olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates,olbia.schema_migrations TO ${role}`);
     for (const arn of options.operationalVerifierRoleArns) {
       if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid verifier role ARN');
       await query('operational-verifier-iam', `AWS IAM GRANT ${role} TO '${arn}'`);
@@ -205,6 +258,11 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query(`catalog-read-${role}`, `GRANT SELECT ON olbia.spend_categories TO ${role}`);
     await query(`plans-read-${role}`, `GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO ${role}`);
     await query(`payroll-read-${role}`, `GRANT SELECT ON olbia.payslips,olbia.payslip_lines TO ${role}`);
+    await query(`imports-read-${role}`, `GRANT SELECT ON olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates TO ${role}`);
+    if (writer) {
+      await query(`imports-header-write-${role}`, `GRANT INSERT,UPDATE ON olbia.bank_imports TO ${role}`);
+      await query(`imports-children-write-${role}`, `GRANT INSERT,DELETE ON olbia.bank_import_rows,olbia.bank_import_candidates TO ${role}`);
+    }
     if (writer) await query(`payroll-insert-${role}`, `GRANT INSERT ON olbia.payslips,olbia.payslip_lines TO ${role}`);
     if (writer) {
       await query(`plans-write-${role}`, `GRANT INSERT,UPDATE ON olbia.month_plans TO ${role}`);
@@ -345,4 +403,93 @@ export const migratePayroll = async (pool: TransactionPool): Promise<void> => {
       await client.query('INSERT INTO olbia.schema_migrations VALUES (12,CURRENT_TIMESTAMP)');
     });
   } catch (error) { throw new BootstrapFailure('payroll-copy',error); }
+};
+
+/** One-time decoding of retained evidence; no native import writes use document keys. */
+export const migrateBankImports = async (pool: TransactionPool): Promise<void> => {
+  try {
+    await pool.transaction(async client => {
+      await client.query("UPDATE olbia.application_barrier SET generation=generation+1 WHERE id='storage'");
+      if ((await client.query('SELECT version FROM olbia.schema_migrations WHERE version=13')).rows.length) return;
+      const retained=(await client.query('SELECT source_item FROM olbia.import_records')).rows;
+      const object=(value:unknown,keys:readonly string[]):Record<string,any> => {
+        if(!value || typeof value!=='object' || Array.isArray(value) || Object.keys(value).some(k=>!keys.includes(k)))
+          throw new Error('Unrepresentable retained import evidence');
+        return value as Record<string,any>;
+      };
+      const strings=(item:Record<string,any>,keys:readonly string[],required=false) => {
+        if(keys.some(k=>(required || Object.hasOwn(item,k)) && typeof item[k]!=='string'))throw new Error('Invalid retained import text');
+      };
+      const integers=(item:Record<string,any>,keys:readonly string[],required=false) => {
+        if(keys.some(k=>(required || Object.hasOwn(item,k)) && !Number.isSafeInteger(item[k])))throw new Error('Invalid retained import integer');
+      };
+      let count=retained.length+2;
+      for(const stored of retained){
+        const item=object(stored.source_item,['PK','SK','owner','entityType','status','createdAt','previewedAt','appliedAt','accountLastFour',
+          'product','period','source','textractJobId','extractionKey','textractAnswers','errorMessage','result','rows','importId']);
+        strings(item,['PK','SK','owner','entityType','status'],true);
+        strings(item,['createdAt','previewedAt','appliedAt','accountLastFour','product','textractJobId','extractionKey','errorMessage','importId']);
+        const source=object(item.source,['bucket','key','sha256','contentType']);strings(source,['bucket','key','sha256','contentType'],true);
+        const provider=({amex_statement_import:'AMEX',santander_statement_import:'SANTANDER_STATEMENT',santander_csv_import:'SANTANDER'} as Record<string,string>)[item.entityType];
+        if(!provider || item.PK!==`USER#${item.owner}` || item.SK!==`IMPORT#${provider}#${source.sha256}` ||
+          item.importId!==undefined && item.importId!==source.sha256)throw new Error('Invalid retained import identity');
+        if(item.period!==undefined)strings(object(item.period,['from','to']),['from','to'],true);
+        if(item.textractAnswers!==undefined && (!item.textractAnswers || typeof item.textractAnswers!=='object' || Array.isArray(item.textractAnswers)))
+          throw new Error('Invalid retained extraction answers');
+        if(item.result!==undefined)integers(object(item.result,['created','linked','skipped','msiConfirmed','createdUnplanned']),['created','linked','skipped','msiConfirmed','createdUnplanned']);
+        const rows=item.rows===undefined && ['processing','failed'].includes(item.status) ? [] : item.rows;
+        if(!Array.isArray(rows))throw new Error('Invalid retained import rows');
+        count+=rows.length;
+        for(const raw of rows){
+          const row=object(raw,['identity','occurredOn','merchantRaw','amountMinor','status','kind','msi','credit','installmentIndex',
+            'installmentMonths','originalAmountMinor','rowNumber','occurrence','transactionId','eventId','candidateEventIds','candidates']);
+          strings(row,['identity','occurredOn','merchantRaw','status'],true);strings(row,['kind','transactionId','eventId']);
+          integers(row,['amountMinor'],true);integers(row,['installmentIndex','installmentMonths','originalAmountMinor','rowNumber','occurrence']);
+          if(Object.hasOwn(row,'credit') && typeof row.credit!=='boolean' ||
+            Object.hasOwn(row,'kind') && row.msi!==(row.kind==='msi') || Object.hasOwn(row,'msi') && !Object.hasOwn(row,'kind'))
+            throw new Error('Invalid retained row classification');
+          if(!Array.isArray(row.candidateEventIds) || !row.candidateEventIds.every((id:unknown)=>typeof id==='string') || !Array.isArray(row.candidates))
+            throw new Error('Invalid retained candidate list');
+          count+=row.candidateEventIds.length;
+          let prior=-1;
+          for(const rawCandidate of row.candidates){
+            const candidate=object(rawCandidate,['id','merchantRaw','occurredAt']);strings(candidate,['id','merchantRaw'],true);strings(candidate,['occurredAt']);
+            const position=row.candidateEventIds.indexOf(candidate.id);
+            if(position<=prior)throw new Error('Invalid retained candidate label order');prior=position;
+          }
+        }
+      }
+      if(count>3000)throw new Error('Bank import copy exceeds native transaction budget');
+      const kind=`CASE receipt.source_item->>'entityType' WHEN 'amex_statement_import' THEN 'amex_statement'
+        WHEN 'santander_statement_import' THEN 'santander_statement' WHEN 'santander_csv_import' THEN 'santander_csv' END`;
+      await client.query(`INSERT INTO olbia.bank_imports (kind,content_sha256,owner,status,created_at,previewed_at,applied_at,
+        account_last_four,product,period_start,period_end,evidence_bucket,evidence_key,evidence_content_type,
+        textract_job_id,extraction_key,textract_answers,error_message,result_created,result_linked,result_skipped,result_msi_confirmed,result_created_unplanned)
+        SELECT ${kind},receipt.source_item->'source'->>'sha256',receipt.source_item->>'owner',receipt.source_item->>'status',
+          COALESCE(receipt.source_item->>'createdAt',receipt.source_item->>'previewedAt')::timestamptz,
+          (receipt.source_item->>'previewedAt')::timestamptz,(receipt.source_item->>'appliedAt')::timestamptz,
+          receipt.source_item->>'accountLastFour',receipt.source_item->>'product',
+          (receipt.source_item->'period'->>'from')::date,(receipt.source_item->'period'->>'to')::date,
+          receipt.source_item->'source'->>'bucket',receipt.source_item->'source'->>'key',receipt.source_item->'source'->>'contentType',
+          receipt.source_item->>'textractJobId',receipt.source_item->>'extractionKey',receipt.source_item->'textractAnswers',receipt.source_item->>'errorMessage',
+          (receipt.source_item->'result'->>'created')::integer,(receipt.source_item->'result'->>'linked')::integer,
+          (receipt.source_item->'result'->>'skipped')::integer,(receipt.source_item->'result'->>'msiConfirmed')::integer,
+          (receipt.source_item->'result'->>'createdUnplanned')::integer FROM olbia.import_records receipt`);
+      await client.query(`INSERT INTO olbia.bank_import_rows (kind,content_sha256,position,identity,occurred_on,merchant_raw,
+        amount_mxn_minor,status,row_kind,is_credit,installment_index,installment_months,original_amount_mxn_minor,row_number,occurrence,bank_transaction_id,selected_movement_id)
+        SELECT ${kind},receipt.source_item->'source'->>'sha256',(line.position-1)::integer,line.item->>'identity',
+          (line.item->>'occurredOn')::date,line.item->>'merchantRaw',(line.item->>'amountMinor')::bigint,line.item->>'status',
+          line.item->>'kind',(line.item->>'credit')::boolean,(line.item->>'installmentIndex')::integer,
+          (line.item->>'installmentMonths')::integer,(line.item->>'originalAmountMinor')::bigint,
+          (line.item->>'rowNumber')::integer,(line.item->>'occurrence')::integer,line.item->>'transactionId',line.item->>'eventId'
+        FROM olbia.import_records receipt CROSS JOIN LATERAL jsonb_array_elements(receipt.source_item->'rows') WITH ORDINALITY AS line(item,position)`);
+      await client.query(`INSERT INTO olbia.bank_import_candidates (kind,content_sha256,row_position,position,movement_id,merchant_raw,occurred_at)
+        SELECT ${kind},receipt.source_item->'source'->>'sha256',(line.position-1)::integer,(candidate.position-1)::integer,
+          candidate.id,label.item->>'merchantRaw',(label.item->>'occurredAt')::timestamptz FROM olbia.import_records receipt
+        CROSS JOIN LATERAL jsonb_array_elements(receipt.source_item->'rows') WITH ORDINALITY AS line(item,position)
+        CROSS JOIN LATERAL jsonb_array_elements_text(line.item->'candidateEventIds') WITH ORDINALITY AS candidate(id,position)
+        LEFT JOIN LATERAL jsonb_array_elements(line.item->'candidates') AS label(item) ON label.item->>'id'=candidate.id`);
+      await client.query('INSERT INTO olbia.schema_migrations VALUES (13,CURRENT_TIMESTAMP)');
+    });
+  } catch(error){throw new BootstrapFailure('bank-import-copy',error);}
 };
