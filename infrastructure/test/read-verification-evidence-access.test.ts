@@ -1,9 +1,16 @@
 import { App } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
-import { expect, it } from 'vitest';
+import { Source } from 'aws-cdk-lib/aws-s3-deployment';
+import { afterEach, expect, it, vi } from 'vitest';
 import { PersonalFinanceV1Stack } from '../lib/personal-finance-v1-stack.js';
 
+afterEach(()=>vi.restoreAllMocks());
 it('gives the deployed verifier read-only access to every supported evidence family',()=>{
+  // CI tests precede the web build. Substitute only that unrelated deployment
+  // asset; the actual verifier function, role and native S3 grants are synthesized.
+  const originalAsset=Source.asset.bind(Source);
+  vi.spyOn(Source,'asset').mockImplementation((assetPath,options)=>assetPath.endsWith('/apps/web/dist')
+    ? Source.data('index.html','Evidence policy test') : originalAsset(assetPath,options));
   const template=Template.fromStack(new PersonalFinanceV1Stack(new App(),'EvidenceAccess',{
     env:{account:'225989371926',region:'us-east-2'},
   }));
