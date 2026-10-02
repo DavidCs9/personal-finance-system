@@ -6,7 +6,7 @@ import type { JsonObject } from '../http/response.js';
 import { readerPool } from '../events/sql-reads.js';
 import { samePublicResult } from '../events/read-selection.js';
 import { feedFromPayloads } from '../events/month-feed.js';
-import { listCategoriesDynamo, listMerchantRulesDynamo, readCategoryRecordsDynamo } from './source-reads.js';
+import { listMerchantRulesDynamo, readMerchantRuleRecords } from './source-reads.js';
 import { readSqlCategories, readSqlMerchantRules, domainReadMode, categoryReadStatement, ruleReadStatement,
   listCategories, listMerchantRules } from './sql-reads.js';
 import { listCards, listCardsDynamo } from '../cards/cards.js';
@@ -26,18 +26,22 @@ import { spendingRangeFromEvents } from '../agent/spending-range.js';
 /** Independent SQL/source content and worker calculations. Never send notifications or use fallback to pass parity. */
 export const verifyDomainReads = async (owner: string, movements: readonly JsonObject[], financialMonths: readonly string[], now: Date) => {
   const started = Date.now(), client = readerPool();
-  const [categories, rules, sqlCategories, sqlRules, cards, sqlCards, categoryRecords, ruleRecords] = await Promise.all([
-    listCategoriesDynamo(), listMerchantRulesDynamo(), readSqlCategories(client), readSqlMerchantRules(client),
-    listCardsDynamo({ database, tableName, owner }), readSqlCards(owner, client), readCategoryRecordsDynamo(), readCategoryRecordsDynamo(true),
+  const [categories, rules, sqlRules, cards, sqlCards, ruleRecords] = await Promise.all([
+    readSqlCategories(client), listMerchantRulesDynamo(), readSqlMerchantRules(client),
+    listCardsDynamo({ database, tableName, owner }), readSqlCards(owner, client), readMerchantRuleRecords(),
   ]);
+  const sqlCategories = categories;
   let mismatches = 0;
   const check = (source: unknown, sql: unknown) => { mismatches += Number(!samePublicResult(source, sql)); };
-  check(categories, sqlCategories); check(rules, sqlRules); check(cards, sqlCards);
-  // Independent promoted columns and original rule envelope; not the projector's own transformation as oracle.
-  const categoryRows = (await client.query("SELECT * FROM olbia.categories WHERE source_pk='CATEGORY_CATALOG' ORDER BY source_sk")).rows;
+  check(rules, sqlRules); check(cards, sqlCards);
+  // Native catalog: independently check column mapping and shape. Frozen migration
+  // envelopes are not a competing category authority or a fallback.
+  const categoryRows = (await client.query('SELECT * FROM olbia.spend_categories ORDER BY id')).rows;
   check(categoryRows, [...categories].sort((a, b) => Buffer.compare(Buffer.from(a.id), Buffer.from(b.id))).map(c => ({
-    source_pk: 'CATEGORY_CATALOG', source_sk: `CAT#${c.id}`, row_id: c.id, id: c.id, name: c.name, sort_order: c.sortOrder, payload: c,
+    id: c.id, name: c.name, sort_order: c.sortOrder,
   })));
+  check(true, categories.length > 0 && categories.every(c => typeof c.id === 'string' && typeof c.name === 'string'
+    && c.name.trim().length > 0 && Number.isInteger(c.sortOrder)));
   const ruleRows = (await client.query("SELECT * FROM olbia.merchant_category_rules WHERE source_pk='CATEGORY_RULES' ORDER BY source_sk")).rows;
   check(ruleRows, ruleRecords.map(item => ({ source_pk: item.PK, source_sk: item.SK, row_id: item.id,
     id: item.id, merchant_key: item.merchantKey, category_id: item.categoryId ?? null, payload: item })));
@@ -112,7 +116,7 @@ export const verifyDomainReads = async (owner: string, movements: readonly JsonO
     queryPlans.push({ query, scanTypes: [...new Set(lines.flatMap(line => line.match(/(?:Index Only Scan|Index Scan|Seq Scan|Bitmap Heap Scan)/g) ?? []))],
       metrics: lines.filter(line => /(?:DPU|Planning Time|Execution Time)/i.test(line)).map(line => line.trim()).filter(line => /^[\w\s():.=,+-]+$/.test(line)) });
   }
-  return { mode: domainReadMode(), persistedCategories: categoryRecords.length, effectiveCategories: categories.length,
+  return { mode: domainReadMode(), categoryAuthority: 'native-sql', persistedCategories: categories.length, effectiveCategories: categories.length,
     rules: rules.length, cards: cards.length, merchantChecks: merchants.size, months: months.length, assistantChecks,
     reports, dailyMessages, cycleDays, cycleMessages, mismatches, elapsedMs: Date.now() - started, queryPlans };
 };

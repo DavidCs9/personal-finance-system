@@ -112,7 +112,12 @@ describe('Patrimonio SQL migration', () => {
   });
   it('uses one bounded SQL attempt per complete report/history read, propagates source failures and supports shadow/rollback', async () => {
     await seed();
-    const attempts = vi.mocked(sqlReaders.readerPool).mockImplementation(() => { throw new Error('private driver error'); }); attempts.mockClear();
+    // Failure is scoped to wealth reads: the native catalog remains required
+    // even when a different domain exercises its temporary source fallback.
+    const attempts = vi.fn(async () => { throw new Error('private driver error'); });
+    vi.mocked(sqlReaders.readerPool).mockReturnValue({ query: (statement, values) =>
+      statement === reads.wealthReadStatement ? attempts() : sql.query(statement, values),
+    });
     expect((await buildMonthlyCloseFacts(owner, '2026-09', now)).wealth.netMxnMinor).toBe(35000);
     expect(attempts).toHaveBeenCalledTimes(1); attempts.mockClear();
     expect(await investmentHistory(owner, { range: 'all' }, now)).toMatchObject({ scope: 'market_investments' });

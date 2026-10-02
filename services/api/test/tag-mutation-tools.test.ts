@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 process.env.METADATA_TABLE_NAME ??= 'test-metadata-table';
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-raw-bucket';
@@ -11,6 +11,13 @@ beforeAll(async () => {
   ({ runTagMutationTool } = await import('../src/agent/tag-mutation-tools.js'));
 });
 
+const readers = await import('../src/events/sql-reads.js');
+beforeEach(() => { vi.spyOn(readers, 'readerPool').mockReturnValue({
+  query: async (statement, values) => {
+    if (statement !== 'SELECT id FROM olbia.spend_categories WHERE id=ANY($1::text[])') throw new Error('Unexpected catalog query');
+    return { rows: (values![0] as string[]).filter(id => ['food', 'other', 'transport'].includes(id)).map(id => ({ id })) };
+  },
+}); });
 afterEach(() => vi.restoreAllMocks());
 
 describe('tag and category mutation Gateway tools', () => {

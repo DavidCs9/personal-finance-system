@@ -8,6 +8,7 @@ import {
 import { eventMonthPartition } from '@finance/ledger';
 import { database, tableName } from '../http/clients.js';
 import { localDate } from './queries.js';
+import { InvalidCategoryError, requireCatalogCategories } from '../categories/catalog.js';
 
 const MAX_BULK_EVENTS = 49;
 const MAX_CATEGORY_BATCH_OPERATIONS = 12;
@@ -43,6 +44,14 @@ const assistantCategoryAudit: BulkEditAudit = {
 };
 
 export class InvalidBulkEditError extends Error {}
+
+const requireBulkCategories = async (ids: readonly (string | null)[]): Promise<void> => {
+  try { await requireCatalogCategories(ids); }
+  catch (error) {
+    if (error instanceof InvalidCategoryError) throw new InvalidBulkEditError(error.message);
+    throw error;
+  }
+};
 
 export type BulkEditChange = {
   readonly addTags?: readonly string[];
@@ -277,6 +286,9 @@ export const previewBulkEdit = async (
   input: { readonly selection: BulkEditSelection & { readonly statuses: readonly ['accepted'] }; readonly change: BulkEditChange },
   now = new Date(),
 ): Promise<BulkEditPreview> => {
+  if (Object.prototype.hasOwnProperty.call(input.change, 'categoryId')) {
+    await requireBulkCategories([input.change.categoryId ?? null]);
+  }
   const rows = await queryRangeEvents(input.selection);
   const hasCategory = Object.prototype.hasOwnProperty.call(input.change, 'categoryId');
   const events: BulkEditSnapshot[] = [];
@@ -547,6 +559,7 @@ export const previewAgentCategoryEdit = async (
   input: AgentCategoryEditInput,
   now = new Date(),
 ): Promise<BulkEditPreview> => {
+  await requireBulkCategories([input.categoryId]);
   const rows = input.eventIds
     ? await queryEventsById(input.eventIds)
     : await queryRangeEvents({ fromDay: input.fromDay!, toDay: input.toDay!, statuses: ['accepted'] });
@@ -725,6 +738,9 @@ const transactOperation = async (
   if (direction === 'apply' && operation.expiresAt <= Math.floor(now.getTime() / 1000)) {
     throw new InvalidBulkEditError('La propuesta expiró. Genera un preview nuevo.');
   }
+  await requireBulkCategories(operation.events
+    .filter(event => event.previousCategoryId !== event.nextCategoryId)
+    .map(event => direction === 'apply' ? event.nextCategoryId : event.previousCategoryId));
   const nextStatus = direction === 'apply' ? 'applied' : 'undone';
   const timestampField = direction === 'apply' ? 'appliedAt' : 'undoneAt';
   const at = now.toISOString();
@@ -932,6 +948,8 @@ export const applyAgentCategoryEdits = async (
   if (operations.some((operation) => operation.expiresAt <= Math.floor(now.getTime() / 1000))) {
     throw new InvalidBulkEditError('Una propuesta del lote expiró. Genera previews nuevos.');
   }
+  await requireBulkCategories(operations.flatMap(operation => operation.events
+    .filter(event => event.previousCategoryId !== event.nextCategoryId).map(event => event.nextCategoryId)));
   const affectedEventIds = operations.flatMap((operation) => operation.events.map((event) => event.id));
   if (new Set(affectedEventIds).size !== affectedEventIds.length) {
     throw new InvalidBulkEditError('Las operaciones del lote se solapan en uno o más movimientos. Genera previews sin movimientos repetidos.');
