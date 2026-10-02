@@ -3,7 +3,7 @@ import { GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { database, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
 import { incomeFieldsForMonth } from '../imports/cfdi-nomina-flow.js';
-import { monthlyPlanKey, type MonthlyPlanInput } from './monthly-plan.js';
+import { monthlyPlanKey, parseMonthlyPlan, type MonthlyPlanInput } from './monthly-plan.js';
 import { readConfiguredPlanning, readSqlPlanRecord } from './sql-reads.js';
 
 export const readMonthlyPlanRecordDynamo = async (owner: string, month: string): Promise<JsonObject | undefined> => {
@@ -74,6 +74,7 @@ export const getMonthlyPlan = (owner: string, month: string): Promise<JsonObject
     () => readSqlPlanRecord(owner, month), () => readMonthlyPlanRecordDynamo(owner, month)), incomeFieldsForMonth);
 
 const saveMonthlyPlanInternal = async (owner: string, month: string, input: MonthlyPlanInput): Promise<JsonObject> => {
+  const validated = parseMonthlyPlan(JSON.stringify(input));
   const updatedAt = new Date().toISOString();
   const existing = await database.send(new GetCommand({
     TableName: tableName,
@@ -84,7 +85,7 @@ const saveMonthlyPlanInternal = async (owner: string, month: string, input: Mont
   const payload = {
     incomeMinor: typeof previous?.incomeMinor === 'number' ? previous.incomeMinor : 0,
     currency: 'MXN' as const,
-    upcomingPayments: input.upcomingPayments,
+    upcomingPayments: validated.upcomingPayments,
     updatedAt,
   };
   await database.send(new PutCommand({

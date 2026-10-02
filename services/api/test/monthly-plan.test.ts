@@ -36,4 +36,11 @@ describe("monthly plan", () => {
     expect(isValidMonth("2026-07")).toBe(true);
     expect(monthlyPlanKey("user-1", "2026-07")).toEqual({ PK: "USER#user-1", SK: "MONTH#2026-07" });
   });
+
+  it("rejects repeated payment identity even when the two amounts or names differ", () => {
+    expect(() => parseMonthlyPlan(JSON.stringify({ upcomingPayments: [
+      { id: "rent", name: "Renta", amountMinor: 10000, dueDay: 1 },
+      { id: "rent", name: "Internet", amountMinor: 20000, dueDay: 15 },
+    ] }))).toThrow(InvalidMonthlyPlanError);
+  });
 });

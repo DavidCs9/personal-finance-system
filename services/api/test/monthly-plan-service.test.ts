@@ -129,4 +129,14 @@ describe('monthly fixed-expense inheritance', () => {
     expect(items.get('USER#owner-1|MONTH#2026-08')?.payload.upcomingPayments)
       .toEqual([payment('Netflix')]);
   });
+
+  it('rejects duplicate identities before reading or writing the stored plan', async () => {
+    seedPlan('owner-1', '2026-09', [payment('Internet')]);
+    const before = [...items.values()];
+    await expect(saveMonthlyPlan('owner-1', '2026-09', { currency: 'MXN',
+      upcomingPayments: [payment('Renta'), { ...payment('Renta'), name: 'Otro pago', amountMinor: 20000 }],
+    })).rejects.toThrow('Hay pagos repetidos');
+    expect(send).not.toHaveBeenCalled();
+    expect([...items.values()]).toEqual(before);
+  });
 });
