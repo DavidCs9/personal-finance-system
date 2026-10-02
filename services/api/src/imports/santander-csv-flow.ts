@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { withApplicationTransaction } from '@finance/ledger/dsql-store';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { BatchGetCommand, GetCommand, PutCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { MsiPlan } from '@finance/domain';
@@ -406,7 +407,7 @@ const parseImportDecisions = (body: string | undefined): Readonly<Record<string,
   }
 };
 
-export const applySantanderImport = async (importId: string, owner: string, decisionBody: string | undefined): Promise<JsonObject> => {
+const applySantanderImportInternal = async (importId: string, owner: string, decisionBody: string | undefined): Promise<JsonObject> => {
   if (!/^[a-f0-9]{64}$/.test(importId)) throw new InvalidSantanderCsvError('Identificador de importación inválido.');
   const stored = await database.send(new GetCommand({
     TableName: tableName,
@@ -566,3 +567,6 @@ export const applySantanderImport = async (importId: string, owner: string, deci
     summary: { created: created.length, linked, skipped, msiConfirmed },
   };
 };
+
+export const applySantanderImport = (...args: Parameters<typeof applySantanderImportInternal>): ReturnType<typeof applySantanderImportInternal> =>
+  withApplicationTransaction(() => applySantanderImportInternal(...args));

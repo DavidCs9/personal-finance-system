@@ -52,4 +52,8 @@ Analysis and private live audit completed. Prepared the narrow marker-12 receipt
 
 ## Outcome and remaining work
 
-Active. Monthly plans are complete. Implement payroll end to end and continue autonomously until David stops the run.
+Native PR [#182](https://github.com/DavidCs9/personal-finance-system/pull/182) passed required quality, was CLEAN/MERGEABLE and squash-merged as `28f59fa09e1dbea3f62dea513c3c278aad63a593`. The immediately preceding read-only preflight again proved all 19 receipts, 192 lines and 19 claims consistent with the exact SQL decoding. Production workflow `37012905178` completed successfully. Its financial/domain/wealth/operational gates all report zero mismatches; planning confirms native payroll authority, 19 receipts/192 lines/three validated keys and relations/zero invalid parents, and all 19 original XML hashes verified. Query plans use the native payment-date index. Native payroll duplicate/line insertion smoke passed and rolled back.
+
+Independent native acceptance before and after the deployed smoke proves exact equality of every header/ordered line against preflight, all 19 frozen receipts and 19 claims unchanged, migration 12 present, three validated key/relation constraints, 14 validated CHECKs, ready date index, zero orphan lines, and SELECT/INSERT-only application/cutover grants with no operational UPDATE/DELETE access. Private acceptance is `/tmp/olbia-native-payroll/native-acceptance-private.json`; deployment evidence is `native-deploy.log` in the same private directory.
+
+**Payroll slice complete end to end.** Continue [core ledger analysis](2026-10-02-native-ledger.md), beginning with [native import provenance](2026-10-02-native-imports.md), until David stops the overall run.

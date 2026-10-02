@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { withApplicationTransaction } from '@finance/ledger/dsql-store';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { BatchGetCommand, GetCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { MsiPlan } from '@finance/domain';
@@ -457,7 +458,7 @@ export const claimAndLinkStatementEvidence = async (input: {
   }
 };
 
-export const applyStatementImport = async (input: {
+const applyStatementImportInternal = async (input: {
   readonly provider: StatementProvider;
   readonly importId: string;
   readonly owner: string;
@@ -644,3 +645,7 @@ export const applyStatementImport = async (input: {
   }));
   return { importId: input.importId, created, summary };
 };
+
+// Financial rows, claims and the import completion share the cutover barrier.
+export const applyStatementImport = (...args: Parameters<typeof applyStatementImportInternal>): ReturnType<typeof applyStatementImportInternal> =>
+  withApplicationTransaction(() => applyStatementImportInternal(...args));
