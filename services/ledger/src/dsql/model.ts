@@ -4,8 +4,8 @@ export type SourceKey = { PK: string; SK: string };
 export type SourceItem = SourceKey & Record<string, unknown>;
 export type SqlRow = { table: TableName; values: Record<string, unknown> };
 
-// No foreign keys yet: a DynamoDB transaction's items arrive independently.
-// Source envelopes are retained in checkpoints; payloads retain optional fields.
+// Legacy projection keys/payloads remain temporary migration compatibility.
+// Native domain tables and current category references use constraints in schema.ts.
 export const OPERATIONAL_TABLE_NAMES = ['dedupe_claims', 'exception_claims', 'ingestion_exceptions', 'ingestion_retries', 'import_records', 'bulk_edit_operations', 'delivery_records', 'push_subscriptions', 'assistant_threads'] as const;
 const operationalColumns = { id: 'text', owner: 'text', entity_type: 'text', status: 'text', created_at: 'timestamptz', updated_at: 'timestamptz', expires_at: 'bigint', payload: 'jsonb', source_item: 'jsonb' } as const;
 export const TABLE_COLUMNS = {

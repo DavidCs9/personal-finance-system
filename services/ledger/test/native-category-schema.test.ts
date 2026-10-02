@@ -40,4 +40,22 @@ describe('native category migration', () => {
     expect((await sql.query("SELECT name FROM olbia.spend_categories WHERE id='otros'")).rows).toEqual([{ name: 'Otros' }]);
     expect((await sql.query("SELECT source_item FROM olbia.projection_state WHERE source_pk='CATEGORY_CATALOG'")).rows).toHaveLength(0);
   });
+  it('copies rule identity, precedence and no-assignment semantics once and preserves native changes on replay', async () => {
+    await sql.query('DELETE FROM olbia.schema_migrations WHERE version=7');
+    await sql.query(`INSERT INTO olbia.merchant_category_rules (source_pk,source_sk,row_id,id,merchant_key,category_id,payload)
+      VALUES ('CATEGORY_RULES','RULE#shop','id','id','shop','',
+      '{"id":"id","merchantKey":"shop","categoryId":"","pattern":"shop","source":"human","updatedAt":"2026-09-01T12:00:00.123Z"}')`);
+    for (const statement of migration) await sql.query(statement);
+    expect((await sql.query<Record<string, unknown>>("SELECT merchant_key,id,pattern,category_id,source,updated_at FROM olbia.merchant_rules")).rows
+      .map(row => ({ ...row, updated_at: (row.updated_at as Date).toISOString() })))
+      .toEqual([{ merchant_key: 'shop', id: 'id', pattern: 'shop', category_id: null, source: 'human', updated_at: '2026-09-01T12:00:00.123Z' }]);
+    await sql.query("UPDATE olbia.merchant_rules SET category_id='otros' WHERE merchant_key='shop'");
+    for (const statement of migration) await sql.query(statement);
+    expect((await sql.query('SELECT category_id FROM olbia.merchant_rules')).rows).toEqual([{ category_id: 'otros' }]);
+    expect((await sql.query('SELECT category_id FROM olbia.merchant_category_rules')).rows).toEqual([{ category_id: '' }]);
+    for (const values of [['Unnormalized Shop', 'id', 'human'], ['valid shop', null, 'human'], ['valid shop', 'id', 'invalid']]) {
+      await expect(sql.query(`INSERT INTO olbia.merchant_rules (merchant_key,id,source,updated_at)
+        VALUES ($1,$2,$3,CURRENT_TIMESTAMP)`, values)).rejects.toThrow();
+    }
+  });
 });

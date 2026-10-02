@@ -126,6 +126,7 @@ const runMaintenance = async (event: MaintenanceInput): Promise<MaintenanceInput
         tableCounts[table] = String(count.rows[0].count);
       }
       tableCounts.spend_categories = String((await client.query('SELECT count(*) AS count FROM olbia.spend_categories')).rows[0].count);
+      tableCounts.merchant_rules = String((await client.query('SELECT count(*) AS count FROM olbia.merchant_rules')).rows[0].count);
       const totals = await client.query(`SELECT spend_month,currency,count(*) AS count,
         sum(amount_minor) AS amount_minor,sum(coalesce(personal_amount_minor,amount_minor)) AS personal_amount_minor
         FROM olbia.movements GROUP BY spend_month,currency`);

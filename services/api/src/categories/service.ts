@@ -3,69 +3,28 @@ import { randomUUID } from 'node:crypto';
 import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import {
   isValidCategoryId,
-  normalizeMerchantKey,
   resolveCategoryId,
   type MerchantCategoryRule,
   type SpendCategory,
 } from '@finance/domain';
-import { listCategories } from './sql-reads.js';
-import { listMerchantRulesDynamo } from './source-reads.js';
+import { listCategories, listMerchantRules } from './sql-reads.js';
+import { saveMerchantRule } from './merchant-rules.js';
 import { InvalidCategoryError, requireCatalogCategories, saveCategoryCatalog } from './catalog.js';
 import { database, tableName } from '../http/clients.js';
-
-const RULES_PK = 'CATEGORY_RULES';
 
 export { InvalidCategoryError };
 
 export { listCategories, listMerchantRules } from './sql-reads.js';
-export { listMerchantRulesDynamo } from './source-reads.js';
 
 const putCategoryCatalogInternal = async (categories: readonly SpendCategory[]): Promise<readonly SpendCategory[]> => {
   await saveCategoryCatalog(categories);
   return listCategories();
 };
 
-const upsertMerchantRuleInternal = async (input: {
-  readonly merchantRaw: string;
-  readonly categoryId: string;
-  readonly pattern?: string;
-  readonly source: MerchantCategoryRule['source'];
-}): Promise<MerchantCategoryRule> => {
-  if (!isValidCategoryId(input.categoryId) && input.categoryId !== '') {
-    throw new InvalidCategoryError(`Categoría inválida: ${input.categoryId}`);
-  }
-  await requireCatalogCategories([input.categoryId === '' ? null : input.categoryId]);
-  const merchantKey = normalizeMerchantKey(input.merchantRaw);
-  if (!merchantKey) throw new InvalidCategoryError('Comercio vacío.');
-  const existing = await database.send(new GetCommand({
-    TableName: tableName,
-    Key: { PK: RULES_PK, SK: `RULE#${merchantKey}` },
-  }));
-  const now = new Date().toISOString();
-  const rule: MerchantCategoryRule = {
-    id: typeof existing.Item?.id === 'string' ? existing.Item.id : randomUUID(),
-    merchantKey,
-    pattern: input.pattern ? normalizeMerchantKey(input.pattern) : undefined,
-    categoryId: input.categoryId,
-    source: input.source,
-    updatedAt: now,
-  };
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: {
-      PK: RULES_PK,
-      SK: `RULE#${merchantKey}`,
-      entityType: 'merchant_category_rule',
-      ...rule,
-      GSI1PK: 'CATEGORY_RULES',
-      GSI1SK: merchantKey,
-    },
-  }));
-  return rule;
-};
+const upsertMerchantRuleInternal = saveMerchantRule;
 
 export const resolveCategoryForMerchant = async (merchantRaw: string): Promise<string | undefined> => {
-  const rules = await listMerchantRulesDynamo();
+  const rules = await listMerchantRules();
   return resolveCategoryId(merchantRaw, rules);
 };
 
