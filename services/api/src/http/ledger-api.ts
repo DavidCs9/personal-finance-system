@@ -30,6 +30,7 @@ import {
   previewSantanderStatementImport,
 } from '../imports/santander-statement-flow.js';
 import { InvalidSantanderCsvError } from '../imports/santander-csv.js';
+import { BankImportError } from '../imports/import-sql.js';
 import { InvalidSantanderStatementError } from '../imports/santander-statement.js';
 import { InvalidAmexStatementError } from '../imports/amex-statement.js';
 import { TextractDocumentError } from '../imports/textract-document.js';
@@ -102,6 +103,7 @@ const asHttpEvent = (event: unknown): APIGatewayProxyEventV2 => event as APIGate
 const clientErrors = [
   InvalidMonthlyPlanError,
   InvalidSantanderCsvError,
+  BankImportError,
   InvalidSantanderStatementError,
   InvalidAmexStatementError,
   InvalidCfdiNominaError,

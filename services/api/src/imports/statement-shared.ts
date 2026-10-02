@@ -1,7 +1,7 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { withApplicationTransaction } from '@finance/ledger/dsql-store';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { BatchGetCommand, GetCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { BatchGetCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import type { MsiPlan } from '@finance/domain';
 import { eventMonthIndexKeys, msiPlanPurchaseOccurredAt, reconciliationPartition } from '@finance/ledger';
 import { buildPlanFromCreateDecision, matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
@@ -9,7 +9,6 @@ import { InvalidAmexStatementError } from './amex-statement.js';
 import { InvalidSantanderStatementError } from './santander-statement.js';
 import {
   statementClaimKey,
-  statementImportCompletionUpdate,
   statementMsiApplyAction,
   statementPreviewSummary,
   statementPurchaseApplyAction,
@@ -23,6 +22,7 @@ import { errorName, type JsonObject } from '../http/response.js';
 import { isValidMonth } from '../months/monthly-plan.js';
 import { allStoredEvents, toPublicEvent } from '../events/queries.js';
 import { persistEventMsi } from '../events/mutations.js';
+import { readBankImport,completeBankImport,statementImportKind, type BankImportRecord } from './import-sql.js';
 
 export type StatementImportEvent = {
   readonly body?: string | null;
@@ -154,29 +154,45 @@ export const statementPreviewResponse = (
   rows,
 });
 
+export const statementImportResponse = (
+  record: BankImportRecord,
+  processingMessage = 'Textract sigue leyendo el PDF…',
+): JsonObject => {
+  if (record.status === 'processing') return { importId: record.importId, status: 'processing', message: processingMessage };
+  if (record.status === 'failed') {
+    const invalid = record.kind === 'amex_statement' ? InvalidAmexStatementError : InvalidSantanderStatementError;
+    throw new invalid(record.errorMessage ?? 'No se pudo leer el estado de cuenta.');
+  }
+  if (!record.accountLastFour || !record.product || !record.period) throw new Error('Missing native statement preview metadata.');
+  return statementPreviewResponse(record.importId, {
+    accountLastFour: record.accountLastFour, product: record.product, period: record.period,
+  }, record.rows as readonly StatementPreviewRow[]);
+};
+
 export const persistTextractExtraction = async (
   sourceKey: string,
   extraction: TextractStatementExtraction,
 ): Promise<string> => {
-  const extractionKey = sourceKey.replace(/\.pdf$/i, '.textract.json');
-  await s3.send(new PutObjectCommand({
-    Bucket: rawSourceBucketName,
-    Key: extractionKey,
-    Body: JSON.stringify(extraction),
-    ContentType: 'application/json; charset=utf-8',
-  }));
+  const jobHash = createHash('sha256').update(extraction.jobId).digest('hex');
+  const extractionKey = sourceKey.replace(/\.pdf$/i, `.textract.${jobHash}.json`);
+  try {
+    await s3.send(new PutObjectCommand({
+      Bucket: rawSourceBucketName,
+      Key: extractionKey,
+      Body: JSON.stringify(extraction),
+      ContentType: 'application/json; charset=utf-8',
+      IfNoneMatch: '*',
+    }));
+  } catch (error) {
+    if (errorName(error) !== 'PreconditionFailed') throw error;
+  }
   return extractionKey;
 };
 
-export const loadStatementTextractExtraction = async (item: JsonObject): Promise<TextractStatementExtraction> => {
-  const source = item.source as JsonObject | undefined;
-  const extractionKey = typeof item.extractionKey === 'string'
-    ? item.extractionKey
-    : typeof source?.key === 'string'
-      ? source.key.replace(/\.pdf$/i, '.textract.json')
-      : undefined;
+export const loadStatementTextractExtraction = async (item: Pick<BankImportRecord, 'source' | 'extractionKey'>): Promise<TextractStatementExtraction> => {
+  const extractionKey = item.extractionKey;
   if (!extractionKey) throw new Error('Missing Textract extraction for statement import apply.');
-  const object = await s3.send(new GetObjectCommand({ Bucket: rawSourceBucketName, Key: extractionKey }));
+  const object = await s3.send(new GetObjectCommand({ Bucket: item.source.bucket, Key: extractionKey }));
   if (!object.Body) throw new Error('Statement Textract extraction did not contain a body.');
   const parsed = JSON.parse(await object.Body.transformToString('utf8')) as TextractStatementExtraction;
   if (!parsed?.answers || !Array.isArray(parsed.tables)) {
@@ -466,31 +482,25 @@ const applyStatementImportInternal = async (input: {
   readonly rebuildRows: () => Promise<readonly StatementPreviewRow[]>;
 }): Promise<JsonObject> => {
   const invalid = input.provider === 'amex' ? InvalidAmexStatementError : InvalidSantanderStatementError;
-  const sk = input.provider === 'amex'
-    ? `IMPORT#AMEX#${input.importId}`
-    : `IMPORT#SANTANDER_STATEMENT#${input.importId}`;
+  const kind=statementImportKind(input.provider);
   if (!/^[a-f0-9]{64}$/.test(input.importId)) throw new invalid('Identificador de importación inválido.');
-  const stored = await database.send(new GetCommand({
-    TableName: tableName,
-    Key: { PK: `USER#${input.owner}`, SK: sk },
-    ConsistentRead: true,
-  }));
-  const source = stored.Item?.source as JsonObject | undefined;
-  if (!stored.Item || stored.Item.owner !== input.owner || typeof source?.key !== 'string') {
+  const stored=await readBankImport(kind,input.importId,input.owner);
+  const source=stored?.source;
+  if (!stored || !source) {
     throw new invalid('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
   }
-  if (stored.Item.status === 'processing') {
+  if (stored.status === 'processing') {
     throw new invalid('El PDF aún se está leyendo. Espera a que termine Textract.');
   }
-  if (stored.Item.status === 'failed') {
+  if (stored.status === 'failed') {
     throw new invalid(
-      typeof stored.Item.errorMessage === 'string'
-        ? stored.Item.errorMessage
+      typeof stored.errorMessage === 'string'
+        ? stored.errorMessage
         : 'No se pudo leer el estado de cuenta.',
     );
   }
-  if (stored.Item.status === 'applied') {
-    const previous = stored.Item.result as JsonObject | undefined;
+  if (stored.status === 'applied') {
+    const previous = stored.result;
     return {
       importId: input.importId,
       created: [],
@@ -498,12 +508,12 @@ const applyStatementImportInternal = async (input: {
       alreadyApplied: true,
     };
   }
-  if (stored.Item.status !== 'previewed' || !Array.isArray(stored.Item.rows)) {
+  if (stored.status !== 'previewed') {
     throw new invalid('La previsualización aún no está lista.');
   }
 
-  const accountLastFour = String(stored.Item.accountLastFour ?? '');
-  const previewRows = stored.Item.rows as readonly StatementPreviewRow[];
+  const accountLastFour = String(stored.accountLastFour ?? '');
+  const previewRows = stored.rows as readonly StatementPreviewRow[];
   const previewByIdentity = new Map(previewRows.map((row) => [row.identity, row]));
   const decisions = parseStatementDecisions(input.decisionBody);
   const currentRows = await input.rebuildRows();
@@ -638,11 +648,7 @@ const applyStatementImportInternal = async (input: {
   }
 
   const summary = { created: createdCount, linked, skipped, msiConfirmed, createdUnplanned };
-  await database.send(new UpdateCommand({
-    TableName: tableName,
-    Key: { PK: `USER#${input.owner}`, SK: sk },
-    ...statementImportCompletionUpdate(appliedAt, summary),
-  }));
+  await completeBankImport(kind,input.importId,input.owner,appliedAt,summary);
   return { importId: input.importId, created, summary };
 };
 
