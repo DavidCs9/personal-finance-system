@@ -473,6 +473,9 @@ export class PersonalFinanceV1Stack extends Stack {
     });
     metadataTable.grantReadData(readVerificationFunction);
     rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/cfdi-nomina/*');
+    rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/amex/*');
+    rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/santander/*');
+    rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/santander-statement/*');
     rawEmailBucket.grantRead(readVerificationFunction, 'wealth-manual/*');
     rawEmailBucket.grantRead(readVerificationFunction, 'wealth-api/*');
     encryptionKey.grantDecrypt(readVerificationFunction);
