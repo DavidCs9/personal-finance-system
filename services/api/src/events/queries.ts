@@ -1,3 +1,4 @@
+import { assertLegacyLedgerReadAvailable } from './legacy-read-guard.js';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import {
@@ -26,6 +27,7 @@ export const localDate = (value: unknown): string | undefined => {
 };
 
 export const allStoredEvents = async (): Promise<readonly JsonObject[]> => {
+  await assertLegacyLedgerReadAvailable();
   const events: JsonObject[] = [];
   let exclusiveStartKey: Record<string, unknown> | undefined;
   do {
@@ -81,6 +83,7 @@ export const listEventsForMonth = async (
 export const listEventsForMonthsDynamo = async (
   months: readonly string[],
 ): Promise<{ readonly events: readonly JsonObject[]; readonly msiRelated: readonly JsonObject[] }> => {
+  await assertLegacyLedgerReadAvailable();
   const requestedMonths = [...new Set(months)];
   if (requestedMonths.length === 0) return { events: [], msiRelated: [] };
 

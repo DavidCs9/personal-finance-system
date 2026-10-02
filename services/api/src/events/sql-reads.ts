@@ -2,6 +2,7 @@ import { currentStoreTransaction } from '@finance/ledger/dsql-store';
 import { createPool } from '@finance/ledger/dsql-connection';
 import type { JsonObject } from '../http/response.js';
 import { candidateMonthsFor, feedFromPayloads, type EventFeed } from './month-feed.js';
+import { assertLegacyLedgerReadAvailable } from './legacy-read-guard.js';
 import { toPublicEvent } from './public-event.js';
 
 export interface ReadSqlClient { query(statement: string, values?: unknown[]): Promise<{ rows: JsonObject[] }> }
@@ -15,6 +16,7 @@ export const monthReadStatement = `SELECT m.payload FROM olbia.movements m
     SELECT 1 FROM olbia.msi_installments i WHERE i.source_pk=m.source_pk AND i.source_sk=m.source_sk AND i.month=ANY($1::text[])))`;
 
 export const readSqlFeed = async (months: readonly string[], client: ReadSqlClient = readerPool()): Promise<EventFeed> => {
+  await assertLegacyLedgerReadAvailable(client);
   const requested = [...new Set(months)];
   if (!requested.length) return { events: [], msiRelated: [] };
   const result = await client.query(monthReadStatement, [requested, candidateMonthsFor(requested)]);
@@ -22,6 +24,7 @@ export const readSqlFeed = async (months: readonly string[], client: ReadSqlClie
 };
 
 export const readSqlDetail = async (eventId: string, client: ReadSqlClient = readerPool()): Promise<JsonObject | undefined> => {
+  await assertLegacyLedgerReadAvailable(client);
   // One statement supplies a consistent SQL snapshot of the movement and its provenance.
   const result = await client.query(`SELECT source_sk,payload,'movement' AS kind FROM olbia.movements WHERE source_pk=$1 AND source_sk='EVENT'
     UNION ALL SELECT source_sk,payload,'revision' AS kind FROM olbia.movement_revisions WHERE source_pk=$1
