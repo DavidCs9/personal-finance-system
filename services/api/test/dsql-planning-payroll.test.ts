@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import * as connection from '../../ledger/src/dsql/connection.js';
 import { PGlite } from '@electric-sql/pglite';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { S3Client } from '@aws-sdk/client-s3';
@@ -13,9 +15,10 @@ process.env.METADATA_TABLE_NAME ??= 'test-metadata';
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-evidence';
 const application = await import('../../ledger/src/dsql/store.js');
 const sqlReaders = await import('../src/events/sql-reads.js');
-const { readSqlPlanRecord, readSqlPayslipsForMonth, readSqlPayslipsForYear, planningReadMode, readConfiguredPlanning } = await import('../src/months/sql-reads.js');
+const { readSqlPlanRecord, readSqlPayslipsForMonth, readSqlPayslipsForYear, readSqlPayslipRecord } = await import('../src/months/sql-reads.js');
 const { getMonthlyPlan, saveMonthlyPlan, getMonthlyPlanFromReads } = await import('../src/months/service.js');
-const { incomeFieldsForMonth, listPayslipsForMonth, listPayslipsForMonthDynamo, listPayslipsForYear, getPayslip, ingestNominaXml } = await import('../src/imports/cfdi-nomina-flow.js');
+const { incomeFieldsForMonth, listPayslipsForMonth, listPayslipsForYear, getPayslip, ingestNominaXml } = await import('../src/imports/cfdi-nomina-flow.js');
+const { insertPayslip } = await import('../src/imports/payroll-sql.js');
 const { getWealthOverview, getWealthOverviewAsOf } = await import('../src/wealth/service.js');
 const { summarizeMonthFeed } = await import('../src/months/summary.js');
 const { parseCfdiNominaXml } = await import('../src/imports/cfdi-nomina.js');
@@ -27,18 +30,23 @@ const owner = 'owner';
 let sql: PGlite;
 let pool: TransactionPool;
 let records: Map<string, SourceItem>;
+const listFrozenPayslips = async (owner:string,month:string) => [...records.values()].filter(item=>item.PK===`USER#${owner}` && item.SK.startsWith(`PAYROLL#${month}#`)).map(item=>item.payload as unknown as typeof baseline).sort((a,b)=>a.fechaPago.localeCompare(b.fechaPago)||a.uuid.localeCompare(b.uuid));
 const recordId = (key: SourceKey) => `${key.PK}|${key.SK}`;
 const put = (item: SourceItem) => records.set(recordId(item), item);
 const payment = { id: 'same-id', name: 'Fixed bill', amountMinor: 12345, dueDay: 31 };
 const plan = (month: string, upcomingPayments = [payment]): SourceItem => ({ PK: `USER#${owner}`, SK: `MONTH#${month}`,
   owner, month, entityType: 'monthly_plan', payload: { upcomingPayments, currency: 'MXN', incomeMinor: 4000000, updatedAt: '2026-09-20T20:01:02.123Z' } });
-const payroll = (month: string, uuid: string, day = '15', tipoNomina = 'O'): SourceItem => ({ PK: `USER#${owner}`, SK: `PAYROLL#${month}#${uuid}`,
-  owner, month, uuid, ingestedAt: '2026-09-20T20:01:02.456Z', source: { bucket: 'test-evidence', key: uuid, sha256: 'hash', contentType: 'application/xml' },
-  payload: { ...baseline, month, uuid, fechaPago: `${month}-${day}`, tipoNomina } });
+const uid = (label: string) => /^[0-9A-F-]{36}$/.test(label) ? label : `00000000-0000-0000-0000-${String(label.charCodeAt(0)).padStart(12,'0')}`;
+const payroll = (month: string, uuid: string, day = '15', tipoNomina = 'O'): SourceItem => ({ PK: `USER#${owner}`, SK: `PAYROLL#${month}#${uid(uuid)}`,
+  owner, month, uuid: uid(uuid), ingestedAt: '2026-09-20T20:01:02.456Z', source: { kind: 'cfdi_nomina',bucket: 'test-evidence', key: uid(uuid), sha256: createHash('sha256').update(fixture).digest('hex'), contentType: 'application/xml' },
+  payload: { ...baseline, month, uuid: uid(uuid), fechaPago: `${month}-${day}`, tipoNomina } });
 const sync = async (item: SourceKey) => {
   await reconcileKey(pool, async key => records.get(recordId(key)), item);
   // Seed the native fixture once; frozen reconciliation never overwrites native edits.
   const source = records.get(recordId(item));
+  if (source && item.SK.startsWith('PAYROLL#')) {
+    await insertPayslip(owner,source.payload as unknown as typeof baseline,String(source.ingestedAt),source.source as never); return;
+  }
   if (!source || !item.SK.startsWith('MONTH#') || (await sql.query('SELECT month FROM olbia.month_plans WHERE month=$1',[source.month])).rows.length) return;
   const payload = source.payload as any;
   await sql.query('INSERT INTO olbia.month_plans VALUES ($1,$2,$3)',[source.month,source.owner,payload.updatedAt]);
@@ -55,11 +63,13 @@ afterAll(async () => { await sql.close(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 beforeEach(async () => {
   records = new Map();
-  await sql.exec(`TRUNCATE olbia.projection_state,olbia.month_plans,olbia.planned_payments,${TABLE_NAMES.map(table => `olbia.${table}`).join(',')}`);
-  vi.stubEnv('DSQL_PLANNING_READ_MODE', 'guarded-sql');
+  await sql.exec(`TRUNCATE olbia.projection_state,olbia.month_plans,olbia.planned_payments,olbia.payslips,olbia.payslip_lines,${TABLE_NAMES.map(table => `olbia.${table}`).join(',')}`);
+  vi.stubEnv('OLBIA_SQL_STORE_ENABLED','true');
+  await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
+  vi.spyOn(connection,'createPool').mockReturnValue({ query: (s: string,v?: unknown[])=>sql.query(s,v),transaction: (fn: (c:SqlClient)=>Promise<unknown>)=>sql.transaction(c=>fn(c as unknown as SqlClient)) } as never);
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now);
-  vi.spyOn(application, 'applicationStoreClient').mockReturnValue(sql);
-  vi.spyOn(sqlReaders, 'readerPool').mockReturnValue(sql);
+  vi.spyOn(application, 'applicationStoreClient').mockImplementation(()=>application.currentStoreTransaction() ?? sql);
+  vi.spyOn(sqlReaders, 'readerPool').mockImplementation(()=>application.currentStoreTransaction() ?? sql);
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(S3Client.prototype, 'send').mockResolvedValue({} as never);
   vi.spyOn(DynamoDBDocumentClient.prototype, 'send').mockImplementation(async (command: any) => {
@@ -87,29 +97,38 @@ describe('DSQL planning and payroll contracts', () => {
   it('verifies independent real SQL/source financial results and XML hashes, and cannot hide a mismatch behind guard fallback', async () => {
     await ingestNominaXml(owner, 'original.xml', fixture);
     const key = { PK: `USER#${owner}`, SK: `PAYROLL#2026-07#${baseline.uuid}` };
+    const native = (await readSqlPayslipRecord(owner,'2026-07',baseline.uuid,sql))!;
+    put({ ...key,owner,month:'2026-07',uuid:baseline.uuid,payload:native.payslip,ingestedAt:native.ingestedAt,source:native.source });
     const planned = plan('2026-07'); put(planned); await sync(planned); await sync(key);
     vi.mocked(S3Client.prototype.send).mockResolvedValue({ Body: { transformToByteArray: async () => Buffer.from(fixture) } } as never);
     const verified = await verifyPlanningReads(owner, [], ['2026-07', '2026-10'], now);
     expect(verified).toMatchObject({ storedPlans: 1, storedPayroll: 1, details: 1, evidenceFiles: 1, mismatches: 0 });
+    const extraXml = fixture.replace(baseline.uuid,'22222222-2222-2222-2222-222222222222');
+    expect((await ingestNominaXml(owner,'native-only.xml',extraXml)).status).toBe('created');
+    const extraHash = createHash('sha256').update(extraXml).digest('hex');
+    vi.mocked(S3Client.prototype.send).mockImplementation(async (command:any)=>({Body:{transformToByteArray:async()=>
+      Buffer.from(String(command.input.Key).endsWith(`${extraHash}.xml`) ? extraXml : fixture)}}) as never);
+    expect(await verifyPlanningReads(owner,[],['2026-07','2026-10'],now)).toMatchObject({storedPayroll:2,frozenPayroll:1,
+      payrollLines:baseline.lines.length*2,evidenceFiles:2,mismatches:0});
     const corrupt = { ...records.get(recordId(key))!, payload: { ...baseline, totalMinor: baseline.totalMinor + 1 } };
     await sql.query('UPDATE olbia.payroll SET source_item=$1 WHERE source_pk=$2 AND source_sk=$3', [JSON.stringify(corrupt), key.PK, key.SK]);
     expect((await verifyPlanningReads(owner, [], ['2026-07', '2026-10'], now)).mismatches).toBeGreaterThan(0);
     expect(await getPayslip(owner, '2026-07', baseline.uuid)).toMatchObject({ totalMinor: baseline.totalMinor });
   });
-  it('retains full history, envelope evidence and IDs through duplicate backfill/replay and confirmed updates', async () => {
+  it('keeps native history and XML identity through duplicate or stale frozen backfill/replay', async () => {
     const items = [plan('2026-09'), payroll('2026-09', 'B'), payroll('2026-09', 'A', '30')];
     for (const item of items) { put(item); await sync(item); await sync(item); }
     expect((await sql.query('SELECT source_item FROM olbia.monthly_plans')).rows).toEqual([{ source_item: items[0] }]);
     expect((await sql.query('SELECT count(*) AS count FROM olbia.payroll')).rows).toEqual([{ count: 2 }]);
-    expect(await getPayslip(owner, '2026-09', 'a')).toMatchObject({ uuid: 'A', source: items[2].source, ingestedAt: items[2].ingestedAt, lines: baseline.lines });
+    expect(await getPayslip(owner, '2026-09', uid('A').toLowerCase())).toMatchObject({ uuid: uid('A'), source: items[2].source, ingestedAt: items[2].ingestedAt, lines: baseline.lines });
     for (const item of items) expect(await verifyKey(pool, async key => records.get(recordId(key)), item)).toBe('equal');
     const updated = { ...items[2], source: { ...items[2].source as object, key: 'corrected-evidence' } };
     put(updated);
-    expect(await getPayslip(owner, '2026-09', 'A')).toMatchObject({ source: { key: 'corrected-evidence' } });
+    expect(await getPayslip(owner, '2026-09', uid('A'))).toMatchObject({ source: items[2].source });
     await sync(updated);
     expect(await verifyKey(pool, async key => records.get(recordId(key)), updated)).toBe('equal');
     records.delete(recordId(updated)); await sync(updated); await sync(updated);
-    expect(await getPayslip(owner, '2026-09', 'A')).toBeUndefined();
+    expect(await getPayslip(owner, '2026-09', uid('A'))).toMatchObject({ source: items[2].source });
     expect((await sql.query('SELECT deleted FROM olbia.projection_state WHERE source_sk=$1', [updated.SK])).rows).toEqual([{ deleted: true }]);
   });
 
@@ -131,12 +150,13 @@ describe('DSQL planning and payroll contracts', () => {
   it('preserves provisional income, twin estimates, extraordinary payroll, sort order and monthly compensation/calculations', async () => {
     const items = [plan('2026-09'), payroll('2026-09', 'B'), payroll('2026-09', 'A', '30'), payroll('2026-09', 'C', '30', 'E')];
     for (const item of items) { put(item); await sync(item); }
-    expect((await listPayslipsForMonth(owner, '2026-09')).map(slip => slip.uuid)).toEqual(['B', 'A', 'C']);
+    expect((await listPayslipsForMonth(owner, '2026-09')).map(slip => slip.uuid)).toEqual(['B','A','C'].map(uid));
     expect(await incomeFieldsForMonth(owner, '2026-10', now)).toMatchObject({ provisionalActive: true, incomeMinor: baseline.totalMinor * 2 });
     expect(await incomeFieldsForMonth(owner, '2026-08', now)).toMatchObject({ configured: false, incomeMinor: 0 });
     const first = payroll('2026-10', 'D'); put(first);
-    expect(await incomeFieldsForMonth(owner, '2026-10', now)).toMatchObject({ estimateActive: true, provisionalActive: false, incomeMinor: baseline.totalMinor * 2 });
+    expect(await incomeFieldsForMonth(owner, '2026-10', now)).toMatchObject({ provisionalActive: true, incomeMinor: baseline.totalMinor * 2 });
     await sync(first);
+    expect(await incomeFieldsForMonth(owner, '2026-10', now)).toMatchObject({ estimateActive: true, provisionalActive: false, incomeMinor: baseline.totalMinor * 2 });
     const extra = payroll('2026-10', 'E', '16', 'E'); put(extra); await sync(extra);
     const fields = await incomeFieldsForMonth(owner, '2026-10', now);
     expect(fields).toMatchObject({ estimateActive: true, incomeMinor: baseline.totalMinor * 3 });
@@ -144,7 +164,7 @@ describe('DSQL planning and payroll contracts', () => {
     const second = payroll('2026-10', 'F', '30'); put(second); await sync(second);
     expect(await incomeFieldsForMonth(owner, '2026-10', now)).toMatchObject({ estimateActive: false, incomeMinor: baseline.totalMinor * 3 });
     const sourcePlan = await getMonthlyPlanFromReads(owner, '2026-10', readSqlPlanRecord,
-      (owner, month) => incomeFieldsForMonth(owner, month, now, listPayslipsForMonthDynamo));
+      (owner, month) => incomeFieldsForMonth(owner, month, now, listFrozenPayslips));
     const sqlPlan = await getMonthlyPlanFromReads(owner, '2026-10', readSqlPlanRecord,
       (owner, month) => incomeFieldsForMonth(owner, month, now, readSqlPayslipsForMonth));
     expect(sqlPlan).toEqual(sourcePlan);
@@ -167,24 +187,24 @@ describe('DSQL planning and payroll contracts', () => {
     expect(await readSqlPayslipsForYear(owner, "2026' OR '1'='1", sql)).toEqual([]);
   });
 
-  it('keeps duplicate imports on authoritative claims when SQL lags or fails, without multiplying evidence/payroll', async () => {
-    const first = await ingestNominaXml(owner, 'source.xml', fixture);
-    expect(first.status).toBe('created');
-    expect(await readSqlPayslipsForMonth(owner, '2026-07', sql)).toEqual([]);
-    expect((await ingestNominaXml(owner, 'again.xml', fixture)).status).toBe('duplicate');
-    expect((await listPayslipsForMonth(owner, '2026-07')).map(slip => slip.uuid)).toEqual([baseline.uuid]);
-    const key = { PK: `USER#${owner}`, SK: `PAYROLL#2026-07#${baseline.uuid}` }; await sync(key); await sync(key);
-    vi.spyOn(sqlReaders, 'readerPool').mockImplementation(() => { throw new Error('SQL down'); });
-    expect((await ingestNominaXml(owner, 'during-outage.xml', fixture)).status).toBe('duplicate');
-    expect(await getPayslip(owner, '2026-07', baseline.uuid.toLowerCase())).toMatchObject({ uuid: baseline.uuid, source: { contentType: 'application/xml' } });
+  it('makes imports immediately authoritative and duplicate receipts immutable without document claims or fallback', async () => {
+    expect((await ingestNominaXml(owner,'source.xml',fixture)).status).toBe('created');
+    expect(await readSqlPayslipsForMonth(owner,'2026-07',sql)).toEqual([baseline]);
+    const before = await getPayslip(owner,'2026-07',baseline.uuid);
+    expect((await ingestNominaXml(owner,'again.xml',fixture)).status).toBe('duplicate');
+    expect(await getPayslip(owner,'2026-07',baseline.uuid.toLowerCase())).toEqual(before);
+    expect([...records.values()].filter(item=>item.SK.startsWith('PAYROLL#') || item.PK.startsWith('DEDUPE#CFDI_NOMINA#'))).toHaveLength(0);
     expect(vi.mocked(S3Client.prototype.send).mock.calls).toHaveLength(1);
-    expect([...records.values()].filter(item => item.SK.startsWith('PAYROLL#'))).toHaveLength(1);
+    vi.spyOn(sqlReaders,'readerPool').mockImplementation(()=>{throw new Error('SQL down');});
+    // The writer identity remains available for duplicate preflight; a product read failure cannot substitute frozen records.
+    expect((await ingestNominaXml(owner,'again.xml',fixture)).status).toBe('duplicate');
+    await expect(getPayslip(owner,'2026-07',baseline.uuid)).rejects.toThrow('SQL down');
     vi.mocked(sqlReaders.readerPool).mockClear();
-    expect(await incomeFieldsForMonth(owner, '2026-10', now)).toMatchObject({ provisionalActive: true, incomeMinor: baseline.totalMinor * 2 });
-    expect(sqlReaders.readerPool).toHaveBeenCalledTimes(1); // No timeout amplification across prior months.
+    await expect(incomeFieldsForMonth(owner,'2026-10',now)).rejects.toThrow('SQL down');
+    expect(sqlReaders.readerPool).toHaveBeenCalledTimes(1);
   });
 
-  it('rolls back failed projections and uses safe fallback/rollback modes without leaking driver errors', async () => {
+  it('preserves native receipts through failed frozen replay and propagates SQL errors across obsolete modes', async () => {
     const item = payroll('2026-09', 'A'); put(item); await sync(item);
     put({ ...item, payload: { ...item.payload as object, totalMinor: 1.5 } });
     await expect(sync(item)).rejects.toThrow('Invalid projection integer');
@@ -193,30 +213,24 @@ describe('DSQL planning and payroll contracts', () => {
     const interrupted: TransactionPool = { transaction: callback => sql.transaction(async client => { await callback(client as unknown as SqlClient); throw new Error('before commit'); }) };
     await expect(reconcileKey(interrupted, async () => fresh, fresh)).rejects.toThrow('before commit');
     expect(await readSqlPlanRecord(owner, '2026-10', sql)).toBeUndefined();
-    const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await readConfiguredPlanning('payroll-month', async () => { throw new Error('private row/token'); }, async () => fresh)).toEqual(fresh);
-    expect(logs.mock.calls.flat().join()).toContain('sql-error');
-    expect(logs.mock.calls.flat().join()).not.toContain('private');
-    await expect(readConfiguredPlanning('payroll-month', async () => fresh, async () => { throw new Error('source down'); })).rejects.toThrow('source down');
-    for (const mode of ['dynamodb', 'invalid']) {
-      vi.stubEnv('DSQL_PLANNING_READ_MODE', mode);
-      const sqlRead = vi.fn(async () => fresh);
-      expect(planningReadMode()).toBe('dynamodb');
-      expect(await readConfiguredPlanning('payroll-month', sqlRead, async () => fresh)).toEqual(fresh);
-      expect(sqlRead).not.toHaveBeenCalled();
+    for (const mode of ['dynamodb','invalid','shadow','guarded-sql']) {
+      vi.stubEnv('DSQL_PLANNING_READ_MODE',mode);
+      expect((await readSqlPayslipsForMonth(owner,'2026-09',sql))[0].totalMinor).toBe(baseline.totalMinor);
     }
-    vi.stubEnv('DSQL_PLANNING_READ_MODE', 'shadow');
-    await readConfiguredPlanning('payroll-month', async () => fresh, async () => fresh);
-    expect(logs.mock.calls.at(-1)?.[0]).toContain('"SourceSelected":1');
+    vi.mocked(sqlReaders.readerPool).mockImplementation(()=>{throw new Error('SQL unavailable');});
+    await expect(listPayslipsForMonth(owner,'2026-09')).rejects.toThrow('SQL unavailable');
   });
 
-  it('paginates strongly consistent payroll queries through empty pages', async () => {
-    const send = vi.mocked(DynamoDBDocumentClient.prototype.send); send.mockReset();
-    send.mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { PK: `USER#${owner}`, SK: 'PAYROLL#2026-09#A' } } as never)
-      .mockResolvedValueOnce({ Items: [payroll('2026-09', 'B')] } as never);
-    expect(await listPayslipsForMonthDynamo(owner, '2026-09')).toHaveLength(1);
-    expect(send.mock.calls.map(([command]) => command.input)).toMatchObject([
-      { ConsistentRead: true }, { ConsistentRead: true, ExclusiveStartKey: { PK: `USER#${owner}`, SK: 'PAYROLL#2026-09#A' } },
+  it('verifies frozen evidence across empty paginated pages while operational payroll uses native SQL', async () => {
+    const item=payroll('2026-07',baseline.uuid,'31');put(item);await sync(item);
+    vi.mocked(S3Client.prototype.send).mockResolvedValue({Body:{transformToByteArray:async()=>Buffer.from(fixture)}} as never);
+    const send=vi.mocked(DynamoDBDocumentClient.prototype.send);
+    send.mockResolvedValueOnce({Items:[]} as never)
+      .mockResolvedValueOnce({Items:[],LastEvaluatedKey:{PK:item.PK,SK:item.SK}} as never)
+      .mockResolvedValueOnce({Items:[item]} as never);
+    expect(await verifyPlanningReads(owner,[],['2026-07','2026-10'],now)).toMatchObject({storedPayroll:1,frozenPayroll:1,mismatches:0});
+    expect(send.mock.calls.slice(0,3).map(([command])=>command.input)).toMatchObject([
+      {ConsistentRead:true},{ConsistentRead:true},{ConsistentRead:true,ExclusiveStartKey:{PK:item.PK,SK:item.SK}},
     ]);
   });
 });

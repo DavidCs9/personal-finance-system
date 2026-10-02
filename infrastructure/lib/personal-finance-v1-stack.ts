@@ -452,8 +452,7 @@ export class PersonalFinanceV1Stack extends Stack {
     if (SQL_AUTHORITY) metadataTable.grantReadData(apiFunction); else metadataTable.grantReadWriteData(apiFunction);
     // Shadow rollout passed real feed/detail/summary equivalence. Preserve source fallback for stream lag.
     const ledgerReadMode = 'guarded-sql';
-    // Shadow backfill/read gate passed all retained plans, CFDIs, evidence and monthly/Patrimonio calculations.
-    const planningReadMode = 'guarded-sql';
+    // Plans and payroll use their native SQL authority directly.
     // Production shadow gate verified all retained canonical/audit records, financial histories and original evidence.
     const wealthReadMode = 'guarded-sql';
     // Categories, merchant rules and card profiles now read native SQL directly.
@@ -462,7 +461,6 @@ export class PersonalFinanceV1Stack extends Stack {
     apiFunction.addEnvironment('DSQL_OPERATIONAL_READ_MODE', operationalReadMode);
     const workerLedgerReadMode = 'guarded-sql';
     apiFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
-    apiFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
     apiFunction.addEnvironment('DSQL_LEDGER_READ_MODE', ledgerReadMode);
     dsqlProjection.grantReader(apiFunction);
     const readVerificationFunction = new NodejsFunction(this, 'DsqlReadVerification', {
@@ -471,7 +469,7 @@ export class PersonalFinanceV1Stack extends Stack {
       timeout: Duration.minutes(10), memorySize: 512,
       logGroup: this.createLogGroup('DsqlReadVerificationLogGroup', 'personal-finance-v1-dsql-read-verification'),
       environment: { ...dataStorageEnvironment, AGENT_OWNER_SUB: agentOwnerSub.valueAsString,
-        DSQL_LEDGER_READ_MODE: ledgerReadMode, DSQL_PLANNING_READ_MODE: planningReadMode, DSQL_WEALTH_READ_MODE: wealthReadMode, DSQL_OPERATIONAL_READ_MODE: operationalReadMode },
+        DSQL_LEDGER_READ_MODE: ledgerReadMode, DSQL_WEALTH_READ_MODE: wealthReadMode, DSQL_OPERATIONAL_READ_MODE: operationalReadMode },
     });
     metadataTable.grantReadData(readVerificationFunction);
     rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/cfdi-nomina/*');
@@ -507,7 +505,6 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     metadataTable.grantReadData(agentToolsFunction);
-    agentToolsFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
     agentToolsFunction.addEnvironment('DSQL_LEDGER_READ_MODE', workerLedgerReadMode);
     agentToolsFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     dsqlProjection.grantReader(agentToolsFunction);
@@ -1127,7 +1124,6 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     if (SQL_AUTHORITY) metadataTable.grantReadData(dailyBalancePushFunction); else metadataTable.grantReadWriteData(dailyBalancePushFunction);
-    dailyBalancePushFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
     dailyBalancePushFunction.addEnvironment('DSQL_LEDGER_READ_MODE', workerLedgerReadMode);
     dsqlProjection.grantReader(dailyBalancePushFunction);
     vapidSecret.grantRead(dailyBalancePushFunction);
@@ -1330,7 +1326,6 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     if (SQL_AUTHORITY) metadataTable.grantReadData(monthEndBalanceReminderFunction); else metadataTable.grantReadWriteData(monthEndBalanceReminderFunction);
-    monthEndBalanceReminderFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
     monthEndBalanceReminderFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     dsqlProjection.grantReader(monthEndBalanceReminderFunction);
     monthEndBalanceReminderFunction.addToRolePolicy(new iam.PolicyStatement({
@@ -1381,7 +1376,6 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     if (SQL_AUTHORITY) metadataTable.grantReadData(monthlyCloseEmailFunction); else metadataTable.grantReadWriteData(monthlyCloseEmailFunction);
-    monthlyCloseEmailFunction.addEnvironment('DSQL_PLANNING_READ_MODE', planningReadMode);
     monthlyCloseEmailFunction.addEnvironment('DSQL_LEDGER_READ_MODE', workerLedgerReadMode);
     monthlyCloseEmailFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     dsqlProjection.grantReader(monthlyCloseEmailFunction);

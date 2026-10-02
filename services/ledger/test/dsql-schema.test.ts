@@ -3,7 +3,8 @@ import { bootstrapSchema as realBootstrapSchema, ensureMovementCategoryForeignKe
 import type { SqlClient } from '../src/dsql/projection.js';
 
 const bootstrapSchema = (client: SqlClient, roleArns: readonly string[], options: Parameters<typeof realBootstrapSchema>[2] = {}) =>
-  realBootstrapSchema(client, roleArns, { transactionPool: { transaction: callback => callback(client) }, ...options });
+  realBootstrapSchema(client, roleArns, { transactionPool: { transaction: callback => callback({ query: (s,v) =>
+    s.includes('AS count FROM olbia.payroll') ? Promise.resolve({ rows: [{ count: 2 }] }) : client.query(s,v) }) }, ...options });
 const ready = (statement: string) => ({ rows:
   statement.includes('pg_constraint') ? [{ convalidated: true }] :
   statement.includes('indisvalid') ? [{ indisvalid: true }] :

@@ -5,7 +5,7 @@ import { s3 } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
 import { readerPool } from '../events/sql-reads.js';
 import { samePublicResult } from '../events/read-selection.js';
-import { listPayslipsForYearDynamo } from '../imports/cfdi-nomina-flow.js';
+import { listPayslipsForYear } from '../imports/cfdi-nomina-flow.js';
 import { readSqlPayslipsForYear } from '../months/sql-reads.js';
 import { listCategories } from '../categories/service.js';
 import { loadCategorizedMonthsEvents } from '../analytics/events.js';
@@ -68,11 +68,11 @@ export const verifyWealthReads = async (owner: string, financialMonths: readonly
   for (let month = addCalendarMonths(firstMonth, -1); month <= addCalendarMonths(lastMonth, 1); month = addCalendarMonths(month, 1)) months.add(month);
   for (const month of months) { days.add(`${month}-01`); days.add(monthCloseDay(month)); }
   const yearPayroll = new Map(await Promise.all([...new Set([...days].map(day => day.slice(0, 4)))].map(async year => {
-    const sourceSlips = await listPayslipsForYearDynamo(owner, year), sqlSlips = await readSqlPayslipsForYear(owner, year);
+    const sourceSlips = await listPayslipsForYear(owner, year), sqlSlips = await readSqlPayslipsForYear(owner, year);
     mismatches += Number(!samePublicResult(sourceSlips, sqlSlips));
     return [year, { source: sourceSlips, sql: sqlSlips }] as const;
   })));
-  const sourcePayroll: typeof listPayslipsForYearDynamo = async (_owner, year) => yearPayroll.get(year)?.source ?? [];
+  const sourcePayroll: typeof listPayslipsForYear = async (_owner, year) => yearPayroll.get(year)?.source ?? [];
   const sqlPayroll: typeof readSqlPayslipsForYear = async (_owner, year) => yearPayroll.get(year)?.sql ?? [];
   let asOfDays = 0, dailyOverviews = 0, reminders = 0;
   for (const day of [...days].sort()) {

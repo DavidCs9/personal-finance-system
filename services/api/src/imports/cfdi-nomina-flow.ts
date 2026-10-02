@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { GetCommand, QueryCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { deriveMonthIncome, isOrdinaryNomina, previousCalendarMonth, type PayslipSummary } from "@finance/domain";
-import { database, rawSourceBucketName, s3, tableName } from "../http/clients.js";
+import { rawSourceBucketName, s3 } from "../http/clients.js";
 import type { JsonObject } from "../http/response.js";
 import { InvalidCfdiNominaError, parseCfdiNominaXml } from "./cfdi-nomina.js";
 
-import { readConfiguredPlanning, readSqlPayslipsForMonth, readSqlPayslipsForYear, readSqlPayslipRecord } from '../months/sql-reads.js';
+import { readSqlPayslipsForMonth,readSqlPayslipsForYear,readSqlPayslipRecord,payslipExists,insertPayslip,MAX_PAYSLIP_LINES,toPublicPayslip,type PayrollEvidence } from './payroll-sql.js';
+export { toPublicPayslip } from './payroll-sql.js';
 
 export { InvalidCfdiNominaError };
 
@@ -26,127 +26,16 @@ export interface NominaUploadResultItem {
   readonly error?: string;
 }
 
-const payrollKey = (owner: string, month: string, uuid: string) => ({
-  PK: `USER#${owner}`,
-  SK: `PAYROLL#${month}#${uuid}`,
-});
-
-const dedupeKey = (uuid: string) => ({
-  PK: `DEDUPE#CFDI_NOMINA#${uuid}`,
-  SK: "CLAIM",
-});
-
 const sourceKey = (owner: string, sha256: string): string =>
   `manual-imports/cfdi-nomina/${owner}/${sha256}.xml`;
 
-export const toPublicPayslip = (payslip: PayslipSummary, ingestedAt: string, source: JsonObject): JsonObject => ({
-  uuid: payslip.uuid,
-  fechaPago: payslip.fechaPago,
-  month: payslip.month,
-  tipoNomina: payslip.tipoNomina,
-  totalMinor: payslip.totalMinor,
-  totalPercepcionesMinor: payslip.totalPercepcionesMinor,
-  totalDeduccionesMinor: payslip.totalDeduccionesMinor,
-  totalOtrosPagosMinor: payslip.totalOtrosPagosMinor,
-  lines: payslip.lines,
-  ...(payslip.employerName ? { employerName: payslip.employerName } : {}),
-  ...(payslip.fechaInicialPago ? { fechaInicialPago: payslip.fechaInicialPago } : {}),
-  ...(payslip.fechaFinalPago ? { fechaFinalPago: payslip.fechaFinalPago } : {}),
-  ingestedAt,
-  source,
-});
-
-export const listPayslipsForMonthDynamo = async (
-  owner: string,
-  month: string,
-): Promise<readonly PayslipSummary[]> => {
-  const items: PayslipSummary[] = [];
-  let exclusiveStartKey: Record<string, unknown> | undefined;
-  do {
-    const result = await database.send(
-      new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-        ExpressionAttributeValues: {
-          ":pk": `USER#${owner}`,
-          ":sk": `PAYROLL#${month}#`,
-        },
-        ExclusiveStartKey: exclusiveStartKey,
-        ConsistentRead: true,
-      }),
-    );
-    for (const item of result.Items ?? []) {
-      const payload = item.payload as PayslipSummary | undefined;
-      if (payload?.uuid && typeof payload.totalMinor === "number") {
-        items.push(payload);
-      }
-    }
-    exclusiveStartKey = result.LastEvaluatedKey;
-  } while (exclusiveStartKey);
-  return items.sort((a, b) => a.fechaPago.localeCompare(b.fechaPago) || a.uuid.localeCompare(b.uuid));
-};
-
-export const listPayslipsForYearDynamo = async (
-  owner: string,
-  year: string,
-): Promise<readonly PayslipSummary[]> => {
-  if (!/^\d{4}$/.test(year)) return [];
-  const items: PayslipSummary[] = [];
-  let exclusiveStartKey: Record<string, unknown> | undefined;
-  do {
-    const result = await database.send(
-      new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-        ExpressionAttributeValues: {
-          ":pk": `USER#${owner}`,
-          ":sk": `PAYROLL#${year}-`,
-        },
-        ExclusiveStartKey: exclusiveStartKey,
-        ConsistentRead: true,
-      }),
-    );
-    for (const item of result.Items ?? []) {
-      const payload = item.payload as PayslipSummary | undefined;
-      if (payload?.uuid && typeof payload.totalMinor === "number") {
-        items.push(payload);
-      }
-    }
-    exclusiveStartKey = result.LastEvaluatedKey;
-  } while (exclusiveStartKey);
-  return items.sort((a, b) => a.fechaPago.localeCompare(b.fechaPago) || a.uuid.localeCompare(b.uuid));
-};
-
-export const getPayslipDynamo = async (
-  owner: string,
-  month: string,
-  uuid: string,
-): Promise<JsonObject | undefined> => {
-  const result = await database.send(
-    new GetCommand({
-      TableName: tableName,
-      Key: payrollKey(owner, month, uuid.toUpperCase()),
-      ConsistentRead: true,
-    }),
-  );
-  if (!result.Item?.payload) return undefined;
-  return toPublicPayslip(
-    result.Item.payload as PayslipSummary,
-    String(result.Item.ingestedAt ?? ""),
-    (result.Item.source as JsonObject) ?? {},
-  );
-};
-
-export const listPayslipsForMonth = (owner: string, month: string): Promise<readonly PayslipSummary[]> =>
-  readConfiguredPlanning('payroll-month', () => readSqlPayslipsForMonth(owner, month), () => listPayslipsForMonthDynamo(owner, month));
-export const listPayslipsForYear = (owner: string, year: string): Promise<readonly PayslipSummary[]> =>
-  readConfiguredPlanning('payroll-year', () => readSqlPayslipsForYear(owner, year), () => listPayslipsForYearDynamo(owner, year));
+export const listPayslipsForMonth = readSqlPayslipsForMonth;
+export const listPayslipsForYear = readSqlPayslipsForYear;
 export const getPayslipSql = async (owner: string, month: string, uuid: string): Promise<JsonObject | undefined> => {
-  const item = await readSqlPayslipRecord(owner, month, uuid);
-  return item?.payload ? toPublicPayslip(item.payload as PayslipSummary, String(item.ingestedAt ?? ''), (item.source as JsonObject) ?? {}) : undefined;
+  const record = await readSqlPayslipRecord(owner,month,uuid);
+  return record ? toPublicPayslip(record.payslip,record.ingestedAt,record.source) : undefined;
 };
-export const getPayslip = (owner: string, month: string, uuid: string): Promise<JsonObject | undefined> =>
-  readConfiguredPlanning('payroll-detail', () => getPayslipSql(owner, month, uuid), () => getPayslipDynamo(owner, month, uuid));
+export const getPayslip = getPayslipSql;
 
 export type MonthPayslipReader = (owner: string, month: string) => Promise<readonly PayslipSummary[]>;
 
@@ -176,7 +65,7 @@ const incomeFieldsForMonthFromReads = async (
   owner: string,
   month: string,
   now: Date = new Date(),
-  readMonth: MonthPayslipReader = listPayslipsForMonthDynamo,
+  readMonth: MonthPayslipReader = listPayslipsForMonth,
 ): Promise<{
   readonly configured: boolean;
   readonly incomeMinor: number;
@@ -203,14 +92,9 @@ const incomeFieldsForMonthFromReads = async (
   };
 };
 
-// Guard the whole derivation: an unavailable SQL connection must not be retried
-// for every prior month while calculating provisional income.
 export const incomeFieldsForMonth = (owner: string, month: string, now: Date = new Date(),
-  readMonth?: MonthPayslipReader): ReturnType<typeof incomeFieldsForMonthFromReads> => readMonth
-  ? incomeFieldsForMonthFromReads(owner, month, now, readMonth)
-  : readConfiguredPlanning('payroll-income',
-    () => incomeFieldsForMonthFromReads(owner, month, now, readSqlPayslipsForMonth),
-    () => incomeFieldsForMonthFromReads(owner, month, now, listPayslipsForMonthDynamo));
+  readMonth: MonthPayslipReader = listPayslipsForMonth): ReturnType<typeof incomeFieldsForMonthFromReads> =>
+  incomeFieldsForMonthFromReads(owner,month,now,readMonth);
 
 const persistPayslip = async (
   owner: string,
@@ -220,7 +104,7 @@ const persistPayslip = async (
   const sha256 = createHash("sha256").update(xml, "utf8").digest("hex");
   const key = sourceKey(owner, sha256);
   const ingestedAt = new Date().toISOString();
-  const source = {
+  const source: PayrollEvidence = {
     kind: "cfdi_nomina",
     bucket: rawSourceBucketName,
     key,
@@ -228,14 +112,8 @@ const persistPayslip = async (
     contentType: "application/xml",
   };
 
-  const existing = await database.send(
-    new GetCommand({
-      TableName: tableName,
-      Key: dedupeKey(payslip.uuid),
-      ConsistentRead: true,
-    }),
-  );
-  if (existing.Item) return "duplicate";
+  if (await payslipExists(payslip.uuid)) return 'duplicate';
+  if (payslip.lines.length>MAX_PAYSLIP_LINES) throw new InvalidCfdiNominaError('La nómina tiene demasiadas líneas para guardarse completa.');
 
   await s3.send(
     new PutObjectCommand({
@@ -246,51 +124,7 @@ const persistPayslip = async (
     }),
   );
 
-  try {
-    await database.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          {
-            Put: {
-              TableName: tableName,
-              Item: {
-                ...dedupeKey(payslip.uuid),
-                entityType: "cfdi_nomina_dedupe",
-                owner,
-                uuid: payslip.uuid,
-                month: payslip.month,
-                claimedAt: ingestedAt,
-              },
-              ConditionExpression: "attribute_not_exists(PK)",
-            },
-          },
-          {
-            Put: {
-              TableName: tableName,
-              Item: {
-                ...payrollKey(owner, payslip.month, payslip.uuid),
-                entityType: "cfdi_nomina",
-                owner,
-                month: payslip.month,
-                uuid: payslip.uuid,
-                ingestedAt,
-                source,
-                payload: payslip,
-              },
-              ConditionExpression: "attribute_not_exists(PK)",
-            },
-          },
-        ],
-      }),
-    );
-  } catch (error) {
-    const name = error && typeof error === "object" && "name" in error ? String(error.name) : "";
-    if (name === "TransactionCanceledException" || name === "ConditionalCheckFailedException") {
-      return "duplicate";
-    }
-    throw error;
-  }
-  return "created";
+  return insertPayslip(owner,payslip,ingestedAt,source);
 };
 
 export const ingestNominaXml = async (
