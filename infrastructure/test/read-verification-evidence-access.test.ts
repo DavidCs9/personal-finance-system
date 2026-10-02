@@ -26,11 +26,15 @@ it('gives the deployed verifier read-only access to every supported evidence fam
   const rawBucket=Object.keys(template.findResources('AWS::S3::Bucket')).find(id=>id.startsWith('RawEmailBucket'))!;
   const objectResources=reads.flatMap(statement=>Array.isArray(statement.Resource)?statement.Resource:[statement.Resource])
     .filter(resource=>resource['Fn::Join']!==undefined);
-  const expected=['manual-imports/cfdi-nomina/*','manual-imports/amex/*','manual-imports/santander/*',
+  const expected=['inbound/*','manual-entries/*','manual-imports/cfdi-nomina/*','manual-imports/amex/*','manual-imports/santander/*',
     'manual-imports/santander-statement/*','wealth-manual/*','wealth-api/*'];
   expect(objectResources).toHaveLength(expected.length);
   for(const prefix of expected)expect(objectResources).toContainEqual({
     'Fn::Join':['',[{'Fn::GetAtt':[rawBucket,'Arn']},`/${prefix}`]],
   });
   expect(statements.flatMap(actions).some(action=>/^s3:(?:Put|Delete|\*)/.test(action))).toBe(false);
+  const functions=template.findResources('AWS::Lambda::Function');
+  for(const resource of Object.values(functions))
+    expect(resource.Properties.Environment?.Variables).not.toHaveProperty('DSQL_LEDGER_READ_MODE');
+
 },60_000);

@@ -1,8 +1,6 @@
-import { GetCommand, PutCommand, UpdateCommand, DeleteCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { createPool } from './connection.js';
-import { OlbiaSqlStore, authorityFrom, withStoreClient } from './store.js';
-import { canonicalJson, type SourceItem } from './model.js';
-import { verifyKeyDetails } from './verification.js';
+import { authorityFrom } from './store.js';
+import { smokeNativeLedger } from './ledger-smoke.js';
 import { createHash, randomUUID } from 'node:crypto';
 
 // Internal IAM-only deployed operator. Product identities cannot update authority.
@@ -99,28 +97,10 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
         const finishedImport = (await client.query(`UPDATE olbia.bank_imports SET status='applied',applied_at=CURRENT_TIMESTAMP,
           result_created=0,result_linked=0,result_skipped=2 WHERE kind='santander_csv' AND content_sha256=$1 RETURNING status,result_skipped`,[smokeHash])).rows[0];
         if (finishedImport?.status !== 'applied' || finishedImport.result_skipped !== 2) throw new Error('Native import completion failed');
-        const raw=(await client.query("SELECT source_item FROM olbia.projection_state WHERE source_sk='EVENT' AND deleted=false ORDER BY source_pk LIMIT 1")).rows[0]?.source_item as SourceItem|undefined;
-        if(!raw) throw new Error('No retained movement for smoke');
-        const key={PK:raw.PK,SK:raw.SK};const store=new OlbiaSqlStore(pool,process.env.METADATA_TABLE_NAME!);
-        await withStoreClient(client,async()=>{
-          const input={TableName:process.env.METADATA_TABLE_NAME!,Key:key};
-          await store.send(new PutCommand({TableName:input.TableName,Item:raw}));
-          const payload=raw.payload as Record<string,unknown>;
-          await store.send(new UpdateCommand({...input,UpdateExpression:'SET #payload.#merchant = :merchant',ExpressionAttributeNames:{'#payload':'payload','#merchant':'merchantRaw'},ExpressionAttributeValues:{':merchant':String(payload.merchantRaw??'')+' migration verification'}}));
-          const result=await store.send(new GetCommand(input));
-          if(result.Item?.payload?.merchantRaw===payload.merchantRaw) throw new Error('Smoke update was not visible');
-          await store.send(new DeleteCommand(input));
-          if((await store.send(new GetCommand(input))).Item) throw new Error('Smoke delete was not visible');
-          await store.send(new PutCommand({TableName:input.TableName,Item:raw}));
-          try {await store.send(new TransactWriteCommand({TransactItems:[{Put:{TableName:input.TableName,Item:raw,ConditionExpression:'attribute_not_exists(PK)'}}]}));throw new Error('Condition accepted');}
-          catch(error) {if((error as Error).name!=='TransactionCanceledException') throw error;}
-          if(canonicalJson((await store.send(new GetCommand(input))).Item)!==canonicalJson(raw)) throw new Error('Smoke restoration differed');
-          const parity=await verifyKeyDetails({transaction:callback=>callback(client)},async()=>raw,key);
-          if(parity.status!=='equal') throw new Error('Smoke derived rows differed');
-        });
+        await smokeNativeLedger(client, String(importSource.owner), String(category.id));
         verified=true;throw rollback;
       });} catch(error) {if(error!==rollback) throw error;}
-      return {verified,rolledBack:true,nativeCategories:true,nativeCards:true,nativeMonthPlans:true,nativePayroll:true,nativeImports:true};
+      return {verified,rolledBack:true,nativeCategories:true,nativeCards:true,nativeMonthPlans:true,nativePayroll:true,nativeImports:true,nativeLedger:true};
     }
     if(!['pause','activate'].includes(event.action)) throw new Error('Unknown operation');
     if(event.action==='activate' && process.env.OLBIA_ALLOW_SQL_ACTIVATION!=='true') throw new Error('SQL activation requires the approved cutover deployment');

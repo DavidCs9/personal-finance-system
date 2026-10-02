@@ -1,3 +1,4 @@
+import { currentStoreTransaction } from '@finance/ledger/dsql-store';
 import { publicThread, isValidAssistantThreadId } from '../agent/threads.js';
 import { createPool } from '@finance/ledger/dsql-connection';
 import { paginateScan } from '@aws-sdk/lib-dynamodb';
@@ -54,7 +55,7 @@ export const compareOperationalRows = (source: readonly JsonObject[], rows: read
   samePublicResult(order(source.map(item => expectedOperationalRow(item, family)).map(normalize)), order(rows.map(normalize)));
 
 let verifierPool: ReturnType<typeof createPool> | undefined;
-export const operationalVerificationPool = (): ReadSqlClient => verifierPool ??= createPool('olbia_operational_verifier', { connectionTimeoutMillis: 1500, queryTimeoutMillis: 3000 });
+export const operationalVerificationPool = (): ReadSqlClient => currentStoreTransaction() ?? (verifierPool ??= createPool('olbia_operational_verifier', { connectionTimeoutMillis: 1500, queryTimeoutMillis: 3000 }));
 export const verifyOperationalReads = async (owner: string, now: Date, client: ReadSqlClient = operationalVerificationPool()) => {
   const started = Date.now(), source: JsonObject[] = [];
   let sourcePages = 0, targetPages = 0, mismatches = 0, publicResponses = 0, expirationChecks = 0, configuredReads = 0;

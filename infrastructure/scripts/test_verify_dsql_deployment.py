@@ -31,9 +31,11 @@ elif operation == ['stepfunctions', 'describe-execution']:
 elif operation == ['lambda', 'invoke']:
     payload = json.loads(a[a.index('--payload') + 1])
     action = payload.get('action', 'read')
-    response = {'mode': os.environ.get('AUTHORITY', 'sql')} if action == 'status' else {'verified': True, 'rolledBack': True} if action == 'smoke' else {'verified': True, 'mismatches': 0}
+    response = {'mode': os.environ.get('AUTHORITY', 'sql')} if action == 'status' else {'verified': True, 'rolledBack': True, 'nativeLedger': True} if action == 'smoke' else {'verified': True, 'mode': 'native-sql', 'mismatches': 0, 'provenance': {'mismatches': 0}, 'evidence': {'mismatches': 0}}
     if os.environ.get('FAIL_GATE') == action:
         response = {'verified': False, 'rolledBack': False, 'mismatches': 1}
+    if os.environ.get('LEGACY_PROBE') == action:
+        response = {'verified': True, 'rolledBack': True, 'mismatches': 0}
     pathlib.Path(a[-1]).write_text(json.dumps(response))
     metadata = {'StatusCode': 200}
     if os.environ.get('FAIL_INVOCATION') == action:
@@ -92,6 +94,12 @@ class RoutineVerificationTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Public read equivalence failed', result.stderr)
         self.assertFalse(any('"action":"smoke"' in call for call in calls))
+
+    def test_legacy_success_cannot_satisfy_native_release_gates(self):
+        for action in ['read', 'smoke']:
+            with self.subTest(action=action):
+                result, _ = self.run_gate(LEGACY_PROBE=action)
+                self.assertNotEqual(result.returncode, 0)
 
     def test_write_smoke_must_confirm_rollback(self):
         result, _ = self.run_gate(FAIL_GATE='smoke')

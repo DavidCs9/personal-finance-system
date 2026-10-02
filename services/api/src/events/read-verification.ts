@@ -2,7 +2,7 @@ import { verifyOperationalReads } from '../operational/verification.js';
 import { addCalendarMonths, monthKeyInZone } from '@finance/domain';
 import { feedFromMovements, spendMonthOf } from './month-feed.js';
 import { verifyNativeLedgerState, verifyNativeMonthSummary } from './native-verification.js';
-import { monthReadStatement, readerPool, readSqlDetail, readSqlFeed, withLedgerReadSnapshot } from './sql-reads.js';
+import { monthReadStatement, readerPool, readSqlDetail, readSqlFeed, withLedgerVerificationSnapshot } from './sql-reads.js';
 import { allStoredEvents, listEventsForMonths, getEventDetail } from './queries.js';
 import { samePublicResult } from './read-selection.js';
 import { getMonthlyPlan } from '../months/service.js';
@@ -15,7 +15,7 @@ import { verifyNativeLedgerProvenance } from './provenance-verification.js';
 import { collectLedgerEvidence, verifyLedgerEvidence } from './evidence-verification.js';
 
 /** One internally consistent financial phase; later domains use their own bounded snapshot. */
-export const verifyNativeFinancialReads = (owner: string, now: Date) => withLedgerReadSnapshot(async () => {
+export const verifyNativeFinancialReads = (owner: string, now: Date) => withLedgerVerificationSnapshot(async () => {
   const started = Date.now();
   const source = [...await allStoredEvents()];
   const nativeReadMs = Date.now() - started;
@@ -82,20 +82,20 @@ export const verifyLedgerReads = async () => {
   if (!owner) throw new Error('Missing verification owner');
   const { orderedMonths, ...financial } = await verifyNativeFinancialReads(owner, now);
   let mismatches = financial.mismatches;
-  const { provenance, evidenceAssertions } = await withLedgerReadSnapshot(async () => ({
+  const { provenance, evidenceAssertions } = await withLedgerVerificationSnapshot(async () => ({
     provenance: await verifyNativeLedgerProvenance(readerPool()), evidenceAssertions: await collectLedgerEvidence(readerPool()),
   }));
   mismatches += provenance.mismatches;
   const evidence = await verifyLedgerEvidence(evidenceAssertions);
   mismatches += evidence.mismatches;
   // Refresh current movement input in the same snapshot as each phase's SQL comparisons.
-  const planning = await withLedgerReadSnapshot(async () => verifyPlanningReads(owner, [...await allStoredEvents()], orderedMonths, now));
+  const planning = await withLedgerVerificationSnapshot(async () => verifyPlanningReads(owner, [...await allStoredEvents()], orderedMonths, now));
   mismatches += planning.mismatches;
-  const wealth = await withLedgerReadSnapshot(() => verifyWealthReads(owner, orderedMonths, now));
+  const wealth = await withLedgerVerificationSnapshot(() => verifyWealthReads(owner, orderedMonths, now));
   mismatches += wealth.mismatches;
-  const domain = await withLedgerReadSnapshot(async () => verifyDomainReads(owner, await allStoredEvents(), orderedMonths, now));
+  const domain = await withLedgerVerificationSnapshot(async () => verifyDomainReads(owner, await allStoredEvents(), orderedMonths, now));
   mismatches += domain.mismatches;
-  const operational = await withLedgerReadSnapshot(() => verifyOperationalReads(owner, now));
+  const operational = await withLedgerVerificationSnapshot(() => verifyOperationalReads(owner, now));
   mismatches += operational.mismatches;
   return { ...financial, provenance, evidence, operational, verified: mismatches === 0, mode: 'native-sql', planning, wealth, domain,
     mismatches, elapsedMs: Date.now() - started, phaseDurationsMs: { financial: financial.elapsedMs,

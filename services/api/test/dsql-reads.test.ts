@@ -12,7 +12,7 @@ import type { SqlClient, TransactionPool } from '../../ledger/src/dsql/projectio
 import type { ObservedEventInput } from '../../ledger/src/observed-events.js';
 
 const harness = vi.hoisted(() => ({ pool: undefined as unknown as SqlClient & TransactionPool }));
-vi.mock('../../ledger/src/dsql/connection.js', () => ({ createPool: () => harness.pool }));
+vi.mock('../../ledger/src/dsql/connection.js', () => ({ createPool: vi.fn(() => harness.pool) }));
 let fixture: Awaited<ReturnType<typeof nativeFixture>>;
 let readers: typeof import('../src/events/sql-reads.js');
 let queries: typeof import('../src/events/queries.js');
@@ -213,12 +213,16 @@ describe('native SQL financial reads', () => {
     const result = await verifyNativeFinancialReads('owner', now);
     expect(result).toMatchObject({ movements: 1, details: 1, mismatches: 0, missingLookups: 2 });
     expect(snapshot).toHaveBeenCalledTimes(1);
+    const connection = await import('../../ledger/src/dsql/connection.js');
+    expect(connection.createPool).toHaveBeenCalledWith('olbia_operational_verifier', expect.any(Object));
     expect(outside).not.toHaveBeenCalled();
     expect(statements.every(statement => /^(SELECT|WITH|EXPLAIN)/.test(statement.trim()))).toBe(true);
     expect(currentStoreTransaction()).toBeUndefined();
     outside.mockRestore(); snapshot.mockClear();
     await readers.withLedgerReadSnapshot(() => readers.withLedgerReadSnapshot(async () => {
       expect(currentStoreTransaction()).toBeDefined();
+      const { operationalVerificationPool } = await import('../src/operational/verification.js');
+      expect(operationalVerificationPool()).toBe(currentStoreTransaction());
       expect((await queries.allStoredEvents()).length).toBe(1);
     }));
     expect(snapshot).toHaveBeenCalledTimes(1);
