@@ -158,7 +158,7 @@ const saveCardInternal = async (input: {
   return record;
 };
 
-export const deleteCard = async (input: {
+const deleteCardInternal = async (input: {
   readonly database: DynamoDBDocumentClient;
   readonly tableName: string;
   readonly owner: string;
@@ -205,3 +205,5 @@ export const toCardRecord = (item: Record<string, unknown>): CardRecord | undefi
 };
 
 export const saveCard = (...args: Parameters<typeof saveCardInternal>): ReturnType<typeof saveCardInternal> => withApplicationTransaction(() => saveCardInternal(...args));
+
+export const deleteCard = (...args: Parameters<typeof deleteCardInternal>): ReturnType<typeof deleteCardInternal> => withApplicationTransaction(() => deleteCardInternal(...args));
