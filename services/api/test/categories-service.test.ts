@@ -10,6 +10,7 @@ process.env.METADATA_TABLE_NAME ??= 'test-metadata-table';
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-raw-bucket';
 const { database } = await import('../src/http/clients.js');
 const readers = await import('../src/events/sql-reads.js');
+const storeClients = await import('@finance/ledger/dsql-store');
 const { listCategories, putCategoryCatalog, ensureDefaultCatalog, setEventCategory, upsertMerchantRule } =
   await import('../src/categories/service.js');
 const { previewAgentCategoryEdit, previewBulkEdit, applyBulkEdit, undoBulkEdit, applyAgentCategoryEdits } =
@@ -43,6 +44,7 @@ beforeEach(async () => {
   for (const c of DEFAULT_SPEND_CATEGORIES) await sql.query('INSERT INTO olbia.spend_categories VALUES ($1,$2,$3)', [c.id, c.name, c.sortOrder]);
   vi.stubEnv('OLBIA_SQL_STORE_ENABLED', 'true');
   vi.spyOn(readers, 'readerPool').mockImplementation(() => currentStoreTransaction() ?? sql);
+  vi.spyOn(storeClients, 'applicationStoreClient').mockImplementation(() => currentStoreTransaction() ?? sql);
   vi.spyOn(database as any, 'send').mockImplementation(command => store.send(command));
   await store.send(new PutCommand({ TableName: process.env.METADATA_TABLE_NAME!, Item: {
     PK: 'EVENT#event-1', SK: 'EVENT', entityType: 'observed_purchase', payload: { id: 'event-1', institution: 'santander_mx',
@@ -95,5 +97,13 @@ describe('native SQL category catalog and membership', () => {
     await expect(undoBulkEdit('owner', 'undo-invalid', 'owner')).rejects.toThrow('no existe');
     expect((await sql.query('SELECT category_id FROM olbia.movements')).rows).toEqual([{ category_id: 'otros' }]);
     expect((await sql.query('SELECT * FROM olbia.movement_revisions')).rows).toHaveLength(0);
+  });
+  it('validates standalone mutation targets with the application identity, without opening a reader identity', async () => {
+    const { requireCatalogCategories } = await import('../src/categories/catalog.js');
+    vi.mocked(readers.readerPool).mockImplementation(() => { throw new Error('Reader role not granted to mutation runtime'); });
+    await expect(requireCatalogCategories(['otros'])).resolves.toBeUndefined();
+    await expect(requireCatalogCategories(['inventada'])).rejects.toThrow('no existe');
+    await requireCatalogCategories([null]);
+    expect(readers.readerPool).not.toHaveBeenCalled();
   });
 });

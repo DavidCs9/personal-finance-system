@@ -16,7 +16,7 @@ export const requireCatalogCategories = async (ids: readonly (string | null)[]):
   const requested = [...new Set(ids.filter((id): id is string => id !== null))];
   if (!requested.length) return;
   if (requested.some(id => !isValidCategoryId(id))) throw new InvalidCategoryError('La categoría no es válida.');
-  const found = new Set((await readerPool().query(
+  const found = new Set((await applicationStoreClient().query(
     'SELECT id FROM olbia.spend_categories WHERE id=ANY($1::text[])', [requested],
   )).rows.map(row => String(row.id)));
   if (requested.some(id => !found.has(id))) {

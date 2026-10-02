@@ -11,8 +11,8 @@ beforeAll(async () => {
   ({ runTagMutationTool } = await import('../src/agent/tag-mutation-tools.js'));
 });
 
-const readers = await import('../src/events/sql-reads.js');
-beforeEach(() => { vi.spyOn(readers, 'readerPool').mockReturnValue({
+const storeClients = await import('@finance/ledger/dsql-store');
+beforeEach(() => { vi.spyOn(storeClients, 'applicationStoreClient').mockReturnValue({
   query: async (statement, values) => {
     if (statement !== 'SELECT id FROM olbia.spend_categories WHERE id=ANY($1::text[])') throw new Error('Unexpected catalog query');
     return { rows: (values![0] as string[]).filter(id => ['food', 'other', 'transport'].includes(id)).map(id => ({ id })) };
