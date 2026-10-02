@@ -1,9 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { withApplicationTransaction } from '@finance/ledger/dsql-store';
+import { withNativeTransaction } from '@finance/ledger/dsql-store';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { BatchGetCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import type { MsiPlan } from '@finance/domain';
-import { eventMonthIndexKeys, msiPlanPurchaseOccurredAt, reconciliationPartition } from '@finance/ledger';
+import { msiPlanPurchaseOccurredAt } from '@finance/ledger';
 import { buildPlanFromCreateDecision, isSantanderMsiRow, matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
 import {
   InvalidSantanderCsvError,
@@ -15,12 +14,13 @@ import {
   type SantanderReconciliationDecision,
   type SantanderReconciliationStatus,
 } from './santander-csv.js';
-import { database, rawSourceBucketName, s3, tableName } from '../http/clients.js';
+import { rawSourceBucketName, s3 } from '../http/clients.js';
 import { errorName, type JsonObject } from '../http/response.js';
 import { isValidMonth } from '../months/monthly-plan.js';
-import { allStoredEvents, localDate, toPublicEvent } from '../events/queries.js';
+import { localDate, toPublicEvent } from '../events/queries.js';
 import { persistEventMsi } from '../events/mutations.js';
-import { readBankImport, startBankImport, completeBankImport } from './import-sql.js';
+import { assertPreparedImport, bankLedgerEvents, bankPlanEvidence, bankRowPosition, claimedBankRows, createBankMovement, linkBankEvidence } from './bank-ledger.js';
+import { readBankImport, startBankImport, completeBankImport, type BankImportRecord } from './import-sql.js';
 
 interface SantanderPreviewRow extends SantanderCsvRow {
   readonly status: SantanderReconciliationStatus;
@@ -29,30 +29,6 @@ interface SantanderPreviewRow extends SantanderCsvRow {
 }
 
 const csvSourceKey = (owner: string, sha256: string): string => `manual-imports/santander/${owner}/${sha256}.csv`;
-const rowClaimKey = (identity: string): { readonly PK: string; readonly SK: string } => ({
-  PK: `DEDUPE#SANTANDER_CSV#${createHash('sha256').update(identity).digest('hex')}`,
-  SK: 'CLAIM',
-});
-
-const claimedRowIdentities = async (rows: readonly SantanderCsvRow[]): Promise<ReadonlySet<string>> => {
-  const claimed = new Set<string>();
-  for (let offset = 0; offset < rows.length; offset += 100) {
-    let requestKeys: Record<string, unknown>[] = rows.slice(offset, offset + 100).map((row) => rowClaimKey(row.identity));
-    let attempts = 0;
-    do {
-      if (attempts > 0) await new Promise((resolve) => setTimeout(resolve, 25 * (2 ** attempts)));
-      const result = await database.send(new BatchGetCommand({
-        RequestItems: { [tableName]: { Keys: requestKeys, ProjectionExpression: 'PK' } },
-      }));
-      for (const item of result.Responses?.[tableName] ?? []) claimed.add(String(item.PK));
-      requestKeys = result.UnprocessedKeys?.[tableName]?.Keys ?? [];
-      attempts += 1;
-      if (attempts >= 6 && requestKeys.length > 0) throw new Error('Unable to verify Santander CSV dedupe keys after multiple attempts.');
-    } while (requestKeys.length > 0);
-  }
-  return claimed;
-};
-
 const candidateEvents = (document: SantanderCsvDocument, row: SantanderCsvRow, events: readonly JsonObject[]): readonly JsonObject[] =>
   events.filter((event) => {
     const account = event.account as JsonObject | undefined;
@@ -66,9 +42,9 @@ const candidateEvents = (document: SantanderCsvDocument, row: SantanderCsvRow, e
   });
 
 const classifySantanderRows = async (document: SantanderCsvDocument): Promise<readonly SantanderPreviewRow[]> => {
-  const [events, claims] = await Promise.all([allStoredEvents(), claimedRowIdentities(document.rows)]);
+  const [events, claims] = await Promise.all([bankLedgerEvents(), claimedBankRows('santander_csv', document.rows.map(row => row.identity))]);
   return document.rows.map((row): SantanderPreviewRow => {
-    if (claims.has(rowClaimKey(row.identity).PK)) return { ...row, status: 'duplicate', candidateEventIds: [], candidates: [] };
+    if (claims.has(row.identity)) return { ...row, status: 'duplicate', candidateEventIds: [], candidates: [] };
     if (row.amountMinor < 0) return { ...row, status: 'excluded', candidateEventIds: [], candidates: [] };
     if (isSantanderMsiRow(row.merchantRaw) && row.amountMinor > 0) {
       const match = matchEvidenceLine({
@@ -150,12 +126,17 @@ export const previewSantanderImport = async (body: string | undefined, owner: st
     sha256: sourceHash,
     contentType: 'text/csv',
   };
-  await s3.send(new PutObjectCommand({
-    Bucket: rawSourceBucketName,
-    Key: source.key,
-    Body: body,
-    ContentType: 'text/csv; charset=utf-8',
-  }));
+  try {
+    await s3.send(new PutObjectCommand({
+      Bucket: rawSourceBucketName,
+      Key: source.key,
+      Body: body,
+      ContentType: 'text/csv; charset=utf-8',
+      IfNoneMatch: '*',
+    }));
+  } catch (error) {
+    if (errorName(error) !== 'PreconditionFailed') throw error;
+  }
   const rows = await classifySantanderRows(document);
   const previewedAt = new Date().toISOString();
   const saved = await startBankImport({
@@ -166,181 +147,17 @@ export const previewSantanderImport = async (body: string | undefined, owner: st
   return previewPayload(importId, document, saved.rows as readonly SantanderPreviewRow[]);
 };
 
-const claimAndCreateCsvEvent = async (
-  owner: string,
-  document: SantanderCsvDocument,
-  row: SantanderPreviewRow,
-  source: JsonObject,
-  appliedAt: string,
-  msi?: MsiPlan,
-): Promise<JsonObject | undefined> => {
-  const id = randomUUID();
-  const observationId = randomUUID();
-  const evidenceOccurredAt = `${row.occurredOn}T12:00:00.000Z`;
-  const occurredAt = msiPlanPurchaseOccurredAt(row.occurredOn, msi?.installments[0]?.month);
-  const purchase: JsonObject = {
-    id,
-    institution: 'santander_mx',
-    eventType: 'card_purchase',
+const claimAndCreateCsvEvent = async (record: BankImportRecord, row: SantanderPreviewRow, appliedAt: string,
+  msi?: MsiPlan): Promise<JsonObject | undefined> => createBankMovement({ record, row, event: {
+    id: randomUUID(), institution: 'santander_mx', eventType: 'card_purchase',
     status: msi?.needsScheduleCompletion ? 'needs_review' : 'accepted',
-    account: {
-      institution: 'santander_mx',
-      accountId: `santander_mx:${document.accountLastFour}`,
-      displayName: `Tarjeta terminada en ${document.accountLastFour}`,
-      lastFour: document.accountLastFour,
-    },
-    amount: {
-      amountMinor: msi?.principalMinor ?? row.amountMinor,
-      currency: 'MXN',
-    },
-    merchantRaw: row.merchantRaw,
-    bankTransactionId: row.transactionId,
-    occurredAt,
-    receivedAt: appliedAt,
-    ingestedAt: appliedAt,
-    source,
-    parserVersion: 'santander-mx-csv-v1',
-    parseWarnings: msi?.needsScheduleCompletion
-      ? ['MSI sin plan completo: confirma meses y cuota.']
-      : [],
-    captureSource: 'santander_csv',
-    captureSources: ['santander_csv'],
-    observationCount: 1,
-    primaryObservationId: observationId,
-    hasRawEmail: false,
-    ...(msi ? { msi } : {}),
-  };
-  const observation = {
-    id: observationId,
-    eventId: id,
-    captureSource: 'santander_csv',
-    observedAt: appliedAt,
-    reconciliationAt: evidenceOccurredAt,
-    institution: 'santander_mx',
-    eventType: 'card_purchase',
-    account: purchase.account,
-    amount: purchase.amount,
-    merchantRaw: row.merchantRaw,
-    occurredAt: evidenceOccurredAt,
-    source,
-    parserVersion: 'santander-mx-csv-v1',
-    parseWarnings: [],
-    rowNumber: row.rowNumber,
-    bankTransactionId: row.transactionId,
-  };
-  try {
-    await database.send(new TransactWriteCommand({ TransactItems: [
-      { Put: {
-        TableName: tableName,
-        Item: { ...rowClaimKey(row.identity), entityType: 'santander_csv_dedupe', identity: row.identity, owner, createdAt: appliedAt },
-        ConditionExpression: 'attribute_not_exists(PK)',
-      } },
-      { Put: {
-        TableName: tableName,
-        Item: {
-          PK: `EVENT#${id}`,
-          SK: 'EVENT',
-          GSI1PK: 'EVENTS',
-          GSI1SK: appliedAt,
-          GSI2PK: reconciliationPartition(purchase as Parameters<typeof reconciliationPartition>[0]),
-          GSI2SK: `${occurredAt}#${id}`,
-          ...eventMonthIndexKeys({ eventId: id, occurredAt, receivedAt: appliedAt }),
-          reconciliationAt: occurredAt,
-          entityType: 'observed_purchase',
-          payload: purchase,
-        },
-        ConditionExpression: 'attribute_not_exists(PK)',
-      } },
-      { Put: {
-        TableName: tableName,
-        Item: {
-          PK: `EVENT#${id}`,
-          SK: `OBSERVATION#${evidenceOccurredAt}#${observationId}`,
-          entityType: 'event_observation',
-          payload: observation,
-        },
-        ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
-      } },
-    ] }));
-    return purchase;
-  } catch (error) {
-    if (errorName(error) === 'TransactionCanceledException') return undefined;
-    throw error;
-  }
-};
-
-const claimAndLinkCsvEvidence = async (
-  owner: string,
-  eventId: string,
-  row: SantanderPreviewRow,
-  source: JsonObject,
-  appliedAt: string,
-): Promise<boolean> => {
-  const revisionId = randomUUID();
-  const observationId = randomUUID();
-  const reconciliationAt = `${row.occurredOn}T12:00:00.000Z`;
-  const reconciliation = { source, rowNumber: row.rowNumber, transactionId: row.transactionId, reconciledAt: appliedAt };
-  const observation = {
-    id: observationId,
-    eventId,
-    captureSource: 'santander_csv',
-    observedAt: appliedAt,
-    reconciliationAt,
-    institution: 'santander_mx',
-    eventType: 'card_purchase',
-    amount: { amountMinor: row.amountMinor, currency: 'MXN' },
-    merchantRaw: row.merchantRaw,
-    occurredAt: reconciliationAt,
-    source,
-    parserVersion: 'santander-mx-csv-v1',
-    parseWarnings: [],
-    rowNumber: row.rowNumber,
-    bankTransactionId: row.transactionId,
-  };
-  const revision = {
-    id: revisionId,
-    observedPurchaseId: eventId,
-    createdAt: appliedAt,
-    changedBy: owner,
-    reason: 'Conciliado con un CSV de movimientos Santander.',
-    changes: { reconciliation: { previous: null, next: reconciliation } },
-  };
-  try {
-    await database.send(new TransactWriteCommand({ TransactItems: [
-      { Put: {
-        TableName: tableName,
-        Item: { ...rowClaimKey(row.identity), entityType: 'santander_csv_dedupe', identity: row.identity, owner, createdAt: appliedAt, eventId },
-        ConditionExpression: 'attribute_not_exists(PK)',
-      } },
-      { Update: {
-        TableName: tableName,
-        Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
-        UpdateExpression: 'SET #payload.#count = if_not_exists(#payload.#count, :one) + :one, #payload.#sources = list_append(if_not_exists(#payload.#sources, :empty), :source), #payload.#reconciledAt = :reconciledAt, #payload.#bankTransactionId = :transactionId',
-        ConditionExpression: 'attribute_exists(PK)',
-        ExpressionAttributeNames: { '#payload': 'payload', '#count': 'observationCount', '#sources': 'captureSources', '#reconciledAt': 'reconciledAt', '#bankTransactionId': 'bankTransactionId' },
-        ExpressionAttributeValues: { ':one': 1, ':empty': [], ':source': ['santander_csv'], ':reconciledAt': appliedAt, ':transactionId': row.transactionId ?? row.identity },
-      } },
-      { Put: {
-        TableName: tableName,
-        Item: {
-          PK: `EVENT#${eventId}`,
-          SK: `OBSERVATION#${reconciliationAt}#${observationId}`,
-          entityType: 'event_observation',
-          payload: observation,
-        },
-        ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
-      } },
-      { Put: {
-        TableName: tableName,
-        Item: { PK: `EVENT#${eventId}`, SK: `REVISION#${appliedAt}#${revisionId}`, entityType: 'event_revision', payload: revision },
-      } },
-    ] }));
-    return true;
-  } catch (error) {
-    if (errorName(error) === 'TransactionCanceledException') return false;
-    throw error;
-  }
-};
+    account: { institution: 'santander_mx', accountId: `santander_mx:${record.accountLastFour}`,
+      displayName: `Tarjeta terminada en ${record.accountLastFour}`, lastFour: record.accountLastFour },
+    amount: { amountMinor: msi?.principalMinor ?? row.amountMinor, currency: 'MXN' }, merchantRaw: row.merchantRaw,
+    bankTransactionId: row.transactionId, occurredAt: msiPlanPurchaseOccurredAt(row.occurredOn, msi?.installments[0]?.month),
+    receivedAt: appliedAt, ingestedAt: appliedAt, source: record.source, parserVersion: 'santander-mx-csv-v1',
+    parseWarnings: msi?.needsScheduleCompletion ? ['MSI sin plan completo: confirma meses y cuota.'] : [], ...(msi ? { msi } : {}),
+  } });
 
 const parseImportDecisions = (body: string | undefined): Readonly<Record<string, SantanderReconciliationDecision>> => {
   if (!body) return {};
@@ -401,7 +218,8 @@ const parseImportDecisions = (body: string | undefined): Readonly<Record<string,
   }
 };
 
-const applySantanderImportInternal = async (importId: string, owner: string, decisionBody: string | undefined): Promise<JsonObject> => {
+const applySantanderImportInternal = async (importId: string, owner: string, decisionBody: string | undefined,
+  prepared: BankImportRecord, document: SantanderCsvDocument): Promise<JsonObject> => {
   if (!/^[a-f0-9]{64}$/.test(importId)) throw new InvalidSantanderCsvError('Identificador de importación inválido.');
   const stored = await readBankImport('santander_csv', importId, owner);
   const source = stored?.source;
@@ -412,14 +230,8 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
     return { importId, created: [], summary: stored.result, alreadyApplied: true };
   }
   if (stored.status !== 'previewed') throw new InvalidSantanderCsvError('Vuelve a seleccionar el CSV para revisar la importación.');
-  const object = await s3.send(new GetObjectCommand({ Bucket: source.bucket, Key: source.key }));
-  if (!object.Body) throw new Error('The Santander CSV source did not contain a body.');
-  const sourceBody = await object.Body.transformToString('utf8');
-  const actualHash = createHash('sha256').update(sourceBody, 'utf8').digest('hex');
-  if (actualHash !== importId) throw new Error('The stored Santander CSV hash does not match the import identifier.');
-
+  assertPreparedImport(stored, prepared);
   const decisions = parseImportDecisions(decisionBody);
-  const document = parseSantanderCsv(sourceBody);
   const rows = await classifySantanderRows(document);
   const previewRows = stored.rows as readonly SantanderPreviewRow[];
   const previewByIdentity = new Map(previewRows.map((row) => [row.identity, row]));
@@ -428,8 +240,9 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
   let linked = 0;
   let skipped = 0;
   let msiConfirmed = 0;
-  let eventsSnapshot = await allStoredEvents();
+  let eventsSnapshot = await bankLedgerEvents();
   for (const row of rows) {
+    bankRowPosition(stored, row);
     const previewRow = previewByIdentity.get(row.identity);
     const action = santanderApplyAction(row, previewRow, decisions[row.identity]);
     const msiEvidence: EvidenceLine | undefined = isSantanderMsiRow(row.merchantRaw) && row.amountMinor > 0
@@ -451,6 +264,7 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
           match.previous,
           match.next,
           'Cuota MSI confirmada con CSV Santander.',
+          bankPlanEvidence(stored, row, match.next),
         );
         if (updated) {
           msiConfirmed += 1;
@@ -472,6 +286,7 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
           existing.previous,
           existing.next,
           'Cuota MSI confirmada con CSV Santander.',
+          bankPlanEvidence(stored, row, existing.next),
         );
         if (updated) {
           msiConfirmed += 1;
@@ -491,7 +306,7 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
         cuotaMinor: action.cuotaMinor,
         startMonth: action.startMonth,
       });
-      const purchase = await claimAndCreateCsvEvent(owner, document, row, source, appliedAt, plan);
+      const purchase = await claimAndCreateCsvEvent(stored, row, appliedAt, plan);
       if (purchase) {
         created.push(toPublicEvent(purchase));
         eventsSnapshot = [...eventsSnapshot, purchase];
@@ -510,6 +325,7 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
             match.previous,
             match.next,
             'Cuota MSI confirmada con CSV Santander.',
+            bankPlanEvidence(stored, row, match.next),
           );
           if (updated) {
             msiConfirmed += 1;
@@ -521,7 +337,7 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
         skipped += 1;
         continue;
       }
-      const purchase = await claimAndCreateCsvEvent(owner, document, row, source, appliedAt);
+      const purchase = await claimAndCreateCsvEvent(stored, row, appliedAt);
       if (purchase) {
         created.push(toPublicEvent(purchase));
         eventsSnapshot = [...eventsSnapshot, purchase];
@@ -537,6 +353,7 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
             match.previous,
             match.next,
             'Cuota MSI confirmada con CSV Santander.',
+            bankPlanEvidence(stored, row, match.next),
           );
           if (updated) {
             msiConfirmed += 1;
@@ -544,7 +361,7 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
           }
         }
       }
-      if (await claimAndLinkCsvEvidence(owner, action.eventId, row, source, appliedAt)) linked += 1;
+      if (await linkBankEvidence({ record: stored, row, eventId: action.eventId, appliedAt, parserVersion: 'santander-mx-csv-v1', reason: 'Conciliado con un CSV de movimientos Santander.' })) linked += 1;
       else skipped += 1;
     } else {
       skipped += 1;
@@ -558,5 +375,17 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
   };
 };
 
-export const applySantanderImport = (...args: Parameters<typeof applySantanderImportInternal>): ReturnType<typeof applySantanderImportInternal> =>
-  withApplicationTransaction(() => applySantanderImportInternal(...args));
+export const applySantanderImport = async (importId: string, owner: string, decisionBody: string | undefined): Promise<JsonObject> => {
+  if (!/^[a-f0-9]{64}$/.test(importId)) throw new InvalidSantanderCsvError('Identificador de importación inválido.');
+  const prepared = await readBankImport('santander_csv', importId, owner);
+  if (!prepared) throw new InvalidSantanderCsvError('La previsualización ya no está disponible. Vuelve a seleccionar el CSV.');
+  if (prepared.status === 'applied') return { importId, created: [], summary: prepared.result, alreadyApplied: true };
+  if (prepared.status !== 'previewed') throw new InvalidSantanderCsvError('Vuelve a seleccionar el CSV para revisar la importación.');
+  const object = await s3.send(new GetObjectCommand({ Bucket: prepared.source.bucket, Key: prepared.source.key }));
+  if (!object.Body) throw new Error('The Santander CSV source did not contain a body.');
+  const sourceBody = await object.Body.transformToString('utf8');
+  if (createHash('sha256').update(sourceBody, 'utf8').digest('hex') !== importId)
+    throw new Error('The stored Santander CSV hash does not match the import identifier.');
+  const document = parseSantanderCsv(sourceBody);
+  return withNativeTransaction(() => applySantanderImportInternal(importId, owner, decisionBody, prepared, document));
+};

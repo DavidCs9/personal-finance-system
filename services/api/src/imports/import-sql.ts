@@ -1,4 +1,4 @@
-import { applicationStoreClient,withApplicationTransaction } from '@finance/ledger/dsql-store';
+import { applicationStoreClient,withNativeTransaction } from '@finance/ledger/dsql-store';
 import { readerPool,type ReadSqlClient } from '../events/sql-reads.js';
 import type { StatementCandidate,StatementPreviewRow,StatementRowStatus,StatementProvider } from './statement-reconciliation.js';
 
@@ -124,7 +124,7 @@ const replaceRows=async(client:ReadSqlClient,record:BankImportRecord,candidates:
     [record.kind,record.importId,JSON.stringify(candidates)]);
 };
 
-export const startBankImport=(record:BankImportRecord):Promise<BankImportRecord>=>withApplicationTransaction(async()=>{
+export const startBankImport=(record:BankImportRecord):Promise<BankImportRecord>=>withNativeTransaction(async()=>{
   const client=applicationStoreClient();const existing=await readBankImport(record.kind,record.importId,record.owner,client);
   if(existing?.status==='applied' || existing?.status==='processing' && record.status==='processing')return existing;
   const candidates=await prepareRows(client,record);
@@ -132,7 +132,7 @@ export const startBankImport=(record:BankImportRecord):Promise<BankImportRecord>
   return (await readBankImport(record.kind,record.importId,record.owner,client))!;
 });
 export const saveStatementPreview=(kind:BankImportKind,importId:string,owner:string,jobId:string,preview:Pick<BankImportRecord,
-  'accountLastFour'|'product'|'period'|'rows'|'extractionKey'|'textractAnswers'>):Promise<BankImportRecord>=>withApplicationTransaction(async()=>{
+  'accountLastFour'|'product'|'period'|'rows'|'extractionKey'|'textractAnswers'>):Promise<BankImportRecord>=>withNativeTransaction(async()=>{
   const client=applicationStoreClient();const existing=await readBankImport(kind,importId,owner,client);if(!existing)throw changed();
   if(existing.status!=='processing' || existing.textractJobId!==jobId)return existing;
   const record={...existing,...preview,status:'previewed' as const,previewedAt:new Date().toISOString(),errorMessage:undefined};
@@ -140,13 +140,13 @@ export const saveStatementPreview=(kind:BankImportKind,importId:string,owner:str
   await putHeader(client,record);await replaceRows(client,record,candidates);return record;
 });
 export const failBankImport=(kind:BankImportKind,importId:string,owner:string,jobId:string,errorMessage:string,
-  evidence:Pick<BankImportRecord,'extractionKey'|'textractAnswers'>={}):Promise<BankImportRecord>=>withApplicationTransaction(async()=>{
+  evidence:Pick<BankImportRecord,'extractionKey'|'textractAnswers'>={}):Promise<BankImportRecord>=>withNativeTransaction(async()=>{
   const client=applicationStoreClient();const existing=await readBankImport(kind,importId,owner,client);if(!existing)throw changed();
   if(existing.status!=='processing' || existing.textractJobId!==jobId)return existing;
   const record={...existing,...evidence,status:'failed' as const,errorMessage};await putHeader(client,record);return record;
 });
 export const completeBankImport=(kind:BankImportKind,importId:string,owner:string,appliedAt:string,result:BankImportResult):Promise<BankImportRecord>=>
-  withApplicationTransaction(async()=>{
+  withNativeTransaction(async()=>{
     const client=applicationStoreClient();const existing=await readBankImport(kind,importId,owner,client);if(!existing)throw changed();
     if(existing.status==='applied')return existing;if(existing.status!=='previewed')throw changed();
     const record={...existing,status:'applied' as const,appliedAt,result};await putHeader(client,record);return record;

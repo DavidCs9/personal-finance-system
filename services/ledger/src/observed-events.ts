@@ -32,7 +32,3 @@ export interface SaveObservedEventResult {
   readonly reconciled: boolean;
   readonly created: boolean;
 }
-
-/** Retained only until statement/CSV financial writers move to native SQL. */
-export const reconciliationPartition = (event: Pick<ObservedEventInput, 'institution' | 'eventType' | 'amount'>): string =>
-  `RECON#${event.institution}#${event.eventType}#${event.amount.currency}#${event.amount.amountMinor}`;

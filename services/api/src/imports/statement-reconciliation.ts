@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { merchantsMatch as santanderMerchantsMatch } from "./santander-csv.js";
 import { amexMerchantsMatch, canCreateMsiPlanFromEvidence } from "./msi-reconciliation.js";
 import type { StatementProvider } from "./textract-document.js";
@@ -64,14 +63,6 @@ export type StatementApplyAction =
     }
   | { readonly kind: "skip" };
 
-export const statementClaimKey = (
-  provider: StatementProvider,
-  identity: string,
-): { readonly PK: string; readonly SK: string } => ({
-  PK: `DEDUPE#${provider === "amex" ? "AMEX_STATEMENT" : "SANTANDER_STATEMENT"}#${createHash("sha256").update(identity).digest("hex")}`,
-  SK: "CLAIM",
-});
-
 export const statementMerchantsMatch = (
   provider: StatementProvider,
   left: string,
@@ -104,7 +95,7 @@ export const classifyPurchaseCharge = (input: {
     candidateEventIds: [] as string[],
     candidates: [] as StatementCandidate[],
   };
-  if (input.claimed.has(statementClaimKey(input.provider, input.charge.identity).PK)) {
+  if (input.claimed.has(input.charge.identity)) {
     return { ...base, status: "duplicate" };
   }
   if (input.charge.credit || input.charge.amountMinor <= 0) {
