@@ -3,6 +3,7 @@ import { createPool } from './connection.js';
 import { OlbiaSqlStore, authorityFrom, withStoreClient } from './store.js';
 import { canonicalJson, type SourceItem } from './model.js';
 import { verifyKeyDetails } from './verification.js';
+import { randomUUID } from 'node:crypto';
 
 // Internal IAM-only deployed operator. Product identities cannot update authority.
 // Activation is allowed only by the approved cutover rollout's environment flag.
@@ -57,6 +58,22 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
         if (child?.id !== 'sql-verification' || Number(child.amount_mxn_minor) !== 1) throw new Error('Native payment replacement failed');
         await client.query('DELETE FROM olbia.planned_payments WHERE month=$1', [plan.month]);
         if (!(await client.query('SELECT month FROM olbia.month_plans WHERE month=$1', [plan.month])).rows.length) throw new Error('Empty plan parent lost');
+        const receipt = (await client.query('SELECT uuid FROM olbia.payslips ORDER BY uuid LIMIT 1')).rows[0];
+        if (!receipt) throw new Error('No native payslip for smoke');
+        const smokeUuid = randomUUID();
+        const copyReceipt = `INSERT INTO olbia.payslips (uuid,owner,paid_on,payroll_type,total_mxn_minor,perceptions_mxn_minor,
+          deductions_mxn_minor,other_payments_mxn_minor,employer_name,pay_period_start,pay_period_end,ingested_at,
+          evidence_bucket,evidence_key,evidence_sha256,evidence_content_type)
+          SELECT $1::uuid,owner,paid_on,payroll_type,total_mxn_minor,perceptions_mxn_minor,deductions_mxn_minor,
+            other_payments_mxn_minor,employer_name,pay_period_start,pay_period_end,ingested_at,evidence_bucket,evidence_key,
+            evidence_sha256,evidence_content_type FROM olbia.payslips WHERE uuid=$2::uuid
+          ON CONFLICT (uuid) DO NOTHING RETURNING uuid`;
+        if ((await client.query(copyReceipt,[smokeUuid,receipt.uuid])).rows[0]?.uuid !== smokeUuid) throw new Error('Native payslip insertion failed');
+        if ((await client.query(copyReceipt,[smokeUuid,receipt.uuid])).rows.length) throw new Error('Duplicate native payslip changed');
+        await client.query(`INSERT INTO olbia.payslip_lines (payslip_uuid,position,sat_kind,sat_type,code,concept,amount_mxn_minor)
+          VALUES ($1::uuid,0,'otro_pago','002','','',0)`,[smokeUuid]);
+        const zeroLine = (await client.query('SELECT amount_mxn_minor FROM olbia.payslip_lines WHERE payslip_uuid=$1::uuid',[smokeUuid])).rows[0];
+        if (Number(zeroLine?.amount_mxn_minor) !== 0) throw new Error('Native zero payroll line lost');
         const raw=(await client.query("SELECT source_item FROM olbia.projection_state WHERE source_sk='EVENT' AND deleted=false ORDER BY source_pk LIMIT 1")).rows[0]?.source_item as SourceItem|undefined;
         if(!raw) throw new Error('No retained movement for smoke');
         const key={PK:raw.PK,SK:raw.SK};const store=new OlbiaSqlStore(pool,process.env.METADATA_TABLE_NAME!);
@@ -78,7 +95,7 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
         });
         verified=true;throw rollback;
       });} catch(error) {if(error!==rollback) throw error;}
-      return {verified,rolledBack:true,nativeCategories:true,nativeCards:true,nativeMonthPlans:true};
+      return {verified,rolledBack:true,nativeCategories:true,nativeCards:true,nativeMonthPlans:true,nativePayroll:true};
     }
     if(!['pause','activate'].includes(event.action)) throw new Error('Unknown operation');
     if(event.action==='activate' && process.env.OLBIA_ALLOW_SQL_ACTIVATION!=='true') throw new Error('SQL activation requires the approved cutover deployment');

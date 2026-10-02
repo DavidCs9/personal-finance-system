@@ -13,7 +13,7 @@ import { summarizeMonthFeed } from '../months/summary.js';
 import { getMonthlyPlan } from '../months/service.js';
 import { readSourceWealthInputs, readSqlWealthInputs, type WealthInputsReader } from '../wealth/sql-reads.js';
 import { getWealthOverviewsAsOf } from '../wealth/service.js';
-import { listPayslipsForYearDynamo } from '../imports/cfdi-nomina-flow.js';
+import { listPayslipsForYear } from '../imports/cfdi-nomina-flow.js';
 import { readSqlPayslipsForYear } from '../months/sql-reads.js';
 import { buildMonthlyCloseFacts } from '../reports/monthly-close.js';
 import { fallbackMonthlyCloseAnalysis } from '../reports/monthly-close-analysis.js';
@@ -84,9 +84,9 @@ export const verifyDomainReads = async (owner: string, movements: readonly JsonO
   const months = [...new Set([...financialMonths, '2026-02', '2028-02'])].sort();
   const years = [...new Set(months.flatMap(month => [month.slice(0, 4), addCalendarMonths(month, -3).slice(0, 4)]))];
   const payroll = new Map<string, { source: readonly PayslipSummary[]; sql: readonly PayslipSummary[] }>();
-  for (const year of years) payroll.set(year, { source: await listPayslipsForYearDynamo(owner, year), sql: await readSqlPayslipsForYear(owner, year, client) });
-  const sourcePayroll: typeof listPayslipsForYearDynamo = async (_owner, year) => payroll.get(year)?.source ?? [];
-  const sqlPayroll: typeof listPayslipsForYearDynamo = async (_owner, year) => payroll.get(year)?.sql ?? [];
+  for (const year of years) payroll.set(year, { source: await listPayslipsForYear(owner, year), sql: await readSqlPayslipsForYear(owner, year, client) });
+  const sourcePayroll: typeof listPayslipsForYear = async (_owner, year) => payroll.get(year)?.source ?? [];
+  const sqlPayroll: typeof listPayslipsForYear = async (_owner, year) => payroll.get(year)?.sql ?? [];
   let reports = 0, dailyMessages = 0, cycleDays = 0, cycleMessages = 0, assistantChecks = 0;
   const url = 'https://finance.castrodavid.dev/';
   for (const month of months) {

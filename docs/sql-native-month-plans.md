@@ -10,7 +10,7 @@ A missing month inherits the latest stored parent on or before the requested mon
 
 Saving updates only the chosen parent and replaces its complete child list inside the existing application transaction/barrier. Payment IDs and order are preserved, including reorderings of existing IDs; earlier months remain unchanged. Saving an empty list retains its parent. Native reads share the current write transaction so the returned response sees the saved state. Card/payment amounts and all payroll-derived results retain their existing public semantics.
 
-Live plan service operations no longer use SDK/table arguments, prefixed keys, command envelopes or JSON payloads. Plan SQL errors propagate. Payroll's temporary comparison mode remains scoped to payroll; it is not a plan fallback.
+Live plan service operations no longer use SDK/table arguments, prefixed keys, command envelopes or JSON payloads. Plan SQL errors propagate. Payroll also uses one native SQL authority after its receipt/line normalization; the temporary planning comparison flag is removed. See [native payroll](sql-native-payroll.md).
 
 ## Staged migration and recovery
 

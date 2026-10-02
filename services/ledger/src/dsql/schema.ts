@@ -89,7 +89,24 @@ export const SCHEMA_STATEMENTS = [
     due_day integer NOT NULL CHECK (due_day BETWEEN 1 AND 31),
     sort_order integer NOT NULL CHECK (sort_order BETWEEN 0 AND 99),
     PRIMARY KEY (month,id), CONSTRAINT planned_payments_order_key UNIQUE (month,sort_order))`,
-
+  `CREATE TABLE IF NOT EXISTS olbia.payslips (
+    uuid uuid PRIMARY KEY, owner text NOT NULL CHECK (length(owner)>0),
+    paid_on date NOT NULL, payroll_type text NOT NULL CHECK (length(payroll_type)>0),
+    total_mxn_minor bigint NOT NULL CHECK (total_mxn_minor BETWEEN 0 AND 9007199254740991),
+    perceptions_mxn_minor bigint NOT NULL CHECK (perceptions_mxn_minor BETWEEN 0 AND 9007199254740991),
+    deductions_mxn_minor bigint NOT NULL CHECK (deductions_mxn_minor BETWEEN 0 AND 9007199254740991),
+    other_payments_mxn_minor bigint NOT NULL CHECK (other_payments_mxn_minor BETWEEN 0 AND 9007199254740991),
+    employer_name text, pay_period_start date, pay_period_end date, ingested_at timestamptz NOT NULL,
+    evidence_bucket text NOT NULL CHECK (length(evidence_bucket)>0), evidence_key text NOT NULL CHECK (length(evidence_key)>0),
+    evidence_sha256 text NOT NULL CHECK (evidence_sha256 ~ '^[0-9a-f]{64}$'),
+    evidence_content_type text NOT NULL CHECK (length(evidence_content_type)>0))`,
+  `CREATE TABLE IF NOT EXISTS olbia.payslip_lines (
+    payslip_uuid uuid NOT NULL CONSTRAINT payslip_lines_receipt_fk REFERENCES olbia.payslips(uuid),
+    position integer NOT NULL CHECK (position BETWEEN 0 AND 2997),
+    sat_kind text NOT NULL CHECK (sat_kind IN ('percepcion','deduccion','otro_pago')),
+    sat_type text NOT NULL CHECK (length(sat_type)>0), code text NOT NULL, concept text NOT NULL,
+    amount_mxn_minor bigint NOT NULL CHECK (amount_mxn_minor BETWEEN 0 AND 9007199254740991),
+    PRIMARY KEY (payslip_uuid,position))`,
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
@@ -111,11 +128,13 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   if (!options.transactionPool) throw new BootstrapFailure('card-copy-transaction-pool');
   await migrateCardProfiles(options.transactionPool);
   await migrateMonthPlans(options.transactionPool);
+  await migratePayroll(options.transactionPool);
   await ensureCardLiabilityRelationships({ query: (statement, params) => query('card-relationships', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   await ensureMovementCategoryForeignKey({ query: (statement, params) => query('category-fk', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   for (const [name, table, columns] of [
     ['movements_month_idx', 'movements', 'spend_month,id'],
     ['installments_month_idx', 'msi_installments', 'month,movement_id'],
+    ['payslips_paid_on_idx', 'payslips', 'paid_on,uuid'],
   ]) {
     await query(`index-create-${name}`, `CREATE INDEX ASYNC IF NOT EXISTS ${name} ON olbia.${table} (${columns})`);
     const deadline = now() + (options.indexWaitMs ?? 180_000);
@@ -138,6 +157,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('read-grant', 'GRANT SELECT ON olbia.schema_migrations,olbia.movement_months,olbia.runtime_state TO olbia_projector');
   await query('catalog-projector-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_projector');
   await query('plans-projector-read', 'GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO olbia_projector');
+  await query('payroll-projector-read', 'GRANT SELECT ON olbia.payslips,olbia.payslip_lines TO olbia_projector');
   await query('cards-projector-read', 'GRANT SELECT ON olbia.card_profiles TO olbia_projector');
   await query('rules-projector-read', 'GRANT SELECT ON olbia.merchant_rules TO olbia_projector');
   await query('projector-barrier-grant','GRANT SELECT,UPDATE ON olbia.application_barrier TO olbia_projector');
@@ -152,6 +172,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments', 'monthly_plans', 'payroll', 'cards', 'wealth_snapshots', 'wealth_versions', 'liability_snapshots', 'liability_versions', 'categories', 'merchant_category_rules', 'ingestion_exceptions', 'import_records', 'push_subscriptions', 'assistant_threads'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
     await query('catalog-reader-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_reader');
     await query('plans-reader-read', 'GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO olbia_reader');
+    await query('payroll-reader-read', 'GRANT SELECT ON olbia.payslips,olbia.payslip_lines TO olbia_reader');
     await query('cards-reader-read', 'GRANT SELECT ON olbia.card_profiles TO olbia_reader');
     await query('rules-reader-read', 'GRANT SELECT ON olbia.merchant_rules TO olbia_reader');
     for (const arn of options.readerRoleArns) {
@@ -183,6 +204,8 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (writer) await query(`view-${role}`,`GRANT SELECT ON olbia.movement_months TO ${role}`);
     await query(`catalog-read-${role}`, `GRANT SELECT ON olbia.spend_categories TO ${role}`);
     await query(`plans-read-${role}`, `GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO ${role}`);
+    await query(`payroll-read-${role}`, `GRANT SELECT ON olbia.payslips,olbia.payslip_lines TO ${role}`);
+    if (writer) await query(`payroll-insert-${role}`, `GRANT INSERT ON olbia.payslips,olbia.payslip_lines TO ${role}`);
     if (writer) {
       await query(`plans-write-${role}`, `GRANT INSERT,UPDATE ON olbia.month_plans TO ${role}`);
       await query(`payments-write-${role}`, `GRANT INSERT,DELETE ON olbia.planned_payments TO ${role}`);
@@ -279,4 +302,47 @@ export const migrateMonthPlans = async (pool: TransactionPool): Promise<void> =>
       await client.query('INSERT INTO olbia.schema_migrations VALUES (11,CURRENT_TIMESTAMP)');
     });
   } catch (error) { throw new BootstrapFailure('month-plan-copy', error); }
+};
+
+/** Immutable CFDI UUID identity replaces the separate live document claim. */
+export const migratePayroll = async (pool: TransactionPool): Promise<void> => {
+  try {
+    await pool.transaction(async client => {
+      await client.query("UPDATE olbia.application_barrier SET generation=generation+1 WHERE id='storage'");
+      if ((await client.query('SELECT version FROM olbia.schema_migrations WHERE version=12')).rows.length) return;
+      const malformed = await client.query(`SELECT uuid FROM olbia.payroll WHERE
+        jsonb_typeof(payload->'lines') IS DISTINCT FROM 'array' OR source->>'kind' IS DISTINCT FROM 'cfdi_nomina' LIMIT 1`);
+      if (malformed.rows.length) throw new Error('Invalid retained payroll evidence');
+      const claims = await client.query(`SELECT receipt.uuid FROM olbia.payroll receipt LEFT JOIN olbia.dedupe_claims claim
+        ON claim.source_pk='DEDUPE#CFDI_NOMINA#'||receipt.uuid AND claim.source_sk='CLAIM' WHERE claim.source_pk IS NULL
+        UNION ALL SELECT claim.source_pk FROM olbia.dedupe_claims claim LEFT JOIN olbia.payroll receipt
+        ON receipt.uuid=claim.source_item->>'uuid' WHERE claim.source_pk LIKE 'DEDUPE#CFDI_NOMINA#%' AND receipt.uuid IS NULL`);
+      if (claims.rows.length) throw new Error('Retained CFDI claim membership differs');
+      const count = Number((await client.query(`SELECT count(*)+COALESCE(sum(jsonb_array_length(payload->'lines')),0)+2 AS count FROM olbia.payroll`)).rows[0]?.count);
+      if (!Number.isSafeInteger(count) || count > 3000) throw new Error('Payroll copy exceeds native transaction budget');
+      const classification = await client.query(`SELECT receipt.uuid FROM olbia.payroll receipt CROSS JOIN LATERAL
+        jsonb_array_elements(receipt.payload->'lines') AS line(item) WHERE
+        line.item->>'group' IS DISTINCT FROM CASE
+          WHEN (line.item->>'kind'='deduccion' AND line.item->>'tipo'='004') OR
+            (line.item->>'kind'='percepcion' AND line.item->>'tipo'='005') THEN 'fondo'
+          WHEN line.item->>'kind'='deduccion' AND line.item->>'tipo'='002' THEN 'isr'
+          WHEN line.item->>'kind'='deduccion' AND line.item->>'tipo'='001' THEN 'imss' ELSE 'otro' END
+        OR line.item->'notCashInBank' IS DISTINCT FROM CASE WHEN line.item->>'kind'='percepcion' AND line.item->>'tipo'='005'
+          THEN 'true'::jsonb ELSE NULL::jsonb END LIMIT 1`);
+      if (classification.rows.length) throw new Error('Retained payroll classification differs');
+      await client.query(`INSERT INTO olbia.payslips (uuid,owner,paid_on,payroll_type,total_mxn_minor,perceptions_mxn_minor,
+        deductions_mxn_minor,other_payments_mxn_minor,employer_name,pay_period_start,pay_period_end,ingested_at,
+        evidence_bucket,evidence_key,evidence_sha256,evidence_content_type)
+        SELECT uuid::uuid,owner,fecha_pago,payload->>'tipoNomina',(payload->>'totalMinor')::bigint,
+          (payload->>'totalPercepcionesMinor')::bigint,(payload->>'totalDeduccionesMinor')::bigint,
+          (payload->>'totalOtrosPagosMinor')::bigint,payload->>'employerName',(payload->>'fechaInicialPago')::date,
+          (payload->>'fechaFinalPago')::date,ingested_at,source->>'bucket',source->>'key',source->>'sha256',source->>'contentType'
+        FROM olbia.payroll`);
+      await client.query(`INSERT INTO olbia.payslip_lines (payslip_uuid,position,sat_kind,sat_type,code,concept,amount_mxn_minor)
+        SELECT receipt.uuid::uuid,(line.position-1)::integer,line.item->>'kind',line.item->>'tipo',
+          line.item->>'clave',line.item->>'concepto',(line.item->>'amountMinor')::bigint FROM olbia.payroll receipt
+        CROSS JOIN LATERAL jsonb_array_elements(receipt.payload->'lines') WITH ORDINALITY AS line(item,position)`);
+      await client.query('INSERT INTO olbia.schema_migrations VALUES (12,CURRENT_TIMESTAMP)');
+    });
+  } catch (error) { throw new BootstrapFailure('payroll-copy',error); }
 };
