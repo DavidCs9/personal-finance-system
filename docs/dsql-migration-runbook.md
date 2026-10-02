@@ -1,12 +1,6 @@
 # DSQL: proyección, verificación y recuperación
 
-The completed [operational-state phase](dsql-operational-state.md) deployed schema/transformer 4 and bootstrap 7; eligible display-only reads now use guarded-sql after separate shadow #164 and promotion #165 workflows both passed full independent verification with zero mismatches. Its exact inventory and write-phase prerequisites supersede older remaining-state lists below. Existing financial flags remain guarded; DynamoDB owns all writes, decisions and freshness checks. Final production evidence is recorded in the [dated autonomous run](autonomous-runs/2026-10-01-dsql-operational-state.md).
-
-The completed [domain-read phase](dsql-domain-reads.md) enables guarded SQL for read-only categories/rules, standalone cards/cycles and worker/assistant movement consumers after separate verified shadow and promotion PRs. Its consumer inventory supersedes earlier remaining-read lists; all writes, authoritative decisions and strong freshness references remain in DynamoDB. Production evidence and rollback are recorded there.
-
-La primera fase de [dsql-migration-plan.md](dsql-migration-plan.md) implementó carga histórica y comparación por registro. DynamoDB continúa como autoridad de escrituras. Las fases de [lecturas de movimientos](dsql-read-migration.md) y [planes mensuales/nómina](dsql-planning-payroll.md) añaden comparación y promoción reversible a SQL con guardia de frescura. La fase de [Patrimonio](dsql-patrimonio.md) proyecta sus canónicos y auditoría con schema/transformer 3 y bootstrap 5; pasó la verificación independiente de contenido/finanzas/evidencia en sombra y nuevamente en guarded-sql, activado por PR separada con el mismo guard y rollback. No se elimina ni reemplaza la tabla ni se cambian sus índices, stream `NEW_IMAGE`, TTL, cifrado, PITR de 35 días o retención. No hay cambios de UI ni promoción de escrituras a DSQL.
-
-La [referencia del esquema DSQL](dsql-schema.md) documenta las quince tablas de dominio y dos operativas, columnas y claves, la vista, los índices, el alcance verificado y los datos que todavía permanecen fuera de SQL. La carga productiva de esta proyección pasó paridad; eso no significa que todos los registros de DynamoDB estén migrados.
+Current authority: SQL was activated on 2026-10-01 through the reviewed [write cutover](dsql-write-cutover.md). All application reads/writes and authoritative consumers use SQL; there is no DynamoDB fallback. The source table remains retained with PITR and a dated native backup, and native SQL backups are enabled. The earlier phases and checklists below are historical context; their DDB-authority, continuous-replication and display-mode rollback instructions are superseded. The [write-cutover run record](autonomous-runs/2026-10-01-dsql-write-cutover.md) records the actual production verification and accepted one-day event gap.
 
 ## Alcance e inventario
 
@@ -106,7 +100,7 @@ Bootstrap versión 2 informa la etapa y un código permitido, por ejemplo `admin
 
 ## Operación y recuperación
 
-Para diagnóstico local autorizado: `aws login` y verificar `aws sts get-caller-identity` inmediatamente antes de cada operación de producción. Usar la cuenta `225989371926`, región `us-east-2`. No usar llaves permanentes ni publicar reportes/payloads privados en Git o logs públicos.
+Para diagnóstico local autorizado: usar el perfil `default` de `codex-local-admin`, cuenta `225989371926`, región `us-east-2`, conforme a la decisión vigente en `AGENTS.md`. Verificar `aws sts get-caller-identity` inmediatamente antes de cada operación de producción. Mantener las credenciales sólo en el archivo local de AWS; no publicar llaves, reportes ni payloads privados en Git o logs públicos. No requiere `aws login`.
 
 Leer outputs y revisar mapping con APIs de sólo lectura:
 
