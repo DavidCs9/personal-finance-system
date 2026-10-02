@@ -123,7 +123,9 @@ describe('remaining domain SQL reads', () => {
     await sql.query('ALTER TABLE olbia.liability_versions ADD CONSTRAINT liability_versions_card_fk FOREIGN KEY (card_id) REFERENCES olbia.card_profiles(id)');
   });
   it('shares one selected movement feed in assistant comparison and four-month report on SQL failure; cards clamp to February once selected', async () => {
-    await seed(); const query = vi.spyOn(sql, 'query').mockRejectedValue(new Error('SQL unavailable'));
+    await seed(); const originalQuery = sql.query.bind(sql);
+    const query = vi.spyOn(sql, 'query').mockImplementation((statement, values) => statement === 'SELECT version FROM olbia.schema_migrations WHERE version=14'
+      ? originalQuery(statement, values) : Promise.reject(new Error('SQL unavailable')));
     await expect(compareMonths('2026-10', '2026-09')).rejects.toThrow('SQL unavailable');
     expect(query.mock.calls.filter(([statement]) => statement === readers.monthReadStatement)).toHaveLength(1);
     query.mockClear(); await expect(buildMonthlyCloseFacts('owner', '2026-10', new Date('2026-11-01T13:00:00Z'))).rejects.toThrow('SQL unavailable');

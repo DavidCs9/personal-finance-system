@@ -1,3 +1,4 @@
+import { assertLegacyLedgerReadAvailable } from './legacy-read-guard.js';
 import { paginateQuery, paginateScan } from '@aws-sdk/lib-dynamodb';
 import { database, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
@@ -6,6 +7,7 @@ import { toPublicEvent } from './public-event.js';
 
 /** Temporary cross-engine freshness guard; strong base-table reads include new/moved/deleted items missed by GSIs. */
 export const readCurrentMovementPayloads = async (): Promise<JsonObject[]> => {
+  await assertLegacyLedgerReadAvailable();
   const payloads: JsonObject[] = [];
   for await (const page of paginateScan({ client: database }, {
     TableName: tableName, ConsistentRead: true,
@@ -18,6 +20,7 @@ export const readSourceFeed = async (months: readonly string[]): Promise<EventFe
   feedFromPayloads(months, await readCurrentMovementPayloads());
 
 export const readSourceDetail = async (eventId: string): Promise<JsonObject | undefined> => {
+  await assertLegacyLedgerReadAvailable();
   const items: JsonObject[] = [];
   for await (const page of paginateQuery({ client: database }, {
     TableName: tableName, ConsistentRead: true, ScanIndexForward: false,
