@@ -112,3 +112,12 @@ print(len(imports))
     expect(actions).not.toContain('dynamodb:UpdateItem');
   });
 });
+
+it('grants native encrypted backup both decrypt and data-key generation only on the existing key',()=>{
+  const keyId=Object.keys(migrated.findResources('AWS::KMS::Key'))[0];
+  const policy=Object.entries(migrated.findResources('AWS::IAM::Policy')).find(([id])=>id.includes('DsqlProjectionDeployRolePolicy'))![1];
+  const statements=policy.Properties.PolicyDocument.Statement;
+  const cryptographic=statements.find((statement:{Action:string|string[]})=>(Array.isArray(statement.Action)?statement.Action:[statement.Action]).includes('kms:GenerateDataKey*'));
+  expect(cryptographic.Action).toContain('kms:Decrypt');
+  expect(cryptographic.Resource).toEqual({'Fn::GetAtt':[keyId,'Arn']});
+});

@@ -1,5 +1,7 @@
 # DSQL monthly planning and payroll
 
+For current write authority and recovery, see [the coordinated SQL cutover](dsql-write-cutover.md). The phase evidence below records the earlier projection/read rollout.
+
 The completed [domain-read phase](dsql-domain-reads.md) enables guarded SQL for read-only categories/rules, standalone cards/cycles and worker/assistant movement consumers after separate verified shadow and promotion PRs. Its consumer inventory supersedes earlier remaining-read lists; all writes, authoritative decisions and strong freshness references remain in DynamoDB. Production evidence and rollback are recorded there.
 
 This phase extends the existing projection to `USER#owner / MONTH#YYYY-MM` and `USER#owner / PAYROLL#YYYY-MM#UUID`. DynamoDB remains the authority for every plan save, CFDI import and dedupe claim. Original XML files remain in S3. At the completion of this phase, Patrimonio snapshots, liabilities and audit versions remained outside SQL; the subsequent [Patrimonio phase](dsql-patrimonio.md) has now projected them and deployed independently verified guarded readers.

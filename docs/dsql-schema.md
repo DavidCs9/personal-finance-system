@@ -1,5 +1,7 @@
 # Aurora DSQL schema reference
 
+For current write authority and recovery, see [the coordinated SQL cutover](dsql-write-cutover.md). The phase evidence below records the earlier projection/read rollout.
+
 ## What is in DSQL now?
 
 The database contains the **ledger, planning, payroll, Patrimonio and retained operational projection**, not every application record. Schema version 4 has twenty-four entity tables, two projection bookkeeping tables and one view under `olbia` in the regional DSQL cluster in `us-east-2`. The [planning/payroll rollout](dsql-planning-payroll.md) extends the original nine-table ledger projection additively. [Patrimonio](dsql-patrimonio.md) adds four canonical/audit tables and the card envelope. The [shadow rollout](https://github.com/DavidCs9/personal-finance-system/actions/runs/36882229551) passed full retained-content/financial/evidence verification; the separate [guarded rollout](https://github.com/DavidCs9/personal-finance-system/actions/runs/36884373746) also passed and is active.

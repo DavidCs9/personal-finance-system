@@ -1,5 +1,7 @@
 # DSQL movement reads
 
+For current write authority and recovery, see [the coordinated SQL cutover](dsql-write-cutover.md). The phase evidence below records the earlier projection/read rollout.
+
 The completed [domain-read phase](dsql-domain-reads.md) enables guarded SQL for read-only categories/rules, standalone cards/cycles and worker/assistant movement consumers after separate verified shadow and promotion PRs. Its consumer inventory supersedes earlier remaining-read lists; all writes, authoritative decisions and strong freshness references remain in DynamoDB. Production evidence and rollback are recorded there.
 
 This phase moves movement feeds and details to SQL while DynamoDB remains the write authority. It preserves existing public payloads, Chihuahua month boundaries, Mi parte (including zero), MSI calculation and ordering, movement states, revision history and observation evidence. Monthly summaries reuse the existing financial calculation with the selected feed; the subsequent [planning/payroll phase](dsql-planning-payroll.md) adds their own guarded SQL readers. Original evidence stays in S3.

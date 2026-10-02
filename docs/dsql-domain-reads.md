@@ -1,5 +1,7 @@
 # DSQL remaining domain reads
 
+For current write authority and recovery, see [the coordinated SQL cutover](dsql-write-cutover.md). The phase evidence below records the earlier projection/read rollout.
+
 This phase completes read-only category/rule, standalone card/cycle and worker/assistant movement consumers. Shadow deployed in PR #161 and independent production parity passed; this separate promotion selects guarded SQL after freshness equality. DynamoDB remains every domain write authority and the strong freshness reference. Schema/transformer stays version 3; bootstrap provider 6 extends SELECT grants on two existing tables and associates the existing card-cycle runtime. No new table, projection, index, source resource or financial algorithm is needed.
 
 ## Consumer inventory and source boundaries
