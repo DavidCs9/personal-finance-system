@@ -1,6 +1,7 @@
-import { withApplicationTransaction } from '@finance/ledger/dsql-store';
+import { applicationStoreClient, withNativeTransaction } from '@finance/ledger/dsql-store';
 import { randomUUID } from 'node:crypto';
-import { PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { insertLedgerRevision, readLedgerDetail, replaceInstallmentPlan, replaceMovementTags,
+  setMovementPersonalAmount, setMovementStatus, type BankRowEvidence } from '@finance/ledger/native-ledger';
 import {
   normalizeEventTags,
   cancelRemainingInstallments,
@@ -10,11 +11,19 @@ import {
   type MsiPlan,
 } from '@finance/domain';
 import { InvalidManualEntryError } from './manual-entry-input.js';
-import { database, tableName } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
-import { getEventDetailDynamo as getEventDetail, toPublicEvent } from './queries.js';
+import { toPublicEvent } from './public-event.js';
 import { setEventCategory } from '../categories/service.js';
 import { parsePersonalAmountMinor } from './personal-amount.js';
+
+const getEventDetail = async (id: string): Promise<JsonObject | undefined> => {
+  const detail = await readLedgerDetail(applicationStoreClient(), id);
+  return detail ? toPublicEvent(detail, detail.revisions as JsonObject[], detail.observations as JsonObject[]) : undefined;
+};
+const saveRevision = async (eventId: string, revision: {
+  id: string; createdAt: string; changedBy: string; reason: string;
+  changes: Record<string, { previous: unknown; next: unknown }>;
+}): Promise<void> => insertLedgerRevision(applicationStoreClient(), { ...revision, movementId: eventId });
 
 export class InvalidMsiError extends Error {}
 
@@ -66,16 +75,7 @@ const persistEventPersonalAmount = async (
 ): Promise<JsonObject | undefined> => {
   const existing = await getEventDetail(eventId);
   if (!existing) return undefined;
-  const updated = await database.send(new UpdateCommand({
-    TableName: tableName,
-    Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
-    UpdateExpression: next === undefined
-      ? 'REMOVE #payload.#personalAmount'
-      : 'SET #payload.#personalAmount = :personalAmount',
-    ExpressionAttributeNames: { '#payload': 'payload', '#personalAmount': 'personalAmountMinor' },
-    ...(next === undefined ? {} : { ExpressionAttributeValues: { ':personalAmount': next } }),
-    ReturnValues: 'ALL_NEW',
-  }));
+  await setMovementPersonalAmount(applicationStoreClient(), eventId, next);
   const revision = {
     id: randomUUID(),
     observedPurchaseId: eventId,
@@ -86,20 +86,8 @@ const persistEventPersonalAmount = async (
       personalAmountMinor: { previous: previous ?? null, next: next ?? null },
     },
   };
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: {
-      PK: `EVENT#${eventId}`,
-      SK: `REVISION#${revision.createdAt}#${revision.id}`,
-      entityType: 'event_revision',
-      payload: revision,
-    },
-  }));
-  return toPublicEvent(
-    updated.Attributes?.payload as JsonObject,
-    [revision, ...(Array.isArray(existing.revisions) ? existing.revisions as JsonObject[] : [])],
-    Array.isArray(existing.observations) ? existing.observations as JsonObject[] : [],
-  );
+  await saveRevision(eventId, revision);
+  return getEventDetail(eventId);
 };
 
 const setEventPersonalAmount = async (
@@ -137,19 +125,11 @@ const persistEventMsiInternal = async (
   previous: unknown,
   next: MsiPlan | undefined,
   reason: string,
+  evidence: readonly BankRowEvidence[] = [],
 ): Promise<JsonObject | undefined> => {
   const existing = await getEventDetail(eventId);
   if (!existing) return undefined;
-  const updated = await database.send(new UpdateCommand({
-    TableName: tableName,
-    Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
-    UpdateExpression: next
-      ? 'SET #payload.#msi = :msi'
-      : 'REMOVE #payload.#msi',
-    ExpressionAttributeNames: { '#payload': 'payload', '#msi': 'msi' },
-    ...(next ? { ExpressionAttributeValues: { ':msi': next } } : {}),
-    ReturnValues: 'ALL_NEW',
-  }));
+  await replaceInstallmentPlan(applicationStoreClient(), eventId, next, evidence);
   const revision = {
     id: randomUUID(),
     observedPurchaseId: eventId,
@@ -160,15 +140,8 @@ const persistEventMsiInternal = async (
       msi: { previous, next: next ?? null },
     },
   };
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: { PK: `EVENT#${eventId}`, SK: `REVISION#${revision.createdAt}#${revision.id}`, entityType: 'event_revision', payload: revision },
-  }));
-  return toPublicEvent(
-    updated.Attributes?.payload as JsonObject,
-    [revision, ...(Array.isArray(existing.revisions) ? existing.revisions as JsonObject[] : [])],
-    Array.isArray(existing.observations) ? existing.observations as JsonObject[] : [],
-  );
+  await saveRevision(eventId, revision);
+  return getEventDetail(eventId);
 };
 
 const setEventMsi = async (eventId: string, changedBy: string, body: JsonObject): Promise<JsonObject | undefined> => {
@@ -256,14 +229,7 @@ const markVerified = async (eventId: string, changedBy: string): Promise<JsonObj
     throw new InvalidManualEntryError('Una autorización USD sólo se confirma con el cargo Santander en MXN.');
   }
   const previousWarnings = Array.isArray(existing.parseWarnings) ? existing.parseWarnings : [];
-  const updated = await database.send(new UpdateCommand({
-    TableName: tableName,
-    Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
-    UpdateExpression: 'SET #payload.#status = :status, #payload.#warnings = :warnings',
-    ExpressionAttributeNames: { '#payload': 'payload', '#status': 'status', '#warnings': 'parseWarnings' },
-    ExpressionAttributeValues: { ':status': 'accepted', ':warnings': [] },
-    ReturnValues: 'ALL_NEW',
-  }));
+  await setMovementStatus(applicationStoreClient(), eventId, 'accepted', []);
   const revision = {
     id: randomUUID(),
     observedPurchaseId: eventId,
@@ -275,11 +241,8 @@ const markVerified = async (eventId: string, changedBy: string): Promise<JsonObj
       parseWarnings: { previous: previousWarnings, next: [] },
     },
   };
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: { PK: `EVENT#${eventId}`, SK: `REVISION#${revision.createdAt}#${revision.id}`, entityType: 'event_revision', payload: revision },
-  }));
-  return toPublicEvent(updated.Attributes?.payload as JsonObject, [revision, ...(Array.isArray(existing.revisions) ? existing.revisions as JsonObject[] : [])], Array.isArray(existing.observations) ? existing.observations as JsonObject[] : []);
+  await saveRevision(eventId, revision);
+  return getEventDetail(eventId);
 };
 
 const markRejected = async (eventId: string, changedBy: string): Promise<JsonObject | undefined> => {
@@ -288,14 +251,7 @@ const markRejected = async (eventId: string, changedBy: string): Promise<JsonObj
   if (existing.status === 'rejected') {
     return existing;
   }
-  const updated = await database.send(new UpdateCommand({
-    TableName: tableName,
-    Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
-    UpdateExpression: 'SET #payload.#status = :status',
-    ExpressionAttributeNames: { '#payload': 'payload', '#status': 'status' },
-    ExpressionAttributeValues: { ':status': 'rejected' },
-    ReturnValues: 'ALL_NEW',
-  }));
+  await setMovementStatus(applicationStoreClient(), eventId, 'rejected');
   const revision = {
     id: randomUUID(),
     observedPurchaseId: eventId,
@@ -306,11 +262,8 @@ const markRejected = async (eventId: string, changedBy: string): Promise<JsonObj
       status: { previous: existing.status, next: 'rejected' },
     },
   };
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: { PK: `EVENT#${eventId}`, SK: `REVISION#${revision.createdAt}#${revision.id}`, entityType: 'event_revision', payload: revision },
-  }));
-  return toPublicEvent(updated.Attributes?.payload as JsonObject, [revision, ...(Array.isArray(existing.revisions) ? existing.revisions as JsonObject[] : [])], Array.isArray(existing.observations) ? existing.observations as JsonObject[] : []);
+  await saveRevision(eventId, revision);
+  return getEventDetail(eventId);
 };
 
 const markDeferredMsiInternal = async (
@@ -327,13 +280,7 @@ const markDeferredMsiInternal = async (
     ...previousWarnings.filter((item) => typeof item === 'string' && !/Diferido a MSI/i.test(item)),
     'Diferido a MSI automático Amex (no cuenta en el mes).',
   ];
-  await database.send(new UpdateCommand({
-    TableName: tableName,
-    Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
-    UpdateExpression: 'SET #payload.#status = :status, #payload.#warnings = :warnings',
-    ExpressionAttributeNames: { '#payload': 'payload', '#status': 'status', '#warnings': 'parseWarnings' },
-    ExpressionAttributeValues: { ':status': 'deferred_msi', ':warnings': warnings },
-  }));
+  await setMovementStatus(applicationStoreClient(), eventId, 'deferred_msi', warnings);
   const revision = {
     id: randomUUID(),
     observedPurchaseId: eventId,
@@ -344,15 +291,7 @@ const markDeferredMsiInternal = async (
       status: { previous: existing.status, next: 'deferred_msi' },
     },
   };
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: {
-      PK: `EVENT#${eventId}`,
-      SK: `REVISION#${revision.createdAt}#${revision.id}`,
-      entityType: 'event_revision',
-      payload: revision,
-    },
-  }));
+  await saveRevision(eventId, revision);
   return true;
 };
 
@@ -388,14 +327,7 @@ const setEventTags = async (
   if (!existing) return undefined;
   const previous = Array.isArray(existing.tags) ? existing.tags.map(String) : [];
   if (JSON.stringify(previous) === JSON.stringify(tags)) return existing;
-  const updated = await database.send(new UpdateCommand({
-    TableName: tableName,
-    Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
-    UpdateExpression: 'SET #payload.#tags = :tags',
-    ExpressionAttributeNames: { '#payload': 'payload', '#tags': 'tags' },
-    ExpressionAttributeValues: { ':tags': tags },
-    ReturnValues: 'ALL_NEW',
-  }));
+  await replaceMovementTags(applicationStoreClient(), eventId, tags);
   const revision = {
     id: randomUUID(),
     observedPurchaseId: eventId,
@@ -404,20 +336,12 @@ const setEventTags = async (
     reason: 'Tags actualizados desde la UI.',
     changes: { tags: { previous, next: tags } },
   };
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: {
-      PK: `EVENT#${eventId}`,
-      SK: `REVISION#${revision.createdAt}#${revision.id}`,
-      entityType: 'event_revision',
-      payload: revision,
-    },
-  }));
-  return toPublicEvent(updated.Attributes?.payload as JsonObject, [revision]);
+  await saveRevision(eventId, revision);
+  return getEventDetail(eventId);
 };
 
-export const patchEvent = (...args: Parameters<typeof patchEventInternal>): ReturnType<typeof patchEventInternal> => withApplicationTransaction(() => patchEventInternal(...args));
+export const patchEvent = (...args: Parameters<typeof patchEventInternal>): ReturnType<typeof patchEventInternal> => withNativeTransaction(() => patchEventInternal(...args));
 
-export const persistEventMsi = (...args: Parameters<typeof persistEventMsiInternal>): ReturnType<typeof persistEventMsiInternal> => withApplicationTransaction(() => persistEventMsiInternal(...args));
+export const persistEventMsi = (...args: Parameters<typeof persistEventMsiInternal>): ReturnType<typeof persistEventMsiInternal> => withNativeTransaction(() => persistEventMsiInternal(...args));
 
-export const markDeferredMsi = (...args: Parameters<typeof markDeferredMsiInternal>): ReturnType<typeof markDeferredMsiInternal> => withApplicationTransaction(() => markDeferredMsiInternal(...args));
+export const markDeferredMsi = (...args: Parameters<typeof markDeferredMsiInternal>): ReturnType<typeof markDeferredMsiInternal> => withNativeTransaction(() => markDeferredMsiInternal(...args));

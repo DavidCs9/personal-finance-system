@@ -144,11 +144,11 @@ describe('remaining domain SQL reads', () => {
     expect((await compareMonths('2026-10', '2020-01')).monthTotalMinor).toBe(40000);
     await expect(compareMonths('invalid', '2026-10')).rejects.toThrow('Mes inválido');
   });
-  it('never consults SQL to decide a movement mutation, including a source deletion during projection lag', async () => {
-    await seed(); records.delete('EVENT#oct|EVENT');
+  it('treats an invalid native UUID as absent without consulting frozen source documents or casting it in SQL', async () => {
+    await seed();
     const query = vi.spyOn(sql, 'query');
     const { patchEvent } = await import('../src/events/mutations.js');
-    expect(await patchEvent('oct', 'owner', '{"action":"reject"}')).toBeUndefined();
+    expect(await application.withStoreClient(sql, () => patchEvent('invalid-id', 'owner', '{"action":"reject"}'))).toBeUndefined();
     expect(query).not.toHaveBeenCalled();
   });
   it('keeps rules on SQL across legacy mode flags and propagates SQL failure without a source fallback', async () => {

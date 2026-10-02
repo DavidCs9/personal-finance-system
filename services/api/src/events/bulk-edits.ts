@@ -1,17 +1,16 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { BatchGetCommand, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
+import { randomUUID } from 'node:crypto';
+import { applicationStoreClient, withNativeTransaction } from '@finance/ledger/dsql-store';
+import { insertLedgerRevision, readLedgerMovements, replaceMovementTags, setMovementCategory } from '@finance/ledger/native-ledger';
+import { bulkAmount, insertBulkOperation, readBulkOperation, transitionBulkOperation } from './bulk-storage.js';
 import {
   applyEventTagChange,
   isValidCategoryId,
   normalizeEventTags,
 } from '@finance/domain';
-import { eventMonthPartition } from '@finance/ledger';
-import { database, tableName } from '../http/clients.js';
 import { localDate } from './queries.js';
 import { InvalidCategoryError, requireCatalogCategories } from '../categories/catalog.js';
 
 const MAX_BULK_EVENTS = 49;
-const MAX_CATEGORY_BATCH_OPERATIONS = 12;
 const MAX_TAG_BATCH_OPERATIONS = 12;
 const PREVIEW_TTL_SECONDS = 15 * 60;
 
@@ -71,7 +70,7 @@ export type BulkEditSelection = {
   readonly onlyUntagged?: boolean;
 };
 
-type BulkEditSnapshot = {
+export type BulkEditSnapshot = {
   readonly id: string;
   readonly merchantRaw: string;
   readonly occurredAt?: string;
@@ -193,38 +192,12 @@ export const parseBulkEditInput = (raw: unknown): {
 };
 
 const queryRangeEvents = async (selection: BulkEditSelection): Promise<readonly Record<string, unknown>[]> => {
-  const items: Record<string, unknown>[] = [];
-  for (const month of monthsBetween(selection.fromDay, selection.toDay)) {
-    let exclusiveStartKey: Record<string, unknown> | undefined;
-    do {
-      const result = await database.send(new QueryCommand({
-        TableName: tableName,
-        IndexName: 'GSI3',
-        KeyConditionExpression: 'GSI3PK = :partition',
-        ExpressionAttributeValues: { ':partition': eventMonthPartition(month) },
-        ExclusiveStartKey: exclusiveStartKey,
-      }));
-      items.push(...(result.Items ?? []));
-      exclusiveStartKey = result.LastEvaluatedKey;
-    } while (exclusiveStartKey);
-  }
-  return items;
+  const rows = await readLedgerMovements(applicationStoreClient(), { months: monthsBetween(selection.fromDay, selection.toDay) });
+  return rows.sort((a, b) => String(a.occurredAt ?? a.receivedAt).localeCompare(String(b.occurredAt ?? b.receivedAt))
+    || String(a.id).localeCompare(String(b.id)));
 };
-
-const queryEventsById = async (eventIds: readonly string[]): Promise<readonly Record<string, unknown>[]> => {
-  const result = await database.send(new BatchGetCommand({
-    RequestItems: {
-      [tableName]: {
-        Keys: eventIds.map((id) => ({ PK: `EVENT#${id}`, SK: 'EVENT' })),
-        ConsistentRead: true,
-      },
-    },
-  }));
-  if (result.UnprocessedKeys && Object.keys(result.UnprocessedKeys).length > 0) {
-    throw new InvalidBulkEditError('No se pudieron leer todos los movimientos seleccionados. Reintenta el preview.');
-  }
-  return (result.Responses?.[tableName] ?? []) as Record<string, unknown>[];
-};
+const queryEventsById = (eventIds: readonly string[]): Promise<readonly Record<string, unknown>[]> =>
+  readLedgerMovements(applicationStoreClient(), { ids: eventIds });
 
 const publicAffectedEvents = (events: readonly BulkEditSnapshot[]) => events.map(({
   id, merchantRaw, occurredAt, amountMinor,
@@ -265,23 +238,13 @@ const createPreviewOperation = async (
     selection,
     change,
     events,
-    amountMinor: events.reduce((sum, event) => sum + event.amountMinor, 0),
+    amountMinor: bulkAmount(events),
   };
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: {
-      PK: `BULK_EDIT#${owner}`,
-      SK: `OP#${operationId}`,
-      entityType: 'bulk_edit_operation',
-      expiresAt: operation.expiresAt,
-      payload: operation,
-    },
-    ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
-  }));
+  await insertBulkOperation(operation);
   return publicPreview(operation);
 };
 
-export const previewBulkEdit = async (
+const previewBulkEditInternal = async (
   owner: string,
   input: { readonly selection: BulkEditSelection & { readonly statuses: readonly ['accepted'] }; readonly change: BulkEditChange },
   now = new Date(),
@@ -293,26 +256,26 @@ export const previewBulkEdit = async (
   const hasCategory = Object.prototype.hasOwnProperty.call(input.change, 'categoryId');
   const events: BulkEditSnapshot[] = [];
   for (const row of rows) {
-    const payload = row.payload as Record<string, unknown> | undefined;
-    if (!payload || payload.status !== 'accepted') continue;
-    const day = localDate(payload.occurredAt ?? payload.receivedAt);
+    const movement = row;
+    if (!movement || movement.status !== 'accepted') continue;
+    const day = localDate(movement.occurredAt ?? movement.receivedAt);
     if (!day || day < input.selection.fromDay || day > input.selection.toDay) continue;
-    const id = typeof payload.id === 'string' ? payload.id : '';
+    const id = typeof movement.id === 'string' ? movement.id : '';
     if (!id) continue;
-    const previousTags = normalizeEventTags(Array.isArray(payload.tags) ? payload.tags.map(String) : []);
+    const previousTags = normalizeEventTags(Array.isArray(movement.tags) ? movement.tags.map(String) : []);
     const nextTags = applyEventTagChange(previousTags, input.change);
-    const previousCategoryId = typeof payload.categoryId === 'string' ? payload.categoryId : null;
+    const previousCategoryId = typeof movement.categoryId === 'string' ? movement.categoryId : null;
     const nextCategoryId = hasCategory ? input.change.categoryId ?? null : previousCategoryId;
     if (JSON.stringify(previousTags) === JSON.stringify(nextTags)
       && previousCategoryId === nextCategoryId) continue;
-    const amount = payload.amount as { amountMinor?: unknown } | undefined;
-    const amountMinor = typeof payload.personalAmountMinor === 'number'
-      ? payload.personalAmountMinor
+    const amount = movement.amount as { amountMinor?: unknown } | undefined;
+    const amountMinor = typeof movement.personalAmountMinor === 'number'
+      ? movement.personalAmountMinor
       : Number(amount?.amountMinor ?? 0);
     events.push({
       id,
-      merchantRaw: String(payload.merchantRaw ?? ''),
-      occurredAt: typeof payload.occurredAt === 'string' ? payload.occurredAt : undefined,
+      merchantRaw: String(movement.merchantRaw ?? ''),
+      occurredAt: typeof movement.occurredAt === 'string' ? movement.occurredAt : undefined,
       status: 'accepted',
       amountMinor,
       previousTags,
@@ -425,7 +388,7 @@ export const parseAgentTagEditInput = (raw: unknown): AgentTagEditInput => {
   };
 };
 
-export const previewAgentTagEdit = async (
+const previewAgentTagEditInternal = async (
   owner: string,
   input: AgentTagEditInput,
   now = new Date(),
@@ -435,9 +398,7 @@ export const previewAgentTagEdit = async (
     : await queryRangeEvents({ fromDay: input.fromDay!, toDay: input.toDay!, statuses: ['accepted'] });
   const rowsById = new Map<string, Record<string, unknown>>();
   for (const row of rows) {
-    const id = typeof (row.payload as Record<string, unknown> | undefined)?.id === 'string'
-      ? String((row.payload as Record<string, unknown>).id)
-      : '';
+    const id = typeof row.id === 'string' ? row.id : '';
     if (id) rowsById.set(id, row);
   }
   if (input.eventIds && input.eventIds.some((id) => !rowsById.has(id))) {
@@ -447,13 +408,13 @@ export const previewAgentTagEdit = async (
   const events: BulkEditSnapshot[] = [];
   const selectedDays: string[] = [];
   for (const row of candidateRows) {
-    const payload = row.payload as Record<string, unknown> | undefined;
-    const id = typeof payload?.id === 'string' ? payload.id : '';
-    const day = payload ? localDate(payload.occurredAt ?? payload.receivedAt) : undefined;
-    const previousTags = normalizeEventTags(Array.isArray(payload?.tags) ? payload.tags.map(String) : []);
-    const matches = Boolean(payload && payload.status === 'accepted' && id && day)
+    const movement = row;
+    const id = typeof movement?.id === 'string' ? movement.id : '';
+    const day = movement ? localDate(movement.occurredAt ?? movement.receivedAt) : undefined;
+    const previousTags = normalizeEventTags(Array.isArray(movement?.tags) ? movement.tags.map(String) : []);
+    const matches = Boolean(movement && movement.status === 'accepted' && id && day)
       && (!input.fromDay || (day! >= input.fromDay && day! <= input.toDay!))
-      && (!input.merchantRaw || merchantKey(String(payload!.merchantRaw ?? '')) === merchantKey(input.merchantRaw))
+      && (!input.merchantRaw || merchantKey(String(movement!.merchantRaw ?? '')) === merchantKey(input.merchantRaw))
       && (!input.sourceTags || input.sourceTags.every((tag) => previousTags.includes(tag)))
       && (!input.onlyUntagged || previousTags.length === 0);
     if (!matches) {
@@ -465,21 +426,21 @@ export const previewAgentTagEdit = async (
     selectedDays.push(day!);
     const nextTags = applyEventTagChange(previousTags, input.change);
     if (JSON.stringify(previousTags) === JSON.stringify(nextTags)) continue;
-    const amount = payload!.amount as { amountMinor?: unknown } | undefined;
+    const amount = movement!.amount as { amountMinor?: unknown } | undefined;
     events.push({
       id,
-      merchantRaw: String(payload!.merchantRaw ?? ''),
-      occurredAt: typeof payload!.occurredAt === 'string'
-        ? payload!.occurredAt
-        : typeof payload!.receivedAt === 'string' ? payload!.receivedAt : undefined,
+      merchantRaw: String(movement!.merchantRaw ?? ''),
+      occurredAt: typeof movement!.occurredAt === 'string'
+        ? movement!.occurredAt
+        : typeof movement!.receivedAt === 'string' ? movement!.receivedAt : undefined,
       status: 'accepted',
-      amountMinor: typeof payload!.personalAmountMinor === 'number'
-        ? payload!.personalAmountMinor
+      amountMinor: typeof movement!.personalAmountMinor === 'number'
+        ? movement!.personalAmountMinor
         : Number(amount?.amountMinor ?? 0),
       previousTags,
       nextTags,
-      previousCategoryId: typeof payload!.categoryId === 'string' ? payload!.categoryId : null,
-      nextCategoryId: typeof payload!.categoryId === 'string' ? payload!.categoryId : null,
+      previousCategoryId: typeof movement!.categoryId === 'string' ? movement!.categoryId : null,
+      nextCategoryId: typeof movement!.categoryId === 'string' ? movement!.categoryId : null,
     });
   }
   const fromDay = input.fromDay ?? selectedDays.slice().sort()[0];
@@ -554,7 +515,7 @@ export const parseAgentCategoryEditInput = (raw: unknown): AgentCategoryEditInpu
   };
 };
 
-export const previewAgentCategoryEdit = async (
+const previewAgentCategoryEditInternal = async (
   owner: string,
   input: AgentCategoryEditInput,
   now = new Date(),
@@ -565,9 +526,7 @@ export const previewAgentCategoryEdit = async (
     : await queryRangeEvents({ fromDay: input.fromDay!, toDay: input.toDay!, statuses: ['accepted'] });
   const rowsById = new Map<string, Record<string, unknown>>();
   for (const row of rows) {
-    const id = typeof (row.payload as Record<string, unknown> | undefined)?.id === 'string'
-      ? String((row.payload as Record<string, unknown>).id)
-      : '';
+    const id = typeof row.id === 'string' ? row.id : '';
     if (id) rowsById.set(id, row);
   }
   if (input.eventIds && input.eventIds.some((id) => !rowsById.has(id))) {
@@ -577,13 +536,13 @@ export const previewAgentCategoryEdit = async (
   const events: BulkEditSnapshot[] = [];
   const selectedDays: string[] = [];
   for (const row of candidateRows) {
-    const payload = row.payload as Record<string, unknown> | undefined;
-    const id = typeof payload?.id === 'string' ? payload.id : '';
-    const day = payload ? localDate(payload.occurredAt ?? payload.receivedAt) : undefined;
-    const previousCategoryId = typeof payload?.categoryId === 'string' ? payload.categoryId : null;
-    const matches = Boolean(payload && payload.status === 'accepted' && id && day)
+    const movement = row;
+    const id = typeof movement?.id === 'string' ? movement.id : '';
+    const day = movement ? localDate(movement.occurredAt ?? movement.receivedAt) : undefined;
+    const previousCategoryId = typeof movement?.categoryId === 'string' ? movement.categoryId : null;
+    const matches = Boolean(movement && movement.status === 'accepted' && id && day)
       && (!input.fromDay || (day! >= input.fromDay && day! <= input.toDay!))
-      && (!input.merchantRaw || merchantKey(String(payload!.merchantRaw ?? '')) === merchantKey(input.merchantRaw))
+      && (!input.merchantRaw || merchantKey(String(movement!.merchantRaw ?? '')) === merchantKey(input.merchantRaw))
       && (!input.sourceCategoryId || previousCategoryId === input.sourceCategoryId)
       && (!input.onlyUncategorized || previousCategoryId === null);
     if (!matches) {
@@ -594,17 +553,17 @@ export const previewAgentCategoryEdit = async (
     }
     selectedDays.push(day!);
     if (previousCategoryId === input.categoryId) continue;
-    const previousTags = normalizeEventTags(Array.isArray(payload!.tags) ? payload!.tags.map(String) : []);
-    const amount = payload!.amount as { amountMinor?: unknown } | undefined;
+    const previousTags = normalizeEventTags(Array.isArray(movement!.tags) ? movement!.tags.map(String) : []);
+    const amount = movement!.amount as { amountMinor?: unknown } | undefined;
     events.push({
       id,
-      merchantRaw: String(payload!.merchantRaw ?? ''),
-      occurredAt: typeof payload!.occurredAt === 'string'
-        ? payload!.occurredAt
-        : typeof payload!.receivedAt === 'string' ? payload!.receivedAt : undefined,
+      merchantRaw: String(movement!.merchantRaw ?? ''),
+      occurredAt: typeof movement!.occurredAt === 'string'
+        ? movement!.occurredAt
+        : typeof movement!.receivedAt === 'string' ? movement!.receivedAt : undefined,
       status: 'accepted',
-      amountMinor: typeof payload!.personalAmountMinor === 'number'
-        ? payload!.personalAmountMinor
+      amountMinor: typeof movement!.personalAmountMinor === 'number'
+        ? movement!.personalAmountMinor
         : Number(amount?.amountMinor ?? 0),
       previousTags,
       nextTags: previousTags,
@@ -627,93 +586,65 @@ export const previewAgentCategoryEdit = async (
 };
 
 const getOperation = async (owner: string, operationId: string): Promise<BulkEditOperation> => {
-  const result = await database.send(new GetCommand({
-    TableName: tableName,
-    Key: { PK: `BULK_EDIT#${owner}`, SK: `OP#${operationId}` },
-    ConsistentRead: true,
-  }));
-  const operation = result.Item?.payload as BulkEditOperation | undefined;
-  if (!operation || operation.owner !== owner) throw new InvalidBulkEditError('La propuesta no existe.');
+  const operation = await readBulkOperation(owner, operationId);
+  if (!operation) throw new InvalidBulkEditError('La propuesta no existe.');
   return operation;
 };
 
-const eventUpdate = (
-  snapshot: BulkEditSnapshot,
-  direction: 'apply' | 'undo',
-): NonNullable<NonNullable<TransactWriteCommandInput['TransactItems']>[number]['Update']> => {
-  const fromTags = direction === 'apply' ? snapshot.previousTags : snapshot.nextTags;
-  const toTags = direction === 'apply' ? snapshot.nextTags : snapshot.previousTags;
-  const fromCategory = direction === 'apply' ? snapshot.previousCategoryId : snapshot.nextCategoryId;
-  const toCategory = direction === 'apply' ? snapshot.nextCategoryId : snapshot.previousCategoryId;
-  const categoryChanges = snapshot.previousCategoryId !== snapshot.nextCategoryId;
-  const names: Record<string, string> = { '#payload': 'payload', '#tags': 'tags', '#status': 'status' };
-  const values: Record<string, unknown> = {
-    ':accepted': 'accepted', ':fromTags': fromTags, ':toTags': toTags,
-  };
-  let updateExpression = 'SET #payload.#tags = :toTags';
-  let conditionExpression = '#payload.#status = :accepted AND (attribute_not_exists(#payload.#tags) OR #payload.#tags = :fromTags)';
-  if (categoryChanges) {
-    names['#categoryId'] = 'categoryId';
-    values[':fromCategory'] = fromCategory;
-    conditionExpression += ' AND (attribute_not_exists(#payload.#categoryId) OR #payload.#categoryId = :fromCategory)';
-    if (toCategory === null) updateExpression += ' REMOVE #payload.#categoryId';
-    else {
-      updateExpression += ', #payload.#categoryId = :toCategory';
-      values[':toCategory'] = toCategory;
+const assertAudit = (operation: BulkEditOperation, audit: BulkEditAudit): void => {
+  if (audit.tagsOnly && Object.prototype.hasOwnProperty.call(operation.change, 'categoryId')) {
+    throw new InvalidBulkEditError('La tool del asistente sólo puede modificar tags.');
+  }
+  if (audit.categoriesOnly && (Object.prototype.hasOwnProperty.call(operation.change, 'addTags')
+    || Object.prototype.hasOwnProperty.call(operation.change, 'removeTags'))) {
+    throw new InvalidBulkEditError('La tool del asistente sólo puede modificar categorías.');
+  }
+};
+const mutationRows = (operation: BulkEditOperation): number =>
+  1 + operation.events.reduce((rows, member) => rows + 1
+    + (member.previousCategoryId !== member.nextCategoryId ? 1 : 0)
+    + (JSON.stringify(member.previousTags) !== JSON.stringify(member.nextTags)
+      ? member.previousTags.length + member.nextTags.length : 0), 0);
+const assertMutationBudget = (operations: readonly BulkEditOperation[]): void => {
+  if (1 + operations.reduce((rows, operation) => rows + mutationRows(operation), 0) > 3000)
+    throw new InvalidBulkEditError('El lote contiene demasiados cambios. Divídelo en grupos más pequeños.');
+};
+
+const mutateOperation = async (operation: BulkEditOperation, direction: 'apply' | 'undo', changedBy: string,
+  at: string, audit: BulkEditAudit): Promise<BulkEditPreview> => {
+  const client = applicationStoreClient();
+  const current = new Map((await readLedgerMovements(client, { ids: operation.events.map(member => member.id) }))
+    .map(movement => [String(movement.id), movement]));
+  for (const member of operation.events) {
+    const movement = current.get(member.id);
+    const fromTags = direction === 'apply' ? member.previousTags : member.nextTags;
+    const toTags = direction === 'apply' ? member.nextTags : member.previousTags;
+    const fromCategory = direction === 'apply' ? member.previousCategoryId : member.nextCategoryId;
+    const toCategory = direction === 'apply' ? member.nextCategoryId : member.previousCategoryId;
+    const categoryChanges = member.previousCategoryId !== member.nextCategoryId;
+    if (!movement || movement.status !== 'accepted' || JSON.stringify(movement.tags) !== JSON.stringify(fromTags)
+      || categoryChanges && (movement.categoryId ?? null) !== fromCategory)
+      throw new InvalidBulkEditError('Los movimientos cambiaron después del preview. Genera uno nuevo.');
+    const changes: Record<string, { previous: unknown; next: unknown }> = {};
+    if (JSON.stringify(fromTags) !== JSON.stringify(toTags)) {
+      await replaceMovementTags(client, member.id, toTags);
+      changes.tags = { previous: fromTags, next: toTags };
     }
+    if (categoryChanges) {
+      await setMovementCategory(client, member.id, toCategory);
+      changes.categoryId = { previous: fromCategory, next: toCategory };
+    }
+    await insertLedgerRevision(client, { id: `${operation.operationId}-${direction}-${member.id}`,
+      movementId: member.id, operationId: operation.operationId, createdAt: at, changedBy, source: audit.source,
+      reason: direction === 'apply' ? audit.applyReason : audit.undoReason, changes });
   }
-  return {
-    TableName: tableName,
-    Key: { PK: `EVENT#${snapshot.id}`, SK: 'EVENT' },
-    UpdateExpression: updateExpression,
-    ConditionExpression: conditionExpression,
-    ExpressionAttributeNames: names,
-    ExpressionAttributeValues: values,
-  };
+  if (!await transitionBulkOperation(operation.owner, operation.operationId, direction, at))
+    throw new InvalidBulkEditError('La operación cambió mientras se aplicaba. Vuelve a consultar su estado.');
+  return publicPreview({ ...operation, status: direction === 'apply' ? 'applied' : 'undone',
+    ...(direction === 'apply' ? { appliedAt: at } : { undoneAt: at }) });
 };
 
-const revisionPut = (
-  snapshot: BulkEditSnapshot,
-  operation: BulkEditOperation,
-  direction: 'apply' | 'undo',
-  changedBy: string,
-  at: string,
-  audit: BulkEditAudit,
-): NonNullable<NonNullable<TransactWriteCommandInput['TransactItems']>[number]['Put']> => {
-  const previousTags = direction === 'apply' ? snapshot.previousTags : snapshot.nextTags;
-  const nextTags = direction === 'apply' ? snapshot.nextTags : snapshot.previousTags;
-  const previousCategoryId = direction === 'apply' ? snapshot.previousCategoryId : snapshot.nextCategoryId;
-  const nextCategoryId = direction === 'apply' ? snapshot.nextCategoryId : snapshot.previousCategoryId;
-  const changes: Record<string, { previous: unknown; next: unknown }> = {};
-  if (JSON.stringify(previousTags) !== JSON.stringify(nextTags)) {
-    changes.tags = { previous: previousTags, next: nextTags };
-  }
-  if (previousCategoryId !== nextCategoryId) {
-    changes.categoryId = { previous: previousCategoryId, next: nextCategoryId };
-  }
-  const revisionId = `${operation.operationId}-${direction}-${snapshot.id}`;
-  return {
-    TableName: tableName,
-    Item: {
-      PK: `EVENT#${snapshot.id}`,
-      SK: `REVISION#${at}#${revisionId}`,
-      entityType: 'event_revision',
-      payload: {
-        id: revisionId,
-        observedPurchaseId: snapshot.id,
-        operationId: operation.operationId,
-        createdAt: at,
-        changedBy,
-        source: audit.source,
-        reason: direction === 'apply' ? audit.applyReason : audit.undoReason,
-        changes,
-      },
-    },
-    ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
-  };
-};
-
-const transactOperation = async (
+const transactOperationInternal = async (
   owner: string,
   operationId: string,
   changedBy: string,
@@ -722,15 +653,7 @@ const transactOperation = async (
   audit = confirmedBulkAudit,
 ): Promise<BulkEditPreview> => {
   const operation = await getOperation(owner, operationId);
-  if (audit.tagsOnly && Object.prototype.hasOwnProperty.call(operation.change, 'categoryId')) {
-    throw new InvalidBulkEditError('La tool del asistente sólo puede modificar tags.');
-  }
-  if (audit.categoriesOnly && (
-    Object.prototype.hasOwnProperty.call(operation.change, 'addTags')
-    || Object.prototype.hasOwnProperty.call(operation.change, 'removeTags')
-  )) {
-    throw new InvalidBulkEditError('La tool del asistente sólo puede modificar categorías.');
-  }
+  assertAudit(operation, audit);
   if (direction === 'apply' && operation.status === 'applied') return publicPreview(operation);
   if (direction === 'undo' && operation.status === 'undone') return publicPreview(operation);
   const expectedStatus = direction === 'apply' ? 'pending' : 'applied';
@@ -741,36 +664,8 @@ const transactOperation = async (
   await requireBulkCategories(operation.events
     .filter(event => event.previousCategoryId !== event.nextCategoryId)
     .map(event => direction === 'apply' ? event.nextCategoryId : event.previousCategoryId));
-  const nextStatus = direction === 'apply' ? 'applied' : 'undone';
-  const timestampField = direction === 'apply' ? 'appliedAt' : 'undoneAt';
-  const at = now.toISOString();
-  const transactItems: NonNullable<TransactWriteCommandInput['TransactItems']> = operation.events.flatMap((event) => [
-    { Update: eventUpdate(event, direction) },
-    { Put: revisionPut(event, operation, direction, changedBy, at, audit) },
-  ]);
-  transactItems.push({ Update: {
-    TableName: tableName,
-    Key: { PK: `BULK_EDIT#${owner}`, SK: `OP#${operationId}` },
-    UpdateExpression: 'SET #payload.#status = :nextStatus, #payload.#timestamp = :at REMOVE #ttl',
-    ConditionExpression: '#payload.#status = :expectedStatus',
-    ExpressionAttributeNames: {
-      '#payload': 'payload', '#status': 'status', '#timestamp': timestampField, '#ttl': 'expiresAt',
-    },
-    ExpressionAttributeValues: { ':expectedStatus': expectedStatus, ':nextStatus': nextStatus, ':at': at },
-  } });
-  try {
-    await database.send(new TransactWriteCommand({
-      TransactItems: transactItems,
-      ClientRequestToken: `${direction}-${operationId}`.slice(0, 36),
-    }));
-  } catch (error) {
-    const name = error && typeof error === 'object' && 'name' in error ? String(error.name) : '';
-    if (name === 'TransactionCanceledException') {
-      throw new InvalidBulkEditError('Los movimientos cambiaron después del preview. Genera uno nuevo.');
-    }
-    throw error;
-  }
-  return publicPreview({ ...operation, status: nextStatus, [timestampField]: at });
+  assertMutationBudget([operation]);
+  return mutateOperation(operation, direction, changedBy, now.toISOString(), audit);
 };
 
 export const applyBulkEdit = (
@@ -813,82 +708,34 @@ export const undoAgentTagEdit = (
   assistantTagAudit,
 );
 
-export const applyAgentTagEdits = async (
-  owner: string,
-  operationIds: readonly string[],
-  now = new Date(),
-): Promise<AgentTagBatchApplyResult> => {
-  const ids = operationIds.map((operationId) => operationId.trim());
-  if (ids.length === 0 || ids.length > MAX_TAG_BATCH_OPERATIONS
-    || ids.some((operationId) => !operationId) || new Set(ids).size !== ids.length) {
+const applyBatch = async (owner: string, operationIds: readonly string[], now: Date, audit: BulkEditAudit): Promise<AgentTagBatchApplyResult> => {
+  const ids = operationIds.map(id => id.trim());
+  if (!ids.length || ids.length > MAX_TAG_BATCH_OPERATIONS || ids.some(id => !id) || new Set(ids).size !== ids.length)
     throw new InvalidBulkEditError(`operationIds debe contener entre 1 y ${MAX_TAG_BATCH_OPERATIONS} IDs únicos.`);
+  const operations = await Promise.all(ids.map(id => getOperation(owner, id)));
+  for (const operation of operations) assertAudit(operation, audit);
+  if (!operations.every(operation => operation.status === 'applied')) {
+    if (operations.some(operation => operation.status !== 'pending'))
+      throw new InvalidBulkEditError('Las operaciones del lote deben estar todas pendientes o todas aplicadas.');
+    if (operations.some(operation => operation.expiresAt <= Math.floor(now.getTime() / 1000)))
+      throw new InvalidBulkEditError('Una propuesta del lote expiró. Genera previews nuevos.');
+    const members = operations.flatMap(operation => operation.events);
+    if (new Set(members.map(member => member.id)).size !== members.length)
+      throw new InvalidBulkEditError('Las operaciones del lote se solapan en uno o más movimientos. Genera previews sin movimientos repetidos.');
+    await requireBulkCategories(members.filter(member => member.previousCategoryId !== member.nextCategoryId).map(member => member.nextCategoryId));
+    assertMutationBudget(operations);
+    const previews: BulkEditPreview[] = [];
+    for (const operation of operations) previews.push(await mutateOperation(operation, 'apply', owner, now.toISOString(), audit));
+    return batchResult(previews);
   }
-  const operations = await Promise.all(ids.map((operationId) => getOperation(owner, operationId)));
-  for (const operation of operations) {
-    if (Object.prototype.hasOwnProperty.call(operation.change, 'categoryId')) {
-      throw new InvalidBulkEditError('El apply por lote sólo puede modificar tags.');
-    }
-  }
-  if (operations.every((operation) => operation.status === 'applied')) {
-    const previews = operations.map(publicPreview);
-    return {
-      operationCount: previews.length,
-      movementCount: previews.reduce((sum, preview) => sum + preview.movementCount, 0),
-      amountMinor: previews.reduce((sum, preview) => sum + preview.amountMinor, 0),
-      operations: previews,
-    };
-  }
-  if (operations.some((operation) => operation.status !== 'pending')) {
-    throw new InvalidBulkEditError('Las operaciones del lote deben estar todas pendientes o todas aplicadas.');
-  }
-  if (operations.some((operation) => operation.expiresAt <= Math.floor(now.getTime() / 1000))) {
-    throw new InvalidBulkEditError('Una propuesta del lote expiró. Genera previews nuevos.');
-  }
-  const affectedEventIds = operations.flatMap((operation) => operation.events.map((event) => event.id));
-  if (new Set(affectedEventIds).size !== affectedEventIds.length) {
-    throw new InvalidBulkEditError('Las operaciones del lote se solapan en uno o más movimientos. Genera previews sin movimientos repetidos.');
-  }
-  const actionCount = operations.reduce((sum, operation) => sum + (operation.events.length * 2) + 1, 0);
-  if (actionCount > 100) {
-    throw new InvalidBulkEditError('El lote excede 100 acciones de DynamoDB. Divídelo en grupos más pequeños.');
-  }
-  const at = now.toISOString();
-  const transactItems: NonNullable<TransactWriteCommandInput['TransactItems']> = operations.flatMap((operation) => [
-    ...operation.events.flatMap((event) => [
-      { Update: eventUpdate(event, 'apply') },
-      { Put: revisionPut(event, operation, 'apply', owner, at, assistantTagAudit) },
-    ]),
-    { Update: {
-      TableName: tableName,
-      Key: { PK: `BULK_EDIT#${owner}`, SK: `OP#${operation.operationId}` },
-      UpdateExpression: 'SET #payload.#status = :nextStatus, #payload.#timestamp = :at REMOVE #ttl',
-      ConditionExpression: '#payload.#status = :expectedStatus',
-      ExpressionAttributeNames: {
-        '#payload': 'payload', '#status': 'status', '#timestamp': 'appliedAt', '#ttl': 'expiresAt',
-      },
-      ExpressionAttributeValues: { ':expectedStatus': 'pending', ':nextStatus': 'applied', ':at': at },
-    } },
-  ]);
-  try {
-    await database.send(new TransactWriteCommand({
-      TransactItems: transactItems,
-      ClientRequestToken: createHash('sha256').update(`apply-tag:${ids.join(':')}`).digest('hex').slice(0, 36),
-    }));
-  } catch (error) {
-    const name = error && typeof error === 'object' && 'name' in error ? String(error.name) : '';
-    if (name === 'TransactionCanceledException') {
-      throw new InvalidBulkEditError('Los movimientos cambiaron después del preview. Genera un lote nuevo.');
-    }
-    throw error;
-  }
-  const previews = operations.map((operation) => publicPreview({ ...operation, status: 'applied', appliedAt: at }));
-  return {
-    operationCount: previews.length,
-    movementCount: previews.reduce((sum, preview) => sum + preview.movementCount, 0),
-    amountMinor: previews.reduce((sum, preview) => sum + preview.amountMinor, 0),
-    operations: previews,
-  };
+  return batchResult(operations.map(publicPreview));
 };
+const batchResult = (operations: readonly BulkEditPreview[]): AgentTagBatchApplyResult => ({
+  operationCount: operations.length, movementCount: operations.reduce((sum, operation) => sum + operation.movementCount, 0),
+  amountMinor: bulkAmount(operations), operations,
+});
+export const applyAgentTagEdits = (owner: string, operationIds: readonly string[], now = new Date()): Promise<AgentTagBatchApplyResult> =>
+  withNativeTransaction(() => applyBatch(owner, operationIds, now, assistantTagAudit));
 
 export const applyAgentCategoryEdit = (
   owner: string,
@@ -916,82 +763,17 @@ export const undoAgentCategoryEdit = (
   assistantCategoryAudit,
 );
 
-export const applyAgentCategoryEdits = async (
-  owner: string,
-  operationIds: readonly string[],
-  now = new Date(),
-): Promise<AgentCategoryBatchApplyResult> => {
-  const ids = operationIds.map((operationId) => operationId.trim());
-  if (ids.length === 0 || ids.length > MAX_CATEGORY_BATCH_OPERATIONS
-    || ids.some((operationId) => !operationId) || new Set(ids).size !== ids.length) {
-    throw new InvalidBulkEditError(`operationIds debe contener entre 1 y ${MAX_CATEGORY_BATCH_OPERATIONS} IDs únicos.`);
-  }
-  const operations = await Promise.all(ids.map((operationId) => getOperation(owner, operationId)));
-  for (const operation of operations) {
-    if (Object.prototype.hasOwnProperty.call(operation.change, 'addTags')
-      || Object.prototype.hasOwnProperty.call(operation.change, 'removeTags')) {
-      throw new InvalidBulkEditError('El apply por lote sólo puede modificar categorías.');
-    }
-  }
-  if (operations.every((operation) => operation.status === 'applied')) {
-    const previews = operations.map(publicPreview);
-    return {
-      operationCount: previews.length,
-      movementCount: previews.reduce((sum, preview) => sum + preview.movementCount, 0),
-      amountMinor: previews.reduce((sum, preview) => sum + preview.amountMinor, 0),
-      operations: previews,
-    };
-  }
-  if (operations.some((operation) => operation.status !== 'pending')) {
-    throw new InvalidBulkEditError('Las operaciones del lote deben estar todas pendientes o todas aplicadas.');
-  }
-  if (operations.some((operation) => operation.expiresAt <= Math.floor(now.getTime() / 1000))) {
-    throw new InvalidBulkEditError('Una propuesta del lote expiró. Genera previews nuevos.');
-  }
-  await requireBulkCategories(operations.flatMap(operation => operation.events
-    .filter(event => event.previousCategoryId !== event.nextCategoryId).map(event => event.nextCategoryId)));
-  const affectedEventIds = operations.flatMap((operation) => operation.events.map((event) => event.id));
-  if (new Set(affectedEventIds).size !== affectedEventIds.length) {
-    throw new InvalidBulkEditError('Las operaciones del lote se solapan en uno o más movimientos. Genera previews sin movimientos repetidos.');
-  }
-  const actionCount = operations.reduce((sum, operation) => sum + (operation.events.length * 2) + 1, 0);
-  if (actionCount > 100) {
-    throw new InvalidBulkEditError('El lote excede 100 acciones de DynamoDB. Divídelo en grupos más pequeños.');
-  }
-  const at = now.toISOString();
-  const transactItems: NonNullable<TransactWriteCommandInput['TransactItems']> = operations.flatMap((operation) => [
-    ...operation.events.flatMap((event) => [
-      { Update: eventUpdate(event, 'apply') },
-      { Put: revisionPut(event, operation, 'apply', owner, at, assistantCategoryAudit) },
-    ]),
-    { Update: {
-      TableName: tableName,
-      Key: { PK: `BULK_EDIT#${owner}`, SK: `OP#${operation.operationId}` },
-      UpdateExpression: 'SET #payload.#status = :nextStatus, #payload.#timestamp = :at REMOVE #ttl',
-      ConditionExpression: '#payload.#status = :expectedStatus',
-      ExpressionAttributeNames: {
-        '#payload': 'payload', '#status': 'status', '#timestamp': 'appliedAt', '#ttl': 'expiresAt',
-      },
-      ExpressionAttributeValues: { ':expectedStatus': 'pending', ':nextStatus': 'applied', ':at': at },
-    } },
-  ]);
-  try {
-    await database.send(new TransactWriteCommand({
-      TransactItems: transactItems,
-      ClientRequestToken: createHash('sha256').update(`apply-category:${ids.join(':')}`).digest('hex').slice(0, 36),
-    }));
-  } catch (error) {
-    const name = error && typeof error === 'object' && 'name' in error ? String(error.name) : '';
-    if (name === 'TransactionCanceledException') {
-      throw new InvalidBulkEditError('Los movimientos cambiaron después del preview. Genera un lote nuevo.');
-    }
-    throw error;
-  }
-  const previews = operations.map((operation) => publicPreview({ ...operation, status: 'applied', appliedAt: at }));
-  return {
-    operationCount: previews.length,
-    movementCount: previews.reduce((sum, preview) => sum + preview.movementCount, 0),
-    amountMinor: previews.reduce((sum, preview) => sum + preview.amountMinor, 0),
-    operations: previews,
-  };
-};
+export const applyAgentCategoryEdits = (owner: string, operationIds: readonly string[], now = new Date()): Promise<AgentCategoryBatchApplyResult> =>
+  withNativeTransaction(() => applyBatch(owner, operationIds, now, assistantCategoryAudit));
+
+export const previewBulkEdit = (...args: Parameters<typeof previewBulkEditInternal>): ReturnType<typeof previewBulkEditInternal> =>
+  withNativeTransaction(() => previewBulkEditInternal(...args));
+
+export const previewAgentTagEdit = (...args: Parameters<typeof previewAgentTagEditInternal>): ReturnType<typeof previewAgentTagEditInternal> =>
+  withNativeTransaction(() => previewAgentTagEditInternal(...args));
+
+export const previewAgentCategoryEdit = (...args: Parameters<typeof previewAgentCategoryEditInternal>): ReturnType<typeof previewAgentCategoryEditInternal> =>
+  withNativeTransaction(() => previewAgentCategoryEditInternal(...args));
+
+const transactOperation = (...args: Parameters<typeof transactOperationInternal>): ReturnType<typeof transactOperationInternal> =>
+  withNativeTransaction(() => transactOperationInternal(...args));
