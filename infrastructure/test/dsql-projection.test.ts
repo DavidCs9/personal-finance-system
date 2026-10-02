@@ -1,3 +1,4 @@
+import { SQL_AUTHORITY } from '../lib/storage-cutover';
 import { App, Stack, RemovalPolicy } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';

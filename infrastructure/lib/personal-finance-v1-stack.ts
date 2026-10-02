@@ -485,7 +485,7 @@ export class PersonalFinanceV1Stack extends Stack {
     new cdk.CfnOutput(this, 'DsqlReadVerificationFunction', { value: readVerificationFunction.functionName });
     const readVerifyDeployRole = iam.Role.fromRoleName(this, 'DsqlReadVerifyDeployRole', 'personal-finance-v1-github-deploy');
     readVerificationFunction.grantInvoke(readVerifyDeployRole);
-    apiFunction.addToRolePolicy(new iam.PolicyStatement({
+    if (!SQL_AUTHORITY) apiFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'],
       resources: [metadataTable.tableArn, `${metadataTable.tableArn}/index/*`],
     }));
@@ -530,7 +530,7 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     metadataTable.grantReadData(agentTagMutationFunction);
-    agentTagMutationFunction.addToRolePolicy(new iam.PolicyStatement({
+    if (!SQL_AUTHORITY) agentTagMutationFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'],
       resources: [metadataTable.tableArn],
       conditions: {
@@ -1459,8 +1459,8 @@ export class PersonalFinanceV1Stack extends Stack {
     // The API Lambda serves many routes. One API-scoped invoke permission avoids
     // exhausting Lambda's 20 KB resource-policy limit with one statement per route.
     for (const fn of [ingestionFunction,retryDispatcherFunction,apiFunction,agentProxyFunction,agentChatBufferedFunction,applePayCaptureFunction,
-      dailyBalancePushFunction,cardCyclePushFunction,bitsoSyncFunction,ibkrSyncFunction,monthEndBalanceReminderFunction,monthlyCloseEmailFunction]) dsqlProjection.grantApplicationStore(fn);
-    for (const fn of [readVerificationFunction,agentToolsFunction,agentTagMutationFunction]) dsqlProjection.grantApplicationStore(fn,'reader');
+      dailyBalancePushFunction,cardCyclePushFunction,bitsoSyncFunction,ibkrSyncFunction,monthEndBalanceReminderFunction,monthlyCloseEmailFunction,agentTagMutationFunction]) dsqlProjection.grantApplicationStore(fn);
+    for (const fn of [readVerificationFunction,agentToolsFunction]) dsqlProjection.grantApplicationStore(fn,'reader');
 
     const apiIntegration = new HttpLambdaIntegration('ApiLambdaIntegration', apiFunction, {
       scopePermissionToRoute: false,
