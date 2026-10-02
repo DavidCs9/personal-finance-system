@@ -2,7 +2,7 @@ import { verifyOperationalReads } from '../operational/verification.js';
 import { addCalendarMonths, monthKeyInZone } from '@finance/domain';
 import { feedFromMovements, spendMonthOf } from './month-feed.js';
 import { verifyNativeLedgerState, verifyNativeMonthSummary } from './native-verification.js';
-import { monthReadStatement, readerPool, readSqlDetail, readSqlFeed } from './sql-reads.js';
+import { monthReadStatement, readerPool, readSqlDetail, readSqlFeed, withLedgerReadSnapshot } from './sql-reads.js';
 import { allStoredEvents, listEventsForMonths, getEventDetail } from './queries.js';
 import { samePublicResult } from './read-selection.js';
 import { getMonthlyPlan } from '../months/service.js';
@@ -12,12 +12,9 @@ import { verifyDomainReads } from '../categories/read-verification.js';
 import { verifyWealthReads } from '../wealth/read-verification.js';
 import { verifyPlanningReads } from '../months/read-verification.js';
 
-/** Read-only deployed capability. Public results contain no source payloads, IDs or financial aggregates. */
-export const verifyLedgerReads = async () => {
+/** One internally consistent financial phase; later domains use their own bounded snapshot. */
+export const verifyNativeFinancialReads = (owner: string, now: Date) => withLedgerReadSnapshot(async () => {
   const started = Date.now();
-  const now = new Date();
-  const owner = process.env.AGENT_OWNER_SUB;
-  if (!owner) throw new Error('Missing verification owner');
   const source = [...await allStoredEvents()];
   const nativeReadMs = Date.now() - started;
   const pool = readerPool();
@@ -72,17 +69,29 @@ export const verifyLedgerReads = async () => {
   const queryPlan = lines.filter(line => /(?:DPU|Planning Time|Execution Time)/i.test(line))
     .map(line => line.trim()).filter(line => /^[\w\s():.=,+-]+$/.test(line));
   const scanTypes = [...new Set(lines.flatMap(line => line.match(/(?:Index Only Scan|Index Scan|Seq Scan|Bitmap Heap Scan)/g) ?? []))];
-  const planning = await verifyPlanningReads(owner, source, orderedMonths, now);
-  mismatches += planning.mismatches;
-  const wealth = await verifyWealthReads(owner, orderedMonths, now);
-  mismatches += wealth.mismatches;
-  const domain = await verifyDomainReads(owner, source, orderedMonths, now);
-  mismatches += domain.mismatches;
-  const operational = await verifyOperationalReads(owner, now);
-  mismatches += operational.mismatches;
-  return { operational, verified: mismatches === 0, mode: 'native-sql', native, planning, wealth, domain, movements: source.length, feeds, summaries, ranges, details: native.details,
+  return { native, orderedMonths, movements: source.length, feeds, summaries, ranges, details: native.details,
     missingLookups: 2, mismatches, elapsedMs: Date.now() - started, nativeReadMs, configuredReadsMs,
     sqlFeedTotalMs: sqlFeedMs, sqlFeedAverageMs: feeds ? Math.round(sqlFeedMs / feeds) : 0, queryPlan, scanTypes };
+});
+
+/** Read-only deployed capability. Public results contain no source payloads, IDs or financial aggregates. */
+export const verifyLedgerReads = async () => {
+  const started = Date.now(), now = new Date(), owner = process.env.AGENT_OWNER_SUB;
+  if (!owner) throw new Error('Missing verification owner');
+  const { orderedMonths, ...financial } = await verifyNativeFinancialReads(owner, now);
+  let mismatches = financial.mismatches;
+  // Refresh current movement input in the same snapshot as each phase's SQL comparisons.
+  const planning = await withLedgerReadSnapshot(async () => verifyPlanningReads(owner, [...await allStoredEvents()], orderedMonths, now));
+  mismatches += planning.mismatches;
+  const wealth = await withLedgerReadSnapshot(() => verifyWealthReads(owner, orderedMonths, now));
+  mismatches += wealth.mismatches;
+  const domain = await withLedgerReadSnapshot(async () => verifyDomainReads(owner, await allStoredEvents(), orderedMonths, now));
+  mismatches += domain.mismatches;
+  const operational = await withLedgerReadSnapshot(() => verifyOperationalReads(owner, now));
+  mismatches += operational.mismatches;
+  return { ...financial, operational, verified: mismatches === 0, mode: 'native-sql', planning, wealth, domain,
+    mismatches, elapsedMs: Date.now() - started, phaseDurationsMs: { financial: financial.elapsedMs,
+      planning: planning.elapsedMs, wealth: wealth.elapsedMs, domain: domain.elapsedMs, operational: operational.elapsedMs } };
 };
 
 export const handler = async () => {

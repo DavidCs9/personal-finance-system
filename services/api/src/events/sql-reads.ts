@@ -1,4 +1,4 @@
-import { currentStoreTransaction } from '@finance/ledger/dsql-store';
+import { currentStoreTransaction, withStoreClient } from '@finance/ledger/dsql-store';
 import { createPool } from '@finance/ledger/dsql-connection';
 import type { JsonObject } from '../http/response.js';
 import { feedFromMovements, type EventFeed } from './month-feed.js';
@@ -7,9 +7,14 @@ import { toPublicEvent } from './public-event.js';
 
 export interface ReadSqlClient { query(statement: string, values?: unknown[]): Promise<{ rows: JsonObject[] }> }
 let pool: ReturnType<typeof createPool> | undefined;
-export const readerPool = (): ReadSqlClient => currentStoreTransaction() ?? (pool ??= createPool('olbia_reader', {
+const nativeReaderPool = () => pool ??= createPool('olbia_reader', {
   connectionTimeoutMillis: 1_500, queryTimeoutMillis: 3_000,
-}));
+});
+export const readerPool = (): ReadSqlClient => currentStoreTransaction() ?? nativeReaderPool();
+
+/** Provider-managed read snapshot; no write barrier, custom lock or manual retry. */
+export const withLedgerReadSnapshot = <T>(callback: () => Promise<T>): Promise<T> =>
+  currentStoreTransaction() ? callback() : nativeReaderPool().transaction(client => withStoreClient(client, callback));
 
 export const monthReadStatement = ledgerMovementReadStatement;
 

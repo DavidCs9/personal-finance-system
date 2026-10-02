@@ -6,6 +6,7 @@ import { nativeFixture } from './fixtures/native-ledger.js';
 import { appendLedgerObservation, insertLedgerRevision } from '../../ledger/src/dsql/ledger-writes.js';
 import { saveNativeCapture } from '../../ledger/src/dsql/ledger-capture.js';
 import { readLedgerMovements } from '../../ledger/src/dsql/ledger-reads.js';
+import { currentStoreTransaction } from '../../ledger/src/dsql/store.js';
 import { reconcileKey } from '../../ledger/src/dsql/projection.js';
 import type { SqlClient, TransactionPool } from '../../ledger/src/dsql/projection.js';
 import type { ObservedEventInput } from '../../ledger/src/observed-events.js';
@@ -198,6 +199,36 @@ describe('native SQL financial reads', () => {
       evidence_sha256=NULL,evidence_content_type=NULL WHERE movement_id=$1 AND capture_source='email'`, [uid(1)]);
     await expect(queries.readRawEmail(uid(1))).rejects.toThrow('Missing raw source');
     expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('verifies the financial phase through one native read snapshot with no writes and clears its context after errors', async () => {
+    await fixture.create(movement(1, { personalAmountMinor: 0 }));
+    const before = await fixture.snapshot();
+    const { verifyNativeFinancialReads } = await import('../src/events/read-verification.js');
+    const transaction = fixture.pool.transaction.bind(fixture.pool);
+    const statements: string[] = [];
+    const snapshot = vi.spyOn(fixture.pool, 'transaction').mockImplementation(callback => transaction(client =>
+      callback({ query: (statement, values) => { statements.push(statement); return client.query(statement, values); } })));
+    const outside = vi.spyOn(fixture.pool, 'query').mockRejectedValue(new Error('Read escaped the transaction'));
+    const result = await verifyNativeFinancialReads('owner', now);
+    expect(result).toMatchObject({ movements: 1, details: 1, mismatches: 0, missingLookups: 2 });
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    expect(outside).not.toHaveBeenCalled();
+    expect(statements.every(statement => /^(SELECT|WITH|EXPLAIN)/.test(statement.trim()))).toBe(true);
+    expect(currentStoreTransaction()).toBeUndefined();
+    outside.mockRestore(); snapshot.mockClear();
+    await readers.withLedgerReadSnapshot(() => readers.withLedgerReadSnapshot(async () => {
+      expect(currentStoreTransaction()).toBeDefined();
+      expect((await queries.allStoredEvents()).length).toBe(1);
+    }));
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    expect(currentStoreTransaction()).toBeUndefined();
+    await expect(readers.withLedgerReadSnapshot(async () => { throw new Error('Verification interrupted'); })).rejects.toThrow('Verification interrupted');
+    expect(currentStoreTransaction()).toBeUndefined();
+    expect(await fixture.snapshot()).toEqual(before);
+    snapshot.mockRejectedValue(new Error('Snapshot unavailable'));
+    await expect(verifyNativeFinancialReads('owner', now)).rejects.toThrow('Snapshot unavailable');
+    expect(DynamoDBDocumentClient.prototype.send).not.toHaveBeenCalled();
   });
 });
 
