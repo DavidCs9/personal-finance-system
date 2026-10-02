@@ -1,6 +1,7 @@
 import { TABLE_COLUMNS, TABLE_NAMES, OPERATIONAL_TABLE_NAMES } from './model.js';
 import type { SqlClient } from './projection.js';
 import { isOCCError } from '@aws/aurora-dsql-node-postgres-connector';
+import { DEFAULT_SPEND_CATEGORIES } from '@finance/domain';
 
 export class BootstrapFailure extends Error {
   constructor(stage: string, error?: unknown) {
@@ -41,6 +42,21 @@ export const SCHEMA_STATEMENTS = [
   `INSERT INTO olbia.schema_migrations VALUES (3,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
   `INSERT INTO olbia.schema_migrations VALUES (4,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
   `INSERT INTO olbia.schema_migrations VALUES (5,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
+  // Version 6: SQL-native category authority. The old projection is retained only
+  // as migration evidence; new category writes never update its envelopes.
+  `CREATE TABLE IF NOT EXISTS olbia.spend_categories (
+    id text PRIMARY KEY CHECK (id ~ '^[a-z][a-z0-9_]{0,39}$'),
+    name text NOT NULL CHECK (length(trim(name)) > 0 AND length(name) <= 100),
+    sort_order integer NOT NULL)`,
+  `INSERT INTO olbia.spend_categories (id,name,sort_order)
+    SELECT id,name,sort_order FROM olbia.categories
+    WHERE NOT EXISTS (SELECT 1 FROM olbia.schema_migrations WHERE version=6)
+    ON CONFLICT (id) DO NOTHING`,
+  ...DEFAULT_SPEND_CATEGORIES.map(category => `INSERT INTO olbia.spend_categories (id,name,sort_order)
+    SELECT '${category.id}','${category.name.replace(/'/g, "''")}',${category.sortOrder}
+    WHERE NOT EXISTS (SELECT 1 FROM olbia.schema_migrations WHERE version=6)
+    ON CONFLICT (id) DO NOTHING`),
+  `INSERT INTO olbia.schema_migrations VALUES (6,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING`,
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
@@ -82,6 +98,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('schema-grant', 'GRANT USAGE ON SCHEMA olbia TO olbia_projector');
   await query('tables-grant', `GRANT SELECT,INSERT,UPDATE,DELETE ON ${['projection_state', ...TABLE_NAMES].map((table) => `olbia.${table}`).join(',')} TO olbia_projector`);
   await query('read-grant', 'GRANT SELECT ON olbia.schema_migrations,olbia.movement_months,olbia.runtime_state TO olbia_projector');
+  await query('catalog-projector-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_projector');
   await query('projector-barrier-grant','GRANT SELECT,UPDATE ON olbia.application_barrier TO olbia_projector');
   for (const arn of roleArns) {
     if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid runtime role ARN');
@@ -92,6 +109,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (!reader.rows.length) await query('reader-role-create', 'CREATE ROLE olbia_reader WITH LOGIN');
     await query('reader-schema-grant', 'GRANT USAGE ON SCHEMA olbia TO olbia_reader');
     await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments', 'monthly_plans', 'payroll', 'cards', 'wealth_snapshots', 'wealth_versions', 'liability_snapshots', 'liability_versions', 'categories', 'merchant_category_rules', 'ingestion_exceptions', 'import_records', 'push_subscriptions', 'assistant_threads'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
+    await query('catalog-reader-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_reader');
     for (const arn of options.readerRoleArns) {
       if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid reader role ARN');
       await query('reader-iam-grant', `AWS IAM GRANT olbia_reader TO '${arn}'`);
@@ -119,6 +137,8 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query(`select-${role}`,`GRANT SELECT ON olbia.runtime_state,olbia.projection_state,olbia.schema_migrations TO ${role}`);
     if (writer) await query(`write-${role}`,`GRANT SELECT,INSERT,UPDATE,DELETE ON ${['projection_state','application_barrier','command_receipts',...TABLE_NAMES].map(t=>`olbia.${t}`).join(',')} TO ${role}`);
     if (writer) await query(`view-${role}`,`GRANT SELECT ON olbia.movement_months TO ${role}`);
+    await query(`catalog-read-${role}`, `GRANT SELECT ON olbia.spend_categories TO ${role}`);
+    if (writer) await query(`catalog-write-${role}`, `GRANT INSERT,UPDATE ON olbia.spend_categories TO ${role}`);
     if (operator) await query(`control-${role}`,`GRANT UPDATE ON olbia.runtime_state TO ${role}`);
     for (const arn of arns) {
       if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid application role ARN');

@@ -28,6 +28,7 @@ const movement = (id: string, receivedAt: string, extra = {}): SourceItem => ({ 
 const rule = (key: string, pattern?: string): SourceItem => ({ PK: 'CATEGORY_RULES', SK: `RULE#${key}`, id: key,
   merchantKey: key, ...(pattern ? { pattern } : {}), categoryId: key === 'z' ? 'salud' : 'shopping', source: 'human', updatedAt: '2026-09-01', provenance: { preserved: true } });
 const seed = async () => {
+  await sql.query("UPDATE olbia.spend_categories SET name='Compras propias',sort_order=1 WHERE id='shopping'");
   for (const item of [{ PK: 'CATEGORY_CATALOG', SK: 'CAT#shopping', id: 'shopping', name: 'Compras propias', sortOrder: 1 },
     card('a'), card('b', 10), card('c', 28), rule('a', 'shop'), rule('z', 'shop'), rule('long', 'shared shop'),
     movement('zero', '2026-10-01T05:59:59.999Z', { personalAmountMinor: 0 }), movement('oct', '2026-10-01T06:00:00.000Z'),
@@ -76,9 +77,9 @@ describe('remaining domain SQL reads', () => {
     const commands = (DynamoDBDocumentClient.prototype.send as any).mock.calls.map(([c]: any[]) => c.input);
     expect(commands.filter((c: any) => c.KeyConditionExpression).every((c: any) => c.ConsistentRead)).toBe(true);
   });
-  it('falls back for new/edited/deleted catalogs/rules/cards without losing full card metadata or admitting a fourth card', async () => {
+  it('keeps the native catalog authoritative while legacy rules/cards handle lag and card limits', async () => {
     await seed(); const original = await readSqlCards('owner', sql); expect(original[0]).toMatchObject({ institution: 'santander_mx', createdAt: '2026-09-01T12:00:00.123Z' });
-    records.delete('CATEGORY_CATALOG|CAT#shopping'); expect(await listCategories()).toContainEqual(DEFAULT_SPEND_CATEGORIES.find(c => c.id === 'shopping'));
+    records.delete('CATEGORY_CATALOG|CAT#shopping'); expect(await listCategories()).toContainEqual({ id: 'shopping', name: 'Compras propias', sortOrder: 1 });
     records.delete('CATEGORY_RULES|RULE#a'); expect((await listMerchantRules()).map(r => r.id)).not.toContain('a');
     await sql.query("DELETE FROM olbia.cards WHERE row_id='c'");
     // Use the real mocked SDK client so max-three validation exercises the source path, not a fake input.
@@ -101,9 +102,9 @@ describe('remaining domain SQL reads', () => {
   });
   it('shares one selected movement feed in assistant comparison and four-month report on SQL failure; cards clamp to February once selected', async () => {
     await seed(); const query = vi.spyOn(sql, 'query').mockRejectedValue(new Error('SQL unavailable'));
-    await compareMonths('2026-10', '2026-09');
+    await expect(compareMonths('2026-10', '2026-09')).rejects.toThrow('SQL unavailable');
     expect(query.mock.calls.filter(([statement]) => statement === readers.monthReadStatement)).toHaveLength(1);
-    query.mockClear(); await buildMonthlyCloseFacts('owner', '2026-10', new Date('2026-11-01T13:00:00Z'));
+    query.mockClear(); await expect(buildMonthlyCloseFacts('owner', '2026-10', new Date('2026-11-01T13:00:00Z'))).rejects.toThrow('SQL unavailable');
     expect(query.mock.calls.filter(([statement]) => statement === readers.monthReadStatement)).toHaveLength(1);
     query.mockClear(); const { database } = await import('../src/http/clients.js');
     const cards = await listCards({ database, tableName: 'test', owner: 'owner' });
@@ -128,10 +129,11 @@ describe('remaining domain SQL reads', () => {
   });
   it('skips SQL entirely in rollback, selects source in shadow and propagates source failure', async () => {
     await seed(); const query = vi.spyOn(sql, 'query'); vi.stubEnv('DSQL_DOMAIN_READ_MODE', 'dynamodb');
-    await listCategories(); await listMerchantRules(); const { database } = await import('../src/http/clients.js'); await listCards({ database, tableName: 'test', owner: 'owner' });
-    expect(query).not.toHaveBeenCalled(); vi.stubEnv('DSQL_DOMAIN_READ_MODE', 'shadow'); await listCategories();
+    await listMerchantRules(); const { database } = await import('../src/http/clients.js'); await listCards({ database, tableName: 'test', owner: 'owner' });
+    expect(query).not.toHaveBeenCalled(); vi.stubEnv('DSQL_DOMAIN_READ_MODE', 'shadow'); await listMerchantRules();
     expect(console.log).toHaveBeenCalledWith(expect.stringContaining('"SourceSelected":1'));
     vi.mocked(DynamoDBDocumentClient.prototype.send).mockRejectedValue(new Error('Source unavailable') as never);
-    await expect(listCategories()).rejects.toThrow('Source unavailable');
+    await expect(listMerchantRules()).rejects.toThrow('Source unavailable');
+    expect(await listCategories()).toHaveLength(13);
   });
 });

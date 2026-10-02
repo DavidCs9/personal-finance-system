@@ -1,8 +1,7 @@
 import { withApplicationTransaction } from '@finance/ledger/dsql-store';
 import { randomUUID } from 'node:crypto';
-import { GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import {
-  DEFAULT_SPEND_CATEGORIES,
   isValidCategoryId,
   normalizeMerchantKey,
   resolveCategoryId,
@@ -11,38 +10,18 @@ import {
 } from '@finance/domain';
 import { listCategories } from './sql-reads.js';
 import { listMerchantRulesDynamo } from './source-reads.js';
+import { InvalidCategoryError, requireCatalogCategories, saveCategoryCatalog } from './catalog.js';
 import { database, tableName } from '../http/clients.js';
 
-const CATALOG_PK = 'CATEGORY_CATALOG';
 const RULES_PK = 'CATEGORY_RULES';
 
-export class InvalidCategoryError extends Error {}
+export { InvalidCategoryError };
 
 export { listCategories, listMerchantRules } from './sql-reads.js';
-export { listCategoriesDynamo, listMerchantRulesDynamo } from './source-reads.js';
+export { listMerchantRulesDynamo } from './source-reads.js';
 
 const putCategoryCatalogInternal = async (categories: readonly SpendCategory[]): Promise<readonly SpendCategory[]> => {
-  for (const category of categories) {
-    if (!isValidCategoryId(category.id)) {
-      throw new InvalidCategoryError(`Categoría inválida: ${category.id}`);
-    }
-    if (!category.name.trim()) throw new InvalidCategoryError('El nombre de categoría es obligatorio.');
-  }
-  for (const category of categories) {
-    await database.send(new PutCommand({
-      TableName: tableName,
-      Item: {
-        PK: CATALOG_PK,
-        SK: `CAT#${category.id}`,
-        entityType: 'spend_category',
-        id: category.id,
-        name: category.name.trim(),
-        sortOrder: category.sortOrder,
-        GSI1PK: 'SPEND_CATEGORIES',
-        GSI1SK: category.id,
-      },
-    }));
-  }
+  await saveCategoryCatalog(categories);
   return listCategories();
 };
 
@@ -55,6 +34,7 @@ const upsertMerchantRuleInternal = async (input: {
   if (!isValidCategoryId(input.categoryId) && input.categoryId !== '') {
     throw new InvalidCategoryError(`Categoría inválida: ${input.categoryId}`);
   }
+  await requireCatalogCategories([input.categoryId === '' ? null : input.categoryId]);
   const merchantKey = normalizeMerchantKey(input.merchantRaw);
   if (!merchantKey) throw new InvalidCategoryError('Comercio vacío.');
   const existing = await database.send(new GetCommand({
@@ -89,16 +69,6 @@ export const resolveCategoryForMerchant = async (merchantRaw: string): Promise<s
   return resolveCategoryId(merchantRaw, rules);
 };
 
-const ensureDefaultCatalogInternal = async (): Promise<readonly SpendCategory[]> => {
-  const existing = await database.send(new QueryCommand({
-    TableName: tableName,
-    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-    ExpressionAttributeValues: { ':pk': CATALOG_PK, ':sk': 'CAT#' },
-    Limit: 1,
-  }));
-  if ((existing.Items?.length ?? 0) > 0) return listCategories();
-  return putCategoryCatalog(DEFAULT_SPEND_CATEGORIES);
-};
 
 const setEventCategoryInternal = async (
   eventId: string,
@@ -109,6 +79,7 @@ const setEventCategoryInternal = async (
   if (categoryId !== null && !isValidCategoryId(categoryId)) {
     throw new InvalidCategoryError(`Categoría inválida: ${categoryId}`);
   }
+  await requireCatalogCategories([categoryId]);
   const existing = await database.send(new GetCommand({
     TableName: tableName,
     Key: { PK: `EVENT#${eventId}`, SK: 'EVENT' },
@@ -163,6 +134,7 @@ export const putCategoryCatalog = (...args:Parameters<typeof putCategoryCatalogI
 
 export const upsertMerchantRule = (...args:Parameters<typeof upsertMerchantRuleInternal>):ReturnType<typeof upsertMerchantRuleInternal> => withApplicationTransaction(()=>upsertMerchantRuleInternal(...args));
 
-export const ensureDefaultCatalog = (...args:Parameters<typeof ensureDefaultCatalogInternal>):ReturnType<typeof ensureDefaultCatalogInternal> => withApplicationTransaction(()=>ensureDefaultCatalogInternal(...args));
+// Retained API name; a catalog read never seeds or mutates data.
+export const ensureDefaultCatalog = listCategories;
 
 export const setEventCategory = (...args:Parameters<typeof setEventCategoryInternal>):ReturnType<typeof setEventCategoryInternal> => withApplicationTransaction(()=>setEventCategoryInternal(...args));

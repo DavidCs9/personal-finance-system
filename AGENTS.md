@@ -12,6 +12,14 @@ Design for David's actual finances and usage. Do not introduce other users, publ
 
 Use his real data to investigate and validate. Anonymization, masking, and synthetic datasets are not prerequisites. Keep the implementation proportional to this personal system while preserving financial correctness, recovery, and the existing PR/deployment workflow.
 
+## SQL-native architecture north star — binding
+
+**OLBIA MUST FEEL AS IF IT WAS BORN IN SQL.** This is David's explicit architecture decision, 2026-10-01. Read [`docs/product-north-star.md`](docs/product-north-star.md) and the [table audit](docs/dsql-normalization-audit.md) before data-model or persistence work.
+
+Design around domain entities, domain primary keys, typed columns, explicit relationships, native database constraints, direct SQL queries and transactional domain operations. Do not preserve DynamoDB's `PK`/`SK`, `GSI` fields, document-command emulation, envelopes or projection-first authority as the final model, including under renamed abstractions. Those mechanisms are temporary migration compatibility and recovery state.
+
+Finish each normalization slice by making its relational representation authoritative and migrating its readers and writers. Adding SQL columns while retaining a DynamoDB-shaped source of truth does not complete normalization. Keep JSON only where its meaning warrants it, such as original evidence, immutable audit changes or genuinely variable provider metadata. Preserve financial behavior, history, recovery and the normal PR/deployment workflow throughout the transition.
+
 ## User-interface changes
 
 Before planning, implementing, or reviewing any user-facing UI change, read these files completely:
