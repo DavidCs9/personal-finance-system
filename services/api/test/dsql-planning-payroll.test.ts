@@ -1,3 +1,5 @@
+import { prepareNativeLedgerFixture } from './fixtures/native-ledger.js';
+import { NATIVE_LEDGER_TABLES } from '../../ledger/src/dsql/ledger-schema.js';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import * as connection from '../../ledger/src/dsql/connection.js';
@@ -57,13 +59,14 @@ const sync = async (item: SourceKey) => {
 beforeAll(async () => {
   sql = new PGlite();
   for (const statement of SCHEMA_STATEMENTS) await sql.query(statement);
+  await prepareNativeLedgerFixture(sql);
   pool = { transaction: callback => sql.transaction(client => callback(client as unknown as SqlClient)) };
 }, 30_000);
 afterAll(async () => { await sql.close(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 beforeEach(async () => {
   records = new Map();
-  await sql.exec(`TRUNCATE olbia.projection_state,olbia.month_plans,olbia.planned_payments,olbia.payslips,olbia.payslip_lines,${TABLE_NAMES.map(table => `olbia.${table}`).join(',')}`);
+  await sql.exec(`TRUNCATE olbia.projection_state,olbia.month_plans,olbia.planned_payments,olbia.payslips,olbia.payslip_lines,${[...TABLE_NAMES,...NATIVE_LEDGER_TABLES,'bank_imports','bank_import_rows','bank_import_candidates'].map(table => `olbia.${table}`).join(',')}`);
   vi.stubEnv('OLBIA_SQL_STORE_ENABLED','true');
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
   vi.spyOn(connection,'createPool').mockReturnValue({ query: (s: string,v?: unknown[])=>sql.query(s,v),transaction: (fn: (c:SqlClient)=>Promise<unknown>)=>sql.transaction(c=>fn(c as unknown as SqlClient)) } as never);

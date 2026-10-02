@@ -1,10 +1,10 @@
 import { verifyOperationalReads } from '../operational/verification.js';
 import { addCalendarMonths, monthKeyInZone } from '@finance/domain';
-import { feedFromPayloads, spendMonthOf } from './month-feed.js';
-import { readCurrentMovementPayloads, readSourceDetail } from './source-reads.js';
+import { feedFromMovements, spendMonthOf } from './month-feed.js';
+import { verifyNativeLedgerState, verifyNativeMonthSummary } from './native-verification.js';
 import { monthReadStatement, readerPool, readSqlDetail, readSqlFeed } from './sql-reads.js';
-import { listEventsForMonthsDynamo, listEventsForMonths, getEventDetail } from './queries.js';
-import { ledgerReadMode, samePublicResult } from './read-selection.js';
+import { allStoredEvents, listEventsForMonths, getEventDetail } from './queries.js';
+import { samePublicResult } from './read-selection.js';
 import { getMonthlyPlan } from '../months/service.js';
 import { summarizeMonthFeed } from '../months/summary.js';
 import type { JsonObject } from '../http/response.js';
@@ -18,12 +18,11 @@ export const verifyLedgerReads = async () => {
   const now = new Date();
   const owner = process.env.AGENT_OWNER_SUB;
   if (!owner) throw new Error('Missing verification owner');
-  const source = await readCurrentMovementPayloads();
-  const sourceScanMs = Date.now() - started;
+  const source = [...await allStoredEvents()];
+  const nativeReadMs = Date.now() - started;
   const pool = readerPool();
-  const sql = await pool.query('SELECT payload FROM olbia.movements');
-  const sort = (items: JsonObject[]) => [...items].sort((a, b) => String(a.id).localeCompare(String(b.id)));
-  let mismatches = Number(!samePublicResult(sort(source), sort(sql.rows.map(row => row.payload as JsonObject))));
+  const native = await verifyNativeLedgerState(pool, source, id => readSqlDetail(id, pool));
+  let mismatches = native.mismatches;
   const months = new Set<string>();
   for (const event of source) {
     months.add(spendMonthOf(event));
@@ -38,45 +37,36 @@ export const verifyLedgerReads = async () => {
   let feeds = 0;
   let summaries = 0;
   let sqlFeedMs = 0;
-  const legacyStarted = Date.now();
-  const legacyRange = await listEventsForMonthsDynamo(orderedMonths);
-  const legacyMs = Date.now() - legacyStarted;
-  mismatches += Number(!samePublicResult(legacyRange, feedFromPayloads(orderedMonths, source)));
-  mismatches += Number(!samePublicResult(legacyRange, await readSqlFeed(orderedMonths, pool)));
+  mismatches += Number(!samePublicResult(feedFromMovements(orderedMonths, source), await readSqlFeed(orderedMonths, pool)));
   for (const month of [...months].sort()) {
-    const sourceFeed = feedFromPayloads([month], source);
+    const sourceFeed = feedFromMovements([month], source);
     const sqlStarted = Date.now();
     const sqlFeed = await readSqlFeed([month], pool);
     sqlFeedMs += Date.now() - sqlStarted;
     mismatches += Number(!samePublicResult(sourceFeed, sqlFeed));
     feeds++;
     const plan = await getMonthlyPlan(owner, month);
-    mismatches += Number(!samePublicResult(summarizeMonthFeed(month, plan, sourceFeed, now), summarizeMonthFeed(month, plan, sqlFeed, now)));
+    const summary = summarizeMonthFeed(month, plan, sqlFeed, now);
+    mismatches += Number(!samePublicResult(summarizeMonthFeed(month, plan, sourceFeed, now), summary));
+    mismatches += (await verifyNativeMonthSummary(pool, month, sqlFeed, summary)).mismatches;
     summaries++;
   }
   // Each adjacent pair verifies range ordering and MSI deduplication, beyond single-month membership.
   let ranges = 1;
   for (let i = 1; i < orderedMonths.length; i++) {
     const range = orderedMonths.slice(i - 1, i + 1);
-    mismatches += Number(!samePublicResult(feedFromPayloads(range, source), await readSqlFeed(range, pool)));
+    mismatches += Number(!samePublicResult(feedFromMovements(range, source), await readSqlFeed(range, pool)));
     ranges++;
   }
-  let details = 0;
-  for (const event of source) {
-    const id = String(event.id);
-    mismatches += Number(!samePublicResult(await readSqlDetail(id, pool), await readSourceDetail(id)));
-    details++;
-  }
-  const missing = '__dsql_missing_read_verification__';
-  mismatches += Number(!samePublicResult(await readSqlDetail(missing, pool), await readSourceDetail(missing)));
+  const missing = '00000000-0000-0000-0000-000000000000';
+  mismatches += Number(await readSqlDetail(missing, pool) !== undefined);
+  mismatches += Number(await readSqlDetail('invalid-id', pool) !== undefined);
   const configuredStarted = Date.now();
   const configuredFeed = await listEventsForMonths([current]);
   mismatches += Number(!samePublicResult(configuredFeed, await readSqlFeed([current], pool)));
   if (source.length) mismatches += Number(!samePublicResult(await getEventDetail(String(source[0].id)), await readSqlDetail(String(source[0].id), pool)));
   const configuredReadsMs = Date.now() - configuredStarted;
-  const plan = await pool.query(`EXPLAIN ANALYZE VERBOSE ${monthReadStatement}`, [[current],
-    [current, ...Array.from({ length: 24 }, (_, index) => addCalendarMonths(current, -index - 1)),
-      ...Array.from({ length: 24 }, (_, index) => addCalendarMonths(current, index + 1))]]);
+  const plan = await pool.query(`EXPLAIN ANALYZE VERBOSE ${monthReadStatement}`, [null, [current]]);
   // Plans can contain predicates/identifiers. Return only native scan node kinds and numeric cost/timing lines.
   const lines = plan.rows.map(row => String(row['QUERY PLAN']));
   const queryPlan = lines.filter(line => /(?:DPU|Planning Time|Execution Time)/i.test(line))
@@ -90,8 +80,8 @@ export const verifyLedgerReads = async () => {
   mismatches += domain.mismatches;
   const operational = await verifyOperationalReads(owner, now);
   mismatches += operational.mismatches;
-  return { operational, verified: mismatches === 0, mode: ledgerReadMode(), planning, wealth, domain, movements: source.length, feeds, summaries, ranges, details,
-    missingLookups: 1, mismatches, elapsedMs: Date.now() - started, sourceScanMs, configuredReadsMs, legacyRangeMs: legacyMs,
+  return { operational, verified: mismatches === 0, mode: 'native-sql', native, planning, wealth, domain, movements: source.length, feeds, summaries, ranges, details: native.details,
+    missingLookups: 2, mismatches, elapsedMs: Date.now() - started, nativeReadMs, configuredReadsMs,
     sqlFeedTotalMs: sqlFeedMs, sqlFeedAverageMs: feeds ? Math.round(sqlFeedMs / feeds) : 0, queryPlan, scanTypes };
 };
 

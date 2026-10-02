@@ -87,14 +87,15 @@ export const movementFromNative=(row:Row):Row=>{
 
 /** Months match actual financial relationships, without synthetic index keys or document pagination. */
 export const isLedgerMovementId=(id:string):boolean=>/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(id);
-export const readLedgerMovements=async(client:SqlClient,selection:{ids?:readonly string[];months?:readonly string[]}={}):Promise<Row[]>=>{
-  const ids=selection.ids?.filter(isLedgerMovementId);
-  if(ids?.length===0)return [];
-  const rows=(await client.query(`${nativeSelection}
+export const ledgerMovementReadStatement = `${nativeSelection}
     WHERE ($1::uuid[] IS NULL OR m.id=ANY($1::uuid[])) AND ($2::text[] IS NULL OR
       to_char(COALESCE(m.occurred_at,m.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM')=ANY($2::text[]) OR
       EXISTS(SELECT 1 FROM olbia.installment_entries i WHERE i.movement_id=m.id AND i.month=ANY($2::text[])))
-    ORDER BY m.received_at,m.id`,[ids??null,selection.months??null])).rows;
+    ORDER BY m.received_at,m.id`;
+export const readLedgerMovements=async(client:SqlClient,selection:{ids?:readonly string[];months?:readonly string[]}={}):Promise<Row[]>=>{
+  const ids=selection.ids?.filter(isLedgerMovementId);
+  if(ids?.length===0 || selection.months?.length===0)return [];
+  const rows=(await client.query(ledgerMovementReadStatement,[ids??null,selection.months??null])).rows;
   return rows.map(movementFromNative);
 };
 

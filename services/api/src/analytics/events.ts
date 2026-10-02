@@ -1,4 +1,4 @@
-import { feedFromPayloads } from '../events/month-feed.js';
+import { feedFromMovements } from '../events/month-feed.js';
 import type { CategorizedSpendEvent } from '@finance/domain';
 import { listEventsForMonth, listEventsForMonths } from '../events/queries.js';
 
@@ -37,9 +37,9 @@ export const loadCategorizedMonthsEvents = async (
   months: readonly string[],
 ): Promise<CategorizedSpendEvent[]> => deduplicateFeed(await listEventsForMonths(months));
 
-/** One selected input bundle, while retaining each month's original +/-24 month scope. */
+/** One selected native input bundle, classified independently for each financial month. */
 export const loadCategorizedComparisonEvents = async (months: readonly string[]): Promise<CategorizedSpendEvent[][]> => {
   const feed = await listEventsForMonths(months);
   const payloads = [...feed.events, ...feed.msiRelated];
-  return months.map(month => deduplicateFeed(feedFromPayloads([month], payloads)));
+  return months.map(month => deduplicateFeed(feedFromMovements([month], payloads)));
 };

@@ -1,14 +1,5 @@
 import { sqlStoreEnabled, storageAuthority } from '@finance/ledger/dsql-store';
-import type { JsonObject } from '../http/response.js';
-import type { EventFeed } from './month-feed.js';
-import { readSourceDetail, readSourceFeed } from './source-reads.js';
-import { readSqlDetail, readSqlFeed, readerPool } from './sql-reads.js';
-
 export type LedgerReadMode = 'dynamodb' | 'shadow' | 'guarded-sql';
-export const ledgerReadMode = (): LedgerReadMode => {
-  const mode = process.env.DSQL_LEDGER_READ_MODE;
-  return mode === 'shadow' || mode === 'guarded-sql' ? mode : 'dynamodb';
-};
 // Match the serialized public contract, including array order; object member order isn't meaningful.
 const canonical = (value: unknown): string | undefined => JSON.stringify(value, (_key, entry) =>
   entry && typeof entry === 'object' && !Array.isArray(entry)
@@ -40,17 +31,4 @@ export const selectLedgerRead = async <T>(input: {
   const selected = sql.ok && outcome === 'equal' && input.mode === 'guarded-sql' ? 'sql' : 'dynamodb';
   input.report?.(outcome, selected);
   return selected === 'sql' && sql.ok ? sql.value : source;
-};
-
-export const readConfiguredFeed = (months: readonly string[], legacySource: () => Promise<EventFeed>): Promise<EventFeed> => {
-  const mode = ledgerReadMode();
-  return selectLedgerRead({ mode, sql: () => readSqlFeed(months, readerPool()),
-    source: mode === 'dynamodb' ? legacySource : () => readSourceFeed(months),
-    report: (outcome, selected) => observe('month', mode, outcome, selected) });
-};
-export const readConfiguredDetail = (id: string, legacySource: () => Promise<JsonObject | undefined>): Promise<JsonObject | undefined> => {
-  const mode = ledgerReadMode();
-  return selectLedgerRead({ mode, sql: () => readSqlDetail(id, readerPool()),
-    source: mode === 'dynamodb' ? legacySource : () => readSourceDetail(id),
-    report: (outcome, selected) => observe('detail', mode, outcome, selected) });
 };

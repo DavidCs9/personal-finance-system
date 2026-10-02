@@ -54,7 +54,7 @@ export const TAG_MUTATION_TOOL_DEFINITIONS = [
   {
     name: 'apply_tag_edits',
     description: [
-      'Aplica atómicamente varias operaciones tags-only pendientes en una sola transacción DynamoDB.',
+      'Aplica atómicamente varias operaciones tags-only pendientes.',
       'Úsala para varios previews concretos cuando el total cabe en la transacción; recibe 1–12 operationIds reales y devuelve un recibo por operación.',
       'No mezcles operaciones de categorías ni inventes IDs. No pidas confirmación adicional.',
     ].join(' '),
@@ -121,7 +121,7 @@ export const TAG_MUTATION_TOOL_DEFINITIONS = [
   {
     name: 'apply_category_edits',
     description: [
-      'Aplica atómicamente varias operaciones category-only pendientes en una sola transacción DynamoDB.',
+      'Aplica atómicamente varias operaciones category-only pendientes.',
       'Úsala para varios previews concretos cuando el total cabe en la transacción; recibe 1–12 operationIds reales y devuelve un recibo por operación.',
       'No mezcles operaciones de tags ni inventes IDs. No pidas confirmación adicional.',
     ].join(' '),
