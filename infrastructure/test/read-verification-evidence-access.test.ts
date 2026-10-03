@@ -45,11 +45,25 @@ it('gives the deployed verifier read-only access to every supported evidence fam
   expect(schema.Properties.Environment.Variables.RAW_EMAIL_BUCKET_NAME).toEqual({Ref:rawBucket});
   expect(schemaStatements.flatMap(actions).some(a=>/^s3:(?:Put|Delete|\*)/.test(a))).toBe(false);
   expect(schemaStatements.flatMap(actions)).toContain('kms:Decrypt');
-  const bootstrap=Object.values(template.findResources('AWS::CloudFormation::CustomResource')).find(r=>r.Properties.Version===21)!;
+  const bootstrap=Object.values(template.findResources('AWS::CloudFormation::CustomResource')).find(r=>r.Properties.Version===22)!;
   const schemaPolicy=Object.keys(template.findResources('AWS::IAM::Policy')).find(id=>id.startsWith('DsqlProjectionSchemaServiceRoleDefaultPolicy'))!;
   expect(bootstrap.DependsOn).toContain(schemaPolicy);
   const functions=template.findResources('AWS::Lambda::Function');
-  for(const resource of Object.values(functions))
-    expect(resource.Properties.Environment?.Variables ?? {}).not.toHaveProperty('DSQL_LEDGER_READ_MODE');
+  let nativeFunctions=0;
+  for(const resource of Object.values(functions)) {
+    const environment=resource.Properties.Environment?.Variables ?? {};
+    expect(environment).not.toHaveProperty('DSQL_LEDGER_READ_MODE');
+    if(!environment.OLBIA_SQL_ROLE)continue;
+    nativeFunctions++;
+    for(const retired of ['METADATA_TABLE_NAME','OLBIA_SQL_STORE_ENABLED','OLBIA_SQL_STORE_ROLE','DSQL_OPERATIONAL_READ_MODE'])
+      expect(environment).not.toHaveProperty(retired);
+    const functionRole=resource.Properties.Role['Fn::GetAtt'][0];
+    const functionActions=Object.values(template.findResources('AWS::IAM::Policy'))
+      .filter(policy=>policy.Properties.Roles.some((value:{Ref?:string})=>value.Ref===functionRole))
+      .flatMap(policy=>policy.Properties.PolicyDocument.Statement).flatMap(actions);
+    // Retained disabled stream mapping uses provider-managed stream reads, never table data access.
+    expect(functionActions.filter(action=>/^dynamodb:(GetItem|BatchGetItem|Query|Scan|PutItem|UpdateItem|DeleteItem|BatchWriteItem|\*)$/.test(action))).toEqual([]);
+  }
+  expect(nativeFunctions).toBe(16);
 
 },60_000);

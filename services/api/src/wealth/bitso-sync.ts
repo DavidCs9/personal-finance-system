@@ -1,4 +1,4 @@
-import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
+import { assertSqlMutationsAvailable } from '@finance/ledger/sql-runtime';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import {
@@ -161,7 +161,7 @@ export const syncBitsoForOwner = async (owner: string): Promise<JsonObjectLike> 
 type JsonObjectLike = Record<string, unknown>;
 
 export const runBitsoSyncJob = async (): Promise<BitsoSyncResult> => {
-  await assertMutationsAvailable();
+  await assertSqlMutationsAvailable();
   const secretArn = process.env.BITSO_SECRET_ARN ?? '';
   if (!secretArn) {
     return { status: 'skipped', reason: 'BITSO_SECRET_ARN is not configured.' };

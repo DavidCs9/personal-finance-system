@@ -1,4 +1,4 @@
-import { withStoreClient } from '@finance/ledger/dsql-store';
+import { withSqlClient } from '@finance/ledger/sql-runtime';
 import { samePublicResult } from '../events/read-selection.js';
 import { readerPool, withLedgerVerificationSnapshot, type ReadSqlClient } from '../events/sql-reads.js';
 import { readStoredConversation, readStoredConversationIndex, readStoredConversationSelection } from './threads.js';
@@ -49,5 +49,5 @@ const verifyThreadSnapshot=async(owner:string,now:Date,client:ReadSqlClient)=>{
   return {mode:'native-sql',activated,headers:headers.length,selectionRows:selections.length,productReads,expiryChecks,validatedConstraints:constraints.filter(r=>r.convalidated===true).length,requiredColumns,mismatches,elapsedMs:Date.now()-started};
 };
 export const verifyNativeConversationMetadata=(owner:string,now:Date,client?:ReadSqlClient)=>client
-  ?withStoreClient(client,()=>verifyThreadSnapshot(owner,now,client))
+  ?withSqlClient(client,()=>verifyThreadSnapshot(owner,now,client))
   :withLedgerVerificationSnapshot(()=>verifyThreadSnapshot(owner,now,readerPool()));

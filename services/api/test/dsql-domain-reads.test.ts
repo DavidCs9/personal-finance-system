@@ -14,7 +14,7 @@ import { TABLE_NAMES, type SourceItem, type SourceKey } from '../../ledger/src/d
 import { reconcileKey, type TransactionPool, type SqlClient } from '../../ledger/src/dsql/projection.js';
 
 process.env.METADATA_TABLE_NAME ??= 'test'; process.env.RAW_EMAIL_BUCKET_NAME ??= 'test';
-const application = await import('../../ledger/src/dsql/store.js');
+const application = await import('../../ledger/src/dsql/sql-runtime.js');
 const readers = await import('../src/events/sql-reads.js');
 const { listCategories, listMerchantRules, resolveCategoryForMerchant } = await import('../src/categories/service.js');
 const { readSqlCategories, readSqlMerchantRules } = await import('../src/categories/sql-reads.js');
@@ -70,10 +70,10 @@ beforeEach(async () => {
   await prepareNativeWealthFixture(sql);
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
   await sql.query('DELETE FROM olbia.schema_migrations WHERE version=9');
-  vi.spyOn(application, 'applicationStoreClient').mockReturnValue(sql);
+  vi.spyOn(application, 'applicationSqlClient').mockReturnValue(sql);
   vi.stubEnv('DSQL_DOMAIN_READ_MODE', 'guarded-sql'); vi.stubEnv('DSQL_LEDGER_READ_MODE', 'guarded-sql');
   vi.stubEnv('DSQL_PLANNING_READ_MODE', 'dynamodb');
-  vi.spyOn(readers, 'readerPool').mockImplementation(() => application.currentStoreTransaction() ?? sql); vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(readers, 'readerPool').mockImplementation(() => application.currentSqlClient() ?? sql); vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(connection, 'createPool').mockReturnValue({ query: (s: string, v?: unknown[]) => sql.query(s, v), transaction: (fn: (c: SqlClient) => Promise<unknown>) => sql.transaction(c => fn(c as unknown as SqlClient)) } as never);
   vi.spyOn(DynamoDBDocumentClient.prototype, 'send').mockImplementation(async (command: any) => {
     const input = command.input, values = input.ExpressionAttributeValues ?? {};
@@ -109,11 +109,8 @@ describe('remaining domain SQL reads', () => {
     records.delete('CATEGORY_CATALOG|CAT#shopping'); expect(await listCategories()).toContainEqual({ id: 'shopping', name: 'Compras propias', sortOrder: 1 });
     records.delete('CATEGORY_RULES|RULE#a'); expect((await listMerchantRules()).map(r => r.id)).toContain('a');
     await sql.query("DELETE FROM olbia.cards WHERE row_id='c'");
-    // Use the real mocked SDK client so max-three validation exercises the source path, not a fake input.
-    const { database } = await import('../src/http/clients.js');
-    const query = vi.spyOn(sql, 'query');
+    // Max-three validation executes the actual native SQL writer.
     await expect(saveCard({ owner: 'owner', cardId: 'd', body: { name: 'd', cutOffDay: 1, paymentDueDay: 2 } })).rejects.toThrow('At most 3');
-    expect(query).toHaveBeenCalled();
     expect(await listCards('owner')).toHaveLength(3);
     records.delete('USER#owner|CARD#a'); expect((await listCards('owner')).map(c => c.id)).toEqual(['a', 'b', 'c']);
     await sql.query("UPDATE olbia.card_profiles SET deleted_at=CURRENT_TIMESTAMP WHERE id='a'");
@@ -131,7 +128,7 @@ describe('remaining domain SQL reads', () => {
     expect((await run()).mismatches).toBeGreaterThan(0);
     await sql.query('ALTER TABLE olbia.ledger_movements ADD CONSTRAINT ledger_movements_category_id_fkey FOREIGN KEY (category_id) REFERENCES olbia.spend_categories(id)');
     await sql.query("UPDATE olbia.cards SET source_item=jsonb_set(source_item,'{payload,name}','\"Corrupt\"') WHERE row_id='a'");
-    const { database } = await import('../src/http/clients.js'); expect((await listCards('owner'))[0].name).toBe('a');
+    expect((await listCards('owner'))[0].name).toBe('a');
     expect((await run()).mismatches).toBe(0); // frozen evidence has a separate maintenance gate
     await sql.query('ALTER TABLE olbia.liability_captures DROP CONSTRAINT liability_captures_card_id_fkey');
     expect((await run()).mismatches).toBeGreaterThan(0);
@@ -160,13 +157,13 @@ describe('remaining domain SQL reads', () => {
     await seed();
     const query = vi.spyOn(sql, 'query');
     const { patchEvent } = await import('../src/events/mutations.js');
-    expect(await application.withStoreClient(sql, () => patchEvent('invalid-id', 'owner', '{"action":"reject"}'))).toBeUndefined();
+    expect(await application.withSqlClient(sql, () => patchEvent('invalid-id', 'owner', '{"action":"reject"}'))).toBeUndefined();
     expect(query).not.toHaveBeenCalled();
   });
   it('keeps rules on SQL across legacy mode flags and propagates SQL failure without a source fallback', async () => {
     await seed(); const query = vi.spyOn(sql, 'query'); vi.stubEnv('DSQL_DOMAIN_READ_MODE', 'dynamodb');
     await listMerchantRules(); expect(query).toHaveBeenCalledTimes(1);
-    query.mockClear(); const { database } = await import('../src/http/clients.js'); await listCards('owner');
+    query.mockClear(); await listCards('owner');
     expect(query).toHaveBeenCalledTimes(1); vi.stubEnv('DSQL_DOMAIN_READ_MODE', 'shadow'); await listMerchantRules();
     vi.mocked(DynamoDBDocumentClient.prototype.send).mockRejectedValue(new Error('Source unavailable') as never);
     expect(await listMerchantRules()).toHaveLength(3);

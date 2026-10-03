@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { SCHEMA_STATEMENTS } from '../../../ledger/src/dsql/schema.js';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../../../ledger/src/dsql/ledger-schema.js';
-import { runNativeTransaction } from '../../../ledger/src/dsql/store.js';
+import { runSqlTransaction } from '../../../ledger/src/dsql/sql-runtime.js';
 import { appendLedgerObservation, insertLedgerMovement } from '../../../ledger/src/dsql/ledger-writes.js';
 import type { ObservedEventInput } from '../../../ledger/src/observed-events.js';
 import type { SqlClient, TransactionPool } from '../../../ledger/src/dsql/projection.js';
@@ -18,7 +18,7 @@ export const seedNativeMovement = async (pool: TransactionPool, changes: Partial
     status: 'accepted', amount: { amountMinor: 10000, currency: 'MXN' }, merchantRaw: 'Original shop',
     occurredAt: at, receivedAt: at, ingestedAt: at, source: { bucket: 'evidence', key: randomUUID(),
       sha256: 'a'.repeat(64), contentType: 'message/rfc822' }, parserVersion: 'original', parseWarnings: [], ...changes };
-  await runNativeTransaction(pool, async client => {
+  await runSqlTransaction(pool, async client => {
     const id = randomUUID();
     await insertLedgerMovement(client, event, id, event.occurredAt ?? event.receivedAt);
     await appendLedgerObservation(client, { id, movementId: event.id, captureSource: 'email',
@@ -37,7 +37,7 @@ export const nativeFixture = async () => {
   await sql.query('INSERT INTO olbia.schema_migrations VALUES (14,CURRENT_TIMESTAMP)');
   const pool: SqlClient & TransactionPool = { query: (s, v) => sql.query<Record<string, unknown>>(s, v),
     transaction: fn => sql.transaction(client => fn(client as unknown as SqlClient)) };
-  const run = <T>(fn: () => Promise<T>): Promise<T> => runNativeTransaction(pool, fn);
+  const run = <T>(fn: () => Promise<T>): Promise<T> => runSqlTransaction(pool, fn);
   const reset = async () => {
     await sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES,'ingestion_retry_attempts', 'projection_state', 'command_receipts', 'merchant_rules',
       'bank_imports', 'bank_import_rows', 'bank_import_candidates'].map(t => `olbia.${t}`).join(',')}`);

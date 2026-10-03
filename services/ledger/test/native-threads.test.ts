@@ -5,7 +5,7 @@ import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
 import { NATIVE_THREAD_SCHEMA_STATEMENTS, nativeThreadReadGrant, nativeThreadWriteGrants } from '../src/dsql/thread-schema.js';
 import { migrateConversationMetadata, prepareThreadCopy } from '../src/dsql/thread-copy.js';
 import { CONVERSATION_RETENTION_MS, readConversationMetadata, readConversationIndex, readConversationSelection, upsertConversation, selectConversation, deleteConversationMetadata, expireConversationMetadata } from '../src/dsql/thread.js';
-import { OlbiaSqlStore } from '../src/dsql/store.js';
+import { OlbiaSqlStore } from '../src/dsql/legacy-document-store.js';
 import type { SqlClient, TransactionPool } from '../src/dsql/projection.js';
 let sql:PGlite,pool:TransactionPool,store:OlbiaSqlStore;
 const id='11111111-1111-1111-1111-111111111111',otherId='22222222-2222-2222-2222-222222222222';

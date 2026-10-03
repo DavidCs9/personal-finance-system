@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
-import { withStoreClient } from '@finance/ledger/dsql-store';
+import { withSqlClient } from '@finance/ledger/sql-runtime';
 import { samePublicResult } from '../events/read-selection.js';
 import { readerPool,withLedgerVerificationSnapshot,type ReadSqlClient } from '../events/sql-reads.js';
 import { s3,rawSourceBucketName } from '../http/clients.js';
@@ -74,5 +74,5 @@ const verifySnapshot=async(now:Date,client:ReadSqlClient,read:Reader)=>{
   return {mode:'native-sql',activated,headers:headers.length,claims:claims.length,attempts:attempts.length,productReads,originalChecks,originalObjects:originals.size,retainedChecks,validatedConstraints:constraints.filter(r=>r.convalidated===true).length,requiredColumns,mismatches,elapsedMs:Date.now()-started};
 };
 export const verifyNativeExceptions=(now:Date,client?:ReadSqlClient,read:Reader=readOriginal)=>client
-  ?withStoreClient(client,()=>verifySnapshot(now,client,read))
-  :withLedgerVerificationSnapshot(()=>withStoreClient(readerPool(),()=>verifySnapshot(now,readerPool(),read)));
+  ?withSqlClient(client,()=>verifySnapshot(now,client,read))
+  :withLedgerVerificationSnapshot(()=>withSqlClient(readerPool(),()=>verifySnapshot(now,readerPool(),read)));

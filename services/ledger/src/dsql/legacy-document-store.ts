@@ -1,8 +1,6 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
+import { currentSqlClient,withSqlClient } from './sql-runtime.js';
 import { createHash } from 'node:crypto';
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, DeleteCommand, QueryCommand, ScanCommand, BatchGetCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
-import { createPool } from './connection.js';
+import { GetCommand, PutCommand, UpdateCommand, DeleteCommand, QueryCommand, ScanCommand, BatchGetCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { canonicalJson, entityForKey, projectRows, PROJECTION_VERSION, type SourceItem, type SourceKey } from './model.js';
 import { insertRow, sourceHash, type SqlClient, type TransactionPool } from './projection.js';
 import { conditionMatches, projectItem, updateItem, type ExpressionInput } from './expressions.js';
@@ -10,51 +8,10 @@ import { conditionMatches, projectItem, updateItem, type ExpressionInput } from 
 type Item=Record<string,unknown>;
 type Input=ExpressionInput & Record<string,any>;
 type Pool=SqlClient & TransactionPool;
-export type StorageAuthority='dynamodb'|'paused'|'sql';
-export const sqlStoreEnabled=() => process.env.OLBIA_SQL_STORE_ENABLED==='true';
-let pool:ReturnType<typeof createPool>|undefined;
-const storePool=():Pool => pool??=createPool(process.env.OLBIA_SQL_STORE_ROLE??'olbia_application');
-const context=new AsyncLocalStorage<SqlClient>();
-export const withStoreClient=<T>(client:SqlClient,callback:()=>Promise<T>):Promise<T> => context.run(client,callback);
-export const applicationStoreClient=():SqlClient => context.getStore()??storePool();
-export const currentStoreTransaction=() => context.getStore();
-const namedError=(name:string,message:string):Error => Object.assign(new Error(message),{name});
-const paused=() => namedError('MigrationPausedException','Olbia está en mantenimiento. Intenta de nuevo más tarde.');
-
-/** Deploy before moving exception/claim/retry orchestration and external IO. */
-export const assertLegacyExceptionAccess=async (client?:SqlClient):Promise<void> => {
-  if(!sqlStoreEnabled()) return;
-  try {
-    if((await (client??applicationStoreClient()).query('SELECT version FROM olbia.schema_migrations WHERE version=19')).rows.length) throw paused();
-  } catch(error) {
-    if((error as {code?:string}).code) throw namedError('StorageUnavailableException','Olbia storage is unavailable.');
-    throw error;
-  }
-};
-
-/** Native domain work shares the activation barrier and the connector's OCC retry. */
-export const runNativeTransaction=async <T>(pool:TransactionPool,callback:(client:SqlClient)=>Promise<T>):Promise<T> => {
-  const existing=context.getStore();if(existing)return callback(existing);
-  return pool.transaction(async client=>{
-    await client.query("UPDATE olbia.application_barrier SET generation=generation+1 WHERE id='storage'");
-    if((await client.query("SELECT mode FROM olbia.runtime_state WHERE id='storage'")).rows[0]?.mode!=='sql')throw paused();
-    return context.run(client,()=>callback(client));
-  });
-};
-export const withNativeTransaction=async <T>(callback:(client:SqlClient)=>Promise<T>):Promise<T> => {
-  const existing=context.getStore();if(existing)return callback(existing);
-  try{return await runNativeTransaction(storePool(),callback);}
-  catch(error){if((error as {code?:string}).code)throw namedError('StorageUnavailableException','Olbia storage is unavailable.');throw error;}
-};
-export const authorityFrom = async (client:SqlClient):Promise<StorageAuthority> => {
-  const result=await client.query("SELECT mode FROM olbia.runtime_state WHERE id='storage'");
-  const mode=result.rows[0]?.mode;
-  if(!['dynamodb','paused','sql'].includes(String(mode))) throw new Error('Missing storage authority.');
-  return mode as StorageAuthority;
-};
-export const storageAuthority=async ():Promise<StorageAuthority> => !sqlStoreEnabled() ? 'dynamodb' : context.getStore() ? 'sql' : authorityFrom(storePool());
-export const mutationsPaused=async () => sqlStoreEnabled() && await storageAuthority()==='paused';
-export const assertMutationsAvailable=async ():Promise<void> => {if(await mutationsPaused()) throw paused();};
+// Historical migration adapter, used only by retained-model tests. No product export or import.
+const context={getStore:currentSqlClient,run:<T>(client:SqlClient,callback:()=>Promise<T>)=>withSqlClient(client,callback)};
+const namedError=(name:string,message:string):Error=>Object.assign(new Error(message),{name});
+const paused=()=>namedError('MigrationPausedException','Olbia está en mantenimiento. Intenta de nuevo más tarde.');
 const clean=<T>(value:T):T => JSON.parse(JSON.stringify(value));
 const keyOf=(item:Item):SourceKey => {
   if(typeof item.PK!=='string' || typeof item.SK!=='string') throw namedError('ValidationException','Invalid Olbia record key.');
@@ -233,32 +190,3 @@ export class OlbiaSqlStore {
     return {Items:visible.map(item=>projectItem(item,input.ProjectionExpression,input)),Count:visible.length,ScannedCount:page.length,...(LastEvaluatedKey?{LastEvaluatedKey}:{})};
   }
 }
-
-export const withApplicationTransaction=async <T>(callback:()=>Promise<T>):Promise<T> => {
-  if(!sqlStoreEnabled() || context.getStore()) return callback();
-  const authority=await storageAuthority();if(authority==='dynamodb') return callback();if(authority==='paused') throw paused();
-  try { return await new OlbiaSqlStore(storePool(),process.env.METADATA_TABLE_NAME??'').transaction(()=>callback()); }
-  catch(error) { if((error as {code?:string}).code) throw namedError('StorageUnavailableException','Olbia storage is unavailable.');throw error; }
-};
-
-/** Keep the SDK client identity required by native paginateQuery/paginateScan.
- * Only send is routed; unsupported commands fail closed. No DynamoDB fallback in SQL mode.
- */
-export const createApplicationStore=():DynamoDBDocumentClient => {
-  const native=DynamoDBDocumentClient.from(new DynamoDBClient({}),{marshallOptions:{removeUndefinedValues:true}});
-  if(!sqlStoreEnabled()) return native;
-  const send=native.send.bind(native);
-  native.send=(async (command:any) => {
-    try {
-      const kind=commandKind(command),authority=await storageAuthority();
-      if(authority==='sql') return await new OlbiaSqlStore(storePool(),process.env.METADATA_TABLE_NAME??'').send(command);
-      if(authority==='paused' && !['GetCommand','QueryCommand','ScanCommand','BatchGetCommand'].includes(kind)) throw paused();
-      return await send(command);
-    } catch(error) {
-      const e=error as {name?:string;code?:string};
-      if(['MigrationPausedException','ValidationException','ConditionalCheckFailedException','TransactionCanceledException','IdempotentParameterMismatchException'].includes(e.name??'')) throw error;
-      throw namedError('StorageUnavailableException','Olbia storage is unavailable.');
-    }
-  }) as typeof native.send;
-  return native;
-};

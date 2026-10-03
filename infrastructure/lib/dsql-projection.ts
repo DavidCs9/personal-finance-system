@@ -56,10 +56,9 @@ export class DsqlProjection extends Construct {
   private readonly applicationRoleArns: string[] = [];
   private readonly storeReaderRoleArns: string[] = [];
   private readonly cutoverRoleArns: string[] = [];
-  grantApplicationStore(fn: NodejsFunction, access: 'writer'|'reader'|'operator'='writer'): void {
+  grantSqlAccess(fn: NodejsFunction, access: 'writer'|'reader'|'operator'='writer'): void {
     fn.addEnvironment('DSQL_ENDPOINT',this.cluster.attrEndpoint);
-    fn.addEnvironment('OLBIA_SQL_STORE_ENABLED','true');
-    fn.addEnvironment('OLBIA_SQL_STORE_ROLE',access==='reader'?'olbia_store_reader':access==='operator'?'olbia_cutover':'olbia_application');
+    fn.addEnvironment('OLBIA_SQL_ROLE',access==='reader'?'olbia_store_reader':access==='operator'?'olbia_cutover':'olbia_application');
     fn.addToRolePolicy(new iam.PolicyStatement({actions:['dsql:DbConnect'],resources:[this.cluster.attrResourceArn]}));
     const property=access==='reader'?'StoreReaderRoleArns':access==='operator'?'CutoverRoleArns':'ApplicationRoleArns';
     const arns=access==='writer'?this.applicationRoleArns:access==='reader'?this.storeReaderRoleArns:this.cutoverRoleArns;arns.push(fn.role!.roleArn);
@@ -92,7 +91,8 @@ export class DsqlProjection extends Construct {
         retention: logs.RetentionDays.ONE_MONTH, removalPolicy: RemovalPolicy.RETAIN,
       }),
       bundling: { minify: true, sourceMap: true, target: 'node24', externalModules: [], },
-      environment: { DSQL_ENDPOINT: cluster.attrEndpoint, METADATA_TABLE_NAME: props.table.tableName, DSQL_RECOVERY_BUCKET: recovery.bucketName },
+      environment: { DSQL_ENDPOINT: cluster.attrEndpoint,
+        ...(entry==='cutover'?{}:{METADATA_TABLE_NAME:props.table.tableName,DSQL_RECOVERY_BUCKET:recovery.bucketName}) },
     });
     const projector = createFunction('Projector', 'projector', 120);
     const maintenance = createFunction('Maintenance', 'maintenance', 600);
@@ -117,7 +117,7 @@ export class DsqlProjection extends Construct {
     });
     const bootstrap = new CustomResource(this, 'Bootstrap', {
       serviceToken: provider.serviceToken,
-      properties: { Version: 21, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
+      properties: { Version: 22, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
     });
     this.bootstrap = bootstrap;
     // IAM policies must be installed before the bootstrap handler connects.
@@ -204,7 +204,7 @@ export class DsqlProjection extends Construct {
     deployRole.addToPrincipalPolicy(new iam.PolicyStatement({ actions: ['cloudformation:DescribeStacks'], resources: [Stack.of(this).stackId] }));
     const operator=createFunction('Cutover','cutover',120);
     operator.addEnvironment('OLBIA_ALLOW_SQL_ACTIVATION',String(SQL_AUTHORITY));
-    this.grantApplicationStore(operator,'operator');
+    this.grantSqlAccess(operator,'operator');
     operator.grantInvoke(deployRole);
     const vault=new backup.BackupVault(this,'BackupVault',{backupVaultName:'personal-finance-v1-dsql',encryptionKey:props.encryptionKey,removalPolicy:RemovalPolicy.RETAIN});
     const backupRole=new iam.Role(this,'BackupRole',{assumedBy:new iam.ServicePrincipal('backup.amazonaws.com'),managedPolicies:[iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSBackupServiceRolePolicyForBackup')]});

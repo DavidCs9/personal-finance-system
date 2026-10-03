@@ -3,7 +3,7 @@ import { smokeNativeThreads } from './thread-smoke.js';
 import { smokeNativeDeliveries } from './delivery-smoke.js';
 import { smokeNativePush } from './push-smoke.js';
 import { createPool } from './connection.js';
-import { authorityFrom } from './store.js';
+import { readStorageAuthority } from './sql-runtime.js';
 import { smokeNativeLedger } from './ledger-smoke.js';
 import { smokeNativeWealth } from './wealth-smoke.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -13,7 +13,7 @@ import { createHash, randomUUID } from 'node:crypto';
 export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'smoke'}):Promise<Record<string,unknown>> => {
   const pool=createPool('olbia_cutover');
   try {
-    if(event.action==='status') return {mode:await authorityFrom(pool)};
+    if(event.action==='status') return {mode:await readStorageAuthority(pool)};
     if(event.action==='smoke') {
       const rollback=new Error('Smoke rollback');let verified=false;
       try {await pool.transaction(async client=>{
@@ -112,7 +112,7 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
     if(event.action==='activate' && process.env.OLBIA_ALLOW_SQL_ACTIVATION!=='true') throw new Error('SQL activation requires the approved cutover deployment');
     return await pool.transaction(async client=>{
       await client.query("UPDATE olbia.application_barrier SET generation=generation+1 WHERE id='storage'");
-      const previous=await authorityFrom(client);
+      const previous=await readStorageAuthority(client);
       if(event.action==='pause' && previous==='sql') return {mode:previous}; // subsequent deployments do not pause an established SQL system
       if(event.action==='activate' && !['paused','sql'].includes(previous)) throw new Error('Pause required before activation');
       const mode=event.action==='pause'?'paused':'sql';

@@ -1,4 +1,4 @@
-import { applicationStoreClient, withNativeTransaction } from '@finance/ledger/dsql-store';
+import { applicationSqlClient, withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { InvalidPushSubscriptionError, pushSubscriptionId, validatePushSubscription, upsertNativePushSubscription, deleteNativePushSubscription,
   readNativePushSubscriptions, type NativePushSubscription, type PushSubscriptionKeys, type PushContentMode } from '@finance/ledger/native-push';
 export { InvalidPushSubscriptionError, pushSubscriptionId };
@@ -44,12 +44,12 @@ export const savePushSubscription = async (input: {
 }): Promise<PushSubscriptionRecord> => {
   validatePushSubscription(input);
   const at = new Date().toISOString();
-  return withNativeTransaction(client => upsertNativePushSubscription(client, {...input, at}));
+  return withSqlTransaction(client => upsertNativePushSubscription(client, {...input, at}));
 };
 export const deletePushSubscription = (input: {readonly owner: string; readonly subscriptionId: string}): Promise<void> =>
-  withNativeTransaction(client => deleteNativePushSubscription(client, input.owner, input.subscriptionId));
+  withSqlTransaction(client => deleteNativePushSubscription(client, input.owner, input.subscriptionId));
 const nativeSubscriptions = async (owner?: string): Promise<readonly PushSubscriptionRecord[]> => {
-  try { return await readNativePushSubscriptions(applicationStoreClient(), owner); }
+  try { return await readNativePushSubscriptions(applicationSqlClient(), owner); }
   catch { throw Object.assign(new Error('Olbia storage is unavailable.'), {name:'StorageUnavailableException'}); }
 };
 export const listActivePushSubscriptions = (): Promise<readonly PushSubscriptionRecord[]> => nativeSubscriptions();

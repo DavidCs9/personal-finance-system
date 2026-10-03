@@ -17,7 +17,7 @@ import { verifyKey } from '../../ledger/src/dsql/verification.js';
 
 process.env.METADATA_TABLE_NAME ??= 'test-metadata';
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-evidence';
-const application = await import('../../ledger/src/dsql/store.js');
+const application = await import('../../ledger/src/dsql/sql-runtime.js');
 const sqlReaders = await import('../src/events/sql-reads.js');
 const { readSqlPlanRecord, readSqlPayslipsForMonth, readSqlPayslipsForYear, readSqlPayslipRecord } = await import('../src/months/sql-reads.js');
 const { getMonthlyPlan, saveMonthlyPlan, getMonthlyPlanFromReads } = await import('../src/months/service.js');
@@ -75,8 +75,8 @@ beforeEach(async () => {
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
   vi.spyOn(connection,'createPool').mockReturnValue({ query: (s: string,v?: unknown[])=>sql.query(s,v),transaction: (fn: (c:SqlClient)=>Promise<unknown>)=>sql.transaction(c=>fn(c as unknown as SqlClient)) } as never);
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now);
-  vi.spyOn(application, 'applicationStoreClient').mockImplementation(()=>application.currentStoreTransaction() ?? sql);
-  vi.spyOn(sqlReaders, 'readerPool').mockImplementation(()=>application.currentStoreTransaction() ?? sql);
+  vi.spyOn(application, 'applicationSqlClient').mockImplementation(()=>application.currentSqlClient() ?? sql);
+  vi.spyOn(sqlReaders, 'readerPool').mockImplementation(()=>application.currentSqlClient() ?? sql);
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(S3Client.prototype, 'send').mockResolvedValue({} as never);
   vi.spyOn(DynamoDBDocumentClient.prototype, 'send').mockImplementation(async (command: any) => {
@@ -228,16 +228,14 @@ describe('DSQL planning and payroll contracts', () => {
     await expect(listPayslipsForMonth(owner,'2026-09')).rejects.toThrow('SQL unavailable');
   });
 
-  it('verifies frozen evidence across empty paginated pages while operational payroll uses native SQL', async () => {
+  it('verifies frozen evidence with native SQL and never consults the retired document source', async () => {
     const item=payroll('2026-07',baseline.uuid,'31');put(item);await sync(item);
     vi.mocked(S3Client.prototype.send).mockResolvedValue({Body:{transformToByteArray:async()=>Buffer.from(fixture)}} as never);
     const send=vi.mocked(DynamoDBDocumentClient.prototype.send);
-    send.mockResolvedValueOnce({Items:[]} as never)
-      .mockResolvedValueOnce({Items:[],LastEvaluatedKey:{PK:item.PK,SK:item.SK}} as never)
-      .mockResolvedValueOnce({Items:[item]} as never);
+    const query=vi.spyOn(sql,'query');
     expect(await verifyPlanningReads(owner,[],['2026-07','2026-10'],now)).toMatchObject({storedPayroll:1,frozenPayroll:1,mismatches:0});
-    expect(send.mock.calls.slice(0,3).map(([command])=>command.input)).toMatchObject([
-      {ConsistentRead:true},{ConsistentRead:true},{ConsistentRead:true,ExclusiveStartKey:{PK:item.PK,SK:item.SK}},
-    ]);
+    expect(send).not.toHaveBeenCalled();
+    expect(query.mock.calls.some(([statement])=>statement.startsWith('SELECT source_pk,source_sk,source_item FROM olbia.projection_state'))).toBe(true);
+
   });
 });

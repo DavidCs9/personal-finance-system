@@ -6,7 +6,7 @@ import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
 import { NATIVE_EXCEPTION_SCHEMA_STATEMENTS } from '../src/dsql/exception-schema.js';
 import { migrateIngestionReview,prepareExceptionCopy,originalEmailSourceToken,type RetainedExceptionSnapshot } from '../src/dsql/exception-copy.js';
 import { readReviewException,readLatestRetry } from '../src/dsql/exception.js';
-import { OlbiaSqlStore } from '../src/dsql/store.js';
+import { OlbiaSqlStore } from '../src/dsql/legacy-document-store.js';
 import type { SqlClient,TransactionPool } from '../src/dsql/projection.js';
 let sql:PGlite,store:OlbiaSqlStore,pool:TransactionPool;
 const id='00000000-0000-4000-8000-000000000001',other='00000000-0000-4000-8000-000000000002',movement='10000000-0000-4000-8000-000000000001';

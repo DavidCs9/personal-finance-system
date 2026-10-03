@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
-import { paginateQuery } from '@aws-sdk/lib-dynamodb';
+import { readRetainedEvidencePages } from '../events/retained-evidence.js';
 import { addCalendarMonths, monthKeyInZone, deriveMonthCompensation, runningFondoAhorroByDay, sumFondoAhorroDeduccionesMinor, type PayslipSummary } from '@finance/domain';
-import { database, s3, tableName } from '../http/clients.js';
+import { s3 } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
 import { samePublicResult } from '../events/read-selection.js';
 import { readerPool, readSqlFeed } from '../events/sql-reads.js';
@@ -20,12 +20,8 @@ import { monthCloseDay } from '../reports/monthly-close.js';
 export const verifyPlanningReads = async (owner: string, movementPayloads: JsonObject[], financialMonths: readonly string[], now: Date) => {
   const started = Date.now();
   const source: JsonObject[] = [];
-  for (const prefix of ['MONTH#', 'PAYROLL#']) {
-    for await (const page of paginateQuery({ client: database }, { TableName: tableName, ConsistentRead: true,
-      KeyConditionExpression: 'PK=:pk AND begins_with(SK,:prefix)',
-      ExpressionAttributeValues: { ':pk': `USER#${owner}`, ':prefix': prefix } })) source.push(...(page.Items ?? []));
-  }
-  const client = readerPool();
+  const client=readerPool();
+  for await(const page of readRetainedEvidencePages(client,owner))source.push(...page);
   const projected = await client.query(`SELECT source_item FROM olbia.monthly_plans WHERE source_pk=$1
     UNION ALL SELECT source_item FROM olbia.payroll WHERE source_pk=$1`, [`USER#${owner}`]);
   const sorted = (items: JsonObject[]) => [...items].sort((a, b) => String(a.SK).localeCompare(String(b.SK)));

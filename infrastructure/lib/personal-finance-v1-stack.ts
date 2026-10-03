@@ -208,7 +208,6 @@ export class PersonalFinanceV1Stack extends Stack {
     });
 
     const dataStorageEnvironment = {
-      METADATA_TABLE_NAME: metadataTable.tableName,
       RAW_EMAIL_BUCKET_NAME: rawEmailBucket.bucketName,
     };
     const lambdaDefaults = {
@@ -275,7 +274,6 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     rawEmailBucket.grantRead(ingestionFunction);
-    if (SQL_AUTHORITY) metadataTable.grantReadData(ingestionFunction); else metadataTable.grantReadWriteData(ingestionFunction);
     vapidSecret.grantRead(ingestionFunction);
     ingestionFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ses:SendEmail'],
@@ -329,7 +327,6 @@ export class PersonalFinanceV1Stack extends Stack {
       entry: path.join(__dirname, '..', 'lambda', 'retry-dispatcher.ts'), handler: 'handler',
       environment: { ...dataStorageEnvironment, INGESTION_QUEUE_URL: ingestionQueue.queueUrl },
     });
-    if (SQL_AUTHORITY) metadataTable.grantReadData(retryDispatcherFunction); else metadataTable.grantReadWriteData(retryDispatcherFunction);
     ingestionQueue.grantSendMessages(retryDispatcherFunction);
     retryDispatcherFunction.addEventSource(new DynamoEventSource(metadataTable, { startingPosition: lambda.StartingPosition.LATEST, batchSize: 1, retryAttempts: 3, enabled: !SQL_AUTHORITY }));
 
@@ -450,14 +447,11 @@ export class PersonalFinanceV1Stack extends Stack {
     });
     rawEmailBucket.grantRead(apiFunction);
     rawEmailBucket.grantPut(apiFunction);
-    if (SQL_AUTHORITY) metadataTable.grantReadData(apiFunction); else metadataTable.grantReadWriteData(apiFunction);
     // Financial readers use the native ledger directly.
     // Plans and payroll use their native SQL authority directly.
     // Production shadow gate verified all retained canonical/audit records, financial histories and original evidence.
     // Categories, merchant rules and card profiles now read native SQL directly.
     // Independent production shadow gate passed complete operational envelopes and public/expiration contracts.
-    const operationalReadMode = 'guarded-sql';
-    apiFunction.addEnvironment('DSQL_OPERATIONAL_READ_MODE', operationalReadMode);
     dsqlProjection.grantReader(apiFunction);
     const readVerificationFunction = new NodejsFunction(this, 'DsqlReadVerification', {
       ...lambdaDefaults, functionName: 'personal-finance-v1-dsql-read-verification',
@@ -465,9 +459,8 @@ export class PersonalFinanceV1Stack extends Stack {
       timeout: Duration.minutes(10), memorySize: 512,
       logGroup: this.createLogGroup('DsqlReadVerificationLogGroup', 'personal-finance-v1-dsql-read-verification'),
       environment: { ...dataStorageEnvironment, AGENT_OWNER_SUB: agentOwnerSub.valueAsString,
-        DSQL_OPERATIONAL_READ_MODE: operationalReadMode },
+      },
     });
-    metadataTable.grantReadData(readVerificationFunction);
     rawEmailBucket.grantRead(readVerificationFunction, 'inbound/*');
     rawEmailBucket.grantRead(readVerificationFunction, 'manual-entries/*');
     rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/cfdi-nomina/*');
@@ -482,10 +475,6 @@ export class PersonalFinanceV1Stack extends Stack {
     new cdk.CfnOutput(this, 'DsqlReadVerificationFunction', { value: readVerificationFunction.functionName });
     const readVerifyDeployRole = iam.Role.fromRoleName(this, 'DsqlReadVerifyDeployRole', 'personal-finance-v1-github-deploy');
     readVerificationFunction.grantInvoke(readVerifyDeployRole);
-    if (!SQL_AUTHORITY) apiFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'],
-      resources: [metadataTable.tableArn, `${metadataTable.tableArn}/index/*`],
-    }));
     apiFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['textract:StartDocumentAnalysis', 'textract:GetDocumentAnalysis'],
       resources: ['*'],
@@ -505,7 +494,6 @@ export class PersonalFinanceV1Stack extends Stack {
         AGENT_OWNER: agentOwnerSub.valueAsString,
       },
     });
-    metadataTable.grantReadData(agentToolsFunction);
     dsqlProjection.grantReader(agentToolsFunction);
 
     const agentTagMutationFunction = new NodejsFunction(this, 'AgentTagMutationFunction', {
@@ -522,19 +510,6 @@ export class PersonalFinanceV1Stack extends Stack {
         AGENT_OWNER: agentOwnerSub.valueAsString,
       },
     });
-    metadataTable.grantReadData(agentTagMutationFunction);
-    if (!SQL_AUTHORITY) agentTagMutationFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'],
-      resources: [metadataTable.tableArn],
-      conditions: {
-        'ForAllValues:StringLike': {
-          'dynamodb:LeadingKeys': [
-            cdk.Fn.join('', ['BULK_EDIT#', agentOwnerSub.valueAsString]),
-            'EVENT#*',
-          ],
-        },
-      },
-    }));
 
     const gatewayRole = new iam.Role(this, 'AgentCoreGatewayRole', {
       roleName: 'personal-finance-v1-agentcore-gateway',
@@ -916,7 +891,6 @@ export class PersonalFinanceV1Stack extends Stack {
       ],
       resources: ['*'],
     }));
-    if (SQL_AUTHORITY) metadataTable.grantReadData(agentProxyFunction); else metadataTable.grantReadWriteData(agentProxyFunction);
     agentProxyFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock:GetPrompt'],
       resources: [
@@ -1004,7 +978,6 @@ export class PersonalFinanceV1Stack extends Stack {
       ],
       resources: ['*'],
     }));
-    if (SQL_AUTHORITY) metadataTable.grantReadData(agentChatBufferedFunction); else metadataTable.grantReadWriteData(agentChatBufferedFunction);
     agentChatBufferedFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock:GetPrompt'],
       resources: [
@@ -1092,13 +1065,11 @@ export class PersonalFinanceV1Stack extends Stack {
       handler: 'handler',
       description: 'Validates and atomically persists Apple Pay Shortcut observations.',
       environment: {
-        METADATA_TABLE_NAME: metadataTable.tableName,
         APPLE_PAY_CAPTURE_SECRET_ARN: applePayCaptureSecret.secretArn,
         VAPID_SECRET_ARN: vapidSecret.secretArn,
         WEB_APP_URL: webAppUrl,
       },
     });
-    if (SQL_AUTHORITY) metadataTable.grantReadData(applePayCaptureFunction); else metadataTable.grantReadWriteData(applePayCaptureFunction);
     applePayCaptureSecret.grantRead(applePayCaptureFunction);
     vapidSecret.grantRead(applePayCaptureFunction);
 
@@ -1116,13 +1087,11 @@ export class PersonalFinanceV1Stack extends Stack {
       description: 'Sends the daily Olbia balance Web Push at 07:00 America/Chihuahua.',
       timeout: Duration.minutes(2),
       environment: {
-        METADATA_TABLE_NAME: metadataTable.tableName,
         RAW_EMAIL_BUCKET_NAME: rawEmailBucket.bucketName,
         VAPID_SECRET_ARN: vapidSecret.secretArn,
         WEB_APP_URL: webAppUrl,
       },
     });
-    if (SQL_AUTHORITY) metadataTable.grantReadData(dailyBalancePushFunction); else metadataTable.grantReadWriteData(dailyBalancePushFunction);
     dsqlProjection.grantReader(dailyBalancePushFunction);
     vapidSecret.grantRead(dailyBalancePushFunction);
     new scheduler.Schedule(this, 'DailyBalancePushSchedule', {
@@ -1157,12 +1126,10 @@ export class PersonalFinanceV1Stack extends Stack {
       description: 'Sends Web Push reminders on card cut-off and payment days at 07:05 America/Chihuahua.',
       timeout: Duration.minutes(2),
       environment: {
-        METADATA_TABLE_NAME: metadataTable.tableName,
         VAPID_SECRET_ARN: vapidSecret.secretArn,
         WEB_APP_URL: webAppUrl,
       },
     });
-    if (SQL_AUTHORITY) metadataTable.grantReadData(cardCyclePushFunction); else metadataTable.grantReadWriteData(cardCyclePushFunction);
     cardCyclePushFunction.addEnvironment('RAW_EMAIL_BUCKET_NAME', rawEmailBucket.bucketName);
     dsqlProjection.grantReader(cardCyclePushFunction);
     vapidSecret.grantRead(cardCyclePushFunction);
@@ -1215,7 +1182,6 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     rawEmailBucket.grantReadWrite(bitsoSyncFunction);
-    if (SQL_AUTHORITY) metadataTable.grantReadData(bitsoSyncFunction); else metadataTable.grantReadWriteData(bitsoSyncFunction);
     bitsoApiSecret.grantRead(bitsoSyncFunction);
     vapidSecret.grantRead(bitsoSyncFunction);
     bitsoSyncFunction.addToRolePolicy(new iam.PolicyStatement({
@@ -1276,7 +1242,6 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     rawEmailBucket.grantReadWrite(ibkrSyncFunction);
-    if (SQL_AUTHORITY) metadataTable.grantReadData(ibkrSyncFunction); else metadataTable.grantReadWriteData(ibkrSyncFunction);
     ibkrApiSecret.grantRead(ibkrSyncFunction);
     vapidSecret.grantRead(ibkrSyncFunction);
     ibkrSyncFunction.addToRolePolicy(new iam.PolicyStatement({
@@ -1323,7 +1288,6 @@ export class PersonalFinanceV1Stack extends Stack {
         WEB_APP_URL: webAppUrl,
       },
     });
-    if (SQL_AUTHORITY) metadataTable.grantReadData(monthEndBalanceReminderFunction); else metadataTable.grantReadWriteData(monthEndBalanceReminderFunction);
     dsqlProjection.grantReader(monthEndBalanceReminderFunction);
     monthEndBalanceReminderFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ses:SendEmail'],
@@ -1372,7 +1336,6 @@ export class PersonalFinanceV1Stack extends Stack {
         WEB_APP_URL: webAppUrl,
       },
     });
-    if (SQL_AUTHORITY) metadataTable.grantReadData(monthlyCloseEmailFunction); else metadataTable.grantReadWriteData(monthlyCloseEmailFunction);
     dsqlProjection.grantReader(monthlyCloseEmailFunction);
     monthlyCloseEmailFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ses:SendEmail'],
@@ -1443,8 +1406,8 @@ export class PersonalFinanceV1Stack extends Stack {
     // The API Lambda serves many routes. One API-scoped invoke permission avoids
     // exhausting Lambda's 20 KB resource-policy limit with one statement per route.
     for (const fn of [ingestionFunction,retryDispatcherFunction,apiFunction,agentProxyFunction,agentChatBufferedFunction,applePayCaptureFunction,
-      dailyBalancePushFunction,cardCyclePushFunction,bitsoSyncFunction,ibkrSyncFunction,monthEndBalanceReminderFunction,monthlyCloseEmailFunction,agentTagMutationFunction]) dsqlProjection.grantApplicationStore(fn);
-    for (const fn of [readVerificationFunction,agentToolsFunction]) dsqlProjection.grantApplicationStore(fn,'reader');
+      dailyBalancePushFunction,cardCyclePushFunction,bitsoSyncFunction,ibkrSyncFunction,monthEndBalanceReminderFunction,monthlyCloseEmailFunction,agentTagMutationFunction]) dsqlProjection.grantSqlAccess(fn);
+    for (const fn of [readVerificationFunction,agentToolsFunction]) dsqlProjection.grantSqlAccess(fn,'reader');
 
 
     const apiIntegration = new HttpLambdaIntegration('ApiLambdaIntegration', apiFunction, {

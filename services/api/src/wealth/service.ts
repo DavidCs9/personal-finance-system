@@ -1,4 +1,4 @@
-import { withNativeTransaction } from '@finance/ledger/dsql-store';
+import { withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { createHash, randomUUID } from 'node:crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import {
@@ -352,7 +352,7 @@ export const persistWealthSnapshot = async (input: {
     ...(input.fxSource ? { fxSource: input.fxSource } : {}),
     ...(typeof input.fxRate === 'number' ? { fxRate: input.fxRate } : {}),
   };
-  return withNativeTransaction(client => insertNativeAssetCapture(client, { id, owner: input.owner, snapshot }));
+  return withSqlTransaction(client => insertNativeAssetCapture(client, { id, owner: input.owner, snapshot }));
 };
 
 export const createCajitaSnapshot = async (body: string | undefined, owner: string): Promise<JsonObject> => {
@@ -420,7 +420,7 @@ export const createCardLiabilitySnapshot = async (
     totalMxnMinor: input.amountMinor,
     evidence,
   };
-  return withNativeTransaction(async client =>
+  return withSqlTransaction(async client =>
     await insertNativeLiabilityCapture(client, { id, owner, snapshot }) as unknown as JsonObject);
 };
 

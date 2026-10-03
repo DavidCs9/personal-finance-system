@@ -8,7 +8,7 @@ import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
 import { NATIVE_WEALTH_SCHEMA_STATEMENTS, NATIVE_WEALTH_TABLES } from '../../ledger/src/dsql/wealth-schema.js';
 import { migrateWealth } from '../../ledger/src/dsql/wealth-copy.js';
 import { projectRows, type SourceItem } from '../../ledger/src/dsql/model.js';
-import { currentStoreTransaction } from '../../ledger/src/dsql/store.js';
+import { currentSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
 import type { SqlClient, TransactionPool } from '../../ledger/src/dsql/projection.js';
 import { readIndependentWealthState, verifyWealthRecovery } from '../src/wealth/native-verification.js';
 
@@ -65,7 +65,7 @@ beforeEach(async () => {
   vi.spyOn(DynamoDBDocumentClient.prototype, 'send').mockRejectedValue(new Error('Unexpected document authority'));
   vi.spyOn(S3Client.prototype, 'send').mockImplementation(async (command: any) => {
     if (command.constructor.name === 'PutObjectCommand') { evidence.set(command.input.Key, command.input.Body); return {}; }
-    expect(currentStoreTransaction()).toBeUndefined();
+    expect(currentSqlClient()).toBeUndefined();
     const body = evidence.get(command.input.Key); if (!body) throw new Error('Missing evidence');
     return { Body: { transformToByteArray: async () => Buffer.from(body) } };
   });

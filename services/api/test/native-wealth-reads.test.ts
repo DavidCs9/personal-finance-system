@@ -6,7 +6,7 @@ import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
 import { NATIVE_WEALTH_SCHEMA_STATEMENTS, NATIVE_WEALTH_TABLES } from '../../ledger/src/dsql/wealth-schema.js';
 import { projectRows, type SourceItem } from '../../ledger/src/dsql/model.js';
 import { migrateWealth } from '../../ledger/src/dsql/wealth-copy.js';
-import { currentStoreTransaction, withStoreClient } from '../../ledger/src/dsql/store.js';
+import { currentSqlClient, withSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
 import type { SqlClient } from '../../ledger/src/dsql/projection.js';
 import { readNativeWealthInputs, readNativeWealthAudit } from '../src/wealth/native-reads.js';
 
@@ -90,12 +90,12 @@ describe('typed native Patrimonio reads', () => {
     const generation = (await sql.query('SELECT generation FROM olbia.application_barrier')).rows;
     expect((await readNativeWealthInputs('owner')).snapshots).toHaveLength(1);
     expect(transaction).toHaveBeenCalledTimes(1); expect(outside).not.toHaveBeenCalled();
-    await sql.transaction(c => withStoreClient(c as unknown as SqlClient, async () => {
-      expect(currentStoreTransaction()).toBe(c);
+    await sql.transaction(c => withSqlClient(c as unknown as SqlClient, async () => {
+      expect(currentSqlClient()).toBe(c);
       expect(await readNativeWealthAudit('owner')).toHaveLength(2);
     }));
     expect(transaction).toHaveBeenCalledTimes(1);
-    expect(currentStoreTransaction()).toBeUndefined();
+    expect(currentSqlClient()).toBeUndefined();
     expect((await sql.query('SELECT generation FROM olbia.application_barrier')).rows).toEqual(generation);
   });
   it('sanitizes driver failures and never retries against document authority', async () => {

@@ -1,4 +1,4 @@
-import { applicationStoreClient } from './store.js';
+import { applicationSqlClient } from './sql-runtime.js';
 import type { SqlClient } from './projection.js';
 
 export interface ReviewSource { readonly bucket:string; readonly key:string; readonly sha256:string; readonly contentType:'message/rfc822' }
@@ -21,7 +21,7 @@ export const requireNativeExceptions=async(client:SqlClient):Promise<void>=>{
   if(!(await client.query('SELECT version FROM olbia.schema_migrations WHERE version=19')).rows.length)
     throw Object.assign(new Error('Olbia está en mantenimiento. Intenta de nuevo más tarde.'),{name:'MigrationPausedException'});
 };
-export const assertNativeExceptionAccess=async(client:SqlClient=applicationStoreClient()):Promise<void>=>{
+export const assertNativeExceptionAccess=async(client:SqlClient=applicationSqlClient()):Promise<void>=>{
   try {await requireNativeExceptions(client);}
   catch(error){if((error as {code?:string}).code)throw Object.assign(new Error('Olbia storage is unavailable.'),{name:'StorageUnavailableException'});throw error;}
 };

@@ -1,4 +1,4 @@
-import { applicationStoreClient, withNativeTransaction } from '@finance/ledger/dsql-store';
+import { applicationSqlClient, withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { randomUUID } from 'node:crypto';
 import { insertLedgerRevision, readLedgerDetail, replaceInstallmentPlan, replaceMovementTags,
   setMovementPersonalAmount, setMovementStatus, type BankRowEvidence } from '@finance/ledger/native-ledger';
@@ -17,13 +17,13 @@ import { setEventCategory } from '../categories/service.js';
 import { parsePersonalAmountMinor } from './personal-amount.js';
 
 const getEventDetail = async (id: string): Promise<JsonObject | undefined> => {
-  const detail = await readLedgerDetail(applicationStoreClient(), id);
+  const detail = await readLedgerDetail(applicationSqlClient(), id);
   return detail ? toPublicEvent(detail, detail.revisions as JsonObject[], detail.observations as JsonObject[]) : undefined;
 };
 const saveRevision = async (eventId: string, revision: {
   id: string; createdAt: string; changedBy: string; reason: string;
   changes: Record<string, { previous: unknown; next: unknown }>;
-}): Promise<void> => insertLedgerRevision(applicationStoreClient(), { ...revision, movementId: eventId });
+}): Promise<void> => insertLedgerRevision(applicationSqlClient(), { ...revision, movementId: eventId });
 
 export class InvalidMsiError extends Error {}
 
@@ -75,7 +75,7 @@ const persistEventPersonalAmount = async (
 ): Promise<JsonObject | undefined> => {
   const existing = await getEventDetail(eventId);
   if (!existing) return undefined;
-  await setMovementPersonalAmount(applicationStoreClient(), eventId, next);
+  await setMovementPersonalAmount(applicationSqlClient(), eventId, next);
   const revision = {
     id: randomUUID(),
     observedPurchaseId: eventId,
@@ -129,7 +129,7 @@ const persistEventMsiInternal = async (
 ): Promise<JsonObject | undefined> => {
   const existing = await getEventDetail(eventId);
   if (!existing) return undefined;
-  await replaceInstallmentPlan(applicationStoreClient(), eventId, next, evidence);
+  await replaceInstallmentPlan(applicationSqlClient(), eventId, next, evidence);
   const revision = {
     id: randomUUID(),
     observedPurchaseId: eventId,
@@ -229,7 +229,7 @@ const markVerified = async (eventId: string, changedBy: string): Promise<JsonObj
     throw new InvalidManualEntryError('Una autorización USD sólo se confirma con el cargo Santander en MXN.');
   }
   const previousWarnings = Array.isArray(existing.parseWarnings) ? existing.parseWarnings : [];
-  await setMovementStatus(applicationStoreClient(), eventId, 'accepted', []);
+  await setMovementStatus(applicationSqlClient(), eventId, 'accepted', []);
   const revision = {
     id: randomUUID(),
     observedPurchaseId: eventId,
@@ -251,7 +251,7 @@ const markRejected = async (eventId: string, changedBy: string): Promise<JsonObj
   if (existing.status === 'rejected') {
     return existing;
   }
-  await setMovementStatus(applicationStoreClient(), eventId, 'rejected');
+  await setMovementStatus(applicationSqlClient(), eventId, 'rejected');
   const revision = {
     id: randomUUID(),
     observedPurchaseId: eventId,
@@ -280,7 +280,7 @@ const markDeferredMsiInternal = async (
     ...previousWarnings.filter((item) => typeof item === 'string' && !/Diferido a MSI/i.test(item)),
     'Diferido a MSI automático Amex (no cuenta en el mes).',
   ];
-  await setMovementStatus(applicationStoreClient(), eventId, 'deferred_msi', warnings);
+  await setMovementStatus(applicationSqlClient(), eventId, 'deferred_msi', warnings);
   const revision = {
     id: randomUUID(),
     observedPurchaseId: eventId,
@@ -327,7 +327,7 @@ const setEventTags = async (
   if (!existing) return undefined;
   const previous = Array.isArray(existing.tags) ? existing.tags.map(String) : [];
   if (JSON.stringify(previous) === JSON.stringify(tags)) return existing;
-  await replaceMovementTags(applicationStoreClient(), eventId, tags);
+  await replaceMovementTags(applicationSqlClient(), eventId, tags);
   const revision = {
     id: randomUUID(),
     observedPurchaseId: eventId,
@@ -340,8 +340,8 @@ const setEventTags = async (
   return getEventDetail(eventId);
 };
 
-export const patchEvent = (...args: Parameters<typeof patchEventInternal>): ReturnType<typeof patchEventInternal> => withNativeTransaction(() => patchEventInternal(...args));
+export const patchEvent = (...args: Parameters<typeof patchEventInternal>): ReturnType<typeof patchEventInternal> => withSqlTransaction(() => patchEventInternal(...args));
 
-export const persistEventMsi = (...args: Parameters<typeof persistEventMsiInternal>): ReturnType<typeof persistEventMsiInternal> => withNativeTransaction(() => persistEventMsiInternal(...args));
+export const persistEventMsi = (...args: Parameters<typeof persistEventMsiInternal>): ReturnType<typeof persistEventMsiInternal> => withSqlTransaction(() => persistEventMsiInternal(...args));
 
-export const markDeferredMsi = (...args: Parameters<typeof markDeferredMsiInternal>): ReturnType<typeof markDeferredMsiInternal> => withNativeTransaction(() => markDeferredMsiInternal(...args));
+export const markDeferredMsi = (...args: Parameters<typeof markDeferredMsiInternal>): ReturnType<typeof markDeferredMsiInternal> => withSqlTransaction(() => markDeferredMsiInternal(...args));

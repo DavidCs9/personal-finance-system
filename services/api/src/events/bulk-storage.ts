@@ -1,4 +1,4 @@
-import { applicationStoreClient } from '@finance/ledger/dsql-store';
+import { applicationSqlClient } from '@finance/ledger/sql-runtime';
 import { isLedgerMovementId } from '@finance/ledger/native-ledger';
 import type { BulkEditOperation, BulkEditSnapshot } from './bulk-edits.js';
 import type { ReadSqlClient } from './sql-reads.js';
@@ -15,7 +15,7 @@ export const bulkAmount = (members: readonly Pick<BulkEditSnapshot, 'amountMinor
 /** Original assertions are immutable; the amount is derived from ordered member facts. */
 export const readBulkOperation = async (owner: string, id: string, client?: ReadSqlClient): Promise<BulkEditOperation | undefined> => {
   if (!isLedgerMovementId(id)) return undefined;
-  const row = (await (client ?? applicationStoreClient()).query(`SELECT operation.*,
+  const row = (await (client ?? applicationSqlClient()).query(`SELECT operation.*,
     (SELECT COALESCE(jsonb_agg(to_jsonb(member) ORDER BY member.position),'[]'::jsonb)
       FROM olbia.ledger_bulk_members member WHERE member.operation_id=operation.id) AS members
     FROM olbia.ledger_bulk_operations operation WHERE operation.id=$1 AND operation.owner=$2`, [id, owner])).rows[0];
@@ -37,7 +37,7 @@ export const readBulkOperation = async (owner: string, id: string, client?: Read
 
 /** Caller owns the complete preview transaction, including its financial snapshot. */
 export const insertBulkOperation = async (operation: BulkEditOperation): Promise<void> => {
-  const client = applicationStoreClient();
+  const client = applicationSqlClient();
   await client.query(`INSERT INTO olbia.ledger_bulk_operations
     (id,owner,status,created_at,expires_at,selection_assertion,change_assertion)
     VALUES ($1,$2,'pending',$3,$4,$5,$6)`, [operation.operationId, operation.owner, operation.createdAt,
@@ -53,6 +53,6 @@ export const transitionBulkOperation = async (owner: string, id: string, directi
   const expected = direction === 'apply' ? 'pending' : 'applied';
   const next = direction === 'apply' ? 'applied' : 'undone';
   const column = direction === 'apply' ? 'applied_at' : 'undone_at';
-  return (await applicationStoreClient().query(`UPDATE olbia.ledger_bulk_operations SET status=$3,${column}=$4
+  return (await applicationSqlClient().query(`UPDATE olbia.ledger_bulk_operations SET status=$3,${column}=$4
     WHERE id=$1 AND owner=$2 AND status=$5 RETURNING id`, [id, owner, next, at, expected])).rows.length === 1;
 };

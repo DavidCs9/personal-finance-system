@@ -4,7 +4,7 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { afterAll,afterEach,beforeAll,beforeEach,describe,expect,it,vi } from 'vitest';
 import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
 import * as connection from '../../ledger/src/dsql/connection.js';
-import { currentStoreTransaction,withStoreClient } from '../../ledger/src/dsql/store.js';
+import { currentSqlClient,withSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
 import type { SqlClient } from '../../ledger/src/dsql/projection.js';
 import * as readers from '../src/events/sql-reads.js';
 
@@ -26,7 +26,7 @@ beforeEach(async () => {
   vi.stubEnv('OLBIA_SQL_STORE_ENABLED','true');
   vi.spyOn(connection,'createPool').mockReturnValue({query:(s:string,v?:unknown[])=>sql.query(s,v),
     transaction:(fn:(c:SqlClient)=>Promise<unknown>)=>sql.transaction(c=>fn(c as unknown as SqlClient))} as never);
-  vi.spyOn(readers,'readerPool').mockImplementation(()=>currentStoreTransaction() ?? sql);
+  vi.spyOn(readers,'readerPool').mockImplementation(()=>currentSqlClient() ?? sql);
   vi.spyOn(S3Client.prototype,'send').mockResolvedValue({} as never);
 });
 describe('native immutable payroll service', () => {
@@ -56,7 +56,7 @@ describe('native immutable payroll service', () => {
     const bad = {...slip,lines:[...slip.lines,{...slip.lines[0]!,amountMinor:-1}]};
     await expect(insertPayslip('owner',bad,'2026-10-02T12:00:00Z',evidence)).rejects.toThrow();
     for(const table of ['payslips','payslip_lines'])expect((await sql.query(`SELECT * FROM olbia.${table}`)).rows).toHaveLength(0);
-    await expect(sql.transaction(client=>withStoreClient(client as unknown as SqlClient,async()=>{
+    await expect(sql.transaction(client=>withSqlClient(client as unknown as SqlClient,async()=>{
       await insertPayslip('owner',slip,'2026-10-02T12:00:00Z',evidence);
       expect(await getPayslip('owner',slip.month,slip.uuid)).toMatchObject(slip);throw new Error('Interrupted');
     }))).rejects.toThrow('Interrupted');

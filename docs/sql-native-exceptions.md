@@ -1,6 +1,6 @@
 # Native ingestion review and retries
 
-**Olbia must feel born in SQL. David Castro is its sole user and owner.** The complete native implementation follows deployed and independently accepted guard PR #198. Native release and independent production acceptance remain pending.
+**Olbia must feel born in SQL. David Castro is its sole user and owner.** The complete native implementation follows deployed and independently accepted guard PR #198. Native [PR #199](https://github.com/DavidCs9/personal-finance-system/pull/199) is deployed and independently accepted.
 
 The verified originals contain eight exception headers, four suppression claims and three completed retry requests. Seven actual encrypted MIME objects reproduce all eight recorded SHA-256 values and all four claim mappings. Four older headers have no claim. All historical requests lack a UUID; their exception/request timestamp is verified, and every completion resolves to a native movement. These absences stay explicit.
 
@@ -24,3 +24,6 @@ Readers and writers use direct SQL only. API retains its exact fields, sorting, 
 The migration rejects historical task/header combinations that cannot prove the requested actor and outcome for each attempt; it does not reconstruct lost attempt history from a newer nested header. The actual three retained attempts each have their exact matching header facts. Unexpected concurrent legacy changes reject activation under the shared barrier and require a fresh audit. Same-timestamp requests reject a key collision without manufacturing another identity. A completed latest attempt cannot be requested again, including when earlier failure evidence remains.
 
 Local acceptance uses David’s eight originals/four claims/three attempts and both actual writer roles, including existing movement completion with full rollback. The independent gate checks 25 constraints, 17 required columns, actual list/raw-metadata consumers and original MIME bytes. The isolated historical verifier retains recovery inventory; unused product envelope/fallback adapters and scheduled legacy TTL writes are removed. Recovery evidence remains intact.
+
+
+Production acceptance at 2026-10-03T16:43:34.176Z preserves all 59 prior tables/6,893 rows and exactly eight/four/three new relational facts. All 336 role/table/column assertions, seven live originals and independent native consumer checks pass. Required quality, deploy-production, every financial/provenance/evidence gate and actual fully rolled-back exception workflow smoke pass. See the [completed run](autonomous-runs/2026-10-03-native-exceptions.md).

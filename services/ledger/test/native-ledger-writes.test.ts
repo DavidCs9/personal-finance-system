@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildMsiSchedule, cancelRemainingInstallments, markInstallmentSpent, replaceMsiSchedule } from '@finance/domain';
 import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../src/dsql/ledger-schema.js';
-import { runNativeTransaction } from '../src/dsql/store.js';
+import { runSqlTransaction } from '../src/dsql/sql-runtime.js';
 import { saveNativeCapture } from '../src/dsql/ledger-capture.js';
 import { readLedgerDetail } from '../src/dsql/ledger-reads.js';
 import {
@@ -20,7 +20,7 @@ const kind = 'amex_statement';
 const hash = 'a'.repeat(64);
 const otherHash = 'b'.repeat(64);
 const schedule = () => buildMsiSchedule({ principalMinor: 10000, months: 3, startMonth: '2026-10', origin: 'manual' });
-const create = (status = 'accepted', currency = 'MXN') => runNativeTransaction(pool, client => saveNativeCapture(client, {
+const create = (status = 'accepted', currency = 'MXN') => runSqlTransaction(pool, client => saveNativeCapture(client, {
   token: randomUUID(), captureSource: 'email', reconciliationAt: at,
   event: { id: randomUUID(), institution: 'american_express_mx', eventType: 'card_purchase', status,
     amount: { amountMinor: 10000, currency }, merchantRaw: randomUUID(), receivedAt: at, ingestedAt: at,
@@ -54,7 +54,7 @@ describe('native financial edits and MSI provenance', () => {
   it('changes category, normalized tags, personal zero and status with ordered native history and immutable evidence', async () => {
     const { eventId } = await create();
     const original = (await readLedgerDetail(pool, eventId))!.observations;
-    await runNativeTransaction(pool, async client => {
+    await runSqlTransaction(pool, async client => {
       await setMovementCategory(client, eventId, 'shopping');
       await replaceMovementTags(client, eventId, [' Travel ', 'travel', 'SHARED']);
       await setMovementPersonalAmount(client, eventId, 0);
@@ -66,7 +66,7 @@ describe('native financial edits and MSI provenance', () => {
     expect(detail).toMatchObject({ categoryId: 'shopping', tags: ['shared', 'travel'], personalAmountMinor: 0,
       parseWarnings: [], revisions: [{ id: 'deterministic-audit-id', changes: { personalAmountMinor: { previous: null, next: 0 } } }] });
     expect(detail!.observations).toEqual(original);
-    await runNativeTransaction(pool, async client => {
+    await runSqlTransaction(pool, async client => {
       await setMovementCategory(client, eventId, null);
       await replaceMovementTags(client, eventId, []);
       await setMovementPersonalAmount(client, eventId, undefined);
@@ -80,15 +80,15 @@ describe('native financial edits and MSI provenance', () => {
   it('rolls back financial changes when an unknown category or duplicate audit identity fails', async () => {
     const { eventId } = await create();
     const before = await snapshot();
-    await expect(runNativeTransaction(pool, async client => {
+    await expect(runSqlTransaction(pool, async client => {
       await replaceMovementTags(client, eventId, ['temporary']);
       await setMovementCategory(client, eventId, 'missing-category');
     })).rejects.toThrow();
     expect(await snapshot()).toEqual(before);
     const revision = { id: 'audit', movementId: eventId, createdAt: at, changedBy: 'owner', changes: {} };
-    await runNativeTransaction(pool, client => insertLedgerRevision(client, revision));
+    await runSqlTransaction(pool, client => insertLedgerRevision(client, revision));
     const withRevision = await snapshot();
-    await expect(runNativeTransaction(pool, async client => {
+    await expect(runSqlTransaction(pool, async client => {
       await setMovementPersonalAmount(client, eventId, 0);
       await insertLedgerRevision(client, revision);
     })).rejects.toThrow();
@@ -98,25 +98,25 @@ describe('native financial edits and MSI provenance', () => {
   it('rejects invalid personal money and incompatible MSI or pending foreign edits without losing zero/absence', async () => {
     const { eventId } = await create();
     for (const value of [-1, 10001, 0.1, Number.MAX_SAFE_INTEGER + 1]) {
-      await expect(runNativeTransaction(pool, client => setMovementPersonalAmount(client, eventId, value))).rejects.toThrow();
+      await expect(runSqlTransaction(pool, client => setMovementPersonalAmount(client, eventId, value))).rejects.toThrow();
     }
-    await runNativeTransaction(pool, client => setMovementPersonalAmount(client, eventId, 0));
-    await expect(runNativeTransaction(pool, client => replaceInstallmentPlan(client, eventId, schedule())))
+    await runSqlTransaction(pool, client => setMovementPersonalAmount(client, eventId, 0));
+    await expect(runSqlTransaction(pool, client => replaceInstallmentPlan(client, eventId, schedule())))
       .rejects.toBeInstanceOf(LedgerPreconditionError);
-    await runNativeTransaction(pool, async client => {
+    await runSqlTransaction(pool, async client => {
       await setMovementPersonalAmount(client, eventId, undefined);
       await replaceInstallmentPlan(client, eventId, schedule());
     });
-    await expect(runNativeTransaction(pool, client => setMovementPersonalAmount(client, eventId, 0)))
+    await expect(runSqlTransaction(pool, client => setMovementPersonalAmount(client, eventId, 0)))
       .rejects.toBeInstanceOf(LedgerPreconditionError);
     const foreign = await create('pending_foreign', 'USD');
-    await expect(runNativeTransaction(pool, client => setMovementStatus(client, foreign.eventId, 'accepted')))
+    await expect(runSqlTransaction(pool, client => setMovementStatus(client, foreign.eventId, 'accepted')))
       .rejects.toBeInstanceOf(LedgerPreconditionError);
-    await expect(runNativeTransaction(pool, client => replaceInstallmentPlan(client, foreign.eventId, schedule())))
+    await expect(runSqlTransaction(pool, client => replaceInstallmentPlan(client, foreign.eventId, schedule())))
       .rejects.toBeInstanceOf(LedgerPreconditionError);
-    await expect(runNativeTransaction(pool, client => setMovementPersonalAmount(client, foreign.eventId, 0)))
+    await expect(runSqlTransaction(pool, client => setMovementPersonalAmount(client, foreign.eventId, 0)))
       .rejects.toBeInstanceOf(LedgerPreconditionError);
-    await runNativeTransaction(pool, client => setMovementStatus(client, foreign.eventId, 'rejected'));
+    await runSqlTransaction(pool, client => setMovementStatus(client, foreign.eventId, 'rejected'));
   });
 
   it('requires the exact bank capture coordinates for a new confirmation and retains that relation when the schedule changes', async () => {
@@ -124,20 +124,20 @@ describe('native financial edits and MSI provenance', () => {
     await seedImport();
     const plan = markInstallmentSpent(schedule(), 1, { amountMinor: 3333, occurredOn: '2026-10-02',
       evidenceObservationId: 'confirmed-row', confirmedAt: at });
-    await expect(runNativeTransaction(pool, client => replaceInstallmentPlan(client, eventId, plan)))
+    await expect(runSqlTransaction(pool, client => replaceInstallmentPlan(client, eventId, plan)))
       .rejects.toBeInstanceOf(InvalidLedgerWriteError);
     for (const evidence of [
       { installmentIndex: 1, kind, contentSha256: otherHash, rowPosition: 0 },
       { installmentIndex: 1, kind, contentSha256: hash, rowPosition: 1 },
     ] as const) {
-      await expect(runNativeTransaction(pool, client => replaceInstallmentPlan(client, eventId, plan, [evidence])))
+      await expect(runSqlTransaction(pool, client => replaceInstallmentPlan(client, eventId, plan, [evidence])))
         .rejects.toBeInstanceOf(InvalidLedgerWriteError);
     }
-    await runNativeTransaction(pool, client => replaceInstallmentPlan(client, eventId, plan, [
+    await runSqlTransaction(pool, client => replaceInstallmentPlan(client, eventId, plan, [
       { installmentIndex: 1, kind, contentSha256: hash, rowPosition: 0 },
     ]));
     const changed = replaceMsiSchedule(plan, { principalMinor: 10000, months: 4, startMonth: '2026-09', origin: 'manual' });
-    await runNativeTransaction(pool, client => replaceInstallmentPlan(client, eventId, changed));
+    await runSqlTransaction(pool, client => replaceInstallmentPlan(client, eventId, changed));
     expect(await readLedgerDetail(pool, eventId)).toMatchObject({ msi: JSON.parse(JSON.stringify(changed)) });
     expect((await sql.query('SELECT * FROM olbia.installment_entries WHERE movement_id=$1 AND installment_index=1', [eventId])).rows[0])
       .toMatchObject({ confirmed_at: new Date(at), evidence_identity: 'confirmed-row', evidence_origin: 'bank_row',
@@ -148,7 +148,7 @@ describe('native financial edits and MSI provenance', () => {
   it('preserves ambiguous candidate captures and legacy backfill evidence when cancelling or moving terminal installments', async () => {
     const { eventId } = await create();
     await seedImport(); await seedImport(otherHash);
-    await runNativeTransaction(pool, client => replaceInstallmentPlan(client, eventId, schedule()));
+    await runSqlTransaction(pool, client => replaceInstallmentPlan(client, eventId, schedule()));
     await sql.query(`UPDATE olbia.installment_entries SET status='spent',confirmed_at=$2,evidence_identity='confirmed-row',
       evidence_origin='ambiguous_bank_row' WHERE movement_id=$1 AND installment_index=1`, [eventId, at]);
     await sql.query(`UPDATE olbia.installment_entries SET status='spent',confirmed_at=$2,evidence_identity='backfill:original',
@@ -158,30 +158,30 @@ describe('native financial edits and MSI provenance', () => {
     const detail = await readLedgerDetail(pool, eventId);
     const plan = detail!.msi as ReturnType<typeof schedule>;
     const cancelled = cancelRemainingInstallments(plan);
-    await runNativeTransaction(pool, client => replaceInstallmentPlan(client, eventId, cancelled));
+    await runSqlTransaction(pool, client => replaceInstallmentPlan(client, eventId, cancelled));
     expect(await readLedgerDetail(pool, eventId)).toMatchObject({ msi: JSON.parse(JSON.stringify(cancelled)) });
     expect((await sql.query('SELECT content_sha256 FROM olbia.installment_evidence_candidates ORDER BY content_sha256')).rows)
       .toEqual([{ content_sha256: hash }, { content_sha256: otherHash }]);
     // A changed schedule can move a terminal month to another position; its evidence remains the same.
     const moved = { ...cancelled, installments: cancelled.installments.map((item, index) =>
       ({ ...cancelled.installments[(index + 1) % 3], index: item.index, month: item.month })) };
-    await runNativeTransaction(pool, client => replaceInstallmentPlan(client, eventId, moved));
+    await runSqlTransaction(pool, client => replaceInstallmentPlan(client, eventId, moved));
     expect((await sql.query('SELECT installment_index FROM olbia.installment_evidence_candidates')).rows)
       .toEqual([{ installment_index: 3 }, { installment_index: 3 }]);
     const before = await snapshot();
     const tampered = { ...moved, installments: moved.installments.map(item => item.evidenceObservationId
       ? { ...item, confirmedAt: '2026-10-02T12:00:00.124Z' } : item) };
-    await expect(runNativeTransaction(pool, client => replaceInstallmentPlan(client, eventId, tampered)))
+    await expect(runSqlTransaction(pool, client => replaceInstallmentPlan(client, eventId, tampered)))
       .rejects.toBeInstanceOf(InvalidLedgerWriteError);
     expect(await snapshot()).toEqual(before);
   });
 
   it('restores the whole plan and evidence when replacement fails after deleting the previous rows', async () => {
     const { eventId } = await create();
-    await runNativeTransaction(pool, client => replaceInstallmentPlan(client, eventId, schedule()));
+    await runSqlTransaction(pool, client => replaceInstallmentPlan(client, eventId, schedule()));
     const before = await snapshot();
     let deleted = false;
-    await expect(runNativeTransaction(pool, client => replaceInstallmentPlan({ query: async (statement, values) => {
+    await expect(runSqlTransaction(pool, client => replaceInstallmentPlan({ query: async (statement, values) => {
       if (statement.startsWith('INSERT INTO olbia.installment_plans')) {
         deleted = !(await client.query('SELECT * FROM olbia.installment_plans')).rows.length;
         throw new Error('Interrupted schedule replacement');
@@ -189,7 +189,7 @@ describe('native financial edits and MSI provenance', () => {
       return client.query(statement, values);
     } }, eventId, schedule()))).rejects.toThrow('Interrupted schedule replacement');
     expect(deleted).toBe(true); expect(await snapshot()).toEqual(before);
-    await runNativeTransaction(pool, client => replaceInstallmentPlan(client, eventId, undefined));
+    await runSqlTransaction(pool, client => replaceInstallmentPlan(client, eventId, undefined));
     expect((await readLedgerDetail(pool, eventId))!.msi).toBeUndefined();
   });
 });

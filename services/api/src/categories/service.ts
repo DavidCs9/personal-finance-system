@@ -1,4 +1,4 @@
-import { applicationStoreClient, withNativeTransaction } from '@finance/ledger/dsql-store';
+import { applicationSqlClient, withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { randomUUID } from 'node:crypto';
 import { insertLedgerRevision, readLedgerMovements, setMovementCategory } from '@finance/ledger/native-ledger';
 import {
@@ -38,10 +38,10 @@ const setEventCategoryInternal = async (
     throw new InvalidCategoryError(`Categoría inválida: ${categoryId}`);
   }
   await requireCatalogCategories([categoryId]);
-  const payload = (await readLedgerMovements(applicationStoreClient(), { ids: [eventId] }))[0];
+  const payload = (await readLedgerMovements(applicationSqlClient(), { ids: [eventId] }))[0];
   if (!payload) return undefined;
   const previous = (payload.categoryId as string | null | undefined) ?? null;
-  await setMovementCategory(applicationStoreClient(), eventId, categoryId);
+  await setMovementCategory(applicationSqlClient(), eventId, categoryId);
   const revision = {
     id: randomUUID(),
     observedPurchaseId: eventId,
@@ -52,7 +52,7 @@ const setEventCategoryInternal = async (
       categoryId: { previous, next: categoryId },
     },
   };
-  await insertLedgerRevision(applicationStoreClient(), { ...revision, movementId: eventId });
+  await insertLedgerRevision(applicationSqlClient(), { ...revision, movementId: eventId });
   if (options?.updateRule && categoryId && typeof payload.merchantRaw === 'string') {
     await upsertMerchantRule({
       merchantRaw: payload.merchantRaw,
@@ -60,18 +60,18 @@ const setEventCategoryInternal = async (
       source: options.source ?? 'human',
     });
   }
-  const nextPayload = (await readLedgerMovements(applicationStoreClient(), { ids: [eventId] }))[0];
+  const nextPayload = (await readLedgerMovements(applicationSqlClient(), { ids: [eventId] }))[0];
   return {
     ...nextPayload,
     categoryId: (nextPayload.categoryId as string | undefined) ?? null,
   };
 };
 
-export const putCategoryCatalog = (...args:Parameters<typeof putCategoryCatalogInternal>):ReturnType<typeof putCategoryCatalogInternal> => withNativeTransaction(()=>putCategoryCatalogInternal(...args));
+export const putCategoryCatalog = (...args:Parameters<typeof putCategoryCatalogInternal>):ReturnType<typeof putCategoryCatalogInternal> => withSqlTransaction(()=>putCategoryCatalogInternal(...args));
 
-export const upsertMerchantRule = (...args:Parameters<typeof upsertMerchantRuleInternal>):ReturnType<typeof upsertMerchantRuleInternal> => withNativeTransaction(()=>upsertMerchantRuleInternal(...args));
+export const upsertMerchantRule = (...args:Parameters<typeof upsertMerchantRuleInternal>):ReturnType<typeof upsertMerchantRuleInternal> => withSqlTransaction(()=>upsertMerchantRuleInternal(...args));
 
 // Retained API name; a catalog read never seeds or mutates data.
 export const ensureDefaultCatalog = listCategories;
 
-export const setEventCategory = (...args:Parameters<typeof setEventCategoryInternal>):ReturnType<typeof setEventCategoryInternal> => withNativeTransaction(()=>setEventCategoryInternal(...args));
+export const setEventCategory = (...args:Parameters<typeof setEventCategoryInternal>):ReturnType<typeof setEventCategoryInternal> => withSqlTransaction(()=>setEventCategoryInternal(...args));

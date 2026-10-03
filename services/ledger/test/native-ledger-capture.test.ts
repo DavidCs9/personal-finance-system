@@ -4,7 +4,7 @@ import { afterAll,beforeAll,beforeEach,describe,expect,it } from 'vitest';
 import { buildMsiSchedule } from '@finance/domain';
 import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS,NATIVE_LEDGER_TABLES,LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../src/dsql/ledger-schema.js';
-import { runNativeTransaction } from '../src/dsql/store.js';
+import { runSqlTransaction } from '../src/dsql/sql-runtime.js';
 import { captureObservedEvent,saveNativeCapture,SourceClaimUnavailableError,type NativeCaptureInput } from '../src/dsql/ledger-capture.js';
 import { readLedgerDetail } from '../src/dsql/ledger-reads.js';
 import { claimIgnoredEmail,setMovementPersonalAmount,setMovementCategory,replaceMovementTags,insertLedgerRevision } from '../src/dsql/ledger-writes.js';
@@ -19,7 +19,7 @@ const input=(source:CaptureSource='apple_pay_shortcut',token:string=randomUUID()
     ingestedAt:at,source:source==='apple_pay_shortcut'?{kind:'apple_pay_shortcut',cardRaw:'Original raw card',requestId:token}:
       {bucket:'evidence',key:`original/${token}`,sha256:'a'.repeat(64),contentType:'message/rfc822'},
     parserVersion:`original-${source}`,parseWarnings:[],account:{institution:'santander_mx',accountId:'card',displayName:'Original card',lastFour:'1234'}}});
-const save=(value:NativeCaptureInput)=>runNativeTransaction(pool,()=>captureObservedEvent(value));
+const save=(value:NativeCaptureInput)=>runSqlTransaction(pool,()=>captureObservedEvent(value));
 const snapshot=async()=>Object.fromEntries(await Promise.all([...NATIVE_LEDGER_TABLES,'projection_state','command_receipts'].map(async table=>
   [table,(await sql.query(`SELECT * FROM olbia.${table} ORDER BY 1`)).rows])));
 beforeAll(async()=>{
@@ -56,7 +56,7 @@ describe('native observed capture and reconciliation',()=>{
   });
   it('reconciles a unique cross-source capture and preserves the primary source and annotations',async()=>{
     const firstInput=input('email'),first=await save(firstInput);
-    await runNativeTransaction(pool,async client=>{
+    await runSqlTransaction(pool,async client=>{
       await setMovementCategory(client,first.eventId,'shopping');await replaceMovementTags(client,first.eventId,['retained']);
       await setMovementPersonalAmount(client,first.eventId,0);
       await insertLedgerRevision(client,{id:randomUUID(),movementId:first.eventId,createdAt:at,changedBy:'owner',
@@ -91,7 +91,7 @@ describe('native observed capture and reconciliation',()=>{
     const apple=input();const usd={...apple,event:{...apple.event,status:'pending_foreign',merchantRaw:'Bass Pro Shops',
       amount:{amountMinor:5000,currency:'USD'}}};
     const first=await save(usd);
-    await runNativeTransaction(pool,client=>replaceMovementTags(client,first.eventId,['retained']));
+    await runSqlTransaction(pool,client=>replaceMovementTags(client,first.eventId,['retained']));
     const later='2026-10-02T12:05:00.123Z',email=input('email');
     const posted={...email,reconciliationAt:later,event:{...email.event,receivedAt:later,ingestedAt:later,
       merchantRaw:'BASS PRO STORE LAS VEG',amount:{amountMinor:100000,currency:'MXN'}}};
@@ -120,19 +120,19 @@ describe('native observed capture and reconciliation',()=>{
     const email=input('email','unknown-history');
     await sql.query(`INSERT INTO olbia.source_claims (capture_source,token,created_at,outcome)
       VALUES ('email',$1,$2,'unresolved_suppression')`,[email.token,at]);
-    await runNativeTransaction(pool,client=>claimIgnoredEmail(client,'intentional',at));
+    await runSqlTransaction(pool,client=>claimIgnoredEmail(client,'intentional',at));
     const missing=input('amex_statement','missing');
     await sql.query(`INSERT INTO olbia.source_claims (capture_source,token,created_at,outcome,historical_target_id)
       VALUES ('amex_statement',$1,$2,'historical_missing',$3)`,[missing.token,at,randomUUID()]);
     const before=await snapshot();
     for(const value of [email,{...email,token:'intentional'},missing])await expect(save(value)).rejects.toBeInstanceOf(SourceClaimUnavailableError);
     expect(await snapshot()).toEqual(before);
-    expect(await runNativeTransaction(pool,client=>claimIgnoredEmail(client,'intentional',at))).toBe(false);
+    expect(await runSqlTransaction(pool,client=>claimIgnoredEmail(client,'intentional',at))).toBe(false);
   });
   it('rolls back actual movement/evidence rows and the barrier when final claim insertion fails, then retries cleanly',async()=>{
     const value=input(),generation=(await sql.query('SELECT generation FROM olbia.application_barrier')).rows;
     let sawRows=false;
-    await expect(runNativeTransaction(pool,client=>saveNativeCapture({query:async(s,v)=>{
+    await expect(runSqlTransaction(pool,client=>saveNativeCapture({query:async(s,v)=>{
       if(s.startsWith('INSERT INTO olbia.source_claims')){
         sawRows=(await client.query('SELECT id FROM olbia.ledger_movements')).rows.length===1 &&
           (await client.query('SELECT id FROM olbia.ledger_observations')).rows.length===1;

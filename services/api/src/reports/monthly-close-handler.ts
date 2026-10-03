@@ -1,4 +1,4 @@
-import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
+import { assertSqlMutationsAvailable } from '@finance/ledger/sql-runtime';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import { monthKeyInZone, previousCalendarMonth } from '@finance/domain';
 import { getMonthlyEmailDelivery, prepareMonthlyEmailDelivery, markMonthlyEmailAccepted } from './delivery-store.js';
@@ -103,7 +103,7 @@ export const runMonthlyClose = async (
   readonly messageId?: string;
   readonly analysisSource?: AnalysisSource;
 }> => {
-  await assertMutationsAvailable();
+  await assertSqlMutationsAvailable();
   const owner = requiredEnvironment('MONTHLY_CLOSE_OWNER');
   const currentMonth = monthKeyInZone(now);
   const month = previousCalendarMonth(currentMonth);

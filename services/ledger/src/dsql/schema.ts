@@ -226,7 +226,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   const existing = await query('role-lookup', "SELECT rolname FROM pg_roles WHERE rolname='olbia_projector'");
   if (!existing.rows.length) await query('role-create', 'CREATE ROLE olbia_projector WITH LOGIN');
   await query('schema-grant', 'GRANT USAGE ON SCHEMA olbia TO olbia_projector');
-  await query('tables-grant', `GRANT SELECT,INSERT,UPDATE,DELETE ON ${['projection_state', ...TABLE_NAMES].map((table) => `olbia.${table}`).join(',')} TO olbia_projector`);
+  await query('tables-grant', `GRANT SELECT ON ${['projection_state', ...TABLE_NAMES].map((table) => `olbia.${table}`).join(',')} TO olbia_projector`);
   await query('read-grant', 'GRANT SELECT ON olbia.schema_migrations,olbia.movement_months,olbia.runtime_state TO olbia_projector');
   await query('catalog-projector-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_projector');
   await query('plans-projector-read', 'GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO olbia_projector');
@@ -259,7 +259,6 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query('push-reader-metadata', nativePushMetadataGrant('olbia_reader'));
     await query('push-reader-recovery-revoke', 'REVOKE SELECT ON olbia.push_subscriptions FROM olbia_reader');
     await query('reader-schema-grant', 'GRANT USAGE ON SCHEMA olbia TO olbia_reader');
-    await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments', 'monthly_plans', 'payroll', 'cards', 'categories', 'merchant_category_rules', 'ingestion_exceptions', 'import_records', 'assistant_threads'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
     await query('wealth-reader-recovery-revoke', 'REVOKE SELECT ON olbia.wealth_snapshots,olbia.wealth_versions,olbia.liability_snapshots,olbia.liability_versions FROM olbia_reader');
     await query('exceptions-reader-read',nativeExceptionReadGrant('olbia_reader'));
     await query('exceptions-reader-recovery-revoke','REVOKE ALL PRIVILEGES ON olbia.ingestion_exceptions,olbia.exception_claims,olbia.ingestion_retries FROM olbia_reader');
@@ -305,7 +304,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (!arns?.length) continue;
     if (!(await query(`lookup-${role}`, 'SELECT rolname FROM pg_roles WHERE rolname=$1',[role])).rows.length) await query(`create-${role}`,`CREATE ROLE ${role} WITH LOGIN`);
     await query(`schema-${role}`,`GRANT USAGE ON SCHEMA olbia TO ${role}`);
-    await query(`select-${role}`,`GRANT SELECT ON olbia.runtime_state,olbia.projection_state,olbia.schema_migrations TO ${role}`);
+    await query(`select-${role}`,`GRANT SELECT ON olbia.runtime_state,olbia.schema_migrations TO ${role}`);
     await query(`ledger-read-${role}`, nativeLedgerReadGrant(role));
     await query(`wealth-read-${role}`, nativeWealthReadGrant(role));
     await query(`exceptions-read-${role}`,nativeExceptionReadGrant(role));
@@ -318,7 +317,10 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (writer) for (const [index, statement] of nativePushWriteGrants(role).entries()) await query(`push-write-${role}-${index}`, statement);
     if (writer) for (const [index, statement] of nativeWealthWriteGrants(role).entries()) await query(`wealth-write-${role}-${index}`, statement);
     if (writer) for (const [index, statement] of nativeLedgerWriteGrants(role).entries()) await query(`ledger-write-${role}-${index}`, statement);
-    if (writer) await query(`write-${role}`,`GRANT SELECT,INSERT,UPDATE,DELETE ON ${['projection_state','application_barrier','command_receipts',...TABLE_NAMES].map(t=>`olbia.${t}`).join(',')} TO ${role}`);
+    if (writer) {
+      await query(`barrier-revoke-${role}`,`REVOKE INSERT,DELETE ON olbia.application_barrier FROM ${role}`);
+      await query(`write-${role}`,`GRANT SELECT,UPDATE ON olbia.application_barrier TO ${role}`);
+    }
     await query(`exceptions-recovery-revoke-${role}`,`REVOKE ALL PRIVILEGES ON olbia.ingestion_exceptions,olbia.exception_claims,olbia.ingestion_retries FROM ${role}`);
     await query(`threads-recovery-revoke-${role}`, `REVOKE ALL PRIVILEGES ON olbia.assistant_threads FROM ${role}`);
     await query(`delivery-recovery-revoke-${role}`, `REVOKE ALL PRIVILEGES ON olbia.delivery_records FROM ${role}`);
@@ -348,6 +350,16 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
       if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid application role ARN');
       await query(`iam-${role}`,`AWS IAM GRANT ${role} TO '${arn}'`);
     }
+  }
+  // All product domains are native. Originals remain isolated, immutable recovery evidence.
+  const recoveryTables=['projection_state','command_receipts',...TABLE_NAMES].map(t=>`olbia.${t}`).join(',');
+  for(const role of ['olbia_application','olbia_cutover','olbia_reader','olbia_store_reader']) {
+    const configured=role==='olbia_application'?options.applicationRoleArns:role==='olbia_cutover'?options.cutoverRoleArns:role==='olbia_reader'?options.readerRoleArns:options.storeReaderRoleArns;
+    if(configured?.length)await query(`recovery-product-revoke-${role}`,`REVOKE ALL PRIVILEGES ON ${recoveryTables} FROM ${role}`);
+  }
+  for(const role of ['olbia_projector',...(options.operationalVerifierRoleArns?.length?['olbia_operational_verifier']:[])]) {
+    await query(`recovery-write-revoke-${role}`,`REVOKE INSERT,UPDATE,DELETE ON ${recoveryTables} FROM ${role}`);
+    await query(`recovery-read-${role}`,`GRANT SELECT ON ${recoveryTables} TO ${role}`);
   }
   // Activation is last: constraints, indexes and permissions precede atomic ledger/wealth copies.
   try { await migrateLedger(options.transactionPool); }

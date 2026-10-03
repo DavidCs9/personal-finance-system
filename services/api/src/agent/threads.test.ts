@@ -7,7 +7,7 @@ import {
 import { DeleteEventCommand } from '@aws-sdk/client-bedrock-agentcore';
 import { PGlite } from '@electric-sql/pglite';
 import { SCHEMA_STATEMENTS } from '@finance/ledger/dsql-schema';
-import { withStoreClient } from '@finance/ledger/dsql-store';
+import { withSqlClient } from '@finance/ledger/sql-runtime';
 import { readConversationMetadata, readConversationSelection } from '@finance/ledger/native-threads';
 import { NATIVE_THREAD_SCHEMA_STATEMENTS } from '../../../ledger/src/dsql/thread-schema.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -109,7 +109,7 @@ describe('assistant thread presentation', () => {
 
 let sql:PGlite;
 const at='2026-08-27T12:00:00.000Z',now=()=>new Date('2026-10-03T12:00:00Z');
-const context=<T>(fn:()=>Promise<T>)=>withStoreClient({query:(s,v)=>sql.query(s,v)},fn);
+const context=<T>(fn:()=>Promise<T>)=>withSqlClient({query:(s,v)=>sql.query(s,v)},fn);
 const dependencies=(send=vi.fn(async(_command:unknown):Promise<any>=>({})))=>({memory:{send} as unknown as BedrockAgentCoreClient,memoryId:'native',now});
 const save=(id=sessionId,message='Pregunta visible',activate=true)=>context(()=>saveAssistantThread({now:()=>new Date(at)},{owner:'owner-1',sessionId:id,message,month:'2026-08',activate}));
 beforeAll(async()=>{sql=new PGlite();for(const s of [...SCHEMA_STATEMENTS,...NATIVE_THREAD_SCHEMA_STATEMENTS])await sql.query(s);await sql.query('INSERT INTO olbia.schema_migrations VALUES (18,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING');},30_000);
@@ -174,14 +174,14 @@ describe('native assistant metadata and provider history',()=>{
     await expect(context(()=>deleteAssistantThread(dependencies(send),'owner-1',sessionId))).rejects.toThrow('Provider failure');
     expect(await readConversationMetadata(sql,'owner-1',sessionId)).toBeDefined();expect(await readConversationSelection(sql,'owner-1')).toEqual({configured:true,id:sessionId});
     send.mockImplementation(async command=>command instanceof ListEventsCommand?{events:[{eventId:'event-1'}]}:{});
-    await sql.transaction(c=>withStoreClient(c,()=>deleteAssistantThread(dependencies(send),'owner-1',sessionId)));
+    await sql.transaction(c=>withSqlClient(c,()=>deleteAssistantThread(dependencies(send),'owner-1',sessionId)));
     expect(await readConversationMetadata(sql,'owner-1',sessionId)).toBeUndefined();expect(await readConversationSelection(sql,'owner-1')).toEqual({configured:true});
   });
   it('fails closed on SQL outage or before activation with zero provider IO and no source fallback',async()=>{
     const send=vi.fn();const deps=dependencies(send),broken={query:async()=>{throw Object.assign(new Error('private driver error'),{code:'08006'});}};
     const operations:(()=>Promise<unknown>)[]=[()=>listAssistantThreads(deps,'owner-1'),()=>getAssistantThread(deps,'owner-1',sessionId),()=>deleteAssistantThread(deps,'owner-1',sessionId)];
     for(const operation of operations)
-      await expect(withStoreClient(broken,operation)).rejects.toMatchObject({name:'StorageUnavailableException',message:'Olbia storage is unavailable.'});
+      await expect(withSqlClient(broken,operation)).rejects.toMatchObject({name:'StorageUnavailableException',message:'Olbia storage is unavailable.'});
     await sql.query('DELETE FROM olbia.schema_migrations WHERE version=18');
     try{await expect(context(()=>listAssistantThreads(deps,'owner-1'))).rejects.toMatchObject({name:'MigrationPausedException'});await expect(save()).rejects.toMatchObject({name:'MigrationPausedException'});}
     finally{await sql.query('INSERT INTO olbia.schema_migrations VALUES (18,CURRENT_TIMESTAMP)');}

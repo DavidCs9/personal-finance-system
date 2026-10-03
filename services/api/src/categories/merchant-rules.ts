@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { normalizeMerchantKey, type MerchantCategoryRule } from '@finance/domain';
-import { applicationStoreClient } from '@finance/ledger/dsql-store';
+import { applicationSqlClient } from '@finance/ledger/sql-runtime';
 import { readerPool, type ReadSqlClient } from '../events/sql-reads.js';
 import { InvalidCategoryError, requireCatalogCategories } from './catalog.js';
 
@@ -22,7 +22,7 @@ export const saveMerchantRule = async (input: {
   const merchantKey = normalizeMerchantKey(input.merchantRaw);
   if (!merchantKey) throw new InvalidCategoryError('Comercio vacío.');
   if (!['seed', 'human', 'llm_residual', 'agent_confirmed'].includes(input.source)) throw new InvalidCategoryError('Origen de regla inválido.');
-  const rows = (await applicationStoreClient().query(`INSERT INTO olbia.merchant_rules
+  const rows = (await applicationSqlClient().query(`INSERT INTO olbia.merchant_rules
     (merchant_key,id,pattern,category_id,source,updated_at) VALUES ($1,$2,$3,$4,$5,$6)
     ON CONFLICT (merchant_key) DO UPDATE SET pattern=EXCLUDED.pattern,category_id=EXCLUDED.category_id,
       source=EXCLUDED.source,updated_at=EXCLUDED.updated_at RETURNING merchant_key,id,pattern,category_id,source,updated_at`,

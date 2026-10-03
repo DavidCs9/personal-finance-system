@@ -1,4 +1,4 @@
-import { applicationStoreClient, withApplicationTransaction } from '@finance/ledger/dsql-store';
+import { withSqlTransaction } from '@finance/ledger/sql-runtime';
 import type { JsonObject } from '../http/response.js';
 import { incomeFieldsForMonth } from '../imports/cfdi-nomina-flow.js';
 import { isValidMonth, InvalidMonthlyPlanError, parseMonthlyPlan, type MonthlyPlanInput, type MonthlyPlanRecord } from './monthly-plan.js';
@@ -46,8 +46,7 @@ export const getMonthlyPlan = (owner: string, month: string): Promise<JsonObject
 export const saveMonthlyPlan = async (owner: string, month: string, input: MonthlyPlanInput): Promise<JsonObject> => {
   if (!isValidMonth(month)) throw new InvalidMonthlyPlanError('month is invalid.');
   const validated = parseMonthlyPlan(JSON.stringify(input));
-  return withApplicationTransaction(async () => {
-    const client = applicationStoreClient();
+  return withSqlTransaction(async client => {
     const parent = (await client.query(`INSERT INTO olbia.month_plans (month,owner,updated_at) VALUES ($1,$2,$3)
       ON CONFLICT (month) DO UPDATE SET updated_at=EXCLUDED.updated_at
       WHERE olbia.month_plans.owner=EXCLUDED.owner RETURNING month`, [month, owner, new Date().toISOString()])).rows[0];

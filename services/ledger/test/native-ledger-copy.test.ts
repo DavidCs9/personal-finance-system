@@ -3,7 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
-import { OlbiaSqlStore } from '../src/dsql/store.js';
+import { OlbiaSqlStore } from '../src/dsql/legacy-document-store.js';
 import { migrateLedger, prepareLedgerCopy, readRetainedLedger, type RetainedLedger } from '../src/dsql/ledger-copy.js';
 import { readLedgerMovements,readLedgerDetail } from '../src/dsql/ledger-reads.js';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS,NATIVE_LEDGER_TABLES,LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../src/dsql/ledger-schema.js';

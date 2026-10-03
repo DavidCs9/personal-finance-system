@@ -22,13 +22,17 @@ const bundleEntry = async (entryFile: string): Promise<string> => {
   });
   const file = result.outputFiles[0];
   if (!file) throw new Error(`esbuild produced no output for ${entryFile}`);
+  for (const retired of ['@aws-sdk/lib-dynamodb', '@aws-sdk/client-dynamodb', 'METADATA_TABLE_NAME',
+    'OLBIA_SQL_STORE_ENABLED', 'OLBIA_SQL_STORE_ROLE', 'DSQL_OPERATIONAL_READ_MODE', 'legacy-document-store']) {
+    expect(file.text, `${entryFile} must use the native SQL runtime`).not.toContain(retired);
+  }
   return file.text;
 };
 
 describe('lambda handler bundle isolation', () => {
   it('api entry does not load apple-pay capture env requirements', async () => {
     const code = await bundleEntry('api.ts');
-    expect(code).toMatch(/METADATA_TABLE_NAME|RAW_EMAIL_BUCKET_NAME/);
+    expect(code).toContain('RAW_EMAIL_BUCKET_NAME');
     expect(code).not.toContain('APPLE_PAY_CAPTURE_SECRET_ARN');
   });
 
@@ -76,5 +80,11 @@ describe('lambda handler bundle isolation', () => {
     const code = await bundleEntry('ibkr-sync.ts');
     expect(code).toContain('IBKR_SECRET_ARN');
     expect(code).not.toContain('APPLE_PAY_CAPTURE_SECRET_ARN');
+  });
+
+  it('keeps ingestion, retry, agent and independent verification bundles native', async () => {
+    for (const entry of ['ingestion.ts', 'bedrock-email-fallback.ts', 'retry-dispatcher.ts',
+      'agent-tools.ts', 'agent-tag-mutations.ts', 'agent-chat-buffered.ts', 'agent-proxy.ts',
+      'dsql-read-verification.ts']) await bundleEntry(entry);
   });
 });

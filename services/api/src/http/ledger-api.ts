@@ -84,7 +84,6 @@ import {
   parsePushSubscriptionInput,
   savePushSubscription,
 } from '@finance/notify';
-import { database, tableName } from './clients.js';
 import { errorMessage, principal, requestBody } from './response.js';
 import { InvalidEventTagError, isValidCategoryId, type SpendCategory } from '@finance/domain';
 import { getSpendingAnalytics } from '../analytics/service.js';

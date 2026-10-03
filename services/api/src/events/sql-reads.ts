@@ -1,4 +1,4 @@
-import { currentStoreTransaction, withStoreClient } from '@finance/ledger/dsql-store';
+import { currentSqlClient, withSqlClient } from '@finance/ledger/sql-runtime';
 import { createPool } from '@finance/ledger/dsql-connection';
 import type { JsonObject } from '../http/response.js';
 import { feedFromMovements, type EventFeed } from './month-feed.js';
@@ -11,17 +11,17 @@ let verifierPool: ReturnType<typeof createPool> | undefined;
 const nativeReaderPool = () => pool ??= createPool('olbia_reader', {
   connectionTimeoutMillis: 1_500, queryTimeoutMillis: 3_000,
 });
-export const readerPool = (): ReadSqlClient => currentStoreTransaction() ?? nativeReaderPool();
+export const readerPool = (): ReadSqlClient => currentSqlClient() ?? nativeReaderPool();
 
 /** Provider-managed read snapshot; no write barrier, custom lock or manual retry. */
 export const withLedgerReadSnapshot = <T>(callback: () => Promise<T>): Promise<T> =>
-  currentStoreTransaction() ? callback() : nativeReaderPool().transaction(client => withStoreClient(client, callback));
+  currentSqlClient() ? callback() : nativeReaderPool().transaction(client => withSqlClient(client, callback));
 
 /** The deployed verifier alone can read frozen recovery assertions in the same snapshot. */
 export const withLedgerVerificationSnapshot = <T>(callback: () => Promise<T>): Promise<T> => {
-  if (currentStoreTransaction()) return callback();
+  if (currentSqlClient()) return callback();
   verifierPool ??= createPool('olbia_operational_verifier', { connectionTimeoutMillis: 1_500, queryTimeoutMillis: 3_000 });
-  return verifierPool.transaction(client => withStoreClient(client, callback));
+  return verifierPool.transaction(client => withSqlClient(client, callback));
 };
 
 export const monthReadStatement = ledgerMovementReadStatement;

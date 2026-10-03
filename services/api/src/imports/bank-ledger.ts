@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { withNativeTransaction } from '@finance/ledger/dsql-store';
+import { withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { appendLedgerObservation, insertLedgerMovement, insertLedgerRevision, insertSourceClaim,
   markMovementReconciled, readLedgerDetail, readLedgerMovements, readSourceClaim,
   withLedgerMutationBudget, reserveLedgerMutations, LedgerMutationBudgetError,
@@ -11,7 +11,7 @@ import { BankImportError, type BankImportKind, type BankImportRecord, type BankI
 
 export const bankClaimToken = (identity: string): string => createHash('sha256').update(identity).digest('hex');
 export const withBankApplyTransaction = async <T>(callback: () => Promise<T>): Promise<T> => {
-  try { return await withNativeTransaction(() => withLedgerMutationBudget(callback)); }
+  try { return await withSqlTransaction(() => withLedgerMutationBudget(callback)); }
   catch (error) {
     if (error instanceof LedgerMutationBudgetError)
       throw new BankImportError('El archivo tiene demasiadas filas para guardarlo en una sola operación.');
@@ -52,7 +52,7 @@ export const assertPreparedImport = (current: BankImportRecord, prepared: BankIm
 
 export const createBankMovement = (input: {
   readonly record: BankImportRecord; readonly row: BankImportRow; readonly event: ObservedEventInput;
-}): Promise<Record<string, unknown> | undefined> => withNativeTransaction(async client => {
+}): Promise<Record<string, unknown> | undefined> => withSqlTransaction(async client => {
   const { record, row, event } = input;
   bankRowPosition(record, row);
   const token = bankClaimToken(row.identity);
@@ -74,7 +74,7 @@ export const createBankMovement = (input: {
 export const linkBankEvidence = (input: {
   readonly record: BankImportRecord; readonly row: BankImportRow; readonly eventId: string;
   readonly appliedAt: string; readonly reason: string; readonly parserVersion: string;
-}): Promise<boolean> => withNativeTransaction(async client => {
+}): Promise<boolean> => withSqlTransaction(async client => {
   const { record, row, eventId, appliedAt } = input;
   bankRowPosition(record, row);
   const token = bankClaimToken(row.identity);

@@ -63,7 +63,9 @@ describe('DSQL-specific schema bootstrap', () => {
     const statements = query.mock.calls.map(([statement]) => statement).filter(statement => statement.includes('olbia_reader'));
     expect(statements).toContain('CREATE ROLE olbia_reader WITH LOGIN');
     expect(statements).toContain('GRANT USAGE ON SCHEMA olbia TO olbia_reader');
-    expect(statements).toContain('GRANT SELECT ON olbia.movements,olbia.movement_observations,olbia.movement_revisions,olbia.msi_installments,olbia.monthly_plans,olbia.payroll,olbia.cards,olbia.categories,olbia.merchant_category_rules,olbia.ingestion_exceptions,olbia.import_records,olbia.assistant_threads TO olbia_reader');
+    expect(statements.some(s=>s.startsWith('GRANT SELECT ON olbia.ledger_movements'))).toBe(true);
+    expect(statements.some(s=>s.startsWith('REVOKE ALL PRIVILEGES ON olbia.projection_state,olbia.command_receipts'))).toBe(true);
+    expect(statements.join()).not.toContain('GRANT SELECT ON olbia.movements,');
     expect(statements).toContain("AWS IAM GRANT olbia_reader TO 'arn:aws:iam::225989371926:role/api-reader'");
     expect(statements.join()).not.toMatch(/GRANT (?:ALL|INSERT|UPDATE|DELETE)|olbia_projector TO/);
     await expect(bootstrapSchema({ query } as SqlClient, [], { readerRoleArns: ["unsafe' ARN"] })).rejects.toThrow('Invalid reader role ARN');
@@ -128,6 +130,10 @@ it('separates product write permissions from the authority operator and keeps en
   expect(statements).toContain('GRANT INSERT,DELETE ON olbia.bank_import_rows,olbia.bank_import_candidates TO olbia_application');
   expect(statements.filter(statement=>statement.includes('bank_import') && statement.endsWith('TO olbia_application')).join()).not.toMatch(/GRANT (?:ALL|DELETE) ON olbia.bank_imports|GRANT UPDATE ON olbia.bank_import_rows/);
   expect(statements).toContain('GRANT UPDATE ON olbia.runtime_state TO olbia_cutover');
+  for(const role of ['olbia_application','olbia_cutover']) {
+    expect(statements).toContain(`REVOKE INSERT,DELETE ON olbia.application_barrier FROM ${role}`);
+    expect(statements).toContain(`GRANT SELECT,UPDATE ON olbia.application_barrier TO ${role}`);
+  }
   expect(statements.filter(statement=>statement.includes('TO olbia_store_reader')).join()).not.toMatch(/INSERT|UPDATE|DELETE/);
   expect(statements.filter(statement=>statement.includes('TO olbia_application')).join()).toContain('olbia.movement_months');
 });
@@ -172,6 +178,10 @@ it('validates native primary ownership before activation and completes grants/in
   expect(exceptionActivation).toBeGreaterThan(threadActivation);
   expect(exceptionActivation).toBeGreaterThan(statements.findIndex(statement=>statement.startsWith('GRANT INSERT ON olbia.ingestion_review_exceptions')));
   expect(exceptionActivation).toBeGreaterThan(statements.findIndex(statement=>statement === 'REVOKE ALL PRIVILEGES ON olbia.ingestion_exceptions,olbia.exception_claims,olbia.ingestion_retries FROM olbia_application'));
+  const recoveryRevoke=statements.findIndex(statement=>statement.startsWith('REVOKE ALL PRIVILEGES ON olbia.projection_state,olbia.command_receipts')&&statement.endsWith('FROM olbia_application'));
+  expect(recoveryRevoke).toBeGreaterThan(-1);
+  expect(activation).toBeGreaterThan(recoveryRevoke);
+  expect(exceptionActivation).toBeGreaterThan(statements.findIndex(statement=>statement.startsWith('REVOKE INSERT,UPDATE,DELETE ON olbia.projection_state,olbia.command_receipts')&&statement.endsWith('FROM olbia_projector')));
   expect(statements).toContain('GRANT SELECT (subscription_id,owner,content_mode,active,created_at,updated_at) ON olbia.web_push_subscriptions TO olbia_reader');
   expect(statements).toContain('GRANT UPDATE (status,applied_at,undone_at) ON olbia.ledger_bulk_operations TO olbia_application');
   const failure = vi.fn(async (statement: string) => ({ rows:
