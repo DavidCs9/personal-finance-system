@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { buildMonthEventFeed, eventHasInstallmentInMonth } from '../src/event-month-feed.js';
+import { eventHasInstallmentInMonth } from '../src/event-month-feed.js';
+import { buildMonthEventFeed } from './fixtures/legacy-month-feed.js';
+import { msiPlanPurchaseOccurredAt } from '../src/installment-date.js';
 import {
   eventMonthIndexKeys,
   eventMonthPartition,
-  msiPlanPurchaseOccurredAt,
   nextCalendarMonths,
   priorCalendarMonths,
-} from '../src/event-month-index.js';
+} from './fixtures/legacy-event-month-index.js';
 import { isValidMonth } from '@finance/domain';
 
 describe('GET /events month query contract', () => {

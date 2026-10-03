@@ -8,6 +8,8 @@ Un solo asistente: consultas ahora; asesor de decisión (“¿qué tan responsab
 
 ## Arquitectura
 
+**Olbia debe sentirse nacida en SQL.** Las tools leen/escriben dominios nativos; no emulan comandos de documentos ni consultan envelopes. Los originales de recuperación permanecen aislados.
+
 ```
 SPA (JWT Cognito)
   → API Gateway REST API  POST /agent/chat  ← chat producto (SSE nativo)
@@ -15,10 +17,10 @@ SPA (JWT Cognito)
       → SSM pointer → Bedrock Prompt Management (versión pineada)
       → AgentCore Harness (InvokeHarness + systemPrompt/model override)
         → AgentCore Gateway (MCP, AWS_IAM)
-          → Lambda agent-tools (AGENT_OWNER) → DynamoDB + computeMonthSummary
+          → Lambda agent-tools (AGENT_OWNER) → SQL nativo + computeMonthSummary
           → AWS-managed Web Search Tool → resultados con citas
         → AgentCore Gateway de mutaciones (MCP, AWS_IAM + Policy ENFORCE)
-          → Lambda agent-tag-mutations (AGENT_OWNER) → DynamoDB TransactWrite
+          → Lambda agent-tag-mutations (AGENT_OWNER) → transacción SQL nativa + revisiones
 
 SPA (JWT Cognito)
   → API Gateway HTTP API  ← resto del ledger
@@ -33,7 +35,7 @@ SPA (JWT Cognito)
 - El loop del agente lo corre **Harness** (no un Converse manual en la Lambda).
 - Claude Sonnet 4.6 usa adaptive thinking con esfuerzo `medium`. La Lambda lo pasa por `additionalParams.additionalModelRequestFields`, no configura `temperature` para este modelo y reserva al menos 4096 tokens totales para razonamiento y respuesta.
 - Las tools viven detrás de **Gateway**: un target Lambda de solo lectura para finanzas, un Gateway separado para mutaciones de tags y el [conector administrado Web Search Tool](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-connector-web-search-tool.html) para información pública con citas.
-- Harness, Memory y el Gateway de Web Search corren en `us-east-1`, requerido por el conector. El Gateway financiero existente, su Lambda y DynamoDB permanecen juntos en `us-east-2`; el Harness conecta ambos Gateways.
+- Harness, Memory y el Gateway de Web Search corren en `us-east-1`, requerido por el conector. El Gateway financiero existente, su Lambda y Aurora DSQL permanecen juntos en `us-east-2`; el Harness conecta ambos Gateways.
 - Code interpreter: **apagado**.
 - Memoria de conversación: AgentCore Memory conserva eventos crudos por conversación durante 365 días y hechos/preferencias durables por separado, todo aislado por Cognito `sub`. Reutilizar el mismo `sessionId` restaura el contexto del Harness. Las estrategias personalizadas de largo plazo rechazan inferencias del asistente, cálculos intermedios, saldos actuales, unidades no confirmadas y fechas inferidas; una corrección posterior del usuario reemplaza el valor anterior. Las conversaciones recientes y las memorias durables se pueden revisar y borrar por separado desde el sheet. Ninguna memoria escribe ni modifica el ledger, Resumen, proyecciones o Patrimonio.
 - CDK provisiona el Gateway de mutaciones, su target Lambda y su Policy Engine con recursos nativos de CloudFormation. El policy engine opera en `ENFORCE`, niega por defecto y sólo permite las ocho acciones al rol IAM del Harness. El custom resource `OlbiaAgentCore` reconcilia Harness, Memory, finanzas y Web Search, e incorpora el ARN del Gateway de mutaciones.
@@ -109,16 +111,16 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 
 ## Categorías
 
-- Catálogo fijo V1 (incluye `Deportes`) + mapa comercio→categoría en DynamoDB (`CATEGORY_CATALOG`, `CATEGORY_RULES`).
-- `categoryId` en el payload del evento; `null`/ausente = Sin categoría.
-- Seed: `infrastructure/scripts/propose-category-seed.ts` (aprobar con `--apply`).
-- Backfill: `infrastructure/scripts/backfill-event-categories.ts`.
+- `spend_categories` es el catálogo efectivo nativo SQL (incluye `Deportes`); `merchant_rules` guarda la regla por comercio con FK nullable al catálogo.
+- `ledger_movements.category_id` referencia ese catálogo; NULL = Sin categoría. Historial y afirmaciones previas conservan su valor original.
+- Bootstrap revisado incorpora defaults una sola vez. Las correcciones usan las operaciones de dominio autenticadas y auditables ya desplegadas, nunca escritura directa a SQL/DynamoDB. Los scripts anteriores de seed/backfill están retirados y fallan antes de cualquier operación.
+- Ver [categorías nativas](sql-native-categories.md) y [auditoría actual](sql-relational-table-audit.md).
 
 ## Auth y chat
 
 - Ledger API: JWT Cognito vía authorizer de API Gateway HTTP API. Chat: authorizer Cognito de API Gateway REST.
 - `POST /agent/chat` body: `{ message, month, sessionId? }` → `text/event-stream`; cada evento `data:` usa los shapes `token`, `reasoning_start`, `reasoning_complete`, `tool_start`, `tool_complete`, `tool_failed`, `citation`, `proposal`, `mutation`, `done`, `error`.
-- El backend crea o actualiza un índice mínimo owner-scoped en `MetadataTable` (`sessionId`, título derivado de la primera pregunta, primer mes, timestamps y puntero activo). El transcript y el contexto siguen siendo propiedad de AgentCore Memory; DynamoDB no los duplica.
+- El backend crea o actualiza metadata nativa en `conversation_threads` (session ID, título original, primer mes y timestamps); `assistant_thread_selection` guarda la selección con un FK real. El transcript, contexto y descubrimiento siguen siendo propiedad de AgentCore Memory. Las tablas SQL no duplican esos eventos.
 - `GET /agent/threads` lista hasta 20 conversaciones recientes y devuelve `activeThreadId`; también descubre y backfillea sesiones nativas aún vigentes que preceden al índice.
 - `GET /agent/threads/{threadId}` reconstruye mensajes visibles con `ListEvents`; `PUT /agent/threads/active` selecciona o limpia el hilo activo y `DELETE /agent/threads/{threadId}` elimina sus eventos crudos y su índice.
 - Cerrar el sheet, recargar o cambiar de mes no limpia el hilo. El mes seleccionado se manda como contexto del turno nuevo. La actividad de razonamiento y las duraciones de tools son sólo del stream en vivo y no se recrean como actividad actual al restaurar.
@@ -136,7 +138,7 @@ Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las
 - Ambos previews son `dryRun` y entregan todos los movimientos `affected`, no una muestra limitada. El agente revisa ese alcance y llama `apply_tag_edit`/`apply_tag_edits` o `apply_category_edit`/`apply_category_edits` con los `operationId` correspondientes en el mismo turno.
 - El backend congela IDs, valores previos, conteo e importe antes de escribir. Cada evento recibe una revisión con el mismo `operationId`, `source=assistant_chat_tag_edit` o `source=assistant_chat_category_edit` y el dueño configurado como actor.
 - La UI recibe un evento SSE `mutation` por cada operación aplicada, refresca el ledger y muestra recibos factuales sin botones de confirmación. Undo se solicita por chat y usa la misma operación congelada.
-- Si el evento cambió después del preview, DynamoDB cancela la transacción y exige generar uno nuevo.
+- Si el movimiento cambió después del preview, las precondiciones de la operación nativa SQL rechazan apply y exigen generar uno nuevo. La selección/cambio y los valores anteriores permanecen como afirmaciones auditables; la operación, sus miembros y revisiones se vinculan con relaciones reales.
 - El Gateway directo expone contracts separados para tags y categorías. La tool de categorías sólo acepta `categoryId` y selectores seguros, nunca tags ni reglas de comercio; ninguna edición crea ni actualiza reglas de comercio.
 - La Lambda de chat compara el Cognito `sub` con `AgentOwnerSub` antes de invocar el Harness. La Lambda de mutación usa ese mismo owner fijo y nunca acepta un owner del modelo.
 - Errores: 1–2 reintentos silenciosos en harness; luego mensaje corto + `requestId`.

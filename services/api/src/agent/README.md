@@ -37,4 +37,4 @@ Version `10` is the current preservation baseline: it combines the private perso
 
 CDK owns the native `AWS::Bedrock::Prompt` resource (stable name, tags, retention, and lifecycle). Before deployment, CI reads the current DRAFT directly from Prompt Management and passes its text, model, and inference settings as CloudFormation `NoEcho` parameters. This preserves the DRAFT without storing prompt content in Git or application code. Immutable versions and promotion remain runtime operations in Prompt Management; the active SSM pointer is an operational prerequisite.
 
-AgentCore Harness, Memory, and the Web Search Gateway run in `us-east-1`, the region required by the AWS-managed connector. The existing finance Gateway, tool Lambda, and DynamoDB source data remain together in `us-east-2`. The Harness attaches both Gateways.
+AgentCore Harness, Memory, and the Web Search Gateway run in `us-east-1`, the region required by the AWS-managed connector. The existing finance Gateway, tool Lambda, and native Aurora DSQL financial domains remain together in `us-east-2`. The Harness attaches both Gateways.

@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DeleteCommand, GetCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
-import { eventMonthIndexKeys } from '../../src/event-month-index.js';
+import { eventMonthIndexKeys } from './legacy-event-month-index.js';
 import { merchantsMatch, foreignMerchantsMatch } from '../../src/reconciliation-matching.js';
 export { normaliseMerchant, foreignMerchantsMatch } from '../../src/reconciliation-matching.js';
 

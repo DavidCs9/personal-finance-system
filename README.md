@@ -13,13 +13,15 @@ The primary unit is not a final accounting transaction — it is an **observed e
 - Every alert or automation leaves an immutable observation with its source.
 - Multiple observations of the same purchase can be reconciled; none are deleted.
 - Ambiguous cases stay for human review. A purchase is never invented by inference.
-- Original MIME, Apple Pay payloads, fallback CSVs, statement Textract JSON, and Amex/Santander PDFs are retained encrypted before parsing.
+- Original MIME, CSV, PDF and CFDI XML files and provider extraction evidence are retained encrypted in S3. Apple Pay preserves authenticated capture fields and source metadata in immutable SQL observations.
 - MSI schedules attach to the observed purchase: committed cuotas reduce remaining money until statement/CSV evidence marks them spent.
-- Month income comes from uploaded CFDI nómina XMLs (not a typed total). Patrimonio snapshots live beside the spend ledger on the same DynamoDB table.
+- Month income comes from uploaded CFDI nómina XMLs (not a typed total). Patrimonio captures, holdings and current daily selections use native SQL relationships beside the spend ledger.
 
 That separates capture, evidence, reconciliation, and presentation so David can trust his financial information and recover mistakes with a manageable personal system.
 
 ## Architecture
+
+**OLBIA MUST FEEL AS IF IT WAS BORN IN SQL.** Aurora DSQL is the sole product persistence authority: domain primary keys, typed relationships/constraints and native SQL transactions. [The current table audit](docs/sql-relational-table-audit.md) covers every native, control and frozen recovery relation. DynamoDB originals and prior SQL projections are isolated recovery evidence; product code has no document-command adapter or source fallback.
 
 System context ([C4](https://c4model.com/) level 1). Container and component diagrams live in [docs/architecture.md](docs/architecture.md).
 
@@ -71,7 +73,7 @@ _Delivers browser notifications_`"]
 | Mid blue | «Software System» in scope |
 | Grey | External «Software System» |
 
-Everything runs on AWS (`us-east-2`), defined with CDK in TypeScript. Deploys from `main` via GitHub Actions with OIDC — no AWS keys stored in the repository. Node.js **24** in CI and Lambdas.
+The financial services and source evidence run on AWS (`us-east-2`); native AgentCore Harness/Memory and managed Web Search run in `us-east-1`. Infrastructure is defined with CDK in TypeScript. Deploys from `main` via GitHub Actions with OIDC — no AWS keys stored in the repository. Node.js **24** in CI and Lambdas.
 
 | Layer | Responsibility |
 | --- | --- |
@@ -79,7 +81,7 @@ Everything runs on AWS (`us-east-2`), defined with CDK in TypeScript. Deploys fr
 | Domain | Shared types, MSI, month summary, wealth, payroll, card cycle (`packages/domain`) |
 | API | Ledger HTTP, statements, nómina, wealth sync, Apple Pay, scheduled pushes (`services/api`) |
 | Ingestion | Email parsers and SES worker (`services/ingestion`) |
-| Ledger | Observed-event persistence and month-index helpers (`services/ledger`) |
+| Ledger | Native SQL domains, relationships and transactions (`services/ledger`) |
 | Notify | Web Push subscriptions and delivery (`services/notify`) |
 | Infrastructure | CDK + thin Lambda adapters only (`infrastructure`) |
 
@@ -89,7 +91,7 @@ Everything runs on AWS (`us-east-2`), defined with CDK in TypeScript. Deploys fr
 apps/web              Review UI (React + Vite)
 services/api          Ledger API, imports, wealth, Apple Pay, card/daily push jobs
 services/ingestion    Email parsers + SES ingestion worker
-services/ledger       Observed-event persistence and month-index helpers
+services/ledger       Native SQL domains, relationships and transactions
 services/notify       Web Push subscriptions and send helpers
 packages/domain       Shared contract across services
 infrastructure        CDK stacks + thin Lambda entrypoints (re-export services)
@@ -110,6 +112,7 @@ npm workspaces, strict TypeScript, and Vitest. Parsers are tested against real A
 ## Documentation
 
 - [Product north star](docs/product-north-star.md) — David Castro's private financial application and the decision criteria for every change
+- [Current SQL table audit](docs/sql-relational-table-audit.md) — actual native keys, constraints, evidence boundaries and acceptance
 - [Architecture (C4)](docs/architecture.md) — containers and components
 - [V1 decisions](docs/v1-decisions.md) — scope, data model, and infrastructure
 - [Patrimonio](docs/patrimonio.md) — net worth accounts, liabilities, and sync

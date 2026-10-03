@@ -1,4 +1,4 @@
-/** Pure month-feed selection used by GET /events?month= (GSI3 query results in, feed out). */
+/** Pure installment membership used by the native SQL month-feed presentation. */
 
 export type MonthFeedEvent = {
   readonly id: string;
@@ -9,26 +9,3 @@ export type MonthFeedEvent = {
 
 export const eventHasInstallmentInMonth = (event: MonthFeedEvent, month: string): boolean =>
   Boolean(event.msi?.installments?.some((installment) => installment.month === month));
-
-/**
- * `events` = purchases whose spend month is `month`.
- * `msiRelated` = other purchases with an installment in `month` (earlier or later index month),
- * excluding ids already in `events`. Later index months cover plans opened from mid-plan evidence
- * before they were re-anchored to cuota 1.
- */
-export const buildMonthEventFeed = <T extends MonthFeedEvent>(
-  month: string,
-  events: readonly T[],
-  nearbyCandidates: readonly T[],
-): { readonly events: readonly T[]; readonly msiRelated: readonly T[] } => {
-  const eventIds = new Set(events.map((event) => event.id));
-  const msiRelated: T[] = [];
-  const seen = new Set<string>();
-  for (const candidate of nearbyCandidates) {
-    if (eventIds.has(candidate.id) || seen.has(candidate.id)) continue;
-    if (!eventHasInstallmentInMonth(candidate, month)) continue;
-    seen.add(candidate.id);
-    msiRelated.push(candidate);
-  }
-  return { events, msiRelated };
-};
