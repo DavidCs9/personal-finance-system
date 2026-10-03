@@ -3,6 +3,8 @@ import type { SqlClient, TransactionPool } from './projection.js';
 import { isOCCError } from '@aws/aurora-dsql-node-postgres-connector';
 import { DEFAULT_SPEND_CATEGORIES } from '@finance/domain';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from './ledger-schema.js';
+import { NATIVE_WEALTH_SCHEMA_STATEMENTS, nativeWealthReadGrant, nativeWealthWriteGrants } from './wealth-schema.js';
+import { migrateWealth } from './wealth-copy.js';
 import { migrateLedger } from './ledger-copy.js';
 
 export class BootstrapFailure extends Error {
@@ -161,6 +163,7 @@ export const SCHEMA_STATEMENTS = [
       to_char(COALESCE(occurred_at,received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM') AS month
       FROM olbia.ledger_movements
     UNION SELECT movement_id::text,month FROM olbia.installment_entries`,
+  ...NATIVE_WEALTH_SCHEMA_STATEMENTS,
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
@@ -220,6 +223,8 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('cards-projector-read', 'GRANT SELECT ON olbia.card_profiles TO olbia_projector');
   await query('rules-projector-read', 'GRANT SELECT ON olbia.merchant_rules TO olbia_projector');
   await query('ledger-projector-read', nativeLedgerReadGrant('olbia_projector'));
+  await query('wealth-projector-read', nativeWealthReadGrant('olbia_projector'));
+  await query('wealth-projector-recovery-revoke', 'REVOKE INSERT,UPDATE,DELETE ON olbia.wealth_snapshots,olbia.wealth_versions,olbia.liability_snapshots,olbia.liability_versions FROM olbia_projector');
   await query('projector-barrier-grant','GRANT SELECT,UPDATE ON olbia.application_barrier TO olbia_projector');
   for (const arn of roleArns) {
     if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid runtime role ARN');
@@ -229,8 +234,10 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     const reader = await query('reader-role-lookup', "SELECT rolname FROM pg_roles WHERE rolname='olbia_reader'");
     if (!reader.rows.length) await query('reader-role-create', 'CREATE ROLE olbia_reader WITH LOGIN');
     await query('ledger-reader-read', nativeLedgerReadGrant('olbia_reader'));
+    await query('wealth-reader-read', nativeWealthReadGrant('olbia_reader'));
     await query('reader-schema-grant', 'GRANT USAGE ON SCHEMA olbia TO olbia_reader');
-    await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments', 'monthly_plans', 'payroll', 'cards', 'wealth_snapshots', 'wealth_versions', 'liability_snapshots', 'liability_versions', 'categories', 'merchant_category_rules', 'ingestion_exceptions', 'import_records', 'push_subscriptions', 'assistant_threads'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
+    await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments', 'monthly_plans', 'payroll', 'cards', 'categories', 'merchant_category_rules', 'ingestion_exceptions', 'import_records', 'push_subscriptions', 'assistant_threads'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
+    await query('wealth-reader-recovery-revoke', 'REVOKE SELECT ON olbia.wealth_snapshots,olbia.wealth_versions,olbia.liability_snapshots,olbia.liability_versions FROM olbia_reader');
     await query('reader-migration-read', 'GRANT SELECT ON olbia.schema_migrations TO olbia_reader');
     await query('catalog-reader-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_reader');
     await query('plans-reader-read', 'GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO olbia_reader');
@@ -249,6 +256,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (!existing.rows.length) await query('operational-verifier-create', `CREATE ROLE ${role} WITH LOGIN`);
     await query('operational-verifier-schema', `GRANT USAGE ON SCHEMA olbia TO ${role}`);
     await query('ledger-verifier-read', nativeLedgerReadGrant(role));
+    await query('wealth-verifier-read', nativeWealthReadGrant(role));
     await query('verification-snapshot-read', `GRANT SELECT ON ${['runtime_state','projection_state','schema_migrations',...TABLE_NAMES,
       'spend_categories','merchant_rules','card_profiles','month_plans','planned_payments','payslips','payslip_lines'].map(table => `olbia.${table}`).join(',')} TO ${role}`);
     await query('operational-verifier-select', `GRANT SELECT ON ${OPERATIONAL_TABLE_NAMES.map(table => `olbia.${table}`).join(',')} TO ${role}`);
@@ -268,8 +276,11 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query(`schema-${role}`,`GRANT USAGE ON SCHEMA olbia TO ${role}`);
     await query(`select-${role}`,`GRANT SELECT ON olbia.runtime_state,olbia.projection_state,olbia.schema_migrations TO ${role}`);
     await query(`ledger-read-${role}`, nativeLedgerReadGrant(role));
+    await query(`wealth-read-${role}`, nativeWealthReadGrant(role));
+    if (writer) for (const [index, statement] of nativeWealthWriteGrants(role).entries()) await query(`wealth-write-${role}-${index}`, statement);
     if (writer) for (const [index, statement] of nativeLedgerWriteGrants(role).entries()) await query(`ledger-write-${role}-${index}`, statement);
     if (writer) await query(`write-${role}`,`GRANT SELECT,INSERT,UPDATE,DELETE ON ${['projection_state','application_barrier','command_receipts',...TABLE_NAMES].map(t=>`olbia.${t}`).join(',')} TO ${role}`);
+    await query(`wealth-recovery-revoke-${role}`, `REVOKE ALL PRIVILEGES ON olbia.wealth_snapshots,olbia.wealth_versions,olbia.liability_snapshots,olbia.liability_versions FROM ${role}`);
     if (writer) await query(`view-${role}`,`GRANT SELECT ON olbia.movement_months TO ${role}`);
     await query(`catalog-read-${role}`, `GRANT SELECT ON olbia.spend_categories TO ${role}`);
     await query(`plans-read-${role}`, `GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO ${role}`);
@@ -295,9 +306,11 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
       await query(`iam-${role}`,`AWS IAM GRANT ${role} TO '${arn}'`);
     }
   }
-  // Activation is last: constraints, indexes and runtime permissions are ready before marker 14 commits.
+  // Activation is last: constraints, indexes and permissions precede atomic ledger/wealth copies.
   try { await migrateLedger(options.transactionPool); }
   catch (error) { throw new BootstrapFailure('ledger-copy', error); }
+  try { await migrateWealth(options.transactionPool); }
+  catch (error) { throw new BootstrapFailure('wealth-copy', error); }
 };
 
 export const nativeLedgerReadGrant = (role: string): string =>

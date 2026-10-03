@@ -1,3 +1,5 @@
+import { prepareNativeWealthFixture } from './fixtures/native-wealth.js';
+import { NATIVE_WEALTH_TABLES } from '../../ledger/src/dsql/wealth-schema.js';
 import { createHash } from 'node:crypto';
 import * as connection from '../../ledger/src/dsql/connection.js';
 import { readLedgerMovements } from '../../ledger/src/dsql/ledger-reads.js';
@@ -54,6 +56,7 @@ const seed = async () => {
 };
 beforeAll(async () => { sql = new PGlite(); for (const statement of SCHEMA_STATEMENTS) await sql.query(statement);
   await prepareNativeLedgerFixture(sql);
+  await prepareNativeWealthFixture(sql);
   await sql.query('ALTER TABLE olbia.movements ADD CONSTRAINT movements_category_fk FOREIGN KEY (category_id) REFERENCES olbia.spend_categories(id)');
   for (const table of ['liability_snapshots','liability_versions']) {
     await sql.query(`ALTER TABLE olbia.${table} ADD CONSTRAINT ${table}_card_required CHECK (card_id IS NOT NULL)`);
@@ -63,14 +66,15 @@ beforeAll(async () => { sql = new PGlite(); for (const statement of SCHEMA_STATE
 afterAll(async () => sql.close());
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 beforeEach(async () => {
-  records = new Map(); await sql.exec(`TRUNCATE olbia.projection_state,olbia.merchant_rules,olbia.card_profiles,${[...TABLE_NAMES,...NATIVE_LEDGER_TABLES,'bank_imports','bank_import_rows','bank_import_candidates'].map(t => `olbia.${t}`).join(',')}`);
+  records = new Map(); await sql.exec(`TRUNCATE olbia.projection_state,olbia.merchant_rules,olbia.card_profiles,${[...TABLE_NAMES,...NATIVE_LEDGER_TABLES,...NATIVE_WEALTH_TABLES,'bank_imports','bank_import_rows','bank_import_candidates'].map(t => `olbia.${t}`).join(',')}`);
+  await prepareNativeWealthFixture(sql);
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
   await sql.query('DELETE FROM olbia.schema_migrations WHERE version=9');
   vi.spyOn(application, 'applicationStoreClient').mockReturnValue(sql);
   vi.stubEnv('DSQL_DOMAIN_READ_MODE', 'guarded-sql'); vi.stubEnv('DSQL_LEDGER_READ_MODE', 'guarded-sql');
-  vi.stubEnv('DSQL_PLANNING_READ_MODE', 'dynamodb'); vi.stubEnv('DSQL_WEALTH_READ_MODE', 'dynamodb');
-  vi.spyOn(readers, 'readerPool').mockReturnValue(sql); vi.spyOn(console, 'log').mockImplementation(() => {});
-  vi.spyOn(connection, 'createPool').mockReturnValue({ query: (s: string, v?: unknown[]) => sql.query(s, v) } as never);
+  vi.stubEnv('DSQL_PLANNING_READ_MODE', 'dynamodb');
+  vi.spyOn(readers, 'readerPool').mockImplementation(() => application.currentStoreTransaction() ?? sql); vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(connection, 'createPool').mockReturnValue({ query: (s: string, v?: unknown[]) => sql.query(s, v), transaction: (fn: (c: SqlClient) => Promise<unknown>) => sql.transaction(c => fn(c as unknown as SqlClient)) } as never);
   vi.spyOn(DynamoDBDocumentClient.prototype, 'send').mockImplementation(async (command: any) => {
     const input = command.input, values = input.ExpressionAttributeValues ?? {};
     if (command.constructor.name === 'GetCommand') return { Item: records.get(identity(input.Key)) };
@@ -129,9 +133,9 @@ describe('remaining domain SQL reads', () => {
     await sql.query("UPDATE olbia.cards SET source_item=jsonb_set(source_item,'{payload,name}','\"Corrupt\"') WHERE row_id='a'");
     const { database } = await import('../src/http/clients.js'); expect((await listCards('owner'))[0].name).toBe('a');
     expect((await run()).mismatches).toBe(0); // frozen evidence has a separate maintenance gate
-    await sql.query('ALTER TABLE olbia.liability_versions DROP CONSTRAINT liability_versions_card_fk');
+    await sql.query('ALTER TABLE olbia.liability_captures DROP CONSTRAINT liability_captures_card_id_fkey');
     expect((await run()).mismatches).toBeGreaterThan(0);
-    await sql.query('ALTER TABLE olbia.liability_versions ADD CONSTRAINT liability_versions_card_fk FOREIGN KEY (card_id) REFERENCES olbia.card_profiles(id)');
+    await sql.query('ALTER TABLE olbia.liability_captures ADD CONSTRAINT liability_captures_card_id_fkey FOREIGN KEY (card_id) REFERENCES olbia.card_profiles(id)');
   });
   it('shares one native movement feed in assistant comparison and four-month report and propagates SQL failure', async () => {
     await seed(); const query = vi.spyOn(sql, 'query').mockRejectedValue(new Error('SQL unavailable'));

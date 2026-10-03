@@ -11,6 +11,7 @@ beforeAll(async () => {
   for (const statement of SCHEMA_STATEMENTS) await sql.query(statement);
   await sql.query(`ALTER TABLE olbia.ledger_movements ADD CONSTRAINT ledger_movements_primary_observation_fk ${LEDGER_PRIMARY_OBSERVATION_CONSTRAINT}`);
   await sql.query('INSERT INTO olbia.schema_migrations VALUES (14,CURRENT_TIMESTAMP)');
+  await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
   const client: SqlClient = {query: async (statement, values) => {
     if (statement.startsWith('AWS IAM GRANT')) return {rows:[]};
     if (statement.startsWith('CREATE INDEX ASYNC')) return sql.query(statement.replace('INDEX ASYNC','INDEX'), values);

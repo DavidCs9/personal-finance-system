@@ -66,7 +66,7 @@ describe('DSQL migration infrastructure safety', () => {
     template.resourceCountIs('AWS::Scheduler::Schedule', 1);
     expect(JSON.stringify(template.findResources('AWS::SNS::TopicPolicy'))).toContain('cloudwatch.amazonaws.com');
     expect(JSON.stringify(template.findResources('AWS::SNS::TopicPolicy'))).toContain('sns:Publish');
-    expect(Object.values(template.findResources('AWS::CloudFormation::CustomResource'))[0].Properties.Version).toBe(16);
+    expect(Object.values(template.findResources('AWS::CloudFormation::CustomResource'))[0].Properties.Version).toBe(17);
   });
   it('can import every retained synthesized DSQL resource without updating the source table or encryption key', () => {
     const script = `

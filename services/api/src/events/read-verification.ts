@@ -91,7 +91,7 @@ export const verifyLedgerReads = async () => {
   // Refresh current movement input in the same snapshot as each phase's SQL comparisons.
   const planning = await withLedgerVerificationSnapshot(async () => verifyPlanningReads(owner, [...await allStoredEvents()], orderedMonths, now));
   mismatches += planning.mismatches;
-  const wealth = await withLedgerVerificationSnapshot(() => verifyWealthReads(owner, orderedMonths, now));
+  const wealth = await verifyWealthReads(owner, orderedMonths, now);
   mismatches += wealth.mismatches;
   const domain = await withLedgerVerificationSnapshot(async () => verifyDomainReads(owner, await allStoredEvents(), orderedMonths, now));
   mismatches += domain.mismatches;

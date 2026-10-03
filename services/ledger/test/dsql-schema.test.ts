@@ -6,6 +6,7 @@ const bootstrapSchema = (client: SqlClient, roleArns: readonly string[], options
   realBootstrapSchema(client, roleArns, { transactionPool: { transaction: callback => callback({ query: (s,v) =>
     s.includes('AS count FROM olbia.payroll') ? Promise.resolve({ rows: [{ count: 2 }] }) : client.query(s,v) }) }, ...options });
 const ready = (statement: string) => ({ rows:
+  statement.includes('WHERE version=15') ? [{ version: 15 }] :
   statement.includes('WHERE version=14') ? [{ version: 14 }] :
   statement.includes('pg_constraint') ? [{ convalidated: true }] :
   statement.includes('indisvalid') ? [{ indisvalid: true }] :
@@ -58,7 +59,7 @@ describe('DSQL-specific schema bootstrap', () => {
     const statements = query.mock.calls.map(([statement]) => statement).filter(statement => statement.includes('olbia_reader'));
     expect(statements).toContain('CREATE ROLE olbia_reader WITH LOGIN');
     expect(statements).toContain('GRANT USAGE ON SCHEMA olbia TO olbia_reader');
-    expect(statements).toContain('GRANT SELECT ON olbia.movements,olbia.movement_observations,olbia.movement_revisions,olbia.msi_installments,olbia.monthly_plans,olbia.payroll,olbia.cards,olbia.wealth_snapshots,olbia.wealth_versions,olbia.liability_snapshots,olbia.liability_versions,olbia.categories,olbia.merchant_category_rules,olbia.ingestion_exceptions,olbia.import_records,olbia.push_subscriptions,olbia.assistant_threads TO olbia_reader');
+    expect(statements).toContain('GRANT SELECT ON olbia.movements,olbia.movement_observations,olbia.movement_revisions,olbia.msi_installments,olbia.monthly_plans,olbia.payroll,olbia.cards,olbia.categories,olbia.merchant_category_rules,olbia.ingestion_exceptions,olbia.import_records,olbia.push_subscriptions,olbia.assistant_threads TO olbia_reader');
     expect(statements).toContain("AWS IAM GRANT olbia_reader TO 'arn:aws:iam::225989371926:role/api-reader'");
     expect(statements.join()).not.toMatch(/GRANT (?:ALL|INSERT|UPDATE|DELETE)|olbia_projector TO/);
     await expect(bootstrapSchema({ query } as SqlClient, [], { readerRoleArns: ["unsafe' ARN"] })).rejects.toThrow('Invalid reader role ARN');
@@ -145,6 +146,12 @@ it('validates native primary ownership before activation and completes grants/in
   const activation = statements.findIndex(statement => statement.includes('WHERE version=14'));
   expect(activation).toBeGreaterThan(statements.findIndex(statement => statement.includes('ledger_revisions_movement_idx')));
   expect(activation).toBeGreaterThan(statements.findIndex(statement => statement.startsWith('GRANT INSERT ON olbia.ledger_observations')));
+  const wealthActivation = statements.findIndex(statement => statement.includes('WHERE version=15'));
+  expect(wealthActivation).toBeGreaterThan(activation);
+  expect(wealthActivation).toBeGreaterThan(statements.findIndex(statement => statement.startsWith('GRANT INSERT ON olbia.asset_captures')));
+  expect(wealthActivation).toBeGreaterThan(statements.findIndex(statement => statement.startsWith('REVOKE ALL PRIVILEGES ON olbia.wealth_snapshots')));
+  expect(statements).toContain('GRANT UPDATE (capture_id) ON olbia.asset_daily_captures TO olbia_application');
+  expect(statements).toContain('GRANT UPDATE (capture_id) ON olbia.liability_daily_captures TO olbia_application');
   expect(statements).toContain('GRANT UPDATE (status,applied_at,undone_at) ON olbia.ledger_bulk_operations TO olbia_application');
   const failure = vi.fn(async (statement: string) => ({ rows:
     statement.includes('pg_constraint') ? [{convalidated:false}] :

@@ -1,6 +1,7 @@
 import { createPool } from './connection.js';
 import { authorityFrom } from './store.js';
 import { smokeNativeLedger } from './ledger-smoke.js';
+import { smokeNativeWealth } from './wealth-smoke.js';
 import { createHash, randomUUID } from 'node:crypto';
 
 // Internal IAM-only deployed operator. Product identities cannot update authority.
@@ -34,14 +35,10 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name RETURNING id,name`,
         [card.id,card.owner,'SQL verification',card.cut_off_day,card.payment_due_day,card.institution,card.created_at,card.updated_at])).rows[0];
         if (updated?.id !== card.id || updated.name !== 'SQL verification') throw new Error('Native profile upsert failed');
-        const retained = (await client.query(`SELECT count(*) AS count FROM (
-          SELECT card_id FROM olbia.liability_snapshots UNION ALL SELECT card_id FROM olbia.liability_versions
-        ) liabilities WHERE card_id=$1`, [card.id])).rows[0]?.count;
+        const retained = (await client.query(`SELECT count(*) AS count FROM olbia.liability_captures WHERE card_id=$1`, [card.id])).rows[0]?.count;
         await client.query('UPDATE olbia.card_profiles SET deleted_at=CURRENT_TIMESTAMP WHERE id=$1', [card.id]);
         if ((await client.query('SELECT id FROM olbia.card_profiles WHERE id=$1 AND deleted_at IS NULL', [card.id])).rows.length) throw new Error('Inactive profile was visible');
-        const stillRetained = (await client.query(`SELECT count(*) AS count FROM (
-          SELECT card_id FROM olbia.liability_snapshots UNION ALL SELECT card_id FROM olbia.liability_versions
-        ) liabilities WHERE card_id=$1`, [card.id])).rows[0]?.count;
+        const stillRetained = (await client.query(`SELECT count(*) AS count FROM olbia.liability_captures WHERE card_id=$1`, [card.id])).rows[0]?.count;
         if (String(retained) !== String(stillRetained)) throw new Error('Profile removal changed liability history');
         await client.query('UPDATE olbia.card_profiles SET deleted_at=NULL WHERE id=$1', [card.id]);
         const plan = (await client.query('SELECT month,owner FROM olbia.month_plans ORDER BY month LIMIT 1')).rows[0];
@@ -98,9 +95,10 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
           result_created=0,result_linked=0,result_skipped=2 WHERE kind='santander_csv' AND content_sha256=$1 RETURNING status,result_skipped`,[smokeHash])).rows[0];
         if (finishedImport?.status !== 'applied' || finishedImport.result_skipped !== 2) throw new Error('Native import completion failed');
         await smokeNativeLedger(client, String(importSource.owner), String(category.id));
+        await smokeNativeWealth(client, String(importSource.owner), String(card.id));
         verified=true;throw rollback;
       });} catch(error) {if(error!==rollback) throw error;}
-      return {verified,rolledBack:true,nativeCategories:true,nativeCards:true,nativeMonthPlans:true,nativePayroll:true,nativeImports:true,nativeLedger:true};
+      return {verified,rolledBack:true,nativeCategories:true,nativeCards:true,nativeMonthPlans:true,nativePayroll:true,nativeImports:true,nativeLedger:true,nativeWealth:true};
     }
     if(!['pause','activate'].includes(event.action)) throw new Error('Unknown operation');
     if(event.action==='activate' && process.env.OLBIA_ALLOW_SQL_ACTIVATION!=='true') throw new Error('SQL activation requires the approved cutover deployment');

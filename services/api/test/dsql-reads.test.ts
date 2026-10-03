@@ -252,7 +252,7 @@ describe('native SQL financial reads', () => {
       SELECT id AS movement_id,spend_month AS month FROM olbia.movements`);
     expect((await checkState()).mismatches).toBeGreaterThan(0);
     const {SCHEMA_STATEMENTS} = await import('../../ledger/src/dsql/schema.js');
-    await fixture.sql.query(SCHEMA_STATEMENTS.at(-1)!);
+    await fixture.sql.query(SCHEMA_STATEMENTS.find(statement => statement.startsWith('CREATE OR REPLACE VIEW olbia.movement_months'))!);
     expect(await checkState()).toMatchObject({monthMemberships:3,mismatches:0});
   });
 

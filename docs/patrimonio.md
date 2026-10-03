@@ -10,13 +10,13 @@ Plan operativo de la tab **Patrimonio** (activos − deudas de tarjeta = neto) d
 - Las tarjetas de Resumen siguen siendo solo ciclo (corte/pago). El saldo vive en Patrimonio, no en el sheet de ciclos.
 - Tab propia, hermana de Resumen y Movimientos.
 - Reporte en **MXN**; moneda nativa queda en holdings.
-- Snapshots **diarios** canónicos por cuenta líquida (`America/Chihuahua`); holdings **embebidos**.
-- **Fondo de ahorro** es derivado de CFDIs de nómina (suma de deducciones SAT `004` del año calendario). Cuenta en activos al 100% con etiqueta illíquida hasta diciembre. No se persiste como `WEALTH_SNAP`; el reset por liquidación de diciembre llega en un slice posterior.
-- Misma `MetadataTable`. Historial **sin TTL**.
-- Misma día: replace del canónico; versión previa solo auditoría.
+- Capturas **diarias** canónicas por cuenta líquida (`America/Chihuahua`); holdings en hijos SQL inmutables y objetos anidados en la respuesta pública.
+- **Fondo de ahorro** es derivado de CFDIs de nómina (suma de deducciones SAT `004` del año calendario). Cuenta en activos al 100% con etiqueta illíquida hasta diciembre. No se persiste como captura; el reset por liquidación de diciembre llega en un slice posterior.
+- [Modelo SQL nativo](sql-native-wealth.md): catálogo de cuentas, capturas/holdings inmutables y selección diaria con FK. Historial **sin TTL**; originales y relaciones de reemplazo permanecen.
+- Mismo día: cambia la selección canónica; la captura anterior queda para auditoría, sin duplicarla.
 - Evidencia cruda en S3 (`wealth-manual/…`, `wealth-api/…`).
 - Cajita: captura manual de solo saldo; fecha del sistema; inmutable; stale a **7 días**.
-- Tarjetas (pasivo): captura manual `{ amountMinor }` (≥ 0; 0 = pagada); fecha del sistema; inmutable mismo día; stale a **7 días**. Persistencia `LIAB_SNAP#` / `LIAB_VER#` ligada a `cardId`.
+- Tarjetas (pasivo): captura manual `{ amountMinor }` (≥ 0; 0 = pagada); fecha del sistema; captura inmutable; stale a **7 días**. Capturas y selección diaria SQL ligadas a `card_profiles.id`.
 - Bitso: sync read-only vía API (balances + tickers `*_mxn`); schedule **06:30** Chihuahua; refresh manual `POST /wealth/sync/bitso`.
 - IBKR: Flex Web Service (posiciones + cash USD) + Banxico FIX `SF43718`; schedule **06:45** Chihuahua; refresh manual `POST /wealth/sync/ibkr`.
 - Fallos de sync Bitso/IBKR: se conserva el último snapshot bueno; **push + email** (misma suscripción VAPID que Avisos de Olbia; títulos del estilo “Bitso no sincronizó” / equivalente IBKR).
@@ -28,7 +28,7 @@ Plan operativo de la tab **Patrimonio** (activos − deudas de tarjeta = neto) d
 
 ## API
 
-- `GET /wealth` — cuentas sembradas (incl. fondo derivado), pasivos por tarjeta, `assetsMxnMinor`, `liabilitiesMxnMinor`, `netMxnMinor`, `totalMxnMinor` (= assets, alias), historial.
+- `GET /wealth` — catálogo SQL de cuentas (incl. Fondo derivado), pasivos por tarjeta, `assetsMxnMinor`, `liabilitiesMxnMinor`, `netMxnMinor`, `totalMxnMinor` (= assets, alias), historial.
 - `POST /wealth/accounts/nu_cajita_emergencia/snapshots` — `{ amountMinor }` MXN (> 0).
 - `POST /wealth/liabilities/{cardId}/snapshots` — `{ amountMinor }` MXN (≥ 0); exige un perfil SQL activo para `cardId`.
 - `POST /wealth/sync/bitso` — sync manual (JWT owner); secret `{ apiKey, apiSecret, owner }`.
