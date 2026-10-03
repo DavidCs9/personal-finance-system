@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SqlClient, TransactionPool } from '../../ledger/src/dsql/projection.js';
 import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../../ledger/src/dsql/ledger-schema.js';
@@ -47,8 +47,6 @@ const ingest = async (raw: string, retryExceptionId?: string) => {
 const snapshot = async () => Object.fromEntries(await Promise.all(NATIVE_LEDGER_TABLES.map(async table =>
   [table, (await sql.query(`SELECT * FROM olbia.${table} ORDER BY 1,2`)).rows])));
 beforeAll(async () => {
-  vi.stubEnv('OLBIA_SQL_STORE_ENABLED', 'true');
-  vi.stubEnv('METADATA_TABLE_NAME', 'metadata');
   vi.stubEnv('APPLE_PAY_CAPTURE_SECRET_ARN', 'capture-secret');
   vi.stubEnv('VAPID_SECRET_ARN', 'vapid'); vi.stubEnv('WEB_APP_URL', 'https://olbia.example.com');
   sql = new PGlite();
@@ -73,7 +71,11 @@ beforeAll(async () => {
   email = await import('../../ingestion/src/process-email.js');
 }, 30_000);
 afterAll(async () => { await sql.close(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+afterEach(() => vi.useRealTimers());
 beforeEach(async () => {
+  // The real handlers use receipt time in the bounded foreign reconciliation window.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(at));
   await sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES,'ingestion_retry_attempts', 'projection_state', 'command_receipts', 'ingestion_exceptions'].map(t => `olbia.${t}`).join(',')}`);
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
   vi.clearAllMocks(); retryOnce = false; transactionCalls = 0;
