@@ -1,3 +1,4 @@
+import { verifyNativeMonthlyDeliveries } from '../reports/delivery-verification.js';
 import { currentStoreTransaction } from '@finance/ledger/dsql-store';
 import { publicThread, isValidAssistantThreadId } from '../agent/threads.js';
 import { createPool } from '@finance/ledger/dsql-connection';
@@ -123,5 +124,6 @@ export const verifyOperationalReads = async (owner: string, now: Date, client?: 
   const imports = await verifyNativeImports(owner, source.filter(item=>operationalFamily(item)==='import_records'), client);
   mismatches += imports.mismatches;
   const push = await verifyNativePushSubscriptions(owner, providedClient); mismatches += push.mismatches;
-  return { mode: operationalReadMode(), imports, push, retained, sourcePages, targetPages, publicResponses, configuredReads, expirationChecks, mismatches, elapsedMs: Date.now() - started };
+  const deliveries = await verifyNativeMonthlyDeliveries(owner, providedClient); mismatches += deliveries.mismatches;
+  return { mode: operationalReadMode(), imports, push, deliveries, retained, sourcePages, targetPages, publicResponses, configuredReads, expirationChecks, mismatches, elapsedMs: Date.now() - started };
 };

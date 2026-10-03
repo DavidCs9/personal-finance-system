@@ -21,7 +21,7 @@ afterAll(async () => sql.close());
 beforeEach(async () => {
   records = []; calls = [];
   await sql.exec(`TRUNCATE olbia.projection_state,${TABLE_NAMES.map(t => `olbia.${t}`).join(',')}`);
-  await sql.query('INSERT INTO olbia.schema_migrations VALUES (13,CURRENT_TIMESTAMP),(16,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING');
+  await sql.query('INSERT INTO olbia.schema_migrations VALUES (13,CURRENT_TIMESTAMP),(16,CURRENT_TIMESTAMP),(17,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING');
   vi.spyOn(readers, 'readerPool').mockReturnValue(sql as unknown as ReadSqlClient);
   vi.stubEnv('DSQL_OPERATIONAL_READ_MODE', 'guarded-sql');
   vi.spyOn(console, 'log').mockImplementation(() => {});

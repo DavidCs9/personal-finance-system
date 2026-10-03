@@ -1,9 +1,8 @@
-import { assertMutationsAvailable, assertLegacyDeliveryAccess } from '@finance/ledger/dsql-store';
-import { createHash } from 'node:crypto';
+import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
-import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { dayKeyInZone, formatMxnWhole, monthKeyInZone } from '@finance/domain';
-import { database, tableName } from '../http/clients.js';
+import { getMonthlyEmailDelivery, prepareMonthlyEmailDelivery, markMonthlyEmailAccepted } from './delivery-store.js';
+import type { NativeMonthlyDelivery } from '@finance/ledger/native-deliveries';
 import { getWealthOverview, type WealthBalanceOverview } from '../wealth/service.js';
 
 const ses = new SESClient({ region: process.env.AWS_REGION, maxAttempts: 5, retryMode: 'adaptive' });
@@ -20,7 +19,7 @@ export interface PreparedMonthEndBalanceReminder {
 }
 
 export interface MonthEndBalanceReminderDependencies {
-  readonly getRecord: (owner: string, month: string) => Promise<Record<string, unknown> | undefined>;
+  readonly getRecord: (owner: string, month: string) => Promise<NativeMonthlyDelivery | undefined>;
   readonly prepare: (
     owner: string,
     month: string,
@@ -37,11 +36,6 @@ const requiredEnvironment = (name: string): string => {
   if (!value) throw new Error(`${name} is required.`);
   return value;
 };
-
-const reminderKey = (owner: string, month: string) => ({
-  PK: `USER#${owner}`,
-  SK: `MONTH_END_BALANCE_REMINDER#${month}`,
-});
 
 const html = (value: string): string => value
   .replaceAll('&', '&amp;')
@@ -233,63 +227,13 @@ export const renderMonthEndBalanceReminder = (
   return { subject, html: emailHtml, text: emailText };
 };
 
-const getRecord = async (owner: string, month: string): Promise<Record<string, unknown> | undefined> => {
-  const result = await database.send(new GetCommand({
-    TableName: tableName,
-    Key: reminderKey(owner, month),
-    ConsistentRead: true,
-  }));
-  return result.Item as Record<string, unknown> | undefined;
-};
-
-const prepare = async (
-  owner: string,
-  month: string,
-  prepared: PreparedMonthEndBalanceReminder,
-  now: Date,
-): Promise<void> => {
-  const contentSha256 = createHash('sha256')
-    .update(prepared.email.subject)
-    .update('\0')
-    .update(prepared.email.html)
-    .update('\0')
-    .update(prepared.email.text)
-    .digest('hex');
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: {
-      ...reminderKey(owner, month),
-      entityType: 'month_end_balance_reminder',
-      owner,
-      month,
-      asOfDay: prepared.asOfDay,
-      status: 'prepared',
-      preparedAt: now.toISOString(),
-      email: prepared.email,
-      contentSha256,
-    },
-    ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
-  }));
-};
-
-const markSent = async (owner: string, month: string, messageId: string, now: Date): Promise<void> => {
-  await database.send(new UpdateCommand({
-    TableName: tableName,
-    Key: reminderKey(owner, month),
-    UpdateExpression: 'SET #status = :sent, sentAt = :sentAt, sesMessageId = :messageId',
-    ConditionExpression: '#status = :prepared',
-    ExpressionAttributeNames: { '#status': 'status' },
-    ExpressionAttributeValues: {
-      ':sent': 'sent',
-      ':prepared': 'prepared',
-      ':sentAt': now.toISOString(),
-      ':messageId': messageId,
-    },
-  }));
-};
+const getRecord = (owner:string,month:string) => getMonthlyEmailDelivery(owner,'month_end_reminder',month);
+const prepare = (owner:string,month:string,prepared:PreparedMonthEndBalanceReminder,now:Date):Promise<void> =>
+  prepareMonthlyEmailDelivery({kind:'month_end_reminder',owner,month,preparedAt:now.toISOString(),email:prepared.email,asOfDay:prepared.asOfDay});
+const markSent = (owner:string,month:string,messageId:string,now:Date):Promise<void> =>
+  markMonthlyEmailAccepted({owner,kind:'month_end_reminder',month,messageId,sentAt:now.toISOString()});
 
 const send = async (email: MonthEndBalanceReminderEmail): Promise<string> => {
-  await assertLegacyDeliveryAccess();
   const response = await ses.send(new SendEmailCommand({
     Source: requiredEnvironment('ALERT_SENDER_EMAIL'),
     Destination: { ToAddresses: [requiredEnvironment('ALERT_RECIPIENT_EMAIL')] },
@@ -314,21 +258,8 @@ const defaultDependencies: MonthEndBalanceReminderDependencies = {
   send,
 };
 
-const preparedFromRecord = (
-  record: Record<string, unknown> | undefined,
-): PreparedMonthEndBalanceReminder | undefined => {
-  if (record?.status !== 'prepared' || typeof record.asOfDay !== 'string') return undefined;
-  const email = record.email;
-  if (!email || typeof email !== 'object' || Array.isArray(email)) return undefined;
-  const emailRecord = email as Record<string, unknown>;
-  if (typeof emailRecord.subject !== 'string' || typeof emailRecord.html !== 'string' || typeof emailRecord.text !== 'string') {
-    return undefined;
-  }
-  return {
-    asOfDay: record.asOfDay,
-    email: { subject: emailRecord.subject, html: emailRecord.html, text: emailRecord.text },
-  };
-};
+const preparedFromRecord = (record:NativeMonthlyDelivery|undefined):PreparedMonthEndBalanceReminder|undefined =>
+  record?.kind==='month_end_reminder'&&record.status==='prepared'?{asOfDay:record.asOfDay,email:record.email}:undefined;
 
 const errorName = (error: unknown): string => error instanceof Error ? error.name : 'UnknownError';
 
@@ -337,7 +268,6 @@ export const runMonthEndBalanceReminder = async (
   dependencies: MonthEndBalanceReminderDependencies = defaultDependencies,
 ): Promise<{ readonly month: string; readonly status: 'sent' | 'already_sent'; readonly messageId?: string }> => {
   await assertMutationsAvailable();
-  await assertLegacyDeliveryAccess();
   const owner = requiredEnvironment('MONTH_END_REMINDER_OWNER');
   const month = monthKeyInZone(now);
   const asOfDay = dayKeyInZone(now);
@@ -365,7 +295,6 @@ export const runMonthEndBalanceReminder = async (
     }
   }
 
-  await assertLegacyDeliveryAccess();
   const messageId = await dependencies.send(prepared.email);
   await dependencies.markSent(owner, month, messageId, now);
   console.info(JSON.stringify({ message: 'Month-end balance reminder sent', month, messageId }));

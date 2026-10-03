@@ -37,7 +37,7 @@ describe('CloudFormation DSQL bootstrap diagnostics', () => {
       statement.includes('indisvalid') ? [{ indisvalid: true }] : statement.includes('pg_roles') ? [{ rolname: 'olbia_projector' }] : [],
     }), release: () => {} } as never);
     vi.spyOn(AuroraDSQLPool.prototype, 'transaction').mockImplementation(async callback => callback({ query: async (s: string) =>
-      ({ rows: s.includes('WHERE version=16') ? [{version:16}] : s.includes('WHERE version=15') ? [{version:15}] : s.includes('WHERE version=14') ? [{version:14}] : s.includes('AS count FROM olbia.payroll') ? [{ count: 2 }] : [] }) } as never));
+      ({ rows: s.includes('WHERE version=17') ? [{version:17}] : s.includes('WHERE version=16') ? [{version:16}] : s.includes('WHERE version=15') ? [{version:15}] : s.includes('WHERE version=14') ? [{version:14}] : s.includes('AS count FROM olbia.payroll') ? [{ count: 2 }] : [] }) } as never));
     vi.spyOn(AuroraDSQLPool.prototype, 'query').mockRejectedValue(Object.assign(new Error('private IAM detail'), { code: '28000' }));
     await expect(schemaHandler({ RequestType: 'Create', ResourceProperties: {} })).rejects.toThrow('runtime-connect-and-smoke (28000)');
   });

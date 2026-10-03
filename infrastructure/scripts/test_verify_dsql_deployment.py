@@ -31,7 +31,7 @@ elif operation == ['stepfunctions', 'describe-execution']:
 elif operation == ['lambda', 'invoke']:
     payload = json.loads(a[a.index('--payload') + 1])
     action = payload.get('action', 'read')
-    response = {'mode': os.environ.get('AUTHORITY', 'sql')} if action == 'status' else {'verified': True, 'rolledBack': True, 'nativeLedger': True, 'nativeWealth': True, 'nativePush': True} if action == 'smoke' else {'verified': True, 'mode': 'native-sql', 'mismatches': 0, 'provenance': {'mismatches': 0}, 'evidence': {'mismatches': 0}}
+    response = {'mode': os.environ.get('AUTHORITY', 'sql')} if action == 'status' else {'verified': True, 'rolledBack': True, 'nativeLedger': True, 'nativeWealth': True, 'nativePush': True, 'nativeDeliveries': True} if action == 'smoke' else {'verified': True, 'mode': 'native-sql', 'mismatches': 0, 'provenance': {'mismatches': 0}, 'evidence': {'mismatches': 0}}
     if os.environ.get('FAIL_GATE') == action:
         response = {'verified': False, 'rolledBack': False, 'mismatches': 1}
     if os.environ.get('LEGACY_PROBE') == action:
