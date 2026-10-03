@@ -1,3 +1,4 @@
+import { assertLegacyThreadAccess } from '@finance/ledger/dsql-store';
 import {
   BedrockAgentCoreClient,
   DeleteEventCommand,
@@ -92,8 +93,10 @@ export const saveAssistantThread = async (
   if (!isValidAssistantThreadId(input.sessionId)) {
     throw new InvalidAssistantThreadError('La conversación no es válida.');
   }
+  await assertLegacyThreadAccess();
   const now = (dependencies.now?.() ?? new Date()).toISOString();
   const expiresAt = Math.floor((new Date(now).getTime() + EVENT_RETENTION_MS) / 1000);
+  await assertLegacyThreadAccess();
   const result = await dependencies.database.send(new UpdateCommand({
     TableName: dependencies.tableName,
     Key: threadKey(input.owner, input.sessionId),
@@ -137,7 +140,9 @@ export const setActiveAssistantThread = async (
   if (sessionId !== undefined && !isValidAssistantThreadId(sessionId)) {
     throw new InvalidAssistantThreadError('La conversación no es válida.');
   }
+  await assertLegacyThreadAccess();
   if (!sessionId) {
+    await assertLegacyThreadAccess();
     await dependencies.database.send(new PutCommand({
       TableName: dependencies.tableName,
       Item: {
@@ -150,12 +155,14 @@ export const setActiveAssistantThread = async (
     }));
     return;
   }
+  await assertLegacyThreadAccess();
   const existing = await dependencies.database.send(new GetCommand({
     TableName: dependencies.tableName,
     Key: threadKey(owner, sessionId),
     ConsistentRead: true,
   }));
   if (!existing.Item) throw new InvalidAssistantThreadError('La conversación ya no está disponible.');
+  await assertLegacyThreadAccess();
   await dependencies.database.send(new PutCommand({
     TableName: dependencies.tableName,
     Item: {
@@ -172,6 +179,7 @@ const indexedThreads = async (dependencies: StoreDependencies, owner: string): P
   const threads: AssistantThread[] = [];
   let exclusiveStartKey: Record<string, unknown> | undefined;
   do {
+    await assertLegacyThreadAccess();
     const page = await dependencies.database.send(new QueryCommand({
       TableName: dependencies.tableName,
       KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
@@ -193,6 +201,7 @@ const activeThreadSelection = async (
   dependencies: StoreDependencies,
   owner: string,
 ): Promise<{ readonly configured: boolean; readonly id?: string }> => {
+  await assertLegacyThreadAccess();
   const result = await dependencies.database.send(new GetCommand({
     TableName: dependencies.tableName,
     Key: activeThreadKey(owner),
@@ -212,6 +221,7 @@ const allMemoryEvents = async (
   const events: Event[] = [];
   let nextToken: string | undefined;
   do {
+    await assertLegacyThreadAccess();
     const page = await dependencies.memory.send(new ListEventsCommand({
       memoryId: dependencies.memoryId,
       actorId: owner,
@@ -336,8 +346,10 @@ export const getAssistantThread = async (
   sessionId: string,
 ): Promise<{ readonly thread: AssistantThread; readonly messages: readonly AssistantThreadMessage[] }> => {
   if (!isValidAssistantThreadId(sessionId)) throw new InvalidAssistantThreadError('La conversación no es válida.');
+  await assertLegacyThreadAccess();
   const events = await allMemoryEvents(dependencies, owner, sessionId);
   const messages = messagesFromMemoryEvents(events);
+  await assertLegacyThreadAccess();
   const existing = await dependencies.database.send(new GetCommand({
     TableName: dependencies.tableName,
     Key: threadKey(owner, sessionId),
@@ -368,6 +380,7 @@ export const listAssistantThreads = async (
   owner: string,
   limit = DEFAULT_VISIBLE_THREADS,
 ): Promise<{ readonly threads: readonly AssistantThread[]; readonly activeThreadId?: string }> => {
+  await assertLegacyThreadAccess();
   const boundedLimit = Math.max(1, Math.min(MAX_VISIBLE_THREADS, Math.trunc(limit)));
   const cutoff = (dependencies.now?.() ?? new Date()).getTime() - EVENT_RETENTION_MS;
   const indexed = (await indexedThreads(dependencies, owner))
@@ -376,6 +389,7 @@ export const listAssistantThreads = async (
   let nextToken: string | undefined;
   const nativeSessions: { id: string; createdAt: Date }[] = [];
   do {
+    await assertLegacyThreadAccess();
     const page = await dependencies.memory.send(new ListSessionsCommand({
       memoryId: dependencies.memoryId,
       actorId: owner,
@@ -444,7 +458,9 @@ export const deleteAssistantThread = async (
   sessionId: string,
 ): Promise<void> => {
   if (!isValidAssistantThreadId(sessionId)) throw new InvalidAssistantThreadError('La conversación no es válida.');
+  await assertLegacyThreadAccess();
   const events = await allMemoryEvents(dependencies, owner, sessionId);
+  await assertLegacyThreadAccess();
   const indexed = await dependencies.database.send(new GetCommand({
     TableName: dependencies.tableName,
     Key: threadKey(owner, sessionId),
@@ -456,6 +472,7 @@ export const deleteAssistantThread = async (
   for (let index = 0; index < events.length; index += DELETE_EVENT_CONCURRENCY) {
     await Promise.all(events.slice(index, index + DELETE_EVENT_CONCURRENCY).map(async (event) => {
       if (!event.eventId) return;
+      await assertLegacyThreadAccess();
       await dependencies.memory.send(new DeleteEventCommand({
         memoryId: dependencies.memoryId,
         actorId: owner,
@@ -464,6 +481,7 @@ export const deleteAssistantThread = async (
       }));
     }));
   }
+  await assertLegacyThreadAccess();
   await dependencies.database.send(new DeleteCommand({
     TableName: dependencies.tableName,
     Key: threadKey(owner, sessionId),
