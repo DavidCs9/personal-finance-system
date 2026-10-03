@@ -129,10 +129,10 @@ it('separates product write permissions from the authority operator and keeps en
   expect(statements).toContain('GRANT INSERT,UPDATE ON olbia.bank_imports TO olbia_application');
   expect(statements).toContain('GRANT INSERT,DELETE ON olbia.bank_import_rows,olbia.bank_import_candidates TO olbia_application');
   expect(statements.filter(statement=>statement.includes('bank_import') && statement.endsWith('TO olbia_application')).join()).not.toMatch(/GRANT (?:ALL|DELETE) ON olbia.bank_imports|GRANT UPDATE ON olbia.bank_import_rows/);
-  expect(statements).toContain('GRANT UPDATE ON olbia.runtime_state TO olbia_cutover');
+  expect(statements).toContain('GRANT UPDATE (mode,changed_at) ON olbia.runtime_state TO olbia_cutover');
   for(const role of ['olbia_application','olbia_cutover']) {
-    expect(statements).toContain(`REVOKE INSERT,DELETE ON olbia.application_barrier FROM ${role}`);
-    expect(statements).toContain(`GRANT SELECT,UPDATE ON olbia.application_barrier TO ${role}`);
+    expect(statements).toContain(`REVOKE INSERT,UPDATE,DELETE ON olbia.application_barrier FROM ${role}`);
+    expect(statements).toContain(`GRANT UPDATE (generation) ON olbia.application_barrier TO ${role}`);
   }
   expect(statements.filter(statement=>statement.includes('TO olbia_store_reader')).join()).not.toMatch(/INSERT|UPDATE|DELETE/);
   expect(statements.filter(statement=>statement.includes('TO olbia_application')).join()).toContain('olbia.movement_months');
@@ -174,6 +174,7 @@ it('validates native primary ownership before activation and completes grants/in
   expect(threadActivation).toBeGreaterThan(deliveryActivation);
   expect(threadActivation).toBeGreaterThan(statements.findIndex(statement=>statement.startsWith('GRANT UPDATE (thread_id,updated_at) ON olbia.assistant_thread_selection')));
   expect(threadActivation).toBeGreaterThan(statements.findIndex(statement=>statement === 'REVOKE ALL PRIVILEGES ON olbia.assistant_threads FROM olbia_application'));
+  expect(statements.at(-1)).toBe('INSERT INTO olbia.schema_migrations VALUES (20,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   const exceptionActivation = statements.findIndex(statement => statement.includes('WHERE version=19'));
   expect(exceptionActivation).toBeGreaterThan(threadActivation);
   expect(exceptionActivation).toBeGreaterThan(statements.findIndex(statement=>statement.startsWith('GRANT INSERT ON olbia.ingestion_review_exceptions')));

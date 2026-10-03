@@ -2,7 +2,13 @@
 
 For current write authority and recovery, see [the coordinated SQL cutover](dsql-write-cutover.md). The phase evidence below records the earlier projection/read rollout.
 
-## What is in DSQL now?
+## Current native SQL schema
+
+**Olbia must feel born in SQL.** All active product domains now use direct native SQL authority through marker 19. The [current complete table audit](sql-relational-table-audit.md) records all 67 base tables, one view, 663 columns, 323 validated constraints and 92 indexes: 38 native domain tables, 24 immutable historical domain tables and five storage/control relations. Domain keys, child tables, native FKs/CHECKs/UNIQUE constraints and actual SQL role scopes replace product PK/SK/envelopes/document commands. S3 original evidence, authentication and native AgentCore transcript/discovery retain their existing provider authority.
+
+The historical SQL definitions below document the original projection rollout and frozen recovery tables. They are **not** current product-authority DDL or a production migration script. Current versioned code lives in [schema/bootstrap](../services/ledger/src/dsql/schema.ts) and native ledger/wealth/push/delivery/thread/exception schema modules; native readers/writers live alongside those domain modules. The [control slice](autonomous-runs/2026-10-03-sql-control-invariants.md) adds five validated native operational CHECKs and scopes control UPDATE columns through reviewed deployment; consult its acceptance status before claiming those changes live.
+
+## Historical projection/read rollout — 2026-09-30 to 2026-10-01
 
 The database contains the **ledger, planning, payroll, Patrimonio and retained operational projection**, not every application record. Schema version 4 has twenty-four entity tables, two projection bookkeeping tables and one view under `olbia` in the regional DSQL cluster in `us-east-2`. The [planning/payroll rollout](dsql-planning-payroll.md) extends the original nine-table ledger projection additively. [Patrimonio](dsql-patrimonio.md) adds four canonical/audit tables and the card envelope. The [shadow rollout](https://github.com/DavidCs9/personal-finance-system/actions/runs/36882229551) passed full retained-content/financial/evidence verification; the separate [guarded rollout](https://github.com/DavidCs9/personal-finance-system/actions/runs/36884373746) also passed and is active.
 
@@ -24,7 +30,7 @@ The deployed schema and real historical ledger passed [production verification](
 | `olbia.msi_plans` | Installment purchase plans derived from a movement’s MSI payload. | 20 |
 | `olbia.msi_installments` | Individual scheduled installments, including future months. | 108 |
 
-## Data still outside this projection
+## Historical projection boundaries
 
 The projector accepts only the source key patterns documented below. Other DynamoDB records are not copied merely because a source scan or parity job succeeded.
 
@@ -32,9 +38,9 @@ The [operational-state extension](dsql-operational-state.md) projects retained c
 
 Original MIME, CSV, PDF, XML and other evidence files remain in S3. SQL JSONB retains their references and source metadata; it does not embed or migrate the original files. Authentication remains with the existing identity provider.
 
-## Common domain-table columns and constraints
+## Historical recovery-table columns and constraints
 
-Every domain table has these columns in addition to its table-specific fields:
+Every historical recovery domain table has these columns in addition to its table-specific fields:
 
 | Column | SQL type | Nullable | Meaning |
 | --- | --- | --- | --- |
@@ -48,7 +54,7 @@ There are no foreign keys, CHECK constraints, column defaults or cascading delet
 
 Amounts use `bigint` in currency minor units. Keep currencies separate and preserve `personal_amount_minor` (Mi parte), including zero and absence. Driver bigint values must not be converted through floating-point arithmetic. Instants use `timestamptz`; comparisons preserve milliseconds. Statement/installment day values use `date`. Financial months use America/Chihuahua.
 
-## Domain tables
+## Historical recovery domain tables
 
 The SQL below documents existing definitions. It is not a manual production migration script; changes must go through the versioned bootstrap and approved PR/deployment workflow.
 

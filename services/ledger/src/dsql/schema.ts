@@ -194,6 +194,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     }
   };
   for (const [index, statement] of SCHEMA_STATEMENTS.entries()) await query(`schema-statement-${index + 1}`, statement);
+  await ensureNativeControlConstraints({ query: (statement, params) => query('native-control', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   if (!options.transactionPool) throw new BootstrapFailure('card-copy-transaction-pool');
   await migrateCardProfiles(options.transactionPool);
   await migrateMonthPlans(options.transactionPool);
@@ -245,7 +246,9 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('push-projector-read', nativePushReadGrant('olbia_projector'));
   await query('push-projector-recovery-revoke', 'REVOKE INSERT,UPDATE,DELETE ON olbia.push_subscriptions FROM olbia_projector');
   await query('wealth-projector-recovery-revoke', 'REVOKE INSERT,UPDATE,DELETE ON olbia.wealth_snapshots,olbia.wealth_versions,olbia.liability_snapshots,olbia.liability_versions FROM olbia_projector');
-  await query('projector-barrier-grant','GRANT SELECT,UPDATE ON olbia.application_barrier TO olbia_projector');
+  await query('projector-barrier-revoke','REVOKE INSERT,UPDATE,DELETE ON olbia.application_barrier FROM olbia_projector');
+  await query('projector-barrier-read','GRANT SELECT ON olbia.application_barrier TO olbia_projector');
+  await query('projector-barrier-grant','GRANT UPDATE (generation) ON olbia.application_barrier TO olbia_projector');
   for (const arn of roleArns) {
     if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid runtime role ARN');
     await query('iam-grant', `AWS IAM GRANT olbia_projector TO '${arn}'`);
@@ -318,8 +321,9 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (writer) for (const [index, statement] of nativeWealthWriteGrants(role).entries()) await query(`wealth-write-${role}-${index}`, statement);
     if (writer) for (const [index, statement] of nativeLedgerWriteGrants(role).entries()) await query(`ledger-write-${role}-${index}`, statement);
     if (writer) {
-      await query(`barrier-revoke-${role}`,`REVOKE INSERT,DELETE ON olbia.application_barrier FROM ${role}`);
-      await query(`write-${role}`,`GRANT SELECT,UPDATE ON olbia.application_barrier TO ${role}`);
+      await query(`barrier-revoke-${role}`,`REVOKE INSERT,UPDATE,DELETE ON olbia.application_barrier FROM ${role}`);
+      await query(`write-${role}`,`GRANT SELECT ON olbia.application_barrier TO ${role}`);
+      await query(`barrier-generation-${role}`,`GRANT UPDATE (generation) ON olbia.application_barrier TO ${role}`);
     }
     await query(`exceptions-recovery-revoke-${role}`,`REVOKE ALL PRIVILEGES ON olbia.ingestion_exceptions,olbia.exception_claims,olbia.ingestion_retries FROM ${role}`);
     await query(`threads-recovery-revoke-${role}`, `REVOKE ALL PRIVILEGES ON olbia.assistant_threads FROM ${role}`);
@@ -345,7 +349,10 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query(`rules-read-${role}`, `GRANT SELECT ON olbia.merchant_rules TO ${role}`);
     if (writer) await query(`catalog-write-${role}`, `GRANT INSERT,UPDATE ON olbia.spend_categories TO ${role}`);
     if (writer) await query(`rules-write-${role}`, `GRANT INSERT,UPDATE ON olbia.merchant_rules TO ${role}`);
-    if (operator) await query(`control-${role}`,`GRANT UPDATE ON olbia.runtime_state TO ${role}`);
+    if (operator) {
+      await query(`control-revoke-${role}`,`REVOKE UPDATE ON olbia.runtime_state FROM ${role}`);
+      await query(`control-${role}`,`GRANT UPDATE (mode,changed_at) ON olbia.runtime_state TO ${role}`);
+    }
     for (const arn of arns) {
       if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid application role ARN');
       await query(`iam-${role}`,`AWS IAM GRANT ${role} TO '${arn}'`);
@@ -374,6 +381,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   catch (error) { throw new BootstrapFailure('thread-copy', error); }
   try { await migrateIngestionReview(options.transactionPool,options.readOriginalEmail??(async()=>{throw new Error('Original email reader is required');})); }
   catch(error){throw new BootstrapFailure('exception-copy',error);}
+  await query('native-control-complete','INSERT INTO olbia.schema_migrations VALUES (20,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 };
 
 export const nativeLedgerReadGrant = (role: string): string =>
@@ -430,6 +438,21 @@ const ensureValidatedConstraint = async (client: SqlClient, table: string, name:
   } catch (error) {
     if (error instanceof BootstrapFailure) throw error;
     throw new BootstrapFailure(stage, error);
+  }
+};
+
+/** Fixed native authority identities and finite states, validated against real rows. */
+export const NATIVE_CONTROL_CONSTRAINTS = [
+  ['runtime_state','runtime_state_storage_id',"CHECK (id='storage')"],
+  ['runtime_state','runtime_state_mode',"CHECK (mode IN ('dynamodb','paused','sql'))"],
+  ['application_barrier','application_barrier_storage_id',"CHECK (id='storage')"],
+  ['application_barrier','application_barrier_generation','CHECK (generation>=0)'],
+  ['schema_migrations','schema_migrations_positive_version','CHECK (version>0)'],
+] as const;
+
+export const ensureNativeControlConstraints = async (client: SqlClient, options: Parameters<typeof ensureValidatedConstraint>[5] = {}): Promise<void> => {
+  for (const [table,name,definition] of NATIVE_CONTROL_CONSTRAINTS) {
+    await ensureValidatedConstraint(client,table,name,definition,`native-control-${name}`,options);
   }
 };
 
