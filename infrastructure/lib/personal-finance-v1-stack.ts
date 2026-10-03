@@ -1407,7 +1407,7 @@ export class PersonalFinanceV1Stack extends Stack {
     // exhausting Lambda's 20 KB resource-policy limit with one statement per route.
     for (const fn of [ingestionFunction,retryDispatcherFunction,apiFunction,agentProxyFunction,agentChatBufferedFunction,applePayCaptureFunction,
       dailyBalancePushFunction,cardCyclePushFunction,bitsoSyncFunction,ibkrSyncFunction,monthEndBalanceReminderFunction,monthlyCloseEmailFunction,agentTagMutationFunction]) dsqlProjection.grantSqlAccess(fn);
-    for (const fn of [readVerificationFunction,agentToolsFunction]) dsqlProjection.grantSqlAccess(fn,'reader');
+    for (const fn of [readVerificationFunction,agentToolsFunction,bedrockEmailFallbackFunction]) dsqlProjection.grantSqlAccess(fn,'reader');
 
 
     const apiIntegration = new HttpLambdaIntegration('ApiLambdaIntegration', apiFunction, {

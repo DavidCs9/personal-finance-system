@@ -64,6 +64,19 @@ it('gives the deployed verifier read-only access to every supported evidence fam
     // Retained disabled stream mapping uses provider-managed stream reads, never table data access.
     expect(functionActions.filter(action=>/^dynamodb:(GetItem|BatchGetItem|Query|Scan|PutItem|UpdateItem|DeleteItem|BatchWriteItem|\*)$/.test(action))).toEqual([]);
   }
-  expect(nativeFunctions).toBe(16);
+  expect(nativeFunctions).toBe(17);
+  const fallback=Object.values(functions).find(resource=>resource.Properties.FunctionName==='personal-finance-v1-bedrock-email-fallback')!;
+  expect(fallback.Properties.Environment.Variables.DSQL_ENDPOINT).toBeDefined();
+  expect(fallback.Properties.Environment.Variables.OLBIA_SQL_ROLE).toBe('olbia_store_reader');
+  const fallbackRole=fallback.Properties.Role['Fn::GetAtt'][0];
+  expect(bootstrap.Properties.StoreReaderRoleArns).toContainEqual({'Fn::GetAtt':[fallbackRole,'Arn']});
+  expect(fallback.DependsOn).toContain(Object.keys(template.findResources('AWS::CloudFormation::CustomResource')).find(id=>id.startsWith('DsqlProjectionBootstrap')));
+  const fallbackStatements=Object.values(template.findResources('AWS::IAM::Policy'))
+    .filter(policy=>policy.Properties.Roles.some((value:{Ref?:string})=>value.Ref===fallbackRole))
+    .flatMap(policy=>policy.Properties.PolicyDocument.Statement);
+  const connect=fallbackStatements.filter(statement=>actions(statement).includes('dsql:DbConnect'));
+  expect(connect).toHaveLength(1);
+  expect(connect[0].Resource).toEqual({'Fn::GetAtt':[Object.keys(template.findResources('AWS::DSQL::Cluster'))[0],'ResourceArn']});
+  expect(fallbackStatements.flatMap(actions)).not.toContain('dsql:DbConnectAdmin');
 
 },60_000);
