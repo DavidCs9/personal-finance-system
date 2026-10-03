@@ -2,7 +2,7 @@
 
 Olbia must feel born in SQL. David's canonical financial facts, capture provenance, edits and installment relationships have one relational authority; document keys and duplicated operational envelopes are retained only as recovery evidence.
 
-This coherent release activates migration 14 after the already deployed core and bulk guards (#186/#187). Production acceptance is pending until the PR, required quality, linear merge, deploy-production and independent live gates finish. The [run record](autonomous-runs/2026-10-02-native-ledger.md) records the design decisions and release evidence.
+Migration 14 is active. [PR #189](https://github.com/DavidCs9/personal-finance-system/pull/189) completed required quality, linear merge, deploy-production and independent exact real-data acceptance after the staged guards. The [completed run record](autonomous-runs/2026-10-02-native-ledger.md) preserves the decisions and release evidence; the [current table audit](sql-relational-table-audit.md) records all later accepted domains and controls.
 
 ## Relations and authority
 
@@ -39,7 +39,7 @@ Every financial mutation and the one-time copy share the deployed application ba
 
 Bootstrap adds the native tables, validates deferred primary-observation ownership, waits for parent/time revision and installment-month indexes, and grants existing runtime roles. It then decodes the retained facts fail-closed and copies all twelve relations plus marker 14 in one transaction. Restart sees the marker and never recopies later native edits. Retained observations/revisions/imports and the DynamoDB recovery source remain unchanged.
 
-A separately deployed reader guard rejects legacy financial reads after activation, and deployed writer guards reject late document mutations. This prevents frozen values from being served as current finances during Lambda replacement. Obsolete financial read-mode flags are removed; unrelated wealth/operational compatibility remains scoped to their unfinished domains.
+Separately deployed reader/writer guards protected activation from still-running legacy bundles. All financial, wealth and operational domains now have accepted native authorities. The product document factory and obsolete read-mode flags are retired; remaining projection/copy logic is isolated migration/recovery code. Product roles cannot read or mutate the frozen originals. See the [runtime retirement receipt](autonomous-runs/2026-10-03-sql-runtime-retirement.md).
 
 The deployed read-only gate uses a separate bounded SQL snapshot for each phase. Current typed fields, original provenance/history, independent SQL monthly totals, ordered feeds/ranges/detail, planning, wealth, domain and operational contracts are checked independently. Original object hashes are collected in SQL and rehashed outside the provenance snapshot; inline originals are valid only for actual Apple Pay captures. Public results expose counts, mismatch totals and timing/scan information, never private rows or financial totals.
 

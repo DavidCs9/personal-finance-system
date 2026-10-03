@@ -1,5 +1,7 @@
 # SQL-native monthly plans and payments
 
+[PR #180](https://github.com/DavidCs9/personal-finance-system/pull/180) is deployed and independently accepted; marker 11 is active. The [completed run](autonomous-runs/2026-10-01-native-month-plans.md) preserves exact parent/child, empty-month, financial/evidence and rollback acceptance. See the [current table audit](sql-relational-table-audit.md) for subsequent native domains.
+
 Olbia must feel born in SQL. `month_plans` uses the calendar month (`YYYY-MM`) as its domain primary key, with David's access binding and a typed update timestamp. `planned_payments` contains typed payment identity, name, MXN amount, due day and ordering position. A native FK links each payment to its month; `(month,id)` is its primary key and `(month,sort_order)` is unique. CHECKs enforce names/IDs, safe positive integer amounts, due days 1–31 and positions 0–99. Those unique bounded positions also enforce the 100-payment limit natively.
 
 The public month API continues to return income derived from payroll, including provisional/twin estimates and Fondo semantics, plus the month's fixed-expense list. Legacy stored income remains frozen evidence. Card cycles and MSI remain separate from fixed expenses. There are no new users or tenant abstractions; `owner` retains the existing authenticated access binding.
