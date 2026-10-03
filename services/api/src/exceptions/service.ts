@@ -1,3 +1,4 @@
+import { assertLegacyExceptionAccess } from '@finance/ledger/dsql-store';
 import { operationalReadMode, selectOperationalRecords, sourceExceptionRecords, publicExceptions, readOperationalItem, isRetainedLive } from '../operational/reads.js';
 import { readerPool } from '../events/sql-reads.js';
 import { GetCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
@@ -7,8 +8,10 @@ import { readSource } from '../events/queries.js';
 import { randomUUID } from 'node:crypto';
 
 export const listExceptions = async (): Promise<readonly JsonObject[]> => {
+  await assertLegacyExceptionAccess();
   const at = new Date();
   if (operationalReadMode() === 'dynamodb') {
+    await assertLegacyExceptionAccess();
     const result = await database.send(new QueryCommand({ TableName: tableName, IndexName: 'GSI1',
       KeyConditionExpression: 'GSI1PK = :partition', ExpressionAttributeValues: { ':partition': 'EXCEPTIONS' }, ScanIndexForward: false, Limit: 100 }));
     return publicExceptions(result.Items ?? [], at, true);
@@ -19,6 +22,7 @@ export const listExceptions = async (): Promise<readonly JsonObject[]> => {
 };
 
 export const requestRetry = async (exceptionId: string, requestedBy: string): Promise<JsonObject> => {
+  await assertLegacyExceptionAccess();
   const existing = await database.send(new GetCommand({ TableName: tableName, Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' }, ConsistentRead: true }));
   const exception = existing.Item?.payload as JsonObject | undefined;
   const source = exception?.source as JsonObject | undefined;
@@ -26,6 +30,7 @@ export const requestRetry = async (exceptionId: string, requestedBy: string): Pr
   const requestedAt = new Date().toISOString();
   const requestId = randomUUID();
   const retry = { status: 'queued', requestId, requestedAt, requestedBy };
+  await assertLegacyExceptionAccess();
   await database.send(new TransactWriteCommand({ TransactItems: [
     { Update: {
       TableName: tableName, Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' },
@@ -43,7 +48,9 @@ export const requestRetry = async (exceptionId: string, requestedBy: string): Pr
 };
 
 export const discardException = async (exceptionId: string, discardedBy: string): Promise<JsonObject> => {
+  await assertLegacyExceptionAccess();
   const discarded = { at: new Date().toISOString(), by: discardedBy };
+  await assertLegacyExceptionAccess();
   await database.send(new UpdateCommand({
     TableName: tableName,
     Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' },
@@ -56,9 +63,11 @@ export const discardException = async (exceptionId: string, discardedBy: string)
 };
 
 export const readExceptionRawEmail = async (exceptionId: string): Promise<string> => {
+  await assertLegacyExceptionAccess();
   const item = await readOperationalItem('ingestion_exceptions', { database, tableName }, `EXCEPTION#${exceptionId}`, 'EXCEPTION');
   if (item && !isRetainedLive(item, new Date())) throw new Error(`Missing raw source for exception ${exceptionId}`);
   const source = (item?.payload as JsonObject | undefined)?.source as { bucket?: string; key?: string } | undefined;
   if (!source?.bucket || !source.key) throw new Error(`Missing raw source for exception ${exceptionId}`);
+  await assertLegacyExceptionAccess();
   return readSource({ bucket: source.bucket, key: source.key }, `exception ${exceptionId}`);
 };

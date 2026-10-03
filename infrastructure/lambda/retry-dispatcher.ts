@@ -1,5 +1,5 @@
 import { expireConversationMetadata } from '@finance/ledger/native-threads';
-import { createApplicationStore, storageAuthority, mutationsPaused, applicationStoreClient, withNativeTransaction } from '@finance/ledger/dsql-store';
+import { createApplicationStore, storageAuthority, mutationsPaused, applicationStoreClient, withNativeTransaction, assertLegacyExceptionAccess } from '@finance/ledger/dsql-store';
 import { UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
 import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
@@ -13,6 +13,7 @@ const queueUrl = process.env.INGESTION_QUEUE_URL!;
 // SQS delivery is at least once; the existing observed-event claims deduplicate retries.
 // A failed send leaves the durable pending record for the next native scheduled run.
 export const handler = async (event: Partial<DynamoDBStreamEvent>): Promise<void> => {
+  await assertLegacyExceptionAccess();
   if (await mutationsPaused()) return;
   const records: Record<string, any>[] = [];
   if (event.Records) {
@@ -39,8 +40,10 @@ export const handler = async (event: Partial<DynamoDBStreamEvent>): Promise<void
   }
   for (const record of records) {
     if (!record.job || record.status !== 'pending') continue;
+    await assertLegacyExceptionAccess();
     await sqs.send(new SendMessageCommand({ QueueUrl: queueUrl, MessageBody: JSON.stringify(record.job) }));
     try {
+      await assertLegacyExceptionAccess();
       await database.send(new UpdateCommand({ TableName: tableName, Key: { PK: record.PK, SK: record.SK },
         UpdateExpression: 'SET #status = :status, dispatchedAt = :at', ConditionExpression: '#status = :pending',
         ExpressionAttributeNames: { '#status': 'status' }, ExpressionAttributeValues: { ':pending': 'pending', ':status': 'dispatched', ':at': new Date().toISOString() } }));
