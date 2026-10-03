@@ -92,6 +92,26 @@ it('carries exact attempt identity through fallback extraction to the existing i
   const retryJob=await parent();expect(await extract({...retryJob,institutionHint:'santander_mx',primaryFailure:'Original failure'})).toEqual({batchItemFailures:[]});
   expect(JSON.parse((sqs.mock.calls[0][0] as any).input.MessageBody)).toMatchObject({retryExceptionId:id,retryRequestedAt:requestedAt,bedrockExtraction:{result:{recognized:false}}});expect(harness.model).toHaveBeenCalledTimes(1);
 });
+it.each(['paused','dynamodb'])('blocks %s ingestion, extraction and dispatch before all provider IO',async mode=>{
+  await sql.query("UPDATE olbia.runtime_state SET mode=$1 WHERE id='storage'",[mode]);
+  expect(await ingest()).toEqual(failed);expect(await extract()).toEqual(failed);
+  await expect(dispatcher.handler({})).rejects.toMatchObject({name:'MigrationPausedException'});
+  expect(s3).not.toHaveBeenCalled();expect(sqs).not.toHaveBeenCalled();expect(ses).not.toHaveBeenCalled();expect(harness.model).not.toHaveBeenCalled();
+});
+it('rechecks SQL before extraction and retains the batch when authority pauses during source reading',async()=>{
+  s3.mockImplementation(async()=>{await sql.query("UPDATE olbia.runtime_state SET mode='paused' WHERE id='storage'");return{Body:{transformToString:async()=>ordinaryMime}};});
+  expect(await extract()).toEqual(failed);expect(s3).toHaveBeenCalledOnce();expect(harness.model).not.toHaveBeenCalled();expect(sqs).not.toHaveBeenCalled();expect(ses).not.toHaveBeenCalled();
+});
+it('retains the batch instead of forwarding an extraction when authority pauses before queue handoff',async()=>{
+  harness.model.mockImplementation(async()=>{await sql.query("UPDATE olbia.runtime_state SET mode='paused' WHERE id='storage'");return{recognized:false};});
+  expect(await extract()).toEqual(failed);expect(harness.model).toHaveBeenCalledOnce();expect(sqs).not.toHaveBeenCalled();expect(ses).not.toHaveBeenCalled();
+});
+it('runs native preflight before deliberately malformed JSON without any source/model/queue work',async()=>{
+  const event={Records:[{messageId:'native-sql-preflight-only',body:'{',attributes:{ApproximateReceiveCount:'1'}}]};
+  expect(await fallback.bedrockFallbackHandler(event as never,{} as never,()=>{})).toEqual({batchItemFailures:[{itemIdentifier:'native-sql-preflight-only'}]});
+  expect(console.error).toHaveBeenCalledWith(expect.stringContaining('"errorName":"SyntaxError"'));
+  expect(s3).not.toHaveBeenCalled();expect(harness.model).not.toHaveBeenCalled();expect(sqs).not.toHaveBeenCalled();expect(ses).not.toHaveBeenCalled();
+});
 it('fails closed on sanitized driver errors with partial retries and no provider work',async()=>{
   const client:SqlClient={query:async()=>{throw Object.assign(new Error('private driver failure'),{code:'08006'});}};
   expect(await withSqlClient(client,async()=>ingest())).toEqual(failed);expect(await withSqlClient(client,async()=>extract())).toEqual(failed);

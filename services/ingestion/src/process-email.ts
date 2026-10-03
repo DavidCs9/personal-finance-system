@@ -1,4 +1,4 @@
-import { withSqlTransaction } from '@finance/ledger/sql-runtime';
+import { withSqlTransaction,assertSqlMutationsAvailable } from '@finance/ledger/sql-runtime';
 import { createHash, randomUUID } from 'node:crypto';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
@@ -28,7 +28,7 @@ export const ingestionHandler: SQSHandler = async (event) => {
   const failures: { itemIdentifier: string }[] = [];
   for (const record of event.Records) {
     try {
-      await assertNativeExceptionAccess();
+      await assertNativeExceptionAccess();await assertSqlMutationsAvailable();
       await ingest(JSON.parse(record.body) as IngestionJob);
     } catch (error) {
       console.error('Unable to ingest SES email', { messageId: record.messageId, error: errorMessage(error) });
@@ -197,7 +197,7 @@ const enqueueBedrockFallback = async (
     institutionHint,
     primaryFailure,
   };
-  await assertNativeExceptionAccess();
+  await assertNativeExceptionAccess();await assertSqlMutationsAvailable();
   await sqs.send(new SendMessageCommand({
     QueueUrl: requiredEnvironment('BEDROCK_FALLBACK_QUEUE_URL'),
     MessageBody: JSON.stringify(fallbackJob),
@@ -243,7 +243,7 @@ const notifyIngestionException = async (exception: IngestionExceptionAlertInput)
     return;
   }
   const alert = ingestionExceptionAlert(exception);
-  await assertNativeExceptionAccess();
+  await assertNativeExceptionAccess();await assertSqlMutationsAvailable();
   await ses.send(new SendEmailCommand({
     Source: addresses.source,
     Destination: { ToAddresses: [addresses.destination] },

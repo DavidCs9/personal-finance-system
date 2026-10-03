@@ -18,6 +18,7 @@ export const handler=async(event:Partial<DynamoDBStreamEvent>):Promise<void>=>{
   catch(error){if((error as {code?:string}).code)throw Object.assign(new Error('Olbia storage is unavailable.'),{name:'StorageUnavailableException'});throw error;}
   for(const attempt of pending){
     await assertNativeExceptionAccess();
+    await assertSqlMutationsAvailable();
     await sqs.send(new SendMessageCommand({QueueUrl:queueUrl,MessageBody:JSON.stringify(attempt.job)}));
     const dispatchedAt=new Date().toISOString();
     await withSqlTransaction(async client=>{await assertNativeExceptionAccess(client);await markReviewRetryDispatched(client,attempt.ref,dispatchedAt);});
