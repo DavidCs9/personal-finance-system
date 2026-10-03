@@ -13,11 +13,13 @@ Olbia is David Castro's private application for controlling his overall financia
 
 Start with the [system context diagram in the root README](../README.md#architecture), then zoom into containers and components below.
 
+**OLBIA MUST FEEL AS IF IT WAS BORN IN SQL.** All product domains use native DSQL keys, typed constraints and direct SQL transactions. [The current audit](sql-relational-table-audit.md) records the complete catalog. Frozen DynamoDB/SQL originals and managed backups are recovery evidence, never a product fallback; S3 originals and AgentCore transcripts retain their provider authority.
+
 ## Container diagram (C2)
 
 **Scope:** Olbia. **Audience:** engineers and operators.
 
-Shows how responsibilities split across the SPA, HTTP edge, email ingestion pipeline, scheduled push and wealth sync, and data stores. Application logic lives in `services/*` and `packages/domain`. Shared observed-event persistence and month indexing live in `services/ledger`. `infrastructure/lambda/` holds thin adapters that re-export service handlers (plus a few infra-only functions: SES receipt, retry dispatcher, VAPID custom resource).
+Shows how responsibilities split across the SPA, HTTP edge, email ingestion pipeline, scheduled push and wealth sync, and data stores. Application logic lives in `services/*` and `packages/domain`. Native domain SQL readers/writers, relationships and transactions live in `services/ledger`. `infrastructure/lambda/` holds thin adapters that re-export service handlers (plus a few infra-only functions: SES receipt, retry dispatcher, VAPID custom resource).
 
 ```mermaid
 flowchart TB
@@ -83,9 +85,12 @@ _Re-queues recoverable exceptions_`"]
     end
 
     subgraph data["`**Data**`"]
-      ddb[("`**Metadata Store**
-«Container: DynamoDB»
-_Events, plans, cards, wealth, push_`")]
+      sql[("`**Financial Domain Store**
+«Container: Aurora DSQL»
+_Native ledger, plans, payroll, wealth and workflows_`")]
+      recovery[("`**Frozen Recovery Evidence**
+«Container: retained DynamoDB + backups»
+_Reviewed recovery only; no product authority_`")]
       raw[("`**Raw Source Store**
 «Container: S3 + KMS»
 _Encrypted MIME, CSV, PDF, evidence_`")]
@@ -124,40 +129,41 @@ _Día 1 · 07:10 America/Chihuahua_`"]
   ingest -->|"Queues parser failures"| bedrock
   bedrock -->|"Returns structured candidates"| queue
   bedrock -->|"Reads MIME"| raw
-  ingest -->|"Writes events/exceptions"| ddb
+  ingest -->|"Writes events/exceptions"| sql
   ingest -->|"Emails exceptions"| ses
   ses -->|"Delivers email"| owner
   ingest -->|"Pushes new observations"| webpush
 
   shortcuts -->|"Posts captures · HTTPS + bearer"| apple
-  apple -->|"Writes events"| ddb
+  apple -->|"Writes events"| sql
   apple -->|"Pushes new observations"| webpush
 
-  api -->|"Reads/writes"| ddb
+  api -->|"Reads/writes"| sql
   api -->|"CSV, PDF, nómina, wealth evidence"| raw
   api -->|"AnalyzeDocument"| textract
-  api -->|"Writes retry jobs"| ddb
-  retry -->|"Watches retries · stream"| ddb
+  api -->|"Writes retry jobs"| sql
+  retry -->|"Reads queued native attempts · Scheduler"| sql
   retry -->|"Re-queues jobs"| queue
 
-  daily -->|"Reads month state"| ddb
+  daily -->|"Reads month state"| sql
   daily -->|"Pushes daily summary"| webpush
-  cardsPush -->|"Reads cards + subscriptions"| ddb
+  cardsPush -->|"Reads cards + subscriptions"| sql
   cardsPush -->|"Pushes cut-off/payment"| webpush
   bitsoSync -->|"Balances + tickers"| bitso
-  bitsoSync -->|"Writes wealth snapshots"| ddb
+  bitsoSync -->|"Writes wealth snapshots"| sql
   ibkrSync -->|"Flex + FIX"| ibkr
-  ibkrSync -->|"Writes wealth snapshots"| ddb
-  monthEndReminder -->|"Reads latest wealth balances"| ddb
+  ibkrSync -->|"Writes wealth snapshots"| sql
+  monthEndReminder -->|"Reads latest wealth balances"| sql
   monthEndReminder -->|"Sends capture checklist"| ses
-  monthlyClose -->|"Reads completed month"| ddb
+  monthlyClose -->|"Reads completed month"| sql
   monthlyClose -->|"Sends monthly close"| ses
   webpush -->|"Notifies devices"| owner
 
   class owner person
   class gmail,shortcuts,bitso,ibkr,textract,webpush external
   class spa,cognito,api,apple,ses,receipt,ingest,bedrock,retry,daily,cardsPush,bitsoSync,ibkrSync,monthEndReminder,monthlyClose container
-  class queue,ddb,raw store
+  class queue,sql,raw store
+  class recovery external
 ```
 
 ## Component diagram — Ingestion Worker (C3)
@@ -173,8 +179,8 @@ flowchart TB
 «Container: SQS»`")]
   raw[("`**Raw Source Store**
 «Container: S3 + KMS»`")]
-  ddb[("`**Metadata Store**
-«Container: DynamoDB»`")]
+  sql[("`**Financial Domain Store**
+«Container: Aurora DSQL»`")]
   ses["`**Email Gateway**
 «Container: SES»`"]
   webpush["`**Web Push network**
@@ -218,8 +224,8 @@ _Notifies on accepted events_`"]
   queue -->|"Delivers jobs"| consumer
   consumer -->|"Reads MIME"| raw
   consumer -->|"Normalizes MIME"| mime
-  consumer -->|"Claims source identity"| dedupe
-  dedupe -->|"Writes dedupe claim"| ddb
+  reconcile -->|"Checks source identity in financial transaction"| dedupe
+  dedupe -->|"Claim and capture commit together"| sql
   consumer -->|"Selects parser"| parsers
   parsers -->|"Parsed purchase"| reconcile
   parsers -->|"Parse failure"| fallbackQueue
@@ -227,22 +233,22 @@ _Notifies on accepted events_`"]
   bedrock -->|"Candidate + evidence"| validator
   validator -->|"Validated purchase"| reconcile
   validator -->|"Rejected extraction"| exceptions
-  reconcile -->|"Writes event + observation"| ddb
+  reconcile -->|"Writes event + observation"| sql
   reconcile -->|"New accepted event"| push
-  exceptions -->|"Writes exception"| ddb
+  exceptions -->|"Writes exception"| sql
   exceptions -->|"Needs alert"| mail
   mail -->|"Sends email"| ses
   push -->|"Sends notification"| webpush
 
   class consumer,dedupe,mime,parsers,validator,reconcile,exceptions,mail,push component
-  class queue,fallbackQueue,raw,ddb,ses,webpush,bedrock external
+  class queue,fallbackQueue,raw,sql,ses,webpush,bedrock external
 ```
 
 ## Component diagram — Ledger API (C3)
 
 **Scope:** Ledger API container. **Audience:** developers changing HTTP routes or ledger mutations.
 
-Exception retries write a DynamoDB retry job; the Retry Dispatcher (C2) watches the stream and re-queues SQS — the API does not send to SQS directly.
+Exception retries record an immutable native request-time attempt. The scheduled Retry Dispatcher (C2) reads queued attempts from SQL and re-queues SQS; the API does not send to SQS directly. Completion links the exact attempt to a real movement in the same financial transaction. Native SQS retry/DLQ remains the delivery mechanism.
 
 Month income on `GET /months/:month` is derived from CFDI nómina payslips. `PUT /months/:month` persists only `upcomingPayments`. If the selected month has no plan record, `GET` resolves the latest earlier monthly plan without writing; the next edit saves the complete effective list for the selected month.
 
@@ -253,8 +259,8 @@ flowchart TB
 
   spa["`**Web SPA**
 «Container: React · Vite»`"]
-  ddb[("`**Metadata Store**
-«Container: DynamoDB»`")]
+  sql[("`**Financial Domain Store**
+«Container: Aurora DSQL»`")]
   raw[("`**Raw Source Store**
 «Container: S3 + KMS»`")]
   textract["`**Amazon Textract**
@@ -309,25 +315,25 @@ _Register and remove endpoints_`"]
   router -->|"POST /imports/nomina"| nomina
   router -->|"Push routes"| pushsubs
 
-  events -->|"Reads/writes"| ddb
+  events -->|"Reads/writes"| sql
   events -->|"Reads MIME evidence"| raw
-  manual -->|"Creates events"| ddb
-  exceptions -->|"Updates + writes retry jobs"| ddb
-  months -->|"Reads/writes"| ddb
-  cards -->|"Reads/writes"| ddb
-  wealth -->|"Reads/writes"| ddb
+  manual -->|"Creates events"| sql
+  exceptions -->|"Updates + writes retry jobs"| sql
+  months -->|"Reads/writes"| sql
+  cards -->|"Reads/writes"| sql
+  wealth -->|"Reads/writes"| sql
   wealth -->|"Stores sync evidence"| raw
   statements -->|"Stores PDF + textract JSON"| raw
   statements -->|"AnalyzeDocument"| textract
-  statements -->|"Links or creates events"| ddb
+  statements -->|"Links or creates events"| sql
   csv -->|"Stores CSV"| raw
-  csv -->|"Links or creates events"| ddb
-  nomina -->|"Stores XML + payslips"| ddb
+  csv -->|"Links or creates events"| sql
+  nomina -->|"Writes payslip + ordered SAT lines"| sql
   nomina -->|"Stores XML evidence"| raw
-  pushsubs -->|"Reads/writes"| ddb
+  pushsubs -->|"Reads/writes"| sql
 
   class router,events,manual,exceptions,months,cards,wealth,statements,csv,nomina,pushsubs component
-  class spa,ddb,raw,textract external
+  class spa,sql,raw,textract external
 ```
 
 ## Component diagram — Web SPA (C3)

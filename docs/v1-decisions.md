@@ -23,7 +23,7 @@ La condición de usuario único es una decisión de producto, no una limitación
 - Amazon SES recibe el correo, conserva el MIME en S3 y activa la ingesta; no se usa OAuth ni una cuenta de Gmail dedicada.
 - La deduplicación identifica el mismo mensaje o reenvío exacto mediante identidad de origen y hash; no deduplica por importe, comercio y fecha.
 - La fuente MIME/RFC 822 se guarda antes de parsear, cifrada con KMS en S3 y retenida indefinidamente.
-- DynamoDB conserva metadatos, hash y el puntero al objeto fuente.
+- Las observaciones y encabezados nativos SQL conservan metadatos, hash y el puntero al objeto fuente; la fuente original permanece en S3.
 - Apple Pay es una fuente adicional y nunca sustituye al correo. Cada ejecución conserva una observación inmutable autenticada con una credencial exclusiva del Shortcut.
 - La idempotencia se aplica por fuente. La reconciliación puede vincular observaciones de fuentes distintas, pero no elimina ninguna de ellas.
 - La UI permite previsualizar y aplicar manualmente el CSV de movimientos de tarjeta Santander. El archivo original se conserva cifrado en S3 como evidencia.
@@ -31,7 +31,7 @@ La condición de usuario único es una decisión de producto, no una limitación
 - La conciliación del CSV compara tarjeta, fecha, importe y concepto normalizado contra observaciones de correo o Apple Pay. Una coincidencia única enlaza el CSV como evidencia del evento existente; múltiples coincidencias exigen una decisión explícita antes de aplicar.
 - Los pagos y abonos negativos del CSV no se incorporan al gasto mensual.
 - Los cobros que no llegan por automatismo (p. ej. Amex sin alerta) se registran como eventos observados con fuente `manual`, no como pagos próximos. Detalle en [Cobros manuales](manual-observed-charges.md).
-- MSI (meses sin intereses) vive en el evento observado como `msi` (schedule multi-mes). No se guarda en `MonthlyPlan`. Guía completa: [Meses sin intereses (MSI)](msi.md).
+- MSI (meses sin intereses) se presenta en el evento observado como `msi` (schedule multi-mes); persiste en planes/cuotas/evidencia relacionales. No se guarda en `MonthlyPlan`. Guía completa: [Meses sin intereses (MSI)](msi.md).
 - Amex con importe **> $2,500.00** asume 3 MSI al crear el evento (`amex_auto`); el usuario puede overridear meses/cuota en la UI. Aplica a correo y a alta manual.
 - Compras Amex Gold cubiertas por `MONTO A DIFERIR MESES EN AUTOMÁTICO` quedan en status `deferred_msi`: visibles en Movimientos, fuera de “Has gastado”; solo cuenta la cuota del plan auto.
 - El ciclo de cada cuota es `committed` → `spent` (nunca ambos). Hasta reconciliar, la cuota resta de “Te quedan”; al confirmar evidencia pasa a “Has gastado”. En Resumen, “Planes con fin” lista las cuotas del mes; Movimientos muestra la lista raw con badge `MSI i/N`.
@@ -44,6 +44,8 @@ La condición de usuario único es una decisión de producto, no una limitación
 
 ## Modelo de datos
 
+**OLBIA DEBE SENTIRSE NACIDA EN SQL.** Esta decisión explícita de David reemplaza la persistencia DynamoDB original de V1. Los contratos financieros que siguen conservan su significado; un objeto de la API no es un documento autoritativo de almacenamiento.
+
 - La unidad primaria es un evento observado, no una transacción contable definitiva.
 - Un evento puede agregar varias observaciones. Sólo se reconcilian automáticamente coincidencias únicas de alta confianza; los casos ambiguos permanecen separados.
 - Cada evento se asocia a una institución y a una cuenta/tarjeta explícita, usando solo alias o últimos cuatro dígitos cuando estén disponibles.
@@ -52,13 +54,13 @@ La condición de usuario único es una decisión de producto, no una limitación
 - En V1, el comercio se conserva únicamente como `merchant_raw`.
 - Las correcciones son revisiones auditables: la fuente y el parseo original no se reescriben.
 - `ObservedPurchase.msi` es opcional y contiene origen, principal, cuota, meses e installments con status por mes.
-- Snapshots de patrimonio (`WEALTH_SNAP#`, `LIAB_SNAP#`) y payslips de nómina viven en la misma MetadataTable.
+- Las capturas de patrimonio, holdings, selecciones diarias y reemplazos viven en relaciones nativas SQL. Nómina usa UUID CFDI y líneas SAT ordenadas. Las claves históricas `WEALTH_SNAP#`/`LIAB_SNAP#` se conservan sólo como evidencia de recuperación.
 
 ## Infraestructura
 
 - Toda la infraestructura vive en AWS, en `us-east-2`, definida con CDK y TypeScript.
 - Se usa la cuenta personal de AWS y tags consistentes para atribuir costes.
-- DynamoDB bajo demanda es la base de datos operativa.
+- Aurora DSQL es la única autoridad operativa: claves de dominio, columnas tipadas, relaciones, restricciones y transacciones SQL directas. DynamoDB y sus proyecciones previas son evidencia congelada de recuperación, sin lectura/escritura desde producto. La normalización y el catálogo actual están en la [auditoría de todas las tablas](sql-relational-table-audit.md).
 - La UI es una SPA de React en S3 + CloudFront. La API es API Gateway HTTP API + Lambdas con autorización JWT de Cognito.
 - Cognito tiene un único usuario administrado para David Castro, sin registro público y sin MFA por ahora. El login web está personalizado para él.
 - Una regla de recepción de SES guarda primero el MIME y luego publica su puntero en SQS; una Lambda de ingestión normaliza MIME con `mailparser`, deduplica y usa los parsers deterministas conocidos como fast path.

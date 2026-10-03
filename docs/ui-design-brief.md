@@ -76,4 +76,4 @@ Las compras continúan viniendo de la API existente. La liquidez del mes se deri
 
 En el mes calendario actual, si aún no hay nóminas, la liquidez puede ser **provisional** a partir del patrón de las últimas 1–2 nóminas ordinarias (doble de la última, o suma de las dos más recientes). La UI muestra Resumen usable con esa cifra y pide el XML; al subir la primera nómina del mes, se aplica la lógica normal (depósitos + estimado de 2ª quincena si aplica). Un mes pasado sin nóminas sigue sin configurar.
 
-Los snapshots de patrimonio viven en la misma tabla (`GET /wealth`, `POST /wealth/accounts/.../snapshots`, `POST /wealth/liabilities/{cardId}/snapshots`, `POST /wealth/sync/bitso`, `POST /wealth/sync/ibkr`) con día calendario `America/Chihuahua`.
+Las capturas de patrimonio, holdings, selecciones diarias y reemplazos persisten en relaciones nativas SQL (`GET /wealth`, `POST /wealth/accounts/.../snapshots`, `POST /wealth/liabilities/{cardId}/snapshots`, `POST /wealth/sync/bitso`, `POST /wealth/sync/ibkr`) con día calendario `America/Chihuahua`.
