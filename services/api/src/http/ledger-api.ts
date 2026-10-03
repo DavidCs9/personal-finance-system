@@ -1,4 +1,4 @@
-import { readOperationalPartition, publicSubscriptions } from '../operational/reads.js';
+import { listPublicPushSubscriptions } from '../push/subscription-reads.js';
 import {
   HttpStatusCodes,
   Router,
@@ -165,8 +165,7 @@ app.delete('/cards/:cardId', async ({ event, params }) => {
 });
 
 app.get('/push/subscriptions', async ({ event }) => {
-  const subscriptions = publicSubscriptions(await readOperationalPartition('push_subscriptions', { database, tableName },
-    `USER#${ownerOf(asHttpEvent(event))}`, 'PUSH#'), new Date());
+  const subscriptions = await listPublicPushSubscriptions(ownerOf(asHttpEvent(event)));
   return json(HttpStatusCodes.OK, {
     subscriptions: subscriptions.map((subscription) => ({
       subscriptionId: subscription.subscriptionId,
@@ -210,8 +209,6 @@ app.put('/push/subscriptions/:subscriptionId', async ({ event, params }) => {
   const gatewayEvent = asHttpEvent(event);
   const input = parsePushSubscriptionInput(requestBody(gatewayEvent), params.subscriptionId);
   const saved = await savePushSubscription({
-    database,
-    tableName,
     owner: ownerOf(gatewayEvent),
     endpoint: input.endpoint,
     keys: input.keys,
@@ -227,8 +224,6 @@ app.put('/push/subscriptions/:subscriptionId', async ({ event, params }) => {
 
 app.delete('/push/subscriptions/:subscriptionId', async ({ event, params }) => {
   await deletePushSubscription({
-    database,
-    tableName,
     owner: ownerOf(asHttpEvent(event)),
     subscriptionId: params.subscriptionId.toLowerCase(),
   });

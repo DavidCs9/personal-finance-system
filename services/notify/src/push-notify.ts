@@ -1,11 +1,8 @@
-import { assertLegacyPushAccess } from '@finance/ledger/dsql-store';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
-import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import webpush from 'web-push';
 import {
   listActivePushSubscriptions,
-  pushSubscriptionKey,
+  deletePushSubscription,
   type PushSubscriptionRecord,
 } from './push-subscriptions.js';
 
@@ -63,25 +60,18 @@ export const declarativeWebPushPayload = (message: DeclarativePushMessage): stri
 });
 
 export const notifyObservedPurchasePush = async (input: {
-  readonly database: DynamoDBDocumentClient;
-  readonly tableName: string;
   readonly secrets: SecretsManagerClient;
   readonly vapidSecretArn: string;
   readonly navigateUrl: string;
   readonly purchase: ObservedPurchasePushInput;
   readonly send?: typeof webpush.sendNotification;
 }): Promise<{ readonly sent: number; readonly expired: number; readonly failed: number }> => {
-  const subscriptions = await listActivePushSubscriptions({
-    database: input.database,
-    tableName: input.tableName,
-  });
+  const subscriptions = await listActivePushSubscriptions();
   if (subscriptions.length === 0) {
     return { sent: 0, expired: 0, failed: 0 };
   }
   const vapid = await loadVapidCredentials(input.secrets, input.vapidSecretArn);
   return sendPushToSubscriptions({
-    database: input.database,
-    tableName: input.tableName,
     vapid,
     subscriptions,
     buildMessage: (subscription) => observedPurchasePushMessage(
@@ -94,14 +84,11 @@ export const notifyObservedPurchasePush = async (input: {
 };
 
 export const sendPushToSubscriptions = async (input: {
-  readonly database: DynamoDBDocumentClient;
-  readonly tableName: string;
   readonly vapid: VapidCredentials;
   readonly subscriptions: readonly PushSubscriptionRecord[];
   readonly buildMessage: (subscription: PushSubscriptionRecord) => DeclarativePushMessage;
   readonly send?: typeof webpush.sendNotification;
 }): Promise<{ readonly sent: number; readonly expired: number; readonly failed: number }> => {
-  await assertLegacyPushAccess();
   webpush.setVapidDetails(input.vapid.subject, input.vapid.publicKey, input.vapid.privateKey);
   const send = input.send ?? webpush.sendNotification.bind(webpush);
 
@@ -125,10 +112,7 @@ export const sendPushToSubscriptions = async (input: {
     } catch (error) {
       const statusCode = pushStatusCode(error);
       if (statusCode === 404 || statusCode === 410) {
-        await input.database.send(new DeleteCommand({
-          TableName: input.tableName,
-          Key: pushSubscriptionKey(subscription.owner, subscription.subscriptionId),
-        }));
+        await deletePushSubscription({owner:subscription.owner,subscriptionId:subscription.subscriptionId});
         expired += 1;
         console.info(JSON.stringify({
           message: 'Expired push subscription removed',

@@ -1,5 +1,4 @@
 import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
-import { createApplicationStore } from '@finance/ledger/dsql-store';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import {
@@ -16,7 +15,6 @@ import {
 } from './bitso-client.js';
 import { persistWealthSnapshot } from './service.js';
 
-const database = createApplicationStore();
 const secrets = new SecretsManagerClient({});
 const ses = new SESClient({});
 
@@ -125,17 +123,14 @@ export const notifyBitsoSyncFailure = async (error: unknown): Promise<void> => {
     }));
   }
 
-  const tableName = process.env.METADATA_TABLE_NAME ?? '';
   const vapidSecretArn = process.env.VAPID_SECRET_ARN ?? '';
   const webAppUrl = process.env.WEB_APP_URL ?? '';
-  if (!tableName || !vapidSecretArn || !webAppUrl) return;
+  if (!vapidSecretArn || !webAppUrl) return;
 
-  const subscriptions = await listActivePushSubscriptions({ database, tableName });
+  const subscriptions = await listActivePushSubscriptions();
   if (subscriptions.length === 0) return;
   const vapid = await loadVapidCredentials(secrets, vapidSecretArn);
   await sendPushToSubscriptions({
-    database,
-    tableName,
     vapid,
     subscriptions,
     buildMessage: () => ({

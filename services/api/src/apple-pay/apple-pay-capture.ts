@@ -1,4 +1,3 @@
-import { createApplicationStore } from '@finance/ledger/dsql-store';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import type { APIGatewayProxyHandlerV2 } from 'aws-lambda';
@@ -6,9 +5,7 @@ import { InvalidApplePayCaptureError, parseApplePayCapture } from './apple-pay-i
 import { captureObservedEvent } from '@finance/ledger/native-ledger';
 import { notifyObservedPurchasePush } from '@finance/notify';
 
-const database = createApplicationStore();
 const secrets = new SecretsManagerClient({});
-const tableName = requiredEnvironment('METADATA_TABLE_NAME');
 const secretArn = requiredEnvironment('APPLE_PAY_CAPTURE_SECRET_ARN');
 let cachedCaptureToken: { readonly token: string; readonly expiresAt: number } | undefined;
 let captureTokenPromise: Promise<string> | undefined;
@@ -102,8 +99,6 @@ const notifyApplePayPush = async (purchase: {
     return;
   }
   const result = await notifyObservedPurchasePush({
-    database,
-    tableName,
     secrets,
     vapidSecretArn,
     navigateUrl,

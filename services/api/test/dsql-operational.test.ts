@@ -14,14 +14,14 @@ let sql: PGlite, pool: TransactionPool, records: SourceItem[], calls: unknown[];
 const now = new Date('2026-10-01T12:00:00.000Z');
 const exception = (n: number, patch = {}): SourceItem => ({ PK: `EXCEPTION#${n}`, SK: 'EXCEPTION', GSI1PK: 'EXCEPTIONS', GSI1SK: new Date(now.getTime() - n * 1000).toISOString(),
   entityType: 'ingestion_exception', payload: { id: String(n), receivedAt: now.toISOString(), reason: 'parser', details: 'original', ...patch } });
-const sub = (): SourceItem => ({ PK: 'USER#owner', SK: 'PUSH#sub', entityType: 'push_subscription', subscriptionId: 'sub', endpoint: 'https://native.example', active: true, contentMode: 'private', keys: { auth: 'native' }, createdAt: now.toISOString() });
+const sub = (): SourceItem => ({ PK: 'USER#owner', SK: 'ASSISTANT_THREAD#session_'+'a'.repeat(33), entityType: 'assistant_thread', owner:'owner',sessionId:'session_'+'a'.repeat(33),title:'Original title',firstMonth:'2026-10',createdAt:now.toISOString(),updatedAt:now.toISOString() });
 beforeAll(async () => { sql = new PGlite(); for (const ddl of SCHEMA_STATEMENTS) await sql.query(ddl);
   pool = { transaction: callback => sql.transaction(client => callback(client as unknown as SqlClient)) }; }, 30_000);
 afterAll(async () => sql.close());
 beforeEach(async () => {
   records = []; calls = [];
   await sql.exec(`TRUNCATE olbia.projection_state,${TABLE_NAMES.map(t => `olbia.${t}`).join(',')}`);
-  await sql.query('INSERT INTO olbia.schema_migrations VALUES (13,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING');
+  await sql.query('INSERT INTO olbia.schema_migrations VALUES (13,CURRENT_TIMESTAMP),(16,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING');
   vi.spyOn(readers, 'readerPool').mockReturnValue(sql as unknown as ReadSqlClient);
   vi.stubEnv('DSQL_OPERATIONAL_READ_MODE', 'guarded-sql');
   vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -52,18 +52,18 @@ describe('guarded operational displays and independent gate', () => {
   });
   it('falls back for stale create/edit/delete without allowing a matching public response to hide envelope corruption', async () => {
     records = [sub()]; await sync();
-    const list = () => reads.readOperationalPartition('push_subscriptions', { database: DynamoDBDocumentClient.prototype as never, tableName: 'test' }, 'USER#owner', 'PUSH#');
+    const list = () => reads.readOperationalPartition('assistant_threads', { database: DynamoDBDocumentClient.prototype as never, tableName: 'test' }, 'USER#owner', 'ASSISTANT_THREAD#');
     records[0] = { ...records[0], active: false, unknown: { changed: true } };
     expect(await list()).toEqual(records);
-    await sync(); await sql.query("UPDATE olbia.push_subscriptions SET source_item=source_item || '{\"unknown\":false}'::jsonb");
+    await sync(); await sql.query("UPDATE olbia.assistant_threads SET source_item=source_item || '{\"unknown\":false}'::jsonb");
     expect(await list()).toEqual(records);
     records = []; expect(await list()).toEqual([]);
-    records = [sub(), { ...sub(), SK: 'PUSH#new', subscriptionId: 'new' }]; expect(await list()).toEqual([...records].sort((a,b) => a.SK.localeCompare(b.SK)));
+    records = [sub(), { ...sub(), SK: 'ASSISTANT_THREAD#new', subscriptionId: 'new' }]; expect(await list()).toEqual([...records].sort((a,b) => a.SK.localeCompare(b.SK)));
   });
   it('has one bounded SQL attempt on outage, propagates source failure and skips SQL in rollback mode', async () => {
     records = [sub()]; const query = vi.fn(async () => { throw new Error('SQL outage'); });
     vi.mocked(readers.readerPool).mockReturnValue({ query });
-    const list = () => reads.readOperationalPartition('push_subscriptions', { database: DynamoDBDocumentClient.prototype as never, tableName: 'test' }, 'USER#owner', 'PUSH#');
+    const list = () => reads.readOperationalPartition('assistant_threads', { database: DynamoDBDocumentClient.prototype as never, tableName: 'test' }, 'USER#owner', 'ASSISTANT_THREAD#');
     expect(await list()).toEqual(records); expect(query).toHaveBeenCalledTimes(1);
     vi.mocked(DynamoDBDocumentClient.prototype.send).mockRejectedValueOnce(new Error('source failure'));
     await expect(list()).rejects.toThrow('source failure');
@@ -72,18 +72,18 @@ describe('guarded operational displays and independent gate', () => {
   it('verifies raw columns before configured fallback, and detects unknown-field and millisecond changes', async () => {
     records = [sub(), exception(1)]; await sync();
     expect((await verify.verifyOperationalReads('owner', now, sql as never)).mismatches).toBe(0);
-    await sql.query("UPDATE olbia.push_subscriptions SET active=false");
+    await sql.query("UPDATE olbia.assistant_threads SET session_id='corrupted-session'");
     expect((await verify.verifyOperationalReads('owner', now, sql as never)).mismatches).toBeGreaterThan(0);
-    await sync(); await sql.query("UPDATE olbia.push_subscriptions SET created_at=created_at + interval '1 millisecond'");
+    await sync(); await sql.query("UPDATE olbia.assistant_threads SET created_at=created_at + interval '1 millisecond'");
     expect((await verify.verifyOperationalReads('owner', now, sql as never)).mismatches).toBeGreaterThan(0);
     await sync(); await sql.query("UPDATE olbia.ingestion_exceptions SET payload=payload || '{\"newOptional\":0}'::jsonb");
     expect((await verify.verifyOperationalReads('owner', now, sql as never)).mismatches).toBeGreaterThan(0);
   });
   it('excludes exact TTL boundaries but retains audit nested deadlines and tests actual SQL expiration filtering', async () => {
     const epoch = Math.floor(now.getTime() / 1000);
-    records = [sub(), { ...sub(), SK: 'PUSH#expired', subscriptionId: 'expired', expiresAt: epoch },
+    records = [sub(), { ...sub(), SK: 'ASSISTANT_THREAD#expired', subscriptionId: 'expired', expiresAt: epoch },
       { PK: 'BULK_EDIT#owner', SK: 'OP#applied', entityType: 'bulk_edit_operation', payload: { operationId: 'applied', status: 'applied', expiresAt: 1, events: [] } }];
-    await sync(); expect(reads.publicSubscriptions(records.filter(item => String(item.SK).startsWith('PUSH#')), now)).toHaveLength(1);
+    await sync(); expect(records.filter(item => String(item.SK).startsWith('ASSISTANT_THREAD#') && reads.isRetainedLive(item,now))).toHaveLength(1);
     const gate = await verify.verifyOperationalReads('owner', now, sql as never);
     expect(gate.mismatches).toBe(0); expect(gate.retained.bulk_edit_operations).toBe(1); expect(gate.expirationChecks).toBeGreaterThan(9);
   });

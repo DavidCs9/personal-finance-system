@@ -1,5 +1,4 @@
 import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
-import { createApplicationStore } from '@finance/ledger/dsql-store';
 import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import {
   cardCyclePushMessage,
@@ -12,9 +11,7 @@ import { listCards } from '../cards/cards.js';
 import { loadVapidCredentials, sendPushToSubscriptions } from '@finance/notify';
 import { listActivePushSubscriptions, type PushSubscriptionRecord } from '@finance/notify';
 
-const database = createApplicationStore();
 const secrets = new SecretsManagerClient({});
-const tableName = process.env.METADATA_TABLE_NAME ?? '';
 const vapidSecretArn = process.env.VAPID_SECRET_ARN ?? '';
 const webAppUrl = process.env.WEB_APP_URL ?? '';
 
@@ -26,8 +23,8 @@ export const handler = async (): Promise<{
   readonly failed: number;
 }> => {
   await assertMutationsAvailable();
-  if (!tableName || !vapidSecretArn || !webAppUrl) {
-    throw new Error('METADATA_TABLE_NAME, VAPID_SECRET_ARN, and WEB_APP_URL are required.');
+  if (!vapidSecretArn || !webAppUrl) {
+    throw new Error('VAPID_SECRET_ARN and WEB_APP_URL are required.');
   }
 
   const now = new Date();
@@ -35,7 +32,7 @@ export const handler = async (): Promise<{
   const dayKey = dayKeyInZone(now);
   const dayOfMonth = dayInZone(now);
   const navigateUrl = ensureTrailingSlash(webAppUrl);
-  const subscriptions = await listActivePushSubscriptions({ database, tableName });
+  const subscriptions = await listActivePushSubscriptions();
   if (subscriptions.length === 0) {
     console.info(JSON.stringify({ message: 'Card cycle push skipped; no active subscriptions.' }));
     return { users: 0, reminders: 0, sent: 0, expired: 0, failed: 0 };
@@ -59,8 +56,6 @@ export const handler = async (): Promise<{
     for (const reminder of due) {
       reminders += 1;
       const result = await sendPushToSubscriptions({
-        database,
-        tableName,
         vapid,
         subscriptions: ownerSubscriptions,
         buildMessage: (subscription) => cardCyclePushMessage(

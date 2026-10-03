@@ -1,5 +1,4 @@
 import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
-import { createApplicationStore } from '@finance/ledger/dsql-store';
 import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import {
   dailyBalancePushMessage,
@@ -11,9 +10,7 @@ import { loadVapidCredentials, sendPushToSubscriptions } from '@finance/notify';
 import { listActivePushSubscriptions, type PushSubscriptionRecord } from '@finance/notify';
 import { getMonthSummary } from '../months/summary.js';
 
-const database = createApplicationStore();
 const secrets = new SecretsManagerClient({});
-const tableName = process.env.METADATA_TABLE_NAME ?? '';
 const vapidSecretArn = process.env.VAPID_SECRET_ARN ?? '';
 const webAppUrl = process.env.WEB_APP_URL ?? '';
 
@@ -24,15 +21,15 @@ export const handler = async (): Promise<{
   readonly failed: number;
 }> => {
   await assertMutationsAvailable();
-  if (!tableName || !vapidSecretArn || !webAppUrl) {
-    throw new Error('METADATA_TABLE_NAME, VAPID_SECRET_ARN, and WEB_APP_URL are required.');
+  if (!vapidSecretArn || !webAppUrl) {
+    throw new Error('VAPID_SECRET_ARN and WEB_APP_URL are required.');
   }
 
   const now = new Date();
   const month = monthKeyInZone(now);
   const dayKey = dayKeyInZone(now);
   const navigateUrl = ensureTrailingSlash(webAppUrl);
-  const subscriptions = await listActivePushSubscriptions({ database, tableName });
+  const subscriptions = await listActivePushSubscriptions();
   if (subscriptions.length === 0) {
     console.info(JSON.stringify({ message: 'Daily balance push skipped; no active subscriptions.' }));
     return { users: 0, sent: 0, expired: 0, failed: 0 };
@@ -50,8 +47,6 @@ export const handler = async (): Promise<{
     users += 1;
     const summary = await summaryForOwner(owner, month, now);
     const result = await sendPushToSubscriptions({
-      database,
-      tableName,
       vapid,
       subscriptions: ownerSubscriptions,
       buildMessage: (subscription) => dailyBalancePushMessage(

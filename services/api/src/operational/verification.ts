@@ -6,9 +6,10 @@ import { database, tableName } from '../http/clients.js';
 import { type ReadSqlClient } from '../events/sql-reads.js';
 import { samePublicResult } from '../events/read-selection.js';
 import type { JsonObject } from '../http/response.js';
-import { operationalReadMode, isRetainedLive, publicExceptions, publicSubscriptions, readOperationalPartition, readOperationalItem,
+import { operationalReadMode, isRetainedLive, publicExceptions, readOperationalPartition, readOperationalItem,
   sqlOperationalPartition } from './reads.js';
 import { terminalImportDisplay } from './import-display.js';
+import { verifyNativePushSubscriptions } from '../push/read-verification.js';
 import { verifyNativeImports } from '../imports/read-verification.js';
 
 // Independent inventory/columns: intentionally does not use projector classification or transformation as oracle.
@@ -56,7 +57,8 @@ export const compareOperationalRows = (source: readonly JsonObject[], rows: read
 
 let verifierPool: ReturnType<typeof createPool> | undefined;
 export const operationalVerificationPool = (): ReadSqlClient => currentStoreTransaction() ?? (verifierPool ??= createPool('olbia_operational_verifier', { connectionTimeoutMillis: 1500, queryTimeoutMillis: 3000 }));
-export const verifyOperationalReads = async (owner: string, now: Date, client: ReadSqlClient = operationalVerificationPool()) => {
+export const verifyOperationalReads = async (owner: string, now: Date, client?: ReadSqlClient) => {
+  const providedClient = client; client ??= operationalVerificationPool();
   const started = Date.now(), source: JsonObject[] = [];
   let sourcePages = 0, targetPages = 0, mismatches = 0, publicResponses = 0, expirationChecks = 0, configuredReads = 0;
   const check = (a: unknown, b: unknown) => { mismatches += Number(!samePublicResult(a, b)); };
@@ -85,12 +87,11 @@ export const verifyOperationalReads = async (owner: string, now: Date, client: R
   }
   const exceptionRecords = source.filter(item => operationalFamily(item) === 'ingestion_exceptions' && item.GSI1PK === 'EXCEPTIONS');
   check(publicExceptions(exceptionRecords, now), publicExceptions(targets.get('ingestion_exceptions')!.map(row => row.source_item as JsonObject), now)); publicResponses++;
-  for (const family of ['push_subscriptions', 'assistant_threads'] as const) {
-    const prefix = family === 'push_subscriptions' ? 'PUSH#' : 'ASSISTANT_THREAD#';
+  for (const family of ['assistant_threads'] as const) {
+    const prefix = 'ASSISTANT_THREAD#';
     const expected = source.filter(item => item.PK === `USER#${owner}` && String(item.SK).startsWith(prefix)).sort((a, b) => Buffer.compare(Buffer.from(String(a.SK)), Buffer.from(String(b.SK))));
     const sql = await sqlOperationalPartition(family, `USER#${owner}`, prefix, client);
     check(expected, sql); check(expected, await readOperationalPartition(family, { database, tableName }, `USER#${owner}`, prefix));
-    if (family === 'push_subscriptions') check(publicSubscriptions(expected, now), publicSubscriptions(sql, now));
     if (family === 'assistant_threads') {
       const visible = (items: readonly JsonObject[]) => items.filter(item => item.SK !== 'ASSISTANT_THREAD#ACTIVE' && isRetainedLive(item, now))
         .map(publicThread).filter(thread => thread !== undefined).sort((a,b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0,20);
@@ -110,16 +111,17 @@ export const verifyOperationalReads = async (owner: string, now: Date, client: R
     const row = targets.get('import_records')!.find(row => row.source_pk === item.PK && row.source_sk === item.SK);
     check(terminalImportDisplay(id, family, item), terminalImportDisplay(id, family, row?.source_item as JsonObject | undefined)); publicResponses++;
   }
-  for (const family of ['ingestion_exceptions', 'push_subscriptions', 'assistant_threads'] as const) {
+  for (const family of ['ingestion_exceptions', 'assistant_threads'] as const) {
     for (const item of source.filter(item => operationalFamily(item) === family)) {
       // Raw input-only adapters: no PDF polling, retry dispatch, native memory backfill or delivery.
       check(item, await readOperationalItem(family, { database, tableName }, String(item.PK), String(item.SK))); configuredReads++;
     }
   }
-  for (const family of ['ingestion_exceptions', 'push_subscriptions', 'assistant_threads'] as const) {
+  for (const family of ['ingestion_exceptions', 'assistant_threads'] as const) {
     check(undefined, await readOperationalItem(family, { database, tableName }, `USER#${owner}`, '__missing_operational_verification__')); publicResponses++;
   }
   const imports = await verifyNativeImports(owner, source.filter(item=>operationalFamily(item)==='import_records'), client);
   mismatches += imports.mismatches;
-  return { mode: operationalReadMode(), imports, retained, sourcePages, targetPages, publicResponses, configuredReads, expirationChecks, mismatches, elapsedMs: Date.now() - started };
+  const push = await verifyNativePushSubscriptions(owner, providedClient); mismatches += push.mismatches;
+  return { mode: operationalReadMode(), imports, push, retained, sourcePages, targetPages, publicResponses, configuredReads, expirationChecks, mismatches, elapsedMs: Date.now() - started };
 };
