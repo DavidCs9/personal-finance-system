@@ -1,73 +1,34 @@
-import { assertLegacyExceptionAccess } from '@finance/ledger/dsql-store';
-import { operationalReadMode, selectOperationalRecords, sourceExceptionRecords, publicExceptions, readOperationalItem, isRetainedLive } from '../operational/reads.js';
-import { readerPool } from '../events/sql-reads.js';
-import { GetCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import { database, tableName } from '../http/clients.js';
+import { applicationStoreClient,withNativeTransaction } from '@finance/ledger/dsql-store';
+import { assertNativeExceptionAccess,listReviewExceptions,readReviewException,requestReviewRetry,discardReviewException,publicRetry } from '@finance/ledger/native-exceptions';
 import type { JsonObject } from '../http/response.js';
 import { readSource } from '../events/queries.js';
 import { randomUUID } from 'node:crypto';
 
-export const listExceptions = async (): Promise<readonly JsonObject[]> => {
-  await assertLegacyExceptionAccess();
-  const at = new Date();
-  if (operationalReadMode() === 'dynamodb') {
-    await assertLegacyExceptionAccess();
-    const result = await database.send(new QueryCommand({ TableName: tableName, IndexName: 'GSI1',
-      KeyConditionExpression: 'GSI1PK = :partition', ExpressionAttributeValues: { ':partition': 'EXCEPTIONS' }, ScanIndexForward: false, Limit: 100 }));
-    return publicExceptions(result.Items ?? [], at, true);
-  }
-  const items = await selectOperationalRecords('ingestion_exceptions', () => sourceExceptionRecords({ database, tableName }), async () =>
-    (await readerPool().query("SELECT source_item FROM olbia.ingestion_exceptions WHERE index_pk='EXCEPTIONS'")).rows.map(row => row.source_item as JsonObject));
-  return publicExceptions(items, at);
+export const listExceptions=async(at:Date=new Date()):Promise<readonly JsonObject[]>=>{
+  const client=applicationStoreClient();await assertNativeExceptionAccess(client);
+  try{return await listReviewExceptions(client,at);}
+  catch(error){if((error as {code?:string}).code)throw Object.assign(new Error('Olbia storage is unavailable.'),{name:'StorageUnavailableException'});throw error;}
 };
-
-export const requestRetry = async (exceptionId: string, requestedBy: string): Promise<JsonObject> => {
-  await assertLegacyExceptionAccess();
-  const existing = await database.send(new GetCommand({ TableName: tableName, Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' }, ConsistentRead: true }));
-  const exception = existing.Item?.payload as JsonObject | undefined;
-  const source = exception?.source as JsonObject | undefined;
-  if (!exception || !source?.bucket || !source.key) throw new Error('Exception not found.');
-  const requestedAt = new Date().toISOString();
-  const requestId = randomUUID();
-  const retry = { status: 'queued', requestId, requestedAt, requestedBy };
-  await assertLegacyExceptionAccess();
-  await database.send(new TransactWriteCommand({ TransactItems: [
-    { Update: {
-      TableName: tableName, Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' },
-      UpdateExpression: 'SET #payload.#retry = :retry',
-      ConditionExpression: 'attribute_not_exists(#payload.#retry) OR #payload.#retry.#status = :failed',
-      ExpressionAttributeNames: { '#payload': 'payload', '#retry': 'retry', '#status': 'status' },
-      ExpressionAttributeValues: { ':retry': retry, ':failed': 'failed' },
-    } },
-    { Put: { TableName: tableName, Item: {
-      PK: `RETRY#${exceptionId}`, SK: `DISPATCH#${requestId}`, entityType: 'ingestion_retry', status: 'pending',
-      job: { receivedAt: exception.receivedAt, source, retryExceptionId: exceptionId }, createdAt: requestedAt,
-    }, ConditionExpression: 'attribute_not_exists(PK)' } },
-  ] }));
-  return { id: exceptionId, retry };
+export const requestRetry=async(exceptionId:string,requestedBy:string):Promise<JsonObject>=>{
+  const requestedAt=new Date().toISOString(),requestId=randomUUID();
+  return withNativeTransaction(async client=>{await assertNativeExceptionAccess(client);
+    const retry=await requestReviewRetry(client,exceptionId,requestedAt,requestedBy,requestId);
+    return {id:exceptionId,retry:publicRetry(retry)};
+  });
 };
-
-export const discardException = async (exceptionId: string, discardedBy: string): Promise<JsonObject> => {
-  await assertLegacyExceptionAccess();
-  const discarded = { at: new Date().toISOString(), by: discardedBy };
-  await assertLegacyExceptionAccess();
-  await database.send(new UpdateCommand({
-    TableName: tableName,
-    Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' },
-    UpdateExpression: 'SET #payload.#discarded = if_not_exists(#payload.#discarded, :discarded)',
-    ConditionExpression: 'attribute_exists(PK)',
-    ExpressionAttributeNames: { '#payload': 'payload', '#discarded': 'discarded' },
-    ExpressionAttributeValues: { ':discarded': discarded },
-  }));
-  return { id: exceptionId, discarded };
+export const discardException=async(exceptionId:string,discardedBy:string):Promise<JsonObject>=>{
+  const discarded={at:new Date().toISOString(),by:discardedBy};
+  return withNativeTransaction(async client=>{await assertNativeExceptionAccess(client);
+    await discardReviewException(client,exceptionId,discarded.at,discarded.by);return {id:exceptionId,discarded};
+  });
 };
-
-export const readExceptionRawEmail = async (exceptionId: string): Promise<string> => {
-  await assertLegacyExceptionAccess();
-  const item = await readOperationalItem('ingestion_exceptions', { database, tableName }, `EXCEPTION#${exceptionId}`, 'EXCEPTION');
-  if (item && !isRetainedLive(item, new Date())) throw new Error(`Missing raw source for exception ${exceptionId}`);
-  const source = (item?.payload as JsonObject | undefined)?.source as { bucket?: string; key?: string } | undefined;
-  if (!source?.bucket || !source.key) throw new Error(`Missing raw source for exception ${exceptionId}`);
-  await assertLegacyExceptionAccess();
-  return readSource({ bucket: source.bucket, key: source.key }, `exception ${exceptionId}`);
+export const readStoredException=async(exceptionId:string,at:Date=new Date())=>{
+  const client=applicationStoreClient();await assertNativeExceptionAccess(client);
+  try{return await readReviewException(client,exceptionId,at);}
+  catch(error){if((error as {code?:string}).code)throw Object.assign(new Error('Olbia storage is unavailable.'),{name:'StorageUnavailableException'});throw error;}
+};
+export const readExceptionRawEmail=async(exceptionId:string):Promise<string>=>{
+  const exception=await readStoredException(exceptionId);
+  if(!exception)throw new Error(`Missing raw source for exception ${exceptionId}`);
+  await assertNativeExceptionAccess();return readSource(exception.source,`exception ${exceptionId}`);
 };

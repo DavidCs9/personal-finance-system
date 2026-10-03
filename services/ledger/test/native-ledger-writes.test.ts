@@ -46,7 +46,7 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(() => sql.close());
 beforeEach(async () => {
-  await sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES, 'bank_imports', 'bank_import_rows', 'bank_import_candidates'].map(t => `olbia.${t}`).join(',')}`);
+  await sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES,'ingestion_retry_attempts', 'bank_imports', 'bank_import_rows', 'bank_import_candidates'].map(t => `olbia.${t}`).join(',')}`);
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
 });
 

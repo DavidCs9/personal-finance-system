@@ -26,6 +26,7 @@ import * as path from 'node:path';
 export class DsqlProjection extends Construct {
   private readonly cluster: dsql.CfnCluster;
   private readonly bootstrap: CustomResource;
+  private readonly schema: NodejsFunction;
   private readonly readerRoleArns: string[] = [];
 
   /** Add read-only API/probe access without granting projection writes or admin permissions. */
@@ -43,6 +44,13 @@ export class DsqlProjection extends Construct {
   /** Additional SELECT-only operational verification identity; never used by product decision paths. */
   grantOperationalVerifier(fn: NodejsFunction): void {
     (this.bootstrap.node.defaultChild as CfnResource).addPropertyOverride('OperationalVerifierRoleArns', [fn.role!.roleArn]);
+  }
+
+  /** Native original-byte read/decrypt, scoped to SES originals and installed before activation. */
+  grantOriginalEmailRead(bucket:s3.IBucket):void {
+    bucket.grantRead(this.schema,'inbound/*');
+    this.schema.addEnvironment('RAW_EMAIL_BUCKET_NAME',bucket.bucketName);
+    this.bootstrap.node.addDependency(this.schema.role!);
   }
 
   private readonly applicationRoleArns: string[] = [];
@@ -90,6 +98,7 @@ export class DsqlProjection extends Construct {
     const maintenance = createFunction('Maintenance', 'maintenance', 600);
     const replay = createFunction('Replay', 'replay', 600);
     const schema = createFunction('Schema', 'schema', 600);
+    this.schema=schema;
     const runtimes = [projector, maintenance, replay, schema];
     for (const fn of runtimes) {
       fn.addToRolePolicy(new iam.PolicyStatement({ actions: ['dsql:DbConnect'], resources: [cluster.attrResourceArn] }));
@@ -108,7 +117,7 @@ export class DsqlProjection extends Construct {
     });
     const bootstrap = new CustomResource(this, 'Bootstrap', {
       serviceToken: provider.serviceToken,
-      properties: { Version: 20, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
+      properties: { Version: 21, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
     });
     this.bootstrap = bootstrap;
     // IAM policies must be installed before the bootstrap handler connects.

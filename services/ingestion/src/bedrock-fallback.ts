@@ -1,4 +1,4 @@
-import { assertLegacyExceptionAccess } from '@finance/ledger/dsql-store';
+import { assertNativeExceptionAccess } from '@finance/ledger/native-exceptions';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
@@ -17,7 +17,7 @@ export const bedrockFallbackHandler: SQSHandler = async (event) => {
   for (const record of event.Records) {
     let job: BedrockFallbackJob | undefined;
     try {
-      await assertLegacyExceptionAccess();
+      await assertNativeExceptionAccess();
       job = JSON.parse(record.body) as BedrockFallbackJob;
       const object = await s3.send(new GetObjectCommand({ Bucket: job.source.bucket, Key: job.source.key }));
       if (!object.Body) throw new Error('Raw email object did not contain a body.');
@@ -68,6 +68,7 @@ const returnToIngestion = async (job: BedrockFallbackJob, result: BedrockEmailEx
     sourceMessageId: job.sourceMessageId,
     source: job.source,
     retryExceptionId: job.retryExceptionId,
+    retryRequestedAt: job.retryRequestedAt,
     bedrockExtraction: {
       version: BEDROCK_EMAIL_EXTRACTOR_VERSION,
       institutionHint: job.institutionHint,
@@ -75,7 +76,7 @@ const returnToIngestion = async (job: BedrockFallbackJob, result: BedrockEmailEx
       result,
     },
   };
-  await assertLegacyExceptionAccess();
+  await assertNativeExceptionAccess();
   await sqs.send(new SendMessageCommand({
     QueueUrl: requiredEnvironment('INGESTION_QUEUE_URL'),
     MessageBody: JSON.stringify(nextJob),

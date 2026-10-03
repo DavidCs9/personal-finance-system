@@ -27,7 +27,7 @@ beforeAll(async()=>{
 },30_000);
 afterAll(()=>sql.close());
 beforeEach(async()=>{
-  await sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES,'projection_state','movements','movement_observations',
+  await sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES,'ingestion_retry_attempts','projection_state','movements','movement_observations',
     'movement_revisions','movement_tags','msi_plans','msi_installments','dedupe_claims','bulk_edit_operations',
     'bank_import_candidates','bank_import_rows','bank_imports','command_receipts'].map(t=>`olbia.${t}`).join(',')}`);
   await sql.query('DELETE FROM olbia.schema_migrations WHERE version IN (13,14)');

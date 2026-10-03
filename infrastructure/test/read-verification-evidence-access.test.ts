@@ -33,6 +33,21 @@ it('gives the deployed verifier read-only access to every supported evidence fam
     'Fn::Join':['',[{'Fn::GetAtt':[rawBucket,'Arn']},`/${prefix}`]],
   });
   expect(statements.flatMap(actions).some(action=>/^s3:(?:Put|Delete|\*)/.test(action))).toBe(false);
+  const schema=Object.values(template.findResources('AWS::Lambda::Function')).find(r=>r.Properties.FunctionName==='personal-finance-v1-dsql-schema')!;
+  const schemaRole=schema.Properties.Role['Fn::GetAtt'][0];
+  const schemaStatements=Object.values(template.findResources('AWS::IAM::Policy')).filter(p=>p.Properties.Roles.some((r:{Ref?:string})=>r.Ref===schemaRole)).flatMap(p=>p.Properties.PolicyDocument.Statement);
+  const originalReads=schemaStatements.filter(s=>actions(s).includes('s3:GetObject*'));
+  expect(originalReads).toHaveLength(1);
+  expect(originalReads[0].Resource).toEqual([
+    {'Fn::GetAtt':[rawBucket,'Arn']},
+    {'Fn::Join':['',[{'Fn::GetAtt':[rawBucket,'Arn']},'/inbound/*']]},
+  ]);
+  expect(schema.Properties.Environment.Variables.RAW_EMAIL_BUCKET_NAME).toEqual({Ref:rawBucket});
+  expect(schemaStatements.flatMap(actions).some(a=>/^s3:(?:Put|Delete|\*)/.test(a))).toBe(false);
+  expect(schemaStatements.flatMap(actions)).toContain('kms:Decrypt');
+  const bootstrap=Object.values(template.findResources('AWS::CloudFormation::CustomResource')).find(r=>r.Properties.Version===21)!;
+  const schemaPolicy=Object.keys(template.findResources('AWS::IAM::Policy')).find(id=>id.startsWith('DsqlProjectionSchemaServiceRoleDefaultPolicy'))!;
+  expect(bootstrap.DependsOn).toContain(schemaPolicy);
   const functions=template.findResources('AWS::Lambda::Function');
   for(const resource of Object.values(functions))
     expect(resource.Properties.Environment?.Variables ?? {}).not.toHaveProperty('DSQL_LEDGER_READ_MODE');
