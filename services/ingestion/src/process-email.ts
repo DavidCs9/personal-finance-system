@@ -1,10 +1,10 @@
-import { createApplicationStore, withNativeTransaction, assertLegacyExceptionAccess } from '@finance/ledger/dsql-store';
+import { withNativeTransaction } from '@finance/ledger/dsql-store';
 import { createHash, randomUUID } from 'node:crypto';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { SendEmailCommand, SESClient } from '@aws-sdk/client-ses';
 import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
-import { PutCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { assertNativeExceptionAccess,resolveRetryAttempt,completeRetryAttempt,failRetryAttempt,saveClaimedReviewException,type ReviewException } from '@finance/ledger/native-exceptions';
 import type { SQSHandler } from 'aws-lambda';
 import { ingestionExceptionAlert, type IngestionExceptionAlertInput } from './notifications.js';
 import { maybeAutoAmexMsi } from '@finance/domain';
@@ -23,13 +23,12 @@ const s3 = new S3Client({});
 const ses = new SESClient({});
 const sqs = new SQSClient({ region: process.env.AWS_REGION, maxAttempts: 5, retryMode: 'adaptive' });
 const secrets = new SecretsManagerClient({});
-const database = createApplicationStore();
 
 export const ingestionHandler: SQSHandler = async (event) => {
   const failures: { itemIdentifier: string }[] = [];
   for (const record of event.Records) {
     try {
-      await assertLegacyExceptionAccess();
+      await assertNativeExceptionAccess();
       await ingest(JSON.parse(record.body) as IngestionJob);
     } catch (error) {
       console.error('Unable to ingest SES email', { messageId: record.messageId, error: errorMessage(error) });
@@ -40,7 +39,6 @@ export const ingestionHandler: SQSHandler = async (event) => {
 };
 
 const ingest = async (job: IngestionJob): Promise<void> => {
-  const tableName = requiredEnvironment('METADATA_TABLE_NAME');
   const object = await s3.send(new GetObjectCommand({ Bucket: job.source.bucket, Key: job.source.key }));
   if (!object.Body) throw new Error('Raw SES email object did not contain a body');
   const mime = await object.Body.transformToString();
@@ -63,13 +61,13 @@ const ingest = async (job: IngestionJob): Promise<void> => {
     try {
       parsed = toParsedPurchase(job.bedrockExtraction.result, job.bedrockExtraction.institutionHint, email.text);
     } catch (error) {
-      await saveException(tableName, {
+      await saveException({
         receivedAt: job.receivedAt,
         institution: job.bedrockExtraction.institutionHint,
         reason: 'parser_failed',
         details: `Primary: ${job.bedrockExtraction.primaryFailure}. Bedrock: ${errorMessage(error)}`,
         source,
-      }, dedupeKey, parserVersion, job.retryExceptionId);
+      }, dedupeKey, parserVersion, job);
       return;
     }
   } else {
@@ -80,12 +78,12 @@ const ingest = async (job: IngestionJob): Promise<void> => {
         await enqueueBedrockFallback({ ...job, sourceMessageId }, institutionHint, 'No configured parser accepted this email.');
         return;
       }
-      await saveException(tableName, {
+      await saveException({
         receivedAt: job.receivedAt,
         reason: 'unsupported_source',
         details: 'No configured parser or trusted institution classifier accepted this SES-received email.',
         source,
-      }, dedupeKey, 'source-classifier-v1', job.retryExceptionId);
+      }, dedupeKey, 'source-classifier-v1', job);
       return;
     }
 
@@ -102,13 +100,13 @@ const ingest = async (job: IngestionJob): Promise<void> => {
   }
 
   if (parsed.amount.amountMinor <= 0 || !parsed.amount.currency || !parsed.merchantRaw.trim()) {
-    await saveException(tableName, {
+    await saveException({
       receivedAt: job.receivedAt,
       institution: parsed.institution,
       reason: 'missing_required_data',
       details: 'Extractor returned incomplete event data.',
       source,
-    }, dedupeKey, parserVersion, job.retryExceptionId);
+    }, dedupeKey, parserVersion, job);
     return;
   }
 
@@ -150,16 +148,16 @@ const ingest = async (job: IngestionJob): Promise<void> => {
   };
   let saved;
   try {
-    saved = await captureObservedEvent({
-      token: dedupeKey,
-      captureSource: 'email',
-      event: purchase,
-      reconciliationAt: job.receivedAt,
+    const completedAt=new Date().toISOString();
+    saved=await withNativeTransaction(async client=>{
+      await assertNativeExceptionAccess(client);const attempt=await resolveRetryAttempt(client,{...job,source});
+      const result=await captureObservedEvent({token:dedupeKey,captureSource:'email',event:purchase,reconciliationAt:job.receivedAt});
+      if(attempt)await completeRetryAttempt(client,attempt,result.eventId,completedAt);return result;
     });
   } catch (error) {
     if (error instanceof SourceClaimUnavailableError &&
       ['suppressed', 'unresolved_suppression'].includes(error.outcome)) {
-      if (job.retryExceptionId) await markRetryFailed(tableName, job.retryExceptionId,
+      if (job.retryExceptionId) await markRetryFailed({...job,source},
         'La fuente conserva una supresión previa; no se creó un movimiento.');
       console.info(JSON.stringify({ message: 'Previously suppressed SES email ignored', dedupeKey }));
       return;
@@ -167,11 +165,9 @@ const ingest = async (job: IngestionJob): Promise<void> => {
     throw error;
   }
   if (saved.duplicate) {
-    if (job.retryExceptionId) await markRetryCompleted(tableName, job.retryExceptionId, saved.eventId);
     console.info(JSON.stringify({ message: 'Duplicate SES email ignored', dedupeKey }));
     return;
   }
-  if (job.retryExceptionId) await markRetryCompleted(tableName, job.retryExceptionId, saved.eventId);
   if (!saved.created) {
     console.info(JSON.stringify({ message: 'Email observation reconciled with an existing event', eventId: saved.eventId }));
     return;
@@ -197,10 +193,11 @@ const enqueueBedrockFallback = async (
     sourceMessageId: job.sourceMessageId,
     source: job.source,
     retryExceptionId: job.retryExceptionId,
+    retryRequestedAt: job.retryRequestedAt,
     institutionHint,
     primaryFailure,
   };
-  await assertLegacyExceptionAccess();
+  await assertNativeExceptionAccess();
   await sqs.send(new SendMessageCommand({
     QueueUrl: requiredEnvironment('BEDROCK_FALLBACK_QUEUE_URL'),
     MessageBody: JSON.stringify(fallbackJob),
@@ -212,90 +209,23 @@ const enqueueBedrockFallback = async (
   }));
 };
 
-const markRetryCompleted = async (tableName: string, exceptionId: string, eventId: string): Promise<void> => {
-  await assertLegacyExceptionAccess();
-  await database.send(new UpdateCommand({
-    TableName: tableName, Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' },
-    UpdateExpression: 'SET #payload.#retry.#status = :status, #payload.#retry.#completedAt = :completedAt, #payload.#retry.#eventId = :eventId',
-    ExpressionAttributeNames: { '#payload': 'payload', '#retry': 'retry', '#status': 'status', '#completedAt': 'completedAt', '#eventId': 'eventId' },
-    ExpressionAttributeValues: { ':status': 'completed', ':completedAt': new Date().toISOString(), ':eventId': eventId },
-  }));
+const markRetryFailed=async(job:IngestionJob,details:string):Promise<void>=>{
+  const at=new Date().toISOString();await withNativeTransaction(async client=>{
+    await assertNativeExceptionAccess(client);const attempt=await resolveRetryAttempt(client,job);if(attempt)await failRetryAttempt(client,attempt,details,at);
+  });
 };
-
-const markRetryFailed = async (tableName: string, exceptionId: string, details: string): Promise<void> => {
-  await assertLegacyExceptionAccess();
-  await database.send(new UpdateCommand({
-    TableName: tableName, Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' },
-    UpdateExpression: 'SET #payload.#retry.#status = :status, #payload.#retry.#failedAt = :failedAt, #payload.#retry.#details = :details',
-    ExpressionAttributeNames: {
-      '#payload': 'payload', '#retry': 'retry', '#status': 'status', '#failedAt': 'failedAt', '#details': 'details',
-    },
-    ExpressionAttributeValues: { ':status': 'failed', ':failedAt': new Date().toISOString(), ':details': details },
-  }));
-};
-
-type NewIngestionException = Omit<IngestionExceptionAlertInput, 'id'>;
-
-const saveException = async (
-  tableName: string,
-  exception: NewIngestionException,
-  sourceDedupeKey: string,
-  extractorVersion: string,
-  retryExceptionId?: string,
-): Promise<void> => {
-  await assertLegacyExceptionAccess();
-  const id = randomUUID();
-  const savedException = { id, ...exception };
-  const exceptionDedupeKey = createHash('sha256')
-    .update(`${sourceDedupeKey}:${extractorVersion}:${exception.reason}`)
-    .digest('hex');
-  try {
-    await assertLegacyExceptionAccess();
-    await database.send(new TransactWriteCommand({ TransactItems: [
-      { Put: {
-        TableName: tableName,
-        Item: {
-          PK: `EXCEPTION_DEDUPE#${exceptionDedupeKey}`,
-          SK: 'CLAIM',
-          entityType: 'ingestion_exception_claim',
-          sourceDedupeKey,
-          extractorVersion,
-          createdAt: new Date().toISOString(),
-        },
-        ConditionExpression: 'attribute_not_exists(PK)',
-      } },
-      { Put: {
-        TableName: tableName,
-        Item: {
-          PK: `EXCEPTION#${id}`,
-          SK: 'EXCEPTION',
-          GSI1PK: 'EXCEPTIONS',
-          GSI1SK: String(exception.receivedAt),
-          entityType: 'ingestion_exception',
-          payload: savedException,
-        },
-        ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
-      } },
-    ] }));
-  } catch (error) {
-    if (errorName(error) === 'TransactionCanceledException') {
-      if (retryExceptionId) await markRetryFailed(tableName, retryExceptionId, exception.details);
-      console.info(JSON.stringify({ message: 'Duplicate SES email exception ignored', exceptionDedupeKey }));
-      return;
-    }
-    throw error;
-  }
-  if (retryExceptionId) await markRetryFailed(tableName, retryExceptionId, exception.details);
-  console.warn(JSON.stringify({ message: 'SES email needs review', exception: { reason: exception.reason, institution: exception.institution } }));
-  try {
-    await notifyIngestionException(savedException);
-  } catch (error) {
-    console.error(JSON.stringify({
-      message: 'Unable to send ingestion-exception alert',
-      exceptionId: id,
-      error: errorMessage(error),
-    }));
-  }
+type NewIngestionException=Pick<ReviewException,'receivedAt'|'institution'|'reason'|'details'|'source'>;
+const saveException=async(exception:NewIngestionException,sourceToken:string,extractorVersion:string,job:IngestionJob):Promise<void>=>{
+  const id=randomUUID(),createdAt=new Date().toISOString(),savedException={id,...exception,sourceToken};
+  const created=await withNativeTransaction(async client=>{
+    await assertNativeExceptionAccess(client);const attempt=await resolveRetryAttempt(client,{...job,source:exception.source});
+    const inserted=await saveClaimedReviewException(client,savedException,extractorVersion,createdAt);
+    if(attempt)await failRetryAttempt(client,attempt,exception.details,createdAt);return inserted;
+  });
+  if(!created){console.info(JSON.stringify({message:'Duplicate SES email exception ignored'}));return;}
+  console.warn(JSON.stringify({message:'SES email needs review',exception:{reason:exception.reason,institution:exception.institution}}));
+  try{await notifyIngestionException(savedException);}
+  catch(error){console.error(JSON.stringify({message:'Unable to send ingestion-exception alert',exceptionId:id,error:errorMessage(error)}));}
 };
 
 const configuredAlertAddresses = (): { readonly source: string; readonly destination: string } | undefined => {
@@ -313,7 +243,7 @@ const notifyIngestionException = async (exception: IngestionExceptionAlertInput)
     return;
   }
   const alert = ingestionExceptionAlert(exception);
-  await assertLegacyExceptionAccess();
+  await assertNativeExceptionAccess();
   await ses.send(new SendEmailCommand({
     Source: addresses.source,
     Destination: { ToAddresses: [addresses.destination] },

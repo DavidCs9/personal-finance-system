@@ -51,7 +51,7 @@ while (( SECONDS < deadline )); do
       aws lambda invoke --function-name "$operator_function" --cli-binary-format raw-in-base64-out \
         --payload '{"action":"smoke"}' --cli-read-timeout 180 "$response_file" > "$metadata_file"
       jq -e '.StatusCode == 200 and .FunctionError == null' "$metadata_file" > /dev/null || { echo 'Native SQL write smoke failed' >&2; exit 1; }
-      jq -e '.verified == true and .rolledBack == true and .nativeLedger == true and .nativeWealth == true and .nativePush == true and .nativeDeliveries == true and .nativeThreads == true' "$response_file" > /dev/null || { echo 'Native SQL rollback verification failed' >&2; exit 1; }
+      jq -e '.verified == true and .rolledBack == true and .nativeLedger == true and .nativeWealth == true and .nativePush == true and .nativeDeliveries == true and .nativeThreads == true and .nativeExceptions == true' "$response_file" > /dev/null || { echo 'Native SQL rollback verification failed' >&2; exit 1; }
       cat "$response_file"
       exit 0 ;;
     FAILED|TIMED_OUT|ABORTED)

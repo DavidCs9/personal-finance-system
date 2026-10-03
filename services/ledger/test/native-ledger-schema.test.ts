@@ -26,7 +26,7 @@ beforeAll(async()=>{
   await sql.query(`ALTER TABLE olbia.ledger_movements ADD CONSTRAINT ledger_movements_primary_observation_fk ${LEDGER_PRIMARY_OBSERVATION_CONSTRAINT}`);
 },30_000);
 afterAll(()=>sql.close());
-beforeEach(()=>sql.exec(`TRUNCATE ${NATIVE_LEDGER_TABLES.map(t=>`olbia.${t}`).join(',')}`));
+beforeEach(()=>sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES,'ingestion_retry_attempts'].map(t=>`olbia.${t}`).join(',')}`));
 
 describe('native financial ledger schema',()=>{
   it('creates a required primary observation atomically and rolls back an incomplete or cross-movement pair',async()=>{

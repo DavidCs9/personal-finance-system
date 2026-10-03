@@ -1,3 +1,4 @@
+import { verifyNativeExceptions } from '../exceptions/verification.js';
 import { verifyNativeConversationMetadata } from '../agent/thread-verification.js';
 import { verifyNativeMonthlyDeliveries } from '../reports/delivery-verification.js';
 import { currentStoreTransaction } from '@finance/ledger/dsql-store';
@@ -7,7 +8,7 @@ import { database, tableName } from '../http/clients.js';
 import { type ReadSqlClient } from '../events/sql-reads.js';
 import { samePublicResult } from '../events/read-selection.js';
 import type { JsonObject } from '../http/response.js';
-import { operationalReadMode, isRetainedLive, publicExceptions, readOperationalItem } from './reads.js';
+import { isRetainedLive, publicExceptions } from './reads.js';
 import { terminalImportDisplay } from './import-display.js';
 import { verifyNativePushSubscriptions } from '../push/read-verification.js';
 import { verifyNativeImports } from '../imports/read-verification.js';
@@ -94,19 +95,11 @@ export const verifyOperationalReads = async (owner: string, now: Date, client?: 
     const row = targets.get('import_records')!.find(row => row.source_pk === item.PK && row.source_sk === item.SK);
     check(terminalImportDisplay(id, family, item), terminalImportDisplay(id, family, row?.source_item as JsonObject | undefined)); publicResponses++;
   }
-  for (const family of ['ingestion_exceptions'] as const) {
-    for (const item of source.filter(item => operationalFamily(item) === family)) {
-      // Raw input-only adapters: no PDF polling, retry dispatch, native memory backfill or delivery.
-      check(item, await readOperationalItem(family, { database, tableName }, String(item.PK), String(item.SK))); configuredReads++;
-    }
-  }
-  for (const family of ['ingestion_exceptions'] as const) {
-    check(undefined, await readOperationalItem(family, { database, tableName }, `USER#${owner}`, '__missing_operational_verification__')); publicResponses++;
-  }
   const imports = await verifyNativeImports(owner, source.filter(item=>operationalFamily(item)==='import_records'), client);
   mismatches += imports.mismatches;
   const push = await verifyNativePushSubscriptions(owner, providedClient); mismatches += push.mismatches;
   const deliveries = await verifyNativeMonthlyDeliveries(owner, providedClient); mismatches += deliveries.mismatches;
+  const exceptions=await verifyNativeExceptions(now,providedClient);mismatches+=exceptions.mismatches;
   const threads = await verifyNativeConversationMetadata(owner,now,providedClient); mismatches += threads.mismatches;
-  return { mode: operationalReadMode(), imports, push, deliveries, threads, retained, sourcePages, targetPages, publicResponses, configuredReads, expirationChecks, mismatches, elapsedMs: Date.now() - started };
+  return { mode: 'native-sql', imports, push, deliveries, threads, exceptions, retained, sourcePages, targetPages, publicResponses, configuredReads, expirationChecks, mismatches, elapsedMs: Date.now() - started };
 };

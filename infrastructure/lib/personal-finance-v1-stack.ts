@@ -178,6 +178,7 @@ export class PersonalFinanceV1Stack extends Stack {
     const dsqlProjection = new DsqlProjection(this, 'DsqlProjection', {
       table: metadataTable, encryptionKey, alertRecipientEmail: alertRecipientEmail.valueAsString,
     });
+    dsqlProjection.grantOriginalEmailRead(rawEmailBucket);
 
     const deadLetterQueue = new sqs.Queue(this, 'IngestionDeadLetterQueue', {
       encryption: sqs.QueueEncryption.KMS,

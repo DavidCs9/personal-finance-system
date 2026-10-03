@@ -69,7 +69,7 @@ afterAll(async () => { await sql.close(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 beforeEach(async () => {
   records = new Map();
-  await sql.exec(`TRUNCATE olbia.projection_state,olbia.month_plans,olbia.planned_payments,olbia.payslips,olbia.payslip_lines,${[...TABLE_NAMES,...NATIVE_LEDGER_TABLES,...NATIVE_WEALTH_TABLES,'bank_imports','bank_import_rows','bank_import_candidates'].map(table => `olbia.${table}`).join(',')}`);
+  await sql.exec(`TRUNCATE olbia.projection_state,olbia.month_plans,olbia.planned_payments,olbia.payslips,olbia.payslip_lines,${[...TABLE_NAMES,...NATIVE_LEDGER_TABLES,'ingestion_retry_attempts',...NATIVE_WEALTH_TABLES,'bank_imports','bank_import_rows','bank_import_candidates'].map(table => `olbia.${table}`).join(',')}`);
   vi.stubEnv('OLBIA_SQL_STORE_ENABLED','true');
   await prepareNativeWealthFixture(sql);
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");

@@ -50,7 +50,7 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => { await sql.close(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 beforeEach(async () => {
-  await sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES, 'projection_state', 'command_receipts'].map(t => `olbia.${t}`).join(',')}`);
+  await sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES,'ingestion_retry_attempts', 'projection_state', 'command_receipts'].map(t => `olbia.${t}`).join(',')}`);
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
   vi.clearAllMocks(); harness.s3.mockResolvedValue({}); retryOnce = false; failClaim = false;
 });

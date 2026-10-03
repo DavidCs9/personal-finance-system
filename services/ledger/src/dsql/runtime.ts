@@ -50,7 +50,11 @@ export const schemaHandler = async (event: {
   try {
     const client = await admin.connect();
     try { await bootstrapSchema(client as SqlClient, event.ResourceProperties.RuntimeRoleArns ?? [], {
-      transactionPool: admin, readerRoleArns: event.ResourceProperties.ReaderRoleArns, operationalVerifierRoleArns: event.ResourceProperties.OperationalVerifierRoleArns,
+      transactionPool: admin, readOriginalEmail:async source=>{
+        if(source.bucket!==required('RAW_EMAIL_BUCKET_NAME')||!source.key.startsWith('inbound/'))throw new Error('Original email source is outside bootstrap scope');
+        const object=await s3.send(new GetObjectCommand({Bucket:source.bucket,Key:source.key}));
+        if(!object.Body)throw new Error('Original email has no body');return object.Body.transformToByteArray();
+      }, readerRoleArns: event.ResourceProperties.ReaderRoleArns, operationalVerifierRoleArns: event.ResourceProperties.OperationalVerifierRoleArns,
       applicationRoleArns: event.ResourceProperties.ApplicationRoleArns,storeReaderRoleArns:event.ResourceProperties.StoreReaderRoleArns,cutoverRoleArns:event.ResourceProperties.CutoverRoleArns,
     }); }
     finally { client.release(); }

@@ -54,7 +54,7 @@ beforeAll(async () => {
   sql = new PGlite();
   for (const statement of [...SCHEMA_STATEMENTS, ...NATIVE_LEDGER_SCHEMA_STATEMENTS]) await sql.query(statement);
   await sql.query(`ALTER TABLE olbia.ledger_movements ADD CONSTRAINT ledger_movements_primary_observation_fk ${LEDGER_PRIMARY_OBSERVATION_CONSTRAINT}`);
-  await sql.query('INSERT INTO olbia.schema_migrations VALUES (14,CURRENT_TIMESTAMP)');
+  await sql.query('INSERT INTO olbia.schema_migrations VALUES (14,CURRENT_TIMESTAMP),(19,CURRENT_TIMESTAMP)');
   harness.pool = { query: (s, v) => sql.query<Record<string, unknown>>(s, v), transaction: async fn => {
     transactionCalls++;
     if (retryOnce) {
@@ -74,7 +74,7 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => { await sql.close(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 beforeEach(async () => {
-  await sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES, 'projection_state', 'command_receipts', 'ingestion_exceptions'].map(t => `olbia.${t}`).join(',')}`);
+  await sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES,'ingestion_retry_attempts', 'projection_state', 'command_receipts', 'ingestion_exceptions'].map(t => `olbia.${t}`).join(',')}`);
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
   vi.clearAllMocks(); retryOnce = false; transactionCalls = 0;
   harness.secret.mockResolvedValue({ SecretString: JSON.stringify({ token: auth }) });

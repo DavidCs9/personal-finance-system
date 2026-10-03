@@ -6,6 +6,7 @@ export interface EmailSourceJob {
   readonly sourceMessageId?: string;
   readonly source: { readonly bucket: string; readonly key: string };
   readonly retryExceptionId?: string;
+  readonly retryRequestedAt?: string;
 }
 
 export interface BedrockFallbackJob extends EmailSourceJob {

@@ -14,7 +14,8 @@
     "./dsql-cutover": "./src/dsql/cutover.ts",
     "./native-push": "./src/dsql/push.ts",
     "./native-deliveries": "./src/dsql/delivery.ts",
-    "./native-threads": "./src/dsql/thread.ts"
+    "./native-threads": "./src/dsql/thread.ts",
+    "./native-exceptions": "./src/dsql/exception.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",
@@ -29,11 +30,13 @@
     "@aws-sdk/lib-dynamodb": "^3.883.0",
     "@aws/aurora-dsql-node-postgres-connector": "^0.1.9",
     "@finance/domain": "*",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "mailparser": "^3.9.15"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
     "@types/pg": "^8.23.1",
-    "vitest": "^3.0.8"
+    "vitest": "^3.0.8",
+    "@types/mailparser": "^3.4.6"
   }
 }

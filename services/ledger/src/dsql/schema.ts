@@ -1,3 +1,5 @@
+import { NATIVE_EXCEPTION_SCHEMA_STATEMENTS,nativeExceptionReadGrant,nativeExceptionWriteGrants } from './exception-schema.js';
+import { migrateIngestionReview,type OriginalEmailReader } from './exception-copy.js';
 import { NATIVE_THREAD_SCHEMA_STATEMENTS, nativeThreadReadGrant, nativeThreadWriteGrants } from './thread-schema.js';
 import { migrateConversationMetadata } from './thread-copy.js';
 import { NATIVE_DELIVERY_SCHEMA_STATEMENTS, nativeDeliveryReadGrant, nativeDeliveryWriteGrant } from './delivery-schema.js';
@@ -173,10 +175,11 @@ export const SCHEMA_STATEMENTS = [
   NATIVE_PUSH_SCHEMA_STATEMENT,
   ...NATIVE_DELIVERY_SCHEMA_STATEMENTS,
   ...NATIVE_THREAD_SCHEMA_STATEMENTS,
+  ...NATIVE_EXCEPTION_SCHEMA_STATEMENTS,
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
-  transactionPool?: TransactionPool; now?: () => number; pause?: (ms: number) => Promise<void>; indexWaitMs?: number; readerRoleArns?: readonly string[]; operationalVerifierRoleArns?: readonly string[]; applicationRoleArns?: readonly string[]; storeReaderRoleArns?: readonly string[]; cutoverRoleArns?: readonly string[];
+  transactionPool?: TransactionPool; readOriginalEmail?: OriginalEmailReader; now?: () => number; pause?: (ms: number) => Promise<void>; indexWaitMs?: number; readerRoleArns?: readonly string[]; operationalVerifierRoleArns?: readonly string[]; applicationRoleArns?: readonly string[]; storeReaderRoleArns?: readonly string[]; cutoverRoleArns?: readonly string[];
 } = {}): Promise<void> => {
   const now = options.now ?? Date.now;
   const pause = options.pause ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -233,6 +236,8 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('rules-projector-read', 'GRANT SELECT ON olbia.merchant_rules TO olbia_projector');
   await query('ledger-projector-read', nativeLedgerReadGrant('olbia_projector'));
   await query('wealth-projector-read', nativeWealthReadGrant('olbia_projector'));
+  await query('exceptions-projector-read',nativeExceptionReadGrant('olbia_projector'));
+  await query('exceptions-projector-recovery-revoke','REVOKE INSERT,UPDATE,DELETE ON olbia.ingestion_exceptions,olbia.exception_claims,olbia.ingestion_retries FROM olbia_projector');
   await query('threads-projector-read', nativeThreadReadGrant('olbia_projector'));
   await query('threads-projector-recovery-revoke', 'REVOKE INSERT,UPDATE,DELETE ON olbia.assistant_threads FROM olbia_projector');
   await query('delivery-projector-read', nativeDeliveryReadGrant('olbia_projector'));
@@ -256,6 +261,8 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query('reader-schema-grant', 'GRANT USAGE ON SCHEMA olbia TO olbia_reader');
     await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments', 'monthly_plans', 'payroll', 'cards', 'categories', 'merchant_category_rules', 'ingestion_exceptions', 'import_records', 'assistant_threads'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
     await query('wealth-reader-recovery-revoke', 'REVOKE SELECT ON olbia.wealth_snapshots,olbia.wealth_versions,olbia.liability_snapshots,olbia.liability_versions FROM olbia_reader');
+    await query('exceptions-reader-read',nativeExceptionReadGrant('olbia_reader'));
+    await query('exceptions-reader-recovery-revoke','REVOKE ALL PRIVILEGES ON olbia.ingestion_exceptions,olbia.exception_claims,olbia.ingestion_retries FROM olbia_reader');
     await query('threads-reader-read', nativeThreadReadGrant('olbia_reader'));
     await query('threads-reader-recovery-revoke', 'REVOKE ALL PRIVILEGES ON olbia.assistant_threads FROM olbia_reader');
     await query('reader-migration-read', 'GRANT SELECT ON olbia.schema_migrations TO olbia_reader');
@@ -277,6 +284,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query('operational-verifier-schema', `GRANT USAGE ON SCHEMA olbia TO ${role}`);
     await query('ledger-verifier-read', nativeLedgerReadGrant(role));
     await query('wealth-verifier-read', nativeWealthReadGrant(role));
+    await query('exceptions-verifier-read',nativeExceptionReadGrant(role));
     await query('threads-verifier-read', nativeThreadReadGrant(role));
     await query('delivery-verifier-read', nativeDeliveryReadGrant(role));
     await query('push-verifier-read', nativePushReadGrant(role));
@@ -300,6 +308,8 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query(`select-${role}`,`GRANT SELECT ON olbia.runtime_state,olbia.projection_state,olbia.schema_migrations TO ${role}`);
     await query(`ledger-read-${role}`, nativeLedgerReadGrant(role));
     await query(`wealth-read-${role}`, nativeWealthReadGrant(role));
+    await query(`exceptions-read-${role}`,nativeExceptionReadGrant(role));
+    if(writer)for(const [index,statement] of nativeExceptionWriteGrants(role).entries())await query(`exceptions-write-${role}-${index}`,statement);
     await query(`threads-read-${role}`, nativeThreadReadGrant(role));
     if (writer) for (const [index, statement] of nativeThreadWriteGrants(role).entries()) await query(`threads-write-${role}-${index}`, statement);
     await query(`delivery-read-${role}`, nativeDeliveryReadGrant(role));
@@ -309,6 +319,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (writer) for (const [index, statement] of nativeWealthWriteGrants(role).entries()) await query(`wealth-write-${role}-${index}`, statement);
     if (writer) for (const [index, statement] of nativeLedgerWriteGrants(role).entries()) await query(`ledger-write-${role}-${index}`, statement);
     if (writer) await query(`write-${role}`,`GRANT SELECT,INSERT,UPDATE,DELETE ON ${['projection_state','application_barrier','command_receipts',...TABLE_NAMES].map(t=>`olbia.${t}`).join(',')} TO ${role}`);
+    await query(`exceptions-recovery-revoke-${role}`,`REVOKE ALL PRIVILEGES ON olbia.ingestion_exceptions,olbia.exception_claims,olbia.ingestion_retries FROM ${role}`);
     await query(`threads-recovery-revoke-${role}`, `REVOKE ALL PRIVILEGES ON olbia.assistant_threads FROM ${role}`);
     await query(`delivery-recovery-revoke-${role}`, `REVOKE ALL PRIVILEGES ON olbia.delivery_records FROM ${role}`);
     await query(`push-recovery-revoke-${role}`, `REVOKE ALL PRIVILEGES ON olbia.push_subscriptions FROM ${role}`);
@@ -349,6 +360,8 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   catch (error) { throw new BootstrapFailure('delivery-copy', error); }
   try { await migrateConversationMetadata(options.transactionPool); }
   catch (error) { throw new BootstrapFailure('thread-copy', error); }
+  try { await migrateIngestionReview(options.transactionPool,options.readOriginalEmail??(async()=>{throw new Error('Original email reader is required');})); }
+  catch(error){throw new BootstrapFailure('exception-copy',error);}
 };
 
 export const nativeLedgerReadGrant = (role: string): string =>

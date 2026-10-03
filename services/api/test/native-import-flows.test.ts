@@ -37,7 +37,7 @@ afterAll(()=>sql.close());
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllEnvs();});
 beforeEach(async()=>{
   objects=new Map();jobCounter=0;
-  await sql.exec(`TRUNCATE ${NATIVE_LEDGER_TABLES.map(t=>`olbia.${t}`).join(',')},olbia.projection_state,
+  await sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES,'ingestion_retry_attempts'].map(t=>`olbia.${t}`).join(',')},olbia.projection_state,
     olbia.movements,olbia.movement_observations,olbia.movement_revisions,olbia.movement_tags,olbia.msi_plans,
     olbia.msi_installments,olbia.dedupe_claims,olbia.import_records,olbia.command_receipts,
     olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates`);
