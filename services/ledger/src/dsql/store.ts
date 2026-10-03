@@ -44,16 +44,6 @@ export const authorityFrom = async (client:SqlClient):Promise<StorageAuthority> 
 export const storageAuthority=async ():Promise<StorageAuthority> => !sqlStoreEnabled() ? 'dynamodb' : context.getStore() ? 'sql' : authorityFrom(storePool());
 export const mutationsPaused=async () => sqlStoreEnabled() && await storageAuthority()==='paused';
 export const assertMutationsAvailable=async ():Promise<void> => {if(await mutationsPaused()) throw paused();};
-/** Temporary rollout guard; deploy before native monthly delivery marker 17. */
-export const assertLegacyDeliveryAccess=async (client?:SqlClient):Promise<void> => {
-  if(!sqlStoreEnabled()) return;
-  try {
-    if((await (client??applicationStoreClient()).query('SELECT version FROM olbia.schema_migrations WHERE version=17')).rows.length) throw paused();
-  } catch(error) {
-    if((error as {code?:string}).code) throw namedError('StorageUnavailableException','Olbia storage is unavailable.');
-    throw error;
-  }
-};
 const clean=<T>(value:T):T => JSON.parse(JSON.stringify(value));
 const keyOf=(item:Item):SourceKey => {
   if(typeof item.PK!=='string' || typeof item.SK!=='string') throw namedError('ValidationException','Invalid Olbia record key.');

@@ -1,9 +1,8 @@
-import { assertMutationsAvailable, assertLegacyDeliveryAccess } from '@finance/ledger/dsql-store';
-import { createHash } from 'node:crypto';
+import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
-import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { monthKeyInZone, previousCalendarMonth } from '@finance/domain';
-import { database, tableName } from '../http/clients.js';
+import { getMonthlyEmailDelivery, prepareMonthlyEmailDelivery, markMonthlyEmailAccepted } from './delivery-store.js';
+import type { NativeMonthlyDelivery } from '@finance/ledger/native-deliveries';
 import {
   analyzeMonthlyClose,
   fallbackMonthlyCloseAnalysis,
@@ -26,7 +25,7 @@ export interface PreparedMonthlyClose {
 }
 
 export interface MonthlyCloseDependencies {
-  readonly getRecord: (owner: string, month: string) => Promise<Record<string, unknown> | undefined>;
+  readonly getRecord: (owner: string, month: string) => Promise<NativeMonthlyDelivery | undefined>;
   readonly prepare: (
     owner: string,
     month: string,
@@ -50,77 +49,16 @@ const requiredEnvironment = (name: string): string => {
   return value;
 };
 
-const reportKey = (owner: string, month: string) => ({
-  PK: `USER#${owner}`,
-  SK: `MONTHLY_CLOSE#${month}`,
-});
-
-const getRecord = async (owner: string, month: string): Promise<Record<string, unknown> | undefined> => {
-  const result = await database.send(new GetCommand({
-    TableName: tableName,
-    Key: reportKey(owner, month),
-    ConsistentRead: true,
-  }));
-  return result.Item as Record<string, unknown> | undefined;
-};
-
-const prepare = async (
-  owner: string,
-  month: string,
-  prepared: PreparedMonthlyClose,
-  now: Date,
-): Promise<void> => {
-  const contentSha256 = createHash('sha256')
-    .update(prepared.email.subject)
-    .update('\0')
-    .update(prepared.email.html)
-    .update('\0')
-    .update(prepared.email.text)
-    .digest('hex');
-  await database.send(new PutCommand({
-    TableName: tableName,
-    Item: {
-      ...reportKey(owner, month),
-      entityType: 'monthly_close_report',
-      owner,
-      month,
-      status: 'prepared',
-      preparedAt: now.toISOString(),
-      facts: prepared.facts,
-      analysis: prepared.analysis,
-      analysisVersion: MONTHLY_CLOSE_ANALYSIS_VERSION,
-      analysisSource: prepared.analysisSource,
-      ...(prepared.analysisErrorName ? { analysisErrorName: prepared.analysisErrorName } : {}),
-      email: prepared.email,
-      contentSha256,
-    },
-    ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
-  }));
-};
-
-const markSent = async (
-  owner: string,
-  month: string,
-  messageId: string,
-  now: Date,
-): Promise<void> => {
-  await database.send(new UpdateCommand({
-    TableName: tableName,
-    Key: reportKey(owner, month),
-    UpdateExpression: 'SET #status = :sent, sentAt = :sentAt, sesMessageId = :messageId',
-    ConditionExpression: '#status = :prepared',
-    ExpressionAttributeNames: { '#status': 'status' },
-    ExpressionAttributeValues: {
-      ':sent': 'sent',
-      ':prepared': 'prepared',
-      ':sentAt': now.toISOString(),
-      ':messageId': messageId,
-    },
-  }));
-};
+const getRecord = (owner:string,month:string) => getMonthlyEmailDelivery(owner,'monthly_close',month);
+const prepare = (owner:string,month:string,prepared:PreparedMonthlyClose,now:Date):Promise<void> =>
+  prepareMonthlyEmailDelivery({kind:'monthly_close',owner,month,preparedAt:now.toISOString(),email:prepared.email,
+    report:{facts:prepared.facts as unknown as Record<string,unknown>,analysis:prepared.analysis as unknown as Record<string,unknown>,
+      analysisVersion:MONTHLY_CLOSE_ANALYSIS_VERSION,analysisSource:prepared.analysisSource,
+      ...(prepared.analysisErrorName===undefined?{}:{analysisErrorName:prepared.analysisErrorName})}});
+const markSent = (owner:string,month:string,messageId:string,now:Date):Promise<void> =>
+  markMonthlyEmailAccepted({owner,kind:'monthly_close',month,messageId,sentAt:now.toISOString()});
 
 const send = async (email: MonthlyCloseEmail): Promise<string> => {
-  await assertLegacyDeliveryAccess();
   const response = await ses.send(new SendEmailCommand({
     Source: requiredEnvironment('ALERT_SENDER_EMAIL'),
     Destination: { ToAddresses: [requiredEnvironment('ALERT_RECIPIENT_EMAIL')] },
@@ -148,25 +86,10 @@ const defaultDependencies: MonthlyCloseDependencies = {
   send,
 };
 
-const preparedFromRecord = (record: Record<string, unknown> | undefined): PreparedMonthlyClose | undefined => {
-  if (record?.status !== 'prepared') return undefined;
-  const email = record.email;
-  const facts = record.facts;
-  const analysis = record.analysis;
-  if (!email || typeof email !== 'object' || Array.isArray(email)) return undefined;
-  if (!facts || typeof facts !== 'object' || Array.isArray(facts)) return undefined;
-  if (!analysis || typeof analysis !== 'object' || Array.isArray(analysis)) return undefined;
-  const emailRecord = email as Record<string, unknown>;
-  if (typeof emailRecord.subject !== 'string' || typeof emailRecord.html !== 'string' || typeof emailRecord.text !== 'string') {
-    return undefined;
-  }
-  return {
-    facts: facts as unknown as MonthlyCloseFacts,
-    analysis: analysis as unknown as MonthlyCloseAnalysis,
-    analysisSource: record.analysisSource === 'bedrock' ? 'bedrock' : 'fallback',
-    ...(typeof record.analysisErrorName === 'string' ? { analysisErrorName: record.analysisErrorName } : {}),
-    email: { subject: emailRecord.subject, html: emailRecord.html, text: emailRecord.text },
-  };
+const preparedFromRecord = (record:NativeMonthlyDelivery|undefined):PreparedMonthlyClose|undefined => {
+  if(record?.kind!=='monthly_close'||record.status!=='prepared')return undefined;
+  return {facts:record.report.facts as unknown as MonthlyCloseFacts,analysis:record.report.analysis as unknown as MonthlyCloseAnalysis,
+    analysisSource:record.report.analysisSource,...(record.report.analysisErrorName===undefined?{}:{analysisErrorName:record.report.analysisErrorName}),email:record.email};
 };
 
 const errorName = (error: unknown): string => error instanceof Error ? error.name : 'UnknownError';
@@ -181,7 +104,6 @@ export const runMonthlyClose = async (
   readonly analysisSource?: AnalysisSource;
 }> => {
   await assertMutationsAvailable();
-  await assertLegacyDeliveryAccess();
   const owner = requiredEnvironment('MONTHLY_CLOSE_OWNER');
   const currentMonth = monthKeyInZone(now);
   const month = previousCalendarMonth(currentMonth);
@@ -224,7 +146,6 @@ export const runMonthlyClose = async (
     }
   }
 
-  await assertLegacyDeliveryAccess();
   const messageId = await dependencies.send(prepared.email);
   await dependencies.markSent(owner, month, messageId, now);
   console.info(JSON.stringify({
