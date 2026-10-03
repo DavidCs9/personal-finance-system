@@ -1,4 +1,4 @@
-import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
+import { assertMutationsAvailable, assertLegacyDeliveryAccess } from '@finance/ledger/dsql-store';
 import { createHash } from 'node:crypto';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
@@ -289,6 +289,7 @@ const markSent = async (owner: string, month: string, messageId: string, now: Da
 };
 
 const send = async (email: MonthEndBalanceReminderEmail): Promise<string> => {
+  await assertLegacyDeliveryAccess();
   const response = await ses.send(new SendEmailCommand({
     Source: requiredEnvironment('ALERT_SENDER_EMAIL'),
     Destination: { ToAddresses: [requiredEnvironment('ALERT_RECIPIENT_EMAIL')] },
@@ -336,6 +337,7 @@ export const runMonthEndBalanceReminder = async (
   dependencies: MonthEndBalanceReminderDependencies = defaultDependencies,
 ): Promise<{ readonly month: string; readonly status: 'sent' | 'already_sent'; readonly messageId?: string }> => {
   await assertMutationsAvailable();
+  await assertLegacyDeliveryAccess();
   const owner = requiredEnvironment('MONTH_END_REMINDER_OWNER');
   const month = monthKeyInZone(now);
   const asOfDay = dayKeyInZone(now);
@@ -363,6 +365,7 @@ export const runMonthEndBalanceReminder = async (
     }
   }
 
+  await assertLegacyDeliveryAccess();
   const messageId = await dependencies.send(prepared.email);
   await dependencies.markSent(owner, month, messageId, now);
   console.info(JSON.stringify({ message: 'Month-end balance reminder sent', month, messageId }));

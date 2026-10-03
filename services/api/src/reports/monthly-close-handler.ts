@@ -1,4 +1,4 @@
-import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
+import { assertMutationsAvailable, assertLegacyDeliveryAccess } from '@finance/ledger/dsql-store';
 import { createHash } from 'node:crypto';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
@@ -120,6 +120,7 @@ const markSent = async (
 };
 
 const send = async (email: MonthlyCloseEmail): Promise<string> => {
+  await assertLegacyDeliveryAccess();
   const response = await ses.send(new SendEmailCommand({
     Source: requiredEnvironment('ALERT_SENDER_EMAIL'),
     Destination: { ToAddresses: [requiredEnvironment('ALERT_RECIPIENT_EMAIL')] },
@@ -180,6 +181,7 @@ export const runMonthlyClose = async (
   readonly analysisSource?: AnalysisSource;
 }> => {
   await assertMutationsAvailable();
+  await assertLegacyDeliveryAccess();
   const owner = requiredEnvironment('MONTHLY_CLOSE_OWNER');
   const currentMonth = monthKeyInZone(now);
   const month = previousCalendarMonth(currentMonth);
@@ -222,6 +224,7 @@ export const runMonthlyClose = async (
     }
   }
 
+  await assertLegacyDeliveryAccess();
   const messageId = await dependencies.send(prepared.email);
   await dependencies.markSent(owner, month, messageId, now);
   console.info(JSON.stringify({
