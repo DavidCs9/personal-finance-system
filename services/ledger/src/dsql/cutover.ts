@@ -1,3 +1,4 @@
+import { smokeNativeThreads } from './thread-smoke.js';
 import { smokeNativeDeliveries } from './delivery-smoke.js';
 import { smokeNativePush } from './push-smoke.js';
 import { createPool } from './connection.js';
@@ -100,9 +101,10 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
         await smokeNativeWealth(client, String(importSource.owner), String(card.id));
         await smokeNativePush(client, String(importSource.owner));
         await smokeNativeDeliveries(client, String(importSource.owner));
+        await smokeNativeThreads(client, String(importSource.owner));
         verified=true;throw rollback;
       });} catch(error) {if(error!==rollback) throw error;}
-      return {verified,rolledBack:true,nativeCategories:true,nativeCards:true,nativeMonthPlans:true,nativePayroll:true,nativeImports:true,nativeLedger:true,nativeWealth:true,nativePush:true,nativeDeliveries:true};
+      return {verified,rolledBack:true,nativeCategories:true,nativeCards:true,nativeMonthPlans:true,nativePayroll:true,nativeImports:true,nativeLedger:true,nativeWealth:true,nativePush:true,nativeDeliveries:true,nativeThreads:true};
     }
     if(!['pause','activate'].includes(event.action)) throw new Error('Unknown operation');
     if(event.action==='activate' && process.env.OLBIA_ALLOW_SQL_ACTIVATION!=='true') throw new Error('SQL activation requires the approved cutover deployment');

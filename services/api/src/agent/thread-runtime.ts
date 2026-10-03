@@ -1,6 +1,4 @@
-import { readOperationalPartition, isRetainedLive } from '../operational/reads.js';
 import { BedrockAgentCoreClient } from '@aws-sdk/client-bedrock-agentcore';
-import { database, tableName } from '../http/clients.js';
 import {
   deleteAssistantThread,
   getAssistantThread,
@@ -16,10 +14,10 @@ const memory = new BedrockAgentCoreClient({
 
 const historyDependencies = () => {
   if (!memoryId) throw new Error('Agent memory is not configured.');
-  return { database, tableName, memory, memoryId, displayIndices: async (owner: string) => { const at = new Date(); return (await readOperationalPartition('assistant_threads', { database, tableName }, `USER#${owner}`, 'ASSISTANT_THREAD#')).filter(item => isRetainedLive(item, at)); } };
+  return { memory, memoryId };
 };
 
-const storeDependencies = { database, tableName };
+const storeDependencies = {};
 
 export const prepareAssistantThread = (
   owner: string,

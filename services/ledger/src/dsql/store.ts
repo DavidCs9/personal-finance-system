@@ -21,17 +21,6 @@ export const currentStoreTransaction=() => context.getStore();
 const namedError=(name:string,message:string):Error => Object.assign(new Error(message),{name});
 const paused=() => namedError('MigrationPausedException','Olbia está en mantenimiento. Intenta de nuevo más tarde.');
 
-/** Prerequisite protection for old metadata and native Memory orchestration. */
-export const assertLegacyThreadAccess=async (client?:SqlClient):Promise<void> => {
-  if(!sqlStoreEnabled()) return;
-  try {
-    if((await (client??applicationStoreClient()).query('SELECT version FROM olbia.schema_migrations WHERE version=18')).rows.length) throw paused();
-  } catch(error) {
-    if((error as {code?:string}).code) throw namedError('StorageUnavailableException','Olbia storage is unavailable.');
-    throw error;
-  }
-};
-
 /** Native domain work shares the activation barrier and the connector's OCC retry. */
 export const runNativeTransaction=async <T>(pool:TransactionPool,callback:(client:SqlClient)=>Promise<T>):Promise<T> => {
   const existing=context.getStore();if(existing)return callback(existing);

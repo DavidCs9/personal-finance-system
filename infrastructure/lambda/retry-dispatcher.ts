@@ -1,4 +1,5 @@
-import { createApplicationStore, storageAuthority, mutationsPaused, applicationStoreClient } from '@finance/ledger/dsql-store';
+import { expireConversationMetadata } from '@finance/ledger/native-threads';
+import { createApplicationStore, storageAuthority, mutationsPaused, applicationStoreClient, withNativeTransaction } from '@finance/ledger/dsql-store';
 import { UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
 import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
@@ -24,9 +25,10 @@ export const handler = async (event: Partial<DynamoDBStreamEvent>): Promise<void
     const client=applicationStoreClient();
     // Read promoted operational columns, rather than repeatedly transferring the whole ledger.
     // Match top-level DynamoDB TTL only; nested preview deadlines remain audit data.
-    const now=Math.floor(Date.now()/1000);
-    const expired=(await client.query(`SELECT source_pk,source_sk FROM olbia.assistant_threads WHERE expires_at<=$1
-      UNION ALL SELECT source_pk,source_sk FROM olbia.bulk_edit_operations WHERE expires_at<=$1
+    const at=new Date();
+    await withNativeTransaction(client=>expireConversationMetadata(client,at));
+    const now=Math.floor(at.getTime()/1000);
+    const expired=(await client.query(`SELECT source_pk,source_sk FROM olbia.bulk_edit_operations WHERE expires_at<=$1
       UNION ALL SELECT source_pk,source_sk FROM olbia.dedupe_claims WHERE expires_at<=$1
       UNION ALL SELECT source_pk,source_sk FROM olbia.exception_claims WHERE expires_at<=$1 LIMIT 100`,[now])).rows;
     for(const item of expired) {
