@@ -1,0 +1,15 @@
+# Native SQL Web Push registry
+
+**Olbia must feel born in SQL. David Castro is its sole user and owner.** Web Push subscriptions are integration records, with SQL as their current authority.
+
+`web_push_subscriptions` stores the existing SHA-256 endpoint identity, unique endpoint, owner provenance, provider keys, amounts/private preference, active state and creation/update timestamps. Native constraints require valid identity shape, HTTPS endpoint shape, nonempty base64url keys, supported preference and nonnull fields. Node's native URL parser and digest validate registrations and the independent deployed gate validates actual endpoint/identity equality. There is no new customer or tenant model.
+
+Registration is one SQL upsert inside the existing application transaction/OCC boundary. Renewal updates only keys, preference, active state and update time; endpoint, identity, owner and creation time are immutable to the writer role. Removal and expired-provider 404/410 cleanup use the same native deletion primitive. Other send failures retain subscriptions. Every notification producer uses direct SQL listing and the existing Web Push transport, Secrets Manager credentials and privacy behavior.
+
+Product listing selects only subscription identity, preference and timestamps. Its SQL role cannot select the endpoint or either key. Transport/application roles read the full native integration record. The isolated verifier and recovery projector retain historical recovery access; product/writer roles cannot read or mutate the old `push_subscriptions` table.
+
+Migration 16 requires SQL authority and native wealth migration 15. Bootstrap prepares schema/grants before copying exact known source/projection fields under the existing application barrier, then writes activation in the same transaction. Unknown, inconsistent or partial mappings fail and roll back. The separately deployed [guard #192](https://github.com/DavidCs9/personal-finance-system/pull/192) prevents old bundles from reading, changing or delivering from frozen documents after activation. Originals remain unchanged as historical recovery; later native registration, renewal or removal does not update them.
+
+The deployed gate independently verifies every native row, eight constraints, nine required columns, public metadata and two transport listings in a bounded snapshot. Frozen recovery verification is separate from current subscription authority. The deployed write smoke registers/renews/removes through the actual native primitive and fully rolls back; it performs no secret lookup or delivery. Integration tests cover actual scoped roles, owner protection, failed copy/renewal, empty registries, expired transport cleanup and sanitized SQL failures without source fallback.
+
+The [run record](autonomous-runs/2026-10-03-native-push.md) tracks PR, required quality, production deployment and independent exact real-data/permission acceptance. Native activation and completion remain pending until those checks pass.

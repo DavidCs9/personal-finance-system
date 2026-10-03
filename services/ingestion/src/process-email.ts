@@ -176,7 +176,7 @@ const ingest = async (job: IngestionJob): Promise<void> => {
     return;
   }
   try {
-    await notifyObservedPurchaseByPush(tableName, purchase);
+    await notifyObservedPurchaseByPush(purchase);
   } catch (error) {
     console.error(JSON.stringify({
       message: 'Unable to send observed-movement push',
@@ -317,7 +317,7 @@ const notifyIngestionException = async (exception: IngestionExceptionAlertInput)
   }));
 };
 
-const notifyObservedPurchaseByPush = async (tableName: string, purchase: {
+const notifyObservedPurchaseByPush = async (purchase: {
   readonly id: string;
   readonly institution: string;
   readonly amount: { readonly amountMinor: number; readonly currency: string };
@@ -330,8 +330,6 @@ const notifyObservedPurchaseByPush = async (tableName: string, purchase: {
     return;
   }
   const result = await notifyObservedPurchasePush({
-    database,
-    tableName,
     secrets,
     vapidSecretArn,
     navigateUrl,

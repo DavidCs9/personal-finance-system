@@ -1,3 +1,4 @@
+import { smokeNativePush } from './push-smoke.js';
 import { createPool } from './connection.js';
 import { authorityFrom } from './store.js';
 import { smokeNativeLedger } from './ledger-smoke.js';
@@ -96,9 +97,10 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
         if (finishedImport?.status !== 'applied' || finishedImport.result_skipped !== 2) throw new Error('Native import completion failed');
         await smokeNativeLedger(client, String(importSource.owner), String(category.id));
         await smokeNativeWealth(client, String(importSource.owner), String(card.id));
+        await smokeNativePush(client, String(importSource.owner));
         verified=true;throw rollback;
       });} catch(error) {if(error!==rollback) throw error;}
-      return {verified,rolledBack:true,nativeCategories:true,nativeCards:true,nativeMonthPlans:true,nativePayroll:true,nativeImports:true,nativeLedger:true,nativeWealth:true};
+      return {verified,rolledBack:true,nativeCategories:true,nativeCards:true,nativeMonthPlans:true,nativePayroll:true,nativeImports:true,nativeLedger:true,nativeWealth:true,nativePush:true};
     }
     if(!['pause','activate'].includes(event.action)) throw new Error('Unknown operation');
     if(event.action==='activate' && process.env.OLBIA_ALLOW_SQL_ACTIVATION!=='true') throw new Error('SQL activation requires the approved cutover deployment');

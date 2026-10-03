@@ -1,3 +1,5 @@
+import { NATIVE_PUSH_SCHEMA_STATEMENT, nativePushReadGrant, nativePushMetadataGrant, nativePushWriteGrants } from './push-schema.js';
+import { migratePushSubscriptions } from './push-copy.js';
 import { TABLE_COLUMNS, TABLE_NAMES, OPERATIONAL_TABLE_NAMES } from './model.js';
 import type { SqlClient, TransactionPool } from './projection.js';
 import { isOCCError } from '@aws/aurora-dsql-node-postgres-connector';
@@ -164,6 +166,7 @@ export const SCHEMA_STATEMENTS = [
       FROM olbia.ledger_movements
     UNION SELECT movement_id::text,month FROM olbia.installment_entries`,
   ...NATIVE_WEALTH_SCHEMA_STATEMENTS,
+  NATIVE_PUSH_SCHEMA_STATEMENT,
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
@@ -224,6 +227,8 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('rules-projector-read', 'GRANT SELECT ON olbia.merchant_rules TO olbia_projector');
   await query('ledger-projector-read', nativeLedgerReadGrant('olbia_projector'));
   await query('wealth-projector-read', nativeWealthReadGrant('olbia_projector'));
+  await query('push-projector-read', nativePushReadGrant('olbia_projector'));
+  await query('push-projector-recovery-revoke', 'REVOKE INSERT,UPDATE,DELETE ON olbia.push_subscriptions FROM olbia_projector');
   await query('wealth-projector-recovery-revoke', 'REVOKE INSERT,UPDATE,DELETE ON olbia.wealth_snapshots,olbia.wealth_versions,olbia.liability_snapshots,olbia.liability_versions FROM olbia_projector');
   await query('projector-barrier-grant','GRANT SELECT,UPDATE ON olbia.application_barrier TO olbia_projector');
   for (const arn of roleArns) {
@@ -235,8 +240,10 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (!reader.rows.length) await query('reader-role-create', 'CREATE ROLE olbia_reader WITH LOGIN');
     await query('ledger-reader-read', nativeLedgerReadGrant('olbia_reader'));
     await query('wealth-reader-read', nativeWealthReadGrant('olbia_reader'));
+    await query('push-reader-metadata', nativePushMetadataGrant('olbia_reader'));
+    await query('push-reader-recovery-revoke', 'REVOKE SELECT ON olbia.push_subscriptions FROM olbia_reader');
     await query('reader-schema-grant', 'GRANT USAGE ON SCHEMA olbia TO olbia_reader');
-    await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments', 'monthly_plans', 'payroll', 'cards', 'categories', 'merchant_category_rules', 'ingestion_exceptions', 'import_records', 'push_subscriptions', 'assistant_threads'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
+    await query('reader-tables-grant', `GRANT SELECT ON ${['movements', 'movement_observations', 'movement_revisions', 'msi_installments', 'monthly_plans', 'payroll', 'cards', 'categories', 'merchant_category_rules', 'ingestion_exceptions', 'import_records', 'assistant_threads'].map(table => `olbia.${table}`).join(',')} TO olbia_reader`);
     await query('wealth-reader-recovery-revoke', 'REVOKE SELECT ON olbia.wealth_snapshots,olbia.wealth_versions,olbia.liability_snapshots,olbia.liability_versions FROM olbia_reader');
     await query('reader-migration-read', 'GRANT SELECT ON olbia.schema_migrations TO olbia_reader');
     await query('catalog-reader-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_reader');
@@ -257,6 +264,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query('operational-verifier-schema', `GRANT USAGE ON SCHEMA olbia TO ${role}`);
     await query('ledger-verifier-read', nativeLedgerReadGrant(role));
     await query('wealth-verifier-read', nativeWealthReadGrant(role));
+    await query('push-verifier-read', nativePushReadGrant(role));
     await query('verification-snapshot-read', `GRANT SELECT ON ${['runtime_state','projection_state','schema_migrations',...TABLE_NAMES,
       'spend_categories','merchant_rules','card_profiles','month_plans','planned_payments','payslips','payslip_lines'].map(table => `olbia.${table}`).join(',')} TO ${role}`);
     await query('operational-verifier-select', `GRANT SELECT ON ${OPERATIONAL_TABLE_NAMES.map(table => `olbia.${table}`).join(',')} TO ${role}`);
@@ -277,9 +285,12 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query(`select-${role}`,`GRANT SELECT ON olbia.runtime_state,olbia.projection_state,olbia.schema_migrations TO ${role}`);
     await query(`ledger-read-${role}`, nativeLedgerReadGrant(role));
     await query(`wealth-read-${role}`, nativeWealthReadGrant(role));
+    await query(`push-read-${role}`, nativePushReadGrant(role));
+    if (writer) for (const [index, statement] of nativePushWriteGrants(role).entries()) await query(`push-write-${role}-${index}`, statement);
     if (writer) for (const [index, statement] of nativeWealthWriteGrants(role).entries()) await query(`wealth-write-${role}-${index}`, statement);
     if (writer) for (const [index, statement] of nativeLedgerWriteGrants(role).entries()) await query(`ledger-write-${role}-${index}`, statement);
     if (writer) await query(`write-${role}`,`GRANT SELECT,INSERT,UPDATE,DELETE ON ${['projection_state','application_barrier','command_receipts',...TABLE_NAMES].map(t=>`olbia.${t}`).join(',')} TO ${role}`);
+    await query(`push-recovery-revoke-${role}`, `REVOKE ALL PRIVILEGES ON olbia.push_subscriptions FROM ${role}`);
     await query(`wealth-recovery-revoke-${role}`, `REVOKE ALL PRIVILEGES ON olbia.wealth_snapshots,olbia.wealth_versions,olbia.liability_snapshots,olbia.liability_versions FROM ${role}`);
     if (writer) await query(`view-${role}`,`GRANT SELECT ON olbia.movement_months TO ${role}`);
     await query(`catalog-read-${role}`, `GRANT SELECT ON olbia.spend_categories TO ${role}`);
@@ -311,6 +322,8 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   catch (error) { throw new BootstrapFailure('ledger-copy', error); }
   try { await migrateWealth(options.transactionPool); }
   catch (error) { throw new BootstrapFailure('wealth-copy', error); }
+  try { await migratePushSubscriptions(options.transactionPool); }
+  catch (error) { throw new BootstrapFailure('push-copy', error); }
 };
 
 export const nativeLedgerReadGrant = (role: string): string =>
