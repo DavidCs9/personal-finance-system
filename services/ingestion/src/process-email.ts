@@ -1,4 +1,4 @@
-import { createApplicationStore, withNativeTransaction } from '@finance/ledger/dsql-store';
+import { createApplicationStore, withNativeTransaction, assertLegacyExceptionAccess } from '@finance/ledger/dsql-store';
 import { createHash, randomUUID } from 'node:crypto';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
@@ -29,6 +29,7 @@ export const ingestionHandler: SQSHandler = async (event) => {
   const failures: { itemIdentifier: string }[] = [];
   for (const record of event.Records) {
     try {
+      await assertLegacyExceptionAccess();
       await ingest(JSON.parse(record.body) as IngestionJob);
     } catch (error) {
       console.error('Unable to ingest SES email', { messageId: record.messageId, error: errorMessage(error) });
@@ -199,6 +200,7 @@ const enqueueBedrockFallback = async (
     institutionHint,
     primaryFailure,
   };
+  await assertLegacyExceptionAccess();
   await sqs.send(new SendMessageCommand({
     QueueUrl: requiredEnvironment('BEDROCK_FALLBACK_QUEUE_URL'),
     MessageBody: JSON.stringify(fallbackJob),
@@ -211,6 +213,7 @@ const enqueueBedrockFallback = async (
 };
 
 const markRetryCompleted = async (tableName: string, exceptionId: string, eventId: string): Promise<void> => {
+  await assertLegacyExceptionAccess();
   await database.send(new UpdateCommand({
     TableName: tableName, Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' },
     UpdateExpression: 'SET #payload.#retry.#status = :status, #payload.#retry.#completedAt = :completedAt, #payload.#retry.#eventId = :eventId',
@@ -220,6 +223,7 @@ const markRetryCompleted = async (tableName: string, exceptionId: string, eventI
 };
 
 const markRetryFailed = async (tableName: string, exceptionId: string, details: string): Promise<void> => {
+  await assertLegacyExceptionAccess();
   await database.send(new UpdateCommand({
     TableName: tableName, Key: { PK: `EXCEPTION#${exceptionId}`, SK: 'EXCEPTION' },
     UpdateExpression: 'SET #payload.#retry.#status = :status, #payload.#retry.#failedAt = :failedAt, #payload.#retry.#details = :details',
@@ -239,12 +243,14 @@ const saveException = async (
   extractorVersion: string,
   retryExceptionId?: string,
 ): Promise<void> => {
+  await assertLegacyExceptionAccess();
   const id = randomUUID();
   const savedException = { id, ...exception };
   const exceptionDedupeKey = createHash('sha256')
     .update(`${sourceDedupeKey}:${extractorVersion}:${exception.reason}`)
     .digest('hex');
   try {
+    await assertLegacyExceptionAccess();
     await database.send(new TransactWriteCommand({ TransactItems: [
       { Put: {
         TableName: tableName,
@@ -307,6 +313,7 @@ const notifyIngestionException = async (exception: IngestionExceptionAlertInput)
     return;
   }
   const alert = ingestionExceptionAlert(exception);
+  await assertLegacyExceptionAccess();
   await ses.send(new SendEmailCommand({
     Source: addresses.source,
     Destination: { ToAddresses: [addresses.destination] },
