@@ -3,7 +3,7 @@ import { beforeAll, afterAll, beforeEach, afterEach, describe, expect, it, vi } 
 import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
 import type { SqlClient } from '../../ledger/src/dsql/projection.js';
 import * as connection from '../../ledger/src/dsql/connection.js';
-import { withStoreClient, currentStoreTransaction } from '../../ledger/src/dsql/store.js';
+import { withSqlClient, currentSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
 import * as readers from '../src/events/sql-reads.js';
 
 process.env.METADATA_TABLE_NAME ??= 'test-metadata';
@@ -29,7 +29,7 @@ beforeEach(async () => {
   vi.spyOn(connection,'createPool').mockReturnValue({ query: (s: string,v?: unknown[]) => sql.query(s,v),
     transaction: (fn: (client: SqlClient) => Promise<unknown>) => sql.transaction(client => fn(client as unknown as SqlClient)),
   } as never);
-  vi.spyOn(readers,'readerPool').mockImplementation(() => currentStoreTransaction() ?? sql);
+  vi.spyOn(readers,'readerPool').mockImplementation(() => currentSqlClient() ?? sql);
   incomeFieldsForMonth.mockResolvedValue({ configured: true, incomeMinor: 5_000_00, depositedMinor: 5_000_00, estimatedMinor: 0,
     estimateActive: false, provisionalActive: false, provisionalMinor: 0, payslips: [] });
 });
@@ -63,7 +63,7 @@ describe('SQL-native monthly fixed-expense inheritance', () => {
   });
   it('rolls parent/child replacement back together and preserves owner binding', async () => {
     await seedPlan('owner-1','2026-09',[payment('Internet')]); const before = await getMonthlyPlan('owner-1','2026-09');
-    await expect(sql.transaction(client => withStoreClient(client as unknown as SqlClient, async () => {
+    await expect(sql.transaction(client => withSqlClient(client as unknown as SqlClient, async () => {
       await saveMonthlyPlan('owner-1','2026-09',{ currency: 'MXN', upcomingPayments: [payment('Renta')] }); throw new Error('Interrupted');
     }))).rejects.toThrow('Interrupted');
     expect(await getMonthlyPlan('owner-1','2026-09')).toEqual(before);

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { CaptureSource,ObservedEventInput,SaveObservedEventResult } from '../observed-events.js';
 import { financialCalendarDay,foreignMerchantsMatch,merchantsMatch } from '../reconciliation-matching.js';
 import type { SqlClient } from './projection.js';
-import { withNativeTransaction } from './store.js';
+import { withSqlTransaction } from './sql-runtime.js';
 import { appendLedgerObservation,insertLedgerMovement,insertSourceClaim,markMovementReconciled,
   promoteForeignAuthorization,readSourceClaim } from './ledger-writes.js';
 
@@ -108,4 +108,4 @@ export const saveNativeCapture=async(client:SqlClient,input:NativeCaptureInput):
   return {eventId,observationId,duplicate:false,reconciled:Boolean(candidate),created:!candidate};
 };
 export const captureObservedEvent=(input:NativeCaptureInput):Promise<SaveObservedEventResult>=>
-  withNativeTransaction(client=>saveNativeCapture(client,input));
+  withSqlTransaction(client=>saveNativeCapture(client,input));

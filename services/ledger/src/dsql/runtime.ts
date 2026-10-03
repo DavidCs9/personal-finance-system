@@ -9,7 +9,7 @@ import { processStream, reconcileKey, type TransactionPool, type SqlClient, type
 import { verifyKeyDetails } from './verification.js';
 import { bootstrapSchema, BootstrapFailure } from './schema.js';
 import { createPool } from './connection.js';
-import { authorityFrom } from './store.js';
+import { readStorageAuthority } from './sql-runtime.js';
 import { NATIVE_LEDGER_TABLES } from './ledger-schema.js';
 export { createPool } from './connection.js';
 
@@ -23,7 +23,7 @@ const runtimePool = (): TransactionPool & SqlClient => pool ??= createPool();
 const database = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 const s3 = new S3Client({});
 const readSource = async (key: SourceKey): Promise<SourceItem | undefined> => {
-  if(await authorityFrom(pool ??= createPool())==='sql') {
+  if(await readStorageAuthority(pool ??= createPool())==='sql') {
     const rows=(await pool!.query('SELECT source_item FROM olbia.projection_state WHERE source_pk=$1 AND source_sk=$2 AND deleted=false',[key.PK,key.SK])).rows;return rows[0]?.source_item as SourceItem|undefined;
   }
   const result = await database.send(new GetCommand({ TableName: required('METADATA_TABLE_NAME'), Key: { PK: key.PK, SK: key.SK }, ConsistentRead: true }));
@@ -31,11 +31,11 @@ const readSource = async (key: SourceKey): Promise<SourceItem | undefined> => {
 };
 const reconcile = (key: SourceKey, delivery?: StreamDelivery): Promise<void> => reconcileKey({transaction: callback => runtimePool().transaction(async client => {
   await client.query("UPDATE olbia.application_barrier SET generation=generation+1 WHERE id='storage'");
-  if(await authorityFrom(client)==='sql') return undefined as never;
+  if(await readStorageAuthority(client)==='sql') return undefined as never;
   return callback(client);
 })}, readSource, key, delivery);
 export const streamHandler = async (event: { Records: Parameters<typeof processStream>[0] }): ReturnType<typeof processStream> => {
-  if(await authorityFrom(pool ??= createPool())==='sql') return {batchItemFailures:[]};
+  if(await readStorageAuthority(pool ??= createPool())==='sql') return {batchItemFailures:[]};
   return processStream(event.Records,reconcile);
 };
 
@@ -83,7 +83,7 @@ export type MaintenanceInput = MaintenanceProgress & { runId: string };
 const runMaintenance = async (event: MaintenanceInput): Promise<MaintenanceInput> => {
   const runId = event.runId;
   if (typeof runId !== 'string' || !runId) throw new Error('runId is required');
-  const sqlAuthority=await authorityFrom(pool ??= createPool())==='sql';
+  const sqlAuthority=await readStorageAuthority(pool ??= createPool())==='sql';
   if(sqlAuthority && !event.phase.startsWith('verify') && event.phase!=='done') event={...event,phase:event.phase==='source'?'verify-source':'verify-target'};
   const input: MaintenanceInput = { ...event, projected: event.projected ?? 0, equal: event.equal ?? 0, lag: event.lag ?? 0, mismatch: event.mismatch ?? 0, sourceTotals: { ...event.sourceTotals } };
   let keys: SourceKey[];

@@ -1,6 +1,6 @@
 # DSQL retained operational state and display reads
 
-For current write authority and recovery, see [the coordinated SQL cutover](dsql-write-cutover.md). The phase evidence below records the earlier projection/read rollout.
+For current write authority and recovery, see [the SQL normalization audit](dsql-normalization-audit.md) and [the coordinated SQL cutover](dsql-write-cutover.md). All active operational domains are now native SQL authorities through marker 19. The shared document factory/read-mode flags are retired in the [runtime cleanup](autonomous-runs/2026-10-03-sql-runtime-retirement.md); frozen operational envelopes are read only by isolated SQL recovery/verifier roles. The phase evidence below records the earlier projection/read rollout, not current product behavior.
 
 This phase adds schema/transformer 4 and bootstrap provider 7. DynamoDB remains every writer, strongly consistent freshness reference and authoritative decision. Shadow PR #164 and separate guarded promotion #165 both passed their approved production workflows and full independent verification with zero mismatches. Eligible API/probe display reads now use `operationalReadMode=guarded-sql`; production evidence is recorded below and in the run record. Existing movement/planning/payroll/Patrimonio/domain flags remain guarded.
 

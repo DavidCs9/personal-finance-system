@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../../ledger/src/dsql/ledger-schema.js';
 import * as connection from '../../ledger/src/dsql/connection.js';
-import { currentStoreTransaction } from '../../ledger/src/dsql/store.js';
+import { currentSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
 import type { SqlClient } from '../../ledger/src/dsql/projection.js';
 import * as readers from '../src/events/sql-reads.js';
 import * as jobs from '../src/imports/textract-document.js';
@@ -46,7 +46,7 @@ beforeEach(async()=>{
   vi.stubEnv('OLBIA_SQL_STORE_ENABLED','true');vi.stubEnv('DSQL_OPERATIONAL_READ_MODE','dynamodb');
   vi.spyOn(connection,'createPool').mockReturnValue({query:(s:string,v?:unknown[])=>sql.query(s,v),
     transaction:(fn:(c:SqlClient)=>Promise<unknown>)=>sql.transaction(c=>fn(c as unknown as SqlClient))} as never);
-  vi.spyOn(readers,'readerPool').mockImplementation(()=>currentStoreTransaction()??sql);
+  vi.spyOn(readers,'readerPool').mockImplementation(()=>currentSqlClient()??sql);
   vi.spyOn(jobs,'startTextractDocumentAnalysis').mockImplementation(async()=>`job-${++jobCounter}`);
   vi.spyOn(jobs,'getTextractAnalysisJobStatus').mockResolvedValue({status:'SUCCEEDED'});
   vi.spyOn(jobs,'fetchTextractStatementExtraction').mockImplementation(async(_client,jobId,provider)=>{

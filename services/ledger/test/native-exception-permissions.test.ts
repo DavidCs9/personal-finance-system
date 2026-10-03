@@ -1,5 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll,afterAll,afterEach,expect,it } from 'vitest';
+import { TABLE_NAMES } from '../src/dsql/model.js';
 import { SCHEMA_STATEMENTS,bootstrapSchema } from '../src/dsql/schema.js';
 import { LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../src/dsql/ledger-schema.js';
 import { smokeNativeExceptions } from '../src/dsql/exception-smoke.js';
@@ -37,9 +38,9 @@ it('permits only native lifecycle columns and denies all immutable evidence/iden
 it('retains isolated historical reads while denying every frozen workflow mutation and product recovery access',async()=>{
   for(const role of ['olbia_application','olbia_cutover','olbia_reader','olbia_store_reader','olbia_operational_verifier','olbia_projector']){
     await sql.query(`SET ROLE ${role}`);
-    for(const table of ['ingestion_exceptions','exception_claims','ingestion_retries']){
+    for(const table of [...TABLE_NAMES,'projection_state','command_receipts']){
       if(['olbia_projector','olbia_operational_verifier'].includes(role))await sql.query(`SELECT * FROM olbia.${table}`);else await expect(sql.query(`SELECT * FROM olbia.${table}`)).rejects.toMatchObject({code:'42501'});
-      await expect(sql.query(`UPDATE olbia.${table} SET source_item=source_item`)).rejects.toMatchObject({code:'42501'});await expect(sql.query(`DELETE FROM olbia.${table}`)).rejects.toMatchObject({code:'42501'});
+      await expect(sql.query(`UPDATE olbia.${table} SET ${table==='command_receipts'?'token=token':'source_pk=source_pk'}`)).rejects.toMatchObject({code:'42501'});await expect(sql.query(`DELETE FROM olbia.${table}`)).rejects.toMatchObject({code:'42501'});await expect(sql.query(`INSERT INTO olbia.${table} DEFAULT VALUES`)).rejects.toMatchObject({code:'42501'});
     }await sql.query('RESET ROLE');
   }
 });

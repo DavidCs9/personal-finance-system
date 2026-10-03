@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { beforeAll,beforeEach,afterAll,expect,it } from 'vitest';
 import { SCHEMA_STATEMENTS } from '@finance/ledger/dsql-schema';
-import { OlbiaSqlStore } from '@finance/ledger/dsql-store';
+import { OlbiaSqlStore } from '../../ledger/src/dsql/legacy-document-store.js';
 import { migrateIngestionReview } from '../../ledger/src/dsql/exception-copy.js';
 import type { SqlClient,TransactionPool } from '../../ledger/src/dsql/projection.js';
 process.env.METADATA_TABLE_NAME??='metadata';process.env.RAW_EMAIL_BUCKET_NAME??='evidence';

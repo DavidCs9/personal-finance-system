@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { withStoreClient } from '@finance/ledger/dsql-store';
+import { withSqlClient } from '@finance/ledger/sql-runtime';
 import { samePublicResult } from '../events/read-selection.js';
 import { readerPool, withLedgerVerificationSnapshot, type ReadSqlClient } from '../events/sql-reads.js';
 import { getMonthlyEmailDelivery } from './delivery-store.js';
@@ -49,5 +49,5 @@ const verifyDeliverySnapshot=async(owner:string,client:ReadSqlClient)=>{
     sent:receipts.length,contentHashes:preparations.length,workerReads,validatedConstraints:constraints.filter(r=>r.convalidated===true).length,requiredColumns:requiredNotNull,mismatches,elapsedMs:Date.now()-started};
 };
 export const verifyNativeMonthlyDeliveries=(owner:string,client?:ReadSqlClient)=>client
-  ?withStoreClient(client,()=>verifyDeliverySnapshot(owner,client))
+  ?withSqlClient(client,()=>verifyDeliverySnapshot(owner,client))
   :withLedgerVerificationSnapshot(()=>verifyDeliverySnapshot(owner,readerPool()));

@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll,beforeAll,beforeEach,describe,expect,it } from 'vitest';
 import { SCHEMA_STATEMENTS,migrateBankImports } from '../src/dsql/schema.js';
-import { OlbiaSqlStore } from '../src/dsql/store.js';
+import { OlbiaSqlStore } from '../src/dsql/legacy-document-store.js';
 import type { SqlClient,TransactionPool } from '../src/dsql/projection.js';
 
 let sql:PGlite,pool:TransactionPool,store:OlbiaSqlStore;

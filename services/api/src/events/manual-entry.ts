@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { maybeAutoAmexMsi } from '@finance/domain';
-import { applicationStoreClient, withNativeTransaction } from '@finance/ledger/dsql-store';
+import { applicationSqlClient, withSqlTransaction } from '@finance/ledger/sql-runtime';
 import {
   appendLedgerObservation, insertLedgerMovement, insertSourceClaim, readLedgerDetail,
   readSourceClaim, SourceClaimUnavailableError,
@@ -41,7 +41,7 @@ export const createManualEvent = async (body: string | undefined, owner: string)
   const input = parseManualEntry(body);
   const appliedAt = new Date().toISOString();
   const fingerprint = manualEntryFingerprint(owner, input);
-  const existing = await previousManualCapture(applicationStoreClient(), fingerprint);
+  const existing = await previousManualCapture(applicationSqlClient(), fingerprint);
   if (existing) return existing;
   const evidenceBody = JSON.stringify({
     kind: 'manual_entry', createdAt: appliedAt, owner, institution: input.institution,
@@ -76,7 +76,7 @@ export const createManualEvent = async (body: string | undefined, owner: string)
     occurredAt: input.occurredAt, receivedAt: appliedAt, ingestedAt: appliedAt, source,
     parserVersion: 'manual-entry-v1', parseWarnings: [], ...(autoMsi ? { msi: autoMsi } : {}),
   };
-  return withNativeTransaction(async client => {
+  return withSqlTransaction(async client => {
     const prior = await previousManualCapture(client, fingerprint);
     if (prior) return prior;
     await insertLedgerMovement(client, purchase, observationId, input.occurredAt);

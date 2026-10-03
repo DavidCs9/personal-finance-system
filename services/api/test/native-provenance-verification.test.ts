@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { nativeFixture } from './fixtures/native-ledger.js';
 import { readLedgerDetail } from '../../ledger/src/dsql/ledger-reads.js';
 import { appendLedgerObservation, insertLedgerRevision, insertSourceClaim } from '../../ledger/src/dsql/ledger-writes.js';
-import { currentStoreTransaction } from '../../ledger/src/dsql/store.js';
+import { currentSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
 import type { SqlClient, TransactionPool } from '../../ledger/src/dsql/projection.js';
 import type { JsonObject } from '../src/http/response.js';
 
@@ -184,7 +184,7 @@ describe('independent ledger provenance and immutable recovery assertions', () =
       [domain, 'verifyDomainReads'], [operational, 'verifyOperationalReads']] as const)
       vi.spyOn(module as never, method).mockResolvedValue({ mismatches: 0, elapsedMs: 1 } as never);
     const external = vi.spyOn(evidence, 'verifyLedgerEvidence').mockImplementation(async assertions => {
-      expect(currentStoreTransaction()).toBeUndefined();
+      expect(currentSqlClient()).toBeUndefined();
       expect(assertions).toHaveLength(1);
       return { captures: 1, inlineCaptures: 0, uniqueObjects: 1, evidenceFiles: 1, conflictingObjects: 0, mismatches: 0, elapsedMs: 1 };
     });

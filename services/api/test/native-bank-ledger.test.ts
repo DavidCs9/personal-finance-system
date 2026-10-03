@@ -3,7 +3,7 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildMsiSchedule } from '@finance/domain';
 import { nativeFixture } from './fixtures/native-ledger.js';
-import { currentStoreTransaction } from '../../ledger/src/dsql/store.js';
+import { currentSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
 import { readLedgerDetail } from '../../ledger/src/dsql/ledger-reads.js';
 import { appendLedgerObservation, insertLedgerRevision } from '../../ledger/src/dsql/ledger-writes.js';
 import type { SqlClient, TransactionPool } from '../../ledger/src/dsql/projection.js';
@@ -35,7 +35,7 @@ beforeAll(async () => {
   bank = await import('../src/imports/bank-ledger.js'); csvFlow = await import('../src/imports/santander-csv-flow.js');
   csvParser = await import('../src/imports/santander-csv.js'); edits = await import('../src/events/mutations.js');
 }, 30_000);
-beforeEach(async () => { await fixture.reset(); vi.spyOn(readers, 'readerPool').mockImplementation(() => currentStoreTransaction() ?? fixture.pool); });
+beforeEach(async () => { await fixture.reset(); vi.spyOn(readers, 'readerPool').mockImplementation(() => currentSqlClient() ?? fixture.pool); });
 afterEach(() => vi.restoreAllMocks());
 afterAll(async () => { await fixture.sql.close(); vi.unstubAllEnvs(); });
 const save = async (kind: BankImportKind, rows: BankImportRecord['rows'], importId = 'a'.repeat(64)) => {
@@ -101,7 +101,7 @@ describe('native bank financial authority and exact provenance', () => {
     const before = await fixture.snapshot();
     await expect(apply(record, [row], undefined, async () => {
       const id = String((await bank.bankLedgerEvents())[0].id);
-      const client = currentStoreTransaction()!;
+      const client = currentSqlClient()!;
       await appendLedgerObservation(client, { id: randomUUID(), movementId: id, captureSource: 'amex_statement',
         observedAt: at, reconciliationAt: at, institution: 'american_express_mx', eventType: 'card_purchase',
         merchantRaw: 'Original shop', amount: { amountMinor: 10000, currency: 'MXN' }, source: record.source,
@@ -229,7 +229,7 @@ describe('native bank financial authority and exact provenance', () => {
     expect((await imports.readBankImport(record.kind, record.importId, 'owner'))!.status).toBe('previewed');
     await expect(shared.applyStatementImport({ provider: 'amex', importId: record.importId, owner: 'owner', decisionBody: undefined,
       prepareRows: async () => {
-        expect(currentStoreTransaction()).toBeUndefined();
+        expect(currentSqlClient()).toBeUndefined();
         await fixture.sql.query('UPDATE olbia.bank_imports SET previewed_at=$1 WHERE content_sha256=$2', ['2026-08-02T12:00:00Z', record.importId]);
         return { rebuildRows: async () => [row] };
       },
@@ -242,7 +242,7 @@ describe('native bank financial authority and exact provenance', () => {
     const document = csvParser.parseSantanderCsv(csv);
     await save('santander_csv', document.rows.map(r => ({ ...r, status: 'new', candidateEventIds: [], candidates: [] })), importId);
     const source = vi.spyOn(S3Client.prototype, 'send').mockImplementation((async () => {
-      expect(currentStoreTransaction()).toBeUndefined(); return { Body: { transformToString: async () => csv } };
+      expect(currentSqlClient()).toBeUndefined(); return { Body: { transformToString: async () => csv } };
     }) as never);
     const original = fixture.pool.transaction.bind(fixture.pool); let attempts = 0;
     vi.spyOn(fixture.pool, 'transaction').mockImplementation(async fn => {

@@ -6,7 +6,7 @@ import * as connection from '../../ledger/src/dsql/connection.js';
 import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
 import { NATIVE_WEALTH_SCHEMA_STATEMENTS, NATIVE_WEALTH_TABLES } from '../../ledger/src/dsql/wealth-schema.js';
 import { migrateWealth } from '../../ledger/src/dsql/wealth-copy.js';
-import { runNativeTransaction } from '../../ledger/src/dsql/store.js';
+import { runSqlTransaction } from '../../ledger/src/dsql/sql-runtime.js';
 import type { SqlClient, TransactionPool } from '../../ledger/src/dsql/projection.js';
 import { readNativeWealthInputs, readNativeWealthAudit } from '../src/wealth/native-reads.js';
 
@@ -129,7 +129,7 @@ describe('native Patrimonio mutations', () => {
     expect((await sql.query('SELECT * FROM olbia.asset_captures')).rows).toEqual(before);
     expect((await readNativeWealthInputs('owner', sql)).snapshots).toEqual([first]);
     expect(await readNativeWealthAudit('owner', sql)).toEqual([]);
-    await expect(runNativeTransaction(pool, async () => { await providerCapture(200); throw new Error('Rollback enclosing capture'); })).rejects.toThrow('Rollback enclosing capture');
+    await expect(runSqlTransaction(pool, async () => { await providerCapture(200); throw new Error('Rollback enclosing capture'); })).rejects.toThrow('Rollback enclosing capture');
     expect((await readNativeWealthInputs('owner', sql)).snapshots).toEqual([first]);
   });
   it('rejects invalid values before IO, refuses inactive/foreign cards, and retains SQL facts on failed evidence upload', async () => {

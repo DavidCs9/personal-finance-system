@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
-import { OlbiaSqlStore } from '../src/dsql/store.js';
+import { OlbiaSqlStore } from '../src/dsql/legacy-document-store.js';
 import type { SqlClient, TransactionPool } from '../src/dsql/projection.js';
 import { NATIVE_DELIVERY_SCHEMA_STATEMENTS, nativeDeliveryReadGrant, nativeDeliveryWriteGrant } from '../src/dsql/delivery-schema.js';
 import { readMonthlyDelivery, monthlyEmailContentHash, insertMonthlyDeliveryPreparation, insertMonthlyDeliveryReceipt, type MonthlyDeliveryPreparation } from '../src/dsql/delivery.js';

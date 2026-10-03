@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { withStoreClient } from '@finance/ledger/dsql-store';
+import { withSqlClient } from '@finance/ledger/sql-runtime';
 import { listActivePushSubscriptions, listOwnerPushSubscriptions } from '@finance/notify';
 import { listPublicPushSubscriptions } from './subscription-reads.js';
 import { readerPool, withLedgerVerificationSnapshot, type ReadSqlClient } from '../events/sql-reads.js';
@@ -39,5 +39,5 @@ const verifyPushSnapshot = async (owner: string, client: ReadSqlClient) => {
 };
 /** Explicit clients belong to the caller's snapshot; ordinary deployment verification owns its bounded snapshot. */
 export const verifyNativePushSubscriptions = (owner: string, client?: ReadSqlClient) => client
-  ? withStoreClient(client,()=>verifyPushSnapshot(owner,client))
+  ? withSqlClient(client,()=>verifyPushSnapshot(owner,client))
   : withLedgerVerificationSnapshot(()=>verifyPushSnapshot(owner,readerPool()));

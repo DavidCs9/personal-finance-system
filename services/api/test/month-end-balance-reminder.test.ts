@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as sqlRuntime from '@finance/ledger/sql-runtime';
 import type { WealthBalanceOverview } from '../src/wealth/service.js';
 
 process.env.METADATA_TABLE_NAME ??= 'test-metadata';
@@ -125,8 +126,11 @@ describe('month-end balance reminder rendering', () => {
 });
 
 describe('month-end balance reminder orchestration', () => {
+  afterEach(()=>vi.restoreAllMocks());
   beforeEach(() => {
     vi.clearAllMocks();
+    // Pure orchestration injects all providers; native worker tests exercise the persisted SQL guard.
+    vi.spyOn(sqlRuntime,'assertSqlMutationsAvailable').mockResolvedValue();
   });
 
   it('prepares, sends, and marks one reminder for the current month', async () => {

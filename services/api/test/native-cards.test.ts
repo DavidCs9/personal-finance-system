@@ -5,7 +5,7 @@ import { cardRemindersForDay } from '@finance/domain';
 import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
 import type { SqlClient } from '../../ledger/src/dsql/projection.js';
 import * as connection from '../../ledger/src/dsql/connection.js';
-import { withStoreClient } from '../../ledger/src/dsql/store.js';
+import { withSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
 import * as readers from '../src/events/sql-reads.js';
 import { saveCard, deleteCard, listCards } from '../src/cards/cards.js';
 
@@ -73,7 +73,7 @@ describe('SQL-native card domain', () => {
   it('rolls back profile removal and recreation with their complete domain transaction', async () => {
     await save('a'); await save('b'); await save('c');
     const before = (await sql.query('SELECT * FROM olbia.card_profiles ORDER BY id')).rows;
-    await expect(sql.transaction(client => withStoreClient(client as unknown as SqlClient, async () => {
+    await expect(sql.transaction(client => withSqlClient(client as unknown as SqlClient, async () => {
       await deleteCard({ owner: 'owner', cardId: 'a' }); await save('d');
       throw new Error('Interrupted operation');
     }))).rejects.toThrow('Interrupted operation');

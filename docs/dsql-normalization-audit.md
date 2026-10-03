@@ -2,7 +2,15 @@
 
 Audit date: **2026-10-01, America/Chihuahua**. Code baseline: `1baea36` (verified SQL authority cutover). Live data snapshot: **21:28:49.960 local**, equivalent to `2026-10-02T03:28:49.960Z`. Counts describe this snapshot, not ongoing counters.
 
-## Assessment
+## Current state — 2026-10-03
+
+**Olbia must feel born in SQL.** All active domains are now relational authorities through migration marker 19: classification, cards, plans, payroll, imports, ledger/installments/provenance, assets/liabilities, push, email preparations/receipts, assistant conversation metadata and ingestion review/retry facts. Readers and writers use typed domain keys, native relationships and SQL transactions. The historical audit below describes the initial post-cutover state, not the current product model.
+
+The fresh live catalog at `2026-10-03T16:41:19.617Z` contains **67 base tables, 663 columns, 323 validated constraints and 92 indexes**: 38 native domain tables, 24 frozen legacy domain tables and five storage/control tables. Independent acceptance of [#199](https://github.com/DavidCs9/personal-finance-system/pull/199) at `16:43:34.176Z` preserved all 59 pre-existing domain/recovery tables and their 6,893 rows exactly; the three new native exception tables contain eight headers, four source claims and three attempts. Real original evidence and deployed financial/domain/rollback gates passed. Every completed slice is recorded below; original financial review candidates remain evidence questions unless separately resolved.
+
+The current slice removes the shared document-command factory from product bundles, uses bounded SQL pagination only in isolated recovery audits, and tightens all 24 frozen domain tables plus `projection_state`/`command_receipts` to read-only recovery/verifier access. It preserves the frozen DynamoDB source, backups, original envelopes and provider-managed recovery resources. See the [runtime retirement run](autonomous-runs/2026-10-03-sql-runtime-retirement.md) for decisions and release status. No deletion of historical evidence is implied by normalization.
+
+## Initial assessment — historical 2026-10-01 snapshot
 
 **Binding architecture north star — David's explicit decision, 2026-10-01:** Olbia should feel as if it was born in SQL. Domain entities and keys, typed relationships, native constraints, direct SQL queries and transactional domain operations are the target. DynamoDB key patterns, GSI strings, document-command emulation and authoritative projection envelopes are temporary compatibility mechanisms, not the final model. A slice is normalized only when its native relational representation becomes authoritative and its readers/writers use it. Renaming the adapter or merely adding columns does not satisfy this direction. Purposeful evidence/history JSON remains valid. This direction is also recorded in the [product north star](product-north-star.md).
 
@@ -27,7 +35,7 @@ The inventory covers **29 base tables and one view**: 24 domain tables and five 
 
 Read paths and writers were inspected in:
 
-- [`services/ledger/src/dsql/model.ts`](../services/ledger/src/dsql/model.ts), [`schema.ts`](../services/ledger/src/dsql/schema.ts), [`store.ts`](../services/ledger/src/dsql/store.ts), and [`verification.ts`](../services/ledger/src/dsql/verification.ts).
+- [`services/ledger/src/dsql/model.ts`](../services/ledger/src/dsql/model.ts), [`schema.ts`](../services/ledger/src/dsql/schema.ts), the historical document adapter (now isolated in [`legacy-document-store.ts`](../services/ledger/src/dsql/legacy-document-store.ts)), and [`verification.ts`](../services/ledger/src/dsql/verification.ts).
 - Domain contracts in [`packages/domain/src`](../packages/domain/src), especially movement, category, MSI, payroll and wealth types.
 - API SQL readers, category mutations, bulk edits, import/reconciliation flows, monthly plans, card profiles and assistant thread state.
 - [`infrastructure/lambda/retry-dispatcher.ts`](../infrastructure/lambda/retry-dispatcher.ts) for SQL retry and expiration behavior.
@@ -36,7 +44,7 @@ The private local evidence directory is `/tmp/olbia-normalization-audit/`: `snap
 
 Original S3 binaries were **not downloaded and rehashed during this audit**. Existing migration evidence verification remains separate evidence. This report does not claim fresh MIME/PDF/CSV/XML verification, bank-statement reconciliation, or a complete audit of all historical revision transitions. A zero projection mismatch means the SQL representation faithfully contains the retained model.
 
-## Why the current model is still denormalized
+## Why the initial model was still denormalized
 
 Every domain table uses `(source_pk, source_sk, row_id)` as its primary key. Actual domain identities such as movement `id`, payroll `uuid` and `(account_id, day)` are nullable and lack database uniqueness. This retains DynamoDB routing syntax as relational identity.
 
@@ -46,7 +54,7 @@ The adapter's Query/Scan implementation reads envelopes and performs key-conditi
 
 There are two indexes beyond primary keys: movements by `(spend_month, id)` and installments by `(month, movement_id)`. Relational query paths need indexes based on actual relationships and time filters; a complete general-purpose index catalog is unnecessary for David's data volume.
 
-## Table-by-table audit
+## Initial table-by-table audit
 
 Proposed keys below are **recommendations**, not deployed changes. David remains the sole owner; no users, tenants or organization framework is proposed. Access checks remain tied to his authorized identity even if repeated owner columns are reduced.
 
@@ -243,3 +251,6 @@ Exception workflow prerequisite: eight exception originals/seven encrypted objec
 
 
 **Exception workflow coherent release preparation (2026-10-03):** guard [#198](https://github.com/DavidCs9/personal-finance-system/pull/198) passed required quality, linear merge, deploy-production and independent acceptance with all 59 tables/6,893 rows exact and marker 19 absent. The complete [native review/claim/retry domain](sql-native-exceptions.md) uses tuple keys, proven claim parents, completed-movement FKs and typed immutable source assertions. Every API/ingestion/fallback/dispatcher consumer now uses direct SQL; financial capture and its exact retry outcome commit together. Real-data rehearsal preserves eight/four/three facts, seven originals and absent historical UUIDs, with zero native-gate mismatches and both writer-role smoke transactions fully rolled back. Product fallback adapters and scheduled legacy TTL writes are retired; recovery rows remain frozen. Final native release/production acceptance are pending; see [run record](autonomous-runs/2026-10-03-native-exceptions.md).
+
+
+**Exceptions/claims/retries completed (2026-10-03):** [#199](https://github.com/DavidCs9/personal-finance-system/pull/199) passed final-head quality, linear merge, deploy-production and independent acceptance. Three native relations own every review/suppression/retry operation and exact financial outcome linkage. Every original baseline row across 59 tables remains exact; eight/four/three native facts, seven live MIME originals, 25 constraints/17 required columns and 336 permission assertions pass. Every deployed financial/provenance/evidence gate and actual fully rolled-back workflow smoke pass. All active domains now have native SQL authority. Next: retire the [remaining document runtime/read-mode dependencies and broad legacy privileges](autonomous-runs/2026-10-03-sql-runtime-retirement.md), preserving frozen recovery evidence.

@@ -1,4 +1,4 @@
-import { applicationStoreClient, withApplicationTransaction } from '@finance/ledger/dsql-store';
+import { withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { INSTITUTIONS, isInstitution } from '@finance/domain';
 import { readSqlCards, toNativeCardRecord } from './sql-reads.js';
 
@@ -72,8 +72,7 @@ export const saveCard = async (input: {
 }): Promise<CardRecord> => {
   if (!isValidCardId(input.cardId)) throw new InvalidCardError('cardId is invalid.');
   const body = parseCardInput(JSON.stringify(input.body));
-  return withApplicationTransaction(async () => {
-    const client = applicationStoreClient();
+  return withSqlTransaction(async client => {
     const existing = (await client.query('SELECT owner,created_at,deleted_at FROM olbia.card_profiles WHERE id=$1', [input.cardId])).rows[0];
     if (existing && existing.owner !== input.owner) throw new InvalidCardError('Card not found.');
     if (!existing || existing.deleted_at !== null) {
@@ -97,8 +96,8 @@ export const saveCard = async (input: {
 /** Retain identity for historical liability FKs; current readers omit inactive profiles. */
 export const deleteCard = async (input: { readonly owner: string; readonly cardId: string }): Promise<void> => {
   if (!isValidCardId(input.cardId)) throw new InvalidCardError('cardId is invalid.');
-  await withApplicationTransaction(async () => {
-    await applicationStoreClient().query(`UPDATE olbia.card_profiles SET deleted_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+  await withSqlTransaction(async client => {
+    await client.query(`UPDATE olbia.card_profiles SET deleted_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
       WHERE id=$1 AND owner=$2 AND deleted_at IS NULL`, [input.cardId, input.owner]);
   });
 };

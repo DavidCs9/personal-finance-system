@@ -1,4 +1,4 @@
-import { applicationStoreClient, withApplicationTransaction } from '@finance/ledger/dsql-store';
+import { applicationSqlClient, withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { payslipLineGroup, type PayslipSummary, type PayslipLine } from '@finance/domain';
 import { readerPool, type ReadSqlClient } from '../events/sql-reads.js';
 import type { JsonObject } from '../http/response.js';
@@ -73,11 +73,10 @@ export const readSqlAllPayrollRecords = async (owner: string, client: ReadSqlCli
     ON line.payslip_uuid=receipt.uuid WHERE receipt.owner=$1 ORDER BY receipt.paid_on,receipt.uuid,line.position`,[owner])).rows);
 
 export const payslipExists = async (uuid: string): Promise<boolean> =>
-  (await applicationStoreClient().query('SELECT uuid FROM olbia.payslips WHERE uuid=$1::uuid',[uuid])).rows.length>0;
+  (await applicationSqlClient().query('SELECT uuid FROM olbia.payslips WHERE uuid=$1::uuid',[uuid])).rows.length>0;
 export const insertPayslip = async (owner: string, payslip: PayslipSummary, ingestedAt: string, source: PayrollEvidence): Promise<'created'|'duplicate'> => {
   if (payslip.lines.length>MAX_PAYSLIP_LINES) throw new InvalidCfdiNominaError('La nómina tiene demasiadas líneas para guardarse completa.');
-  return withApplicationTransaction(async () => {
-    const client = applicationStoreClient();
+  return withSqlTransaction(async client => {
     const inserted = (await client.query(`INSERT INTO olbia.payslips (${payslipInsertColumns})
       VALUES (${Array.from({length:16},(_,i)=>`$${i+1}`).join(',')}) ON CONFLICT (uuid) DO NOTHING RETURNING uuid`,
     [payslip.uuid,owner,payslip.fechaPago,payslip.tipoNomina,payslip.totalMinor,payslip.totalPercepcionesMinor,

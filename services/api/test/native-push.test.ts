@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
-import { withStoreClient } from '@finance/ledger/dsql-store';
+import { withSqlClient } from '@finance/ledger/sql-runtime';
 import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
 import { NATIVE_PUSH_SCHEMA_STATEMENT, nativePushMetadataGrant } from '../../ledger/src/dsql/push-schema.js';
 import { upsertNativePushSubscription } from '@finance/ledger/native-push';
@@ -23,8 +23,8 @@ it('reads actual public metadata with the narrow SQL role across every old read-
   const saved=await seed();await sql.query('SET ROLE push_product');
   for(const mode of ['dynamodb','shadow','guarded-sql']){
     vi.stubEnv('DSQL_OPERATIONAL_READ_MODE',mode);
-    expect(await withStoreClient(sql,()=>listPublicPushSubscriptions('owner'))).toEqual([{subscriptionId:saved.subscriptionId,contentMode:'private',createdAt:at,updatedAt:at}]);
-    expect(await withStoreClient(sql,()=>listPublicPushSubscriptions('other'))).toEqual([]);
+    expect(await withSqlClient(sql,()=>listPublicPushSubscriptions('owner'))).toEqual([{subscriptionId:saved.subscriptionId,contentMode:'private',createdAt:at,updatedAt:at}]);
+    expect(await withSqlClient(sql,()=>listPublicPushSubscriptions('other'))).toEqual([]);
   }
   for(const key of ['endpoint','p256dh','auth'])await expect(sql.query(`SELECT ${key} FROM olbia.web_push_subscriptions`)).rejects.toMatchObject({code:'42501'});
 });
@@ -52,6 +52,6 @@ it('detects native digest corruption and missing database constraints independen
 
 it('sanitizes SQL failure and propagates it without returning stale metadata',async()=>{
   const query=vi.fn(async()=>{throw Object.assign(new Error('private endpoint/key'),{code:'08006'});});
-  await expect(withStoreClient({query},()=>listPublicPushSubscriptions('owner'))).rejects.toMatchObject({name:'StorageUnavailableException',message:'Olbia storage is unavailable.'});
+  await expect(withSqlClient({query},()=>listPublicPushSubscriptions('owner'))).rejects.toMatchObject({name:'StorageUnavailableException',message:'Olbia storage is unavailable.'});
   expect(query).toHaveBeenCalledTimes(1);
 });

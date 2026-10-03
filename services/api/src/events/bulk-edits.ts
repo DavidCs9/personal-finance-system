@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { applicationStoreClient, withNativeTransaction } from '@finance/ledger/dsql-store';
+import { applicationSqlClient, withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { insertLedgerRevision, readLedgerMovements, replaceMovementTags, setMovementCategory } from '@finance/ledger/native-ledger';
 import { bulkAmount, insertBulkOperation, readBulkOperation, transitionBulkOperation } from './bulk-storage.js';
 import {
@@ -192,12 +192,12 @@ export const parseBulkEditInput = (raw: unknown): {
 };
 
 const queryRangeEvents = async (selection: BulkEditSelection): Promise<readonly Record<string, unknown>[]> => {
-  const rows = await readLedgerMovements(applicationStoreClient(), { months: monthsBetween(selection.fromDay, selection.toDay) });
+  const rows = await readLedgerMovements(applicationSqlClient(), { months: monthsBetween(selection.fromDay, selection.toDay) });
   return rows.sort((a, b) => String(a.occurredAt ?? a.receivedAt).localeCompare(String(b.occurredAt ?? b.receivedAt))
     || String(a.id).localeCompare(String(b.id)));
 };
 const queryEventsById = (eventIds: readonly string[]): Promise<readonly Record<string, unknown>[]> =>
-  readLedgerMovements(applicationStoreClient(), { ids: eventIds });
+  readLedgerMovements(applicationSqlClient(), { ids: eventIds });
 
 const publicAffectedEvents = (events: readonly BulkEditSnapshot[]) => events.map(({
   id, merchantRaw, occurredAt, amountMinor,
@@ -612,7 +612,7 @@ const assertMutationBudget = (operations: readonly BulkEditOperation[]): void =>
 
 const mutateOperation = async (operation: BulkEditOperation, direction: 'apply' | 'undo', changedBy: string,
   at: string, audit: BulkEditAudit): Promise<BulkEditPreview> => {
-  const client = applicationStoreClient();
+  const client = applicationSqlClient();
   const current = new Map((await readLedgerMovements(client, { ids: operation.events.map(member => member.id) }))
     .map(movement => [String(movement.id), movement]));
   for (const member of operation.events) {
@@ -735,7 +735,7 @@ const batchResult = (operations: readonly BulkEditPreview[]): AgentTagBatchApply
   amountMinor: bulkAmount(operations), operations,
 });
 export const applyAgentTagEdits = (owner: string, operationIds: readonly string[], now = new Date()): Promise<AgentTagBatchApplyResult> =>
-  withNativeTransaction(() => applyBatch(owner, operationIds, now, assistantTagAudit));
+  withSqlTransaction(() => applyBatch(owner, operationIds, now, assistantTagAudit));
 
 export const applyAgentCategoryEdit = (
   owner: string,
@@ -764,16 +764,16 @@ export const undoAgentCategoryEdit = (
 );
 
 export const applyAgentCategoryEdits = (owner: string, operationIds: readonly string[], now = new Date()): Promise<AgentCategoryBatchApplyResult> =>
-  withNativeTransaction(() => applyBatch(owner, operationIds, now, assistantCategoryAudit));
+  withSqlTransaction(() => applyBatch(owner, operationIds, now, assistantCategoryAudit));
 
 export const previewBulkEdit = (...args: Parameters<typeof previewBulkEditInternal>): ReturnType<typeof previewBulkEditInternal> =>
-  withNativeTransaction(() => previewBulkEditInternal(...args));
+  withSqlTransaction(() => previewBulkEditInternal(...args));
 
 export const previewAgentTagEdit = (...args: Parameters<typeof previewAgentTagEditInternal>): ReturnType<typeof previewAgentTagEditInternal> =>
-  withNativeTransaction(() => previewAgentTagEditInternal(...args));
+  withSqlTransaction(() => previewAgentTagEditInternal(...args));
 
 export const previewAgentCategoryEdit = (...args: Parameters<typeof previewAgentCategoryEditInternal>): ReturnType<typeof previewAgentCategoryEditInternal> =>
-  withNativeTransaction(() => previewAgentCategoryEditInternal(...args));
+  withSqlTransaction(() => previewAgentCategoryEditInternal(...args));
 
 const transactOperation = (...args: Parameters<typeof transactOperationInternal>): ReturnType<typeof transactOperationInternal> =>
-  withNativeTransaction(() => transactOperationInternal(...args));
+  withSqlTransaction(() => transactOperationInternal(...args));

@@ -6,7 +6,7 @@ import { nativeFixture } from './fixtures/native-ledger.js';
 import { appendLedgerObservation, insertLedgerRevision } from '../../ledger/src/dsql/ledger-writes.js';
 import { saveNativeCapture } from '../../ledger/src/dsql/ledger-capture.js';
 import { readLedgerMovements } from '../../ledger/src/dsql/ledger-reads.js';
-import { currentStoreTransaction } from '../../ledger/src/dsql/store.js';
+import { currentSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
 import { reconcileKey } from '../../ledger/src/dsql/projection.js';
 import type { SqlClient, TransactionPool } from '../../ledger/src/dsql/projection.js';
 import type { ObservedEventInput } from '../../ledger/src/observed-events.js';
@@ -217,18 +217,18 @@ describe('native SQL financial reads', () => {
     expect(connection.createPool).toHaveBeenCalledWith('olbia_operational_verifier', expect.any(Object));
     expect(outside).not.toHaveBeenCalled();
     expect(statements.every(statement => /^(SELECT|WITH|EXPLAIN)/.test(statement.trim()))).toBe(true);
-    expect(currentStoreTransaction()).toBeUndefined();
+    expect(currentSqlClient()).toBeUndefined();
     outside.mockRestore(); snapshot.mockClear();
     await readers.withLedgerReadSnapshot(() => readers.withLedgerReadSnapshot(async () => {
-      expect(currentStoreTransaction()).toBeDefined();
+      expect(currentSqlClient()).toBeDefined();
       const { operationalVerificationPool } = await import('../src/operational/verification.js');
-      expect(operationalVerificationPool()).toBe(currentStoreTransaction());
+      expect(operationalVerificationPool()).toBe(currentSqlClient());
       expect((await queries.allStoredEvents()).length).toBe(1);
     }));
     expect(snapshot).toHaveBeenCalledTimes(1);
-    expect(currentStoreTransaction()).toBeUndefined();
+    expect(currentSqlClient()).toBeUndefined();
     await expect(readers.withLedgerReadSnapshot(async () => { throw new Error('Verification interrupted'); })).rejects.toThrow('Verification interrupted');
-    expect(currentStoreTransaction()).toBeUndefined();
+    expect(currentSqlClient()).toBeUndefined();
     expect(await fixture.snapshot()).toEqual(before);
     snapshot.mockRejectedValue(new Error('Snapshot unavailable'));
     await expect(verifyNativeFinancialReads('owner', now)).rejects.toThrow('Snapshot unavailable');
@@ -243,7 +243,7 @@ describe('native SQL financial reads', () => {
     await fixture.run(async () => {
       const {replaceInstallmentPlan} = await import('../../ledger/src/dsql/ledger-writes.js');
       const {buildMsiSchedule} = await import('@finance/domain');
-      await replaceInstallmentPlan(currentStoreTransaction()!,id,buildMsiSchedule({principalMinor:40000,months:2,startMonth:'2029-01',origin:'manual'}));
+      await replaceInstallmentPlan(currentSqlClient()!,id,buildMsiSchedule({principalMinor:40000,months:2,startMonth:'2029-01',origin:'manual'}));
     });
     expect((await fixture.sql.query('SELECT month FROM olbia.movement_months ORDER BY month')).rows)
       .toEqual([{month:'2026-10'},{month:'2029-01'},{month:'2029-02'}]);

@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { afterAll,afterEach,beforeAll,beforeEach,describe,expect,it,vi } from 'vitest';
 import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
 import * as connection from '../../ledger/src/dsql/connection.js';
-import { currentStoreTransaction,withStoreClient } from '../../ledger/src/dsql/store.js';
+import { currentSqlClient,withSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
 import type { SqlClient } from '../../ledger/src/dsql/projection.js';
 import * as readers from '../src/events/sql-reads.js';
 import { readBankImport,startBankImport,saveStatementPreview,failBankImport,completeBankImport,type BankImportRecord } from '../src/imports/import-sql.js';
@@ -30,7 +30,7 @@ beforeEach(async()=>{
     transaction:(fn:(c:SqlClient)=>Promise<unknown>)=>sql.transaction(c=>fn({query:(s:string,v?:unknown[])=>{
       statements.push(s);return c.query(s,v);
     }} as SqlClient))} as never);
-  vi.spyOn(readers,'readerPool').mockImplementation(()=>currentStoreTransaction()??sql);
+  vi.spyOn(readers,'readerPool').mockImplementation(()=>currentSqlClient()??sql);
 });
 describe('native import lifecycle and relational evidence',()=>{
   it('preserves signed/zero rows, candidate order and missing labels through an owner-bound consistent SQL read',async()=>{
@@ -73,7 +73,7 @@ describe('native import lifecycle and relational evidence',()=>{
     await startBankImport(record);
     await expect(startBankImport({...record,product:'Changed',rows:[...record.rows,{...record.rows[1]!,identity:'unsafe',amountMinor:9007199254740992}]})).rejects.toThrow();
     expect(await readBankImport(record.kind,hash,'owner')).toEqual(record);
-    await expect(sql.transaction(c=>withStoreClient(c as unknown as SqlClient,async()=>{
+    await expect(sql.transaction(c=>withSqlClient(c as unknown as SqlClient,async()=>{
       await startBankImport({...record,rows:[]});
       expect((await readBankImport(record.kind,hash,'owner'))?.rows).toEqual([]);throw new Error('Interrupted');
     }))).rejects.toThrow('Interrupted');

@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as sqlRuntime from '@finance/ledger/sql-runtime';
 import type { CategorizedSpendEvent, WealthSnapshot } from '@finance/domain';
 import type { WealthBalanceOverview } from '../src/wealth/service.js';
 
@@ -253,8 +254,11 @@ describe('monthly close email rendering', () => {
 });
 
 describe('monthly close orchestration', () => {
+  afterEach(()=>vi.restoreAllMocks());
   beforeEach(() => {
     vi.clearAllMocks();
+    // Pure orchestration injects all providers; native worker tests exercise the persisted SQL guard.
+    vi.spyOn(sqlRuntime,'assertSqlMutationsAvailable').mockResolvedValue();
   });
 
   it('falls back from AI, persists the prepared report, sends it, and marks it sent', async () => {

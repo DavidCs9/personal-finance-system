@@ -1,4 +1,4 @@
-import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
+import { assertSqlMutationsAvailable } from '@finance/ledger/sql-runtime';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import { dayKeyInZone, formatMxnWhole, monthKeyInZone } from '@finance/domain';
 import { getMonthlyEmailDelivery, prepareMonthlyEmailDelivery, markMonthlyEmailAccepted } from './delivery-store.js';
@@ -267,7 +267,7 @@ export const runMonthEndBalanceReminder = async (
   now: Date = new Date(),
   dependencies: MonthEndBalanceReminderDependencies = defaultDependencies,
 ): Promise<{ readonly month: string; readonly status: 'sent' | 'already_sent'; readonly messageId?: string }> => {
-  await assertMutationsAvailable();
+  await assertSqlMutationsAvailable();
   const owner = requiredEnvironment('MONTH_END_REMINDER_OWNER');
   const month = monthKeyInZone(now);
   const asOfDay = dayKeyInZone(now);

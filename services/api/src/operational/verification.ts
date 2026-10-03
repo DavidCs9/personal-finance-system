@@ -1,10 +1,9 @@
 import { verifyNativeExceptions } from '../exceptions/verification.js';
 import { verifyNativeConversationMetadata } from '../agent/thread-verification.js';
 import { verifyNativeMonthlyDeliveries } from '../reports/delivery-verification.js';
-import { currentStoreTransaction } from '@finance/ledger/dsql-store';
+import { currentSqlClient } from '@finance/ledger/sql-runtime';
 import { createPool } from '@finance/ledger/dsql-connection';
-import { paginateScan } from '@aws-sdk/lib-dynamodb';
-import { database, tableName } from '../http/clients.js';
+import { readRetainedEvidencePages } from '../events/retained-evidence.js';
 import { type ReadSqlClient } from '../events/sql-reads.js';
 import { samePublicResult } from '../events/read-selection.js';
 import type { JsonObject } from '../http/response.js';
@@ -57,14 +56,14 @@ export const compareOperationalRows = (source: readonly JsonObject[], rows: read
   samePublicResult(order(source.map(item => expectedOperationalRow(item, family)).map(normalize)), order(rows.map(normalize)));
 
 let verifierPool: ReturnType<typeof createPool> | undefined;
-export const operationalVerificationPool = (): ReadSqlClient => currentStoreTransaction() ?? (verifierPool ??= createPool('olbia_operational_verifier', { connectionTimeoutMillis: 1500, queryTimeoutMillis: 3000 }));
+export const operationalVerificationPool = (): ReadSqlClient => currentSqlClient() ?? (verifierPool ??= createPool('olbia_operational_verifier', { connectionTimeoutMillis: 1500, queryTimeoutMillis: 3000 }));
 export const verifyOperationalReads = async (owner: string, now: Date, client?: ReadSqlClient) => {
   const providedClient = client; client ??= operationalVerificationPool();
   const started = Date.now(), source: JsonObject[] = [];
   let sourcePages = 0, targetPages = 0, mismatches = 0, publicResponses = 0, expirationChecks = 0, configuredReads = 0;
   const check = (a: unknown, b: unknown) => { mismatches += Number(!samePublicResult(a, b)); };
-  for await (const page of paginateScan({ client: database, pageSize: 25 }, { TableName: tableName, ConsistentRead: true })) {
-    source.push(...page.Items ?? []); sourcePages++;
+  for await (const page of readRetainedEvidencePages(client)) {
+    source.push(...page); sourcePages++;
   }
   const retained: Record<string, number> = {}, targets = new Map<OperationalFamily, JsonObject[]>();
   for (const family of operationalFamilies) {

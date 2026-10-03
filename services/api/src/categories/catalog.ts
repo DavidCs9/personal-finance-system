@@ -1,5 +1,5 @@
 import { isValidCategoryId, type SpendCategory } from '@finance/domain';
-import { applicationStoreClient } from '@finance/ledger/dsql-store';
+import { applicationSqlClient } from '@finance/ledger/sql-runtime';
 import { readerPool, type ReadSqlClient } from '../events/sql-reads.js';
 
 export class InvalidCategoryError extends Error {}
@@ -16,7 +16,7 @@ export const requireCatalogCategories = async (ids: readonly (string | null)[]):
   const requested = [...new Set(ids.filter((id): id is string => id !== null))];
   if (!requested.length) return;
   if (requested.some(id => !isValidCategoryId(id))) throw new InvalidCategoryError('La categoría no es válida.');
-  const found = new Set((await applicationStoreClient().query(
+  const found = new Set((await applicationSqlClient().query(
     'SELECT id FROM olbia.spend_categories WHERE id=ANY($1::text[])', [requested],
   )).rows.map(row => String(row.id)));
   if (requested.some(id => !found.has(id))) {
@@ -39,7 +39,7 @@ export const saveCategoryCatalog = async (categories: readonly SpendCategory[]):
   if (new Set(categories.map(c => c.id)).size !== categories.length) {
     throw new InvalidCategoryError('El catálogo requiere IDs únicos.');
   }
-  const client = applicationStoreClient();
+  const client = applicationSqlClient();
   for (const category of categories) await client.query(
     `INSERT INTO olbia.spend_categories (id,name,sort_order) VALUES ($1,$2,$3)
       ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,sort_order=EXCLUDED.sort_order`,

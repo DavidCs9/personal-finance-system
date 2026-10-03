@@ -9,9 +9,7 @@ const listCards = vi.fn();
 const listPayslipsForYear = vi.fn();
 
 vi.mock('../src/http/clients.js', () => ({
-  database: { send: vi.fn() },
   s3: { send: vi.fn() },
-  tableName: 'test-metadata',
   rawSourceBucketName: 'test-raw-email',
 }));
 vi.mock('../src/wealth/native-reads.js', () => ({ readNativeWealthInputs }));

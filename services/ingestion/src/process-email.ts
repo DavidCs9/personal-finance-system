@@ -1,4 +1,4 @@
-import { withNativeTransaction } from '@finance/ledger/dsql-store';
+import { withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { createHash, randomUUID } from 'node:crypto';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
@@ -49,7 +49,7 @@ const ingest = async (job: IngestionJob): Promise<void> => {
 
   const source = { bucket: job.source.bucket, key: job.source.key, sha256, contentType: 'message/rfc822' as const };
   if (shouldIgnoreEmail(email)) {
-    const claimed = await withNativeTransaction(client => claimIgnoredEmail(client, dedupeKey, new Date().toISOString()));
+    const claimed = await withSqlTransaction(client => claimIgnoredEmail(client, dedupeKey, new Date().toISOString()));
     if (!claimed) return;
     console.info(JSON.stringify({ message: 'Administrative email ignored', sourceKey: job.source.key }));
     return;
@@ -149,7 +149,7 @@ const ingest = async (job: IngestionJob): Promise<void> => {
   let saved;
   try {
     const completedAt=new Date().toISOString();
-    saved=await withNativeTransaction(async client=>{
+    saved=await withSqlTransaction(async client=>{
       await assertNativeExceptionAccess(client);const attempt=await resolveRetryAttempt(client,{...job,source});
       const result=await captureObservedEvent({token:dedupeKey,captureSource:'email',event:purchase,reconciliationAt:job.receivedAt});
       if(attempt)await completeRetryAttempt(client,attempt,result.eventId,completedAt);return result;
@@ -210,14 +210,14 @@ const enqueueBedrockFallback = async (
 };
 
 const markRetryFailed=async(job:IngestionJob,details:string):Promise<void>=>{
-  const at=new Date().toISOString();await withNativeTransaction(async client=>{
+  const at=new Date().toISOString();await withSqlTransaction(async client=>{
     await assertNativeExceptionAccess(client);const attempt=await resolveRetryAttempt(client,job);if(attempt)await failRetryAttempt(client,attempt,details,at);
   });
 };
 type NewIngestionException=Pick<ReviewException,'receivedAt'|'institution'|'reason'|'details'|'source'>;
 const saveException=async(exception:NewIngestionException,sourceToken:string,extractorVersion:string,job:IngestionJob):Promise<void>=>{
   const id=randomUUID(),createdAt=new Date().toISOString(),savedException={id,...exception,sourceToken};
-  const created=await withNativeTransaction(async client=>{
+  const created=await withSqlTransaction(async client=>{
     await assertNativeExceptionAccess(client);const attempt=await resolveRetryAttempt(client,{...job,source:exception.source});
     const inserted=await saveClaimedReviewException(client,savedException,extractorVersion,createdAt);
     if(attempt)await failRetryAttempt(client,attempt,exception.details,createdAt);return inserted;

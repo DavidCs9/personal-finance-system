@@ -1,4 +1,4 @@
-import { applicationStoreClient, withNativeTransaction } from '@finance/ledger/dsql-store';
+import { applicationSqlClient, withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { isConversationId, conversationPresentation, readConversationMetadata, readConversationIndex, readConversationSelection, upsertConversation, selectConversation, deleteConversationMetadata } from '@finance/ledger/native-threads';
 import {
   BedrockAgentCoreClient,
@@ -46,16 +46,16 @@ export const assistantThreadTitle = (message: string): string => {
 };
 
 const unavailableStorage = () => Object.assign(new Error('Olbia storage is unavailable.'), { name:'StorageUnavailableException' });
-const assertNativeThreadsActive = async (client:ReturnType<typeof applicationStoreClient>):Promise<void> => {
+const assertNativeThreadsActive = async (client:ReturnType<typeof applicationSqlClient>):Promise<void> => {
   if (!(await client.query('SELECT version FROM olbia.schema_migrations WHERE version=18')).rows.length)
     throw Object.assign(new Error('Olbia está en mantenimiento. Intenta de nuevo más tarde.'),{name:'MigrationPausedException'});
 };
 const readMetadata = async <T>(operation: () => Promise<T>): Promise<T> => {
-  try { await assertNativeThreadsActive(applicationStoreClient()); return await operation(); }
+  try { await assertNativeThreadsActive(applicationSqlClient()); return await operation(); }
   catch (error) { if ((error as Error).name === 'MigrationPausedException') throw error; throw unavailableStorage(); }
 };
-const writeMetadata = async <T>(operation: Parameters<typeof withNativeTransaction<T>>[0]): Promise<T> => {
-  try { return await withNativeTransaction(async client => { await assertNativeThreadsActive(client); return operation(client); }); }
+const writeMetadata = async <T>(operation: Parameters<typeof withSqlTransaction<T>>[0]): Promise<T> => {
+  try { return await withSqlTransaction(async client => { await assertNativeThreadsActive(client); return operation(client); }); }
   catch (error) {
     if ((error as Error).name === 'ConversationUnavailableException') throw new InvalidAssistantThreadError('La conversación ya no está disponible.');
     if ((error as {code?:string}).code) throw unavailableStorage();
@@ -63,9 +63,9 @@ const writeMetadata = async <T>(operation: Parameters<typeof withNativeTransacti
   }
 };
 // The read-only verifier uses these actual product metadata adapters without provider IO or backfill.
-export const readStoredConversation = (owner:string,id:string) => readMetadata(() => readConversationMetadata(applicationStoreClient(),owner,id));
-export const readStoredConversationIndex = (owner:string,at:Date) => readMetadata(() => readConversationIndex(applicationStoreClient(),owner,at));
-export const readStoredConversationSelection = (owner:string) => readMetadata(() => readConversationSelection(applicationStoreClient(),owner));
+export const readStoredConversation = (owner:string,id:string) => readMetadata(() => readConversationMetadata(applicationSqlClient(),owner,id));
+export const readStoredConversationIndex = (owner:string,at:Date) => readMetadata(() => readConversationIndex(applicationSqlClient(),owner,at));
+export const readStoredConversationSelection = (owner:string) => readMetadata(() => readConversationSelection(applicationSqlClient(),owner));
 
 export const saveAssistantThread = async (
   dependencies: StoreDependencies,

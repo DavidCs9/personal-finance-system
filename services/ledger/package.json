@@ -8,14 +8,14 @@
     "./dsql-runtime": "./src/dsql/runtime.ts",
     "./dsql-schema": "./src/dsql/schema.ts",
     "./dsql-connection": "./src/dsql/connection.ts",
-    "./dsql-store": "./src/dsql/store.ts",
     "./native-wealth": "./src/dsql/native-wealth.ts",
     "./native-ledger": "./src/dsql/ledger.ts",
     "./dsql-cutover": "./src/dsql/cutover.ts",
     "./native-push": "./src/dsql/push.ts",
     "./native-deliveries": "./src/dsql/delivery.ts",
     "./native-threads": "./src/dsql/thread.ts",
-    "./native-exceptions": "./src/dsql/exception.ts"
+    "./native-exceptions": "./src/dsql/exception.ts",
+    "./sql-runtime": "./src/dsql/sql-runtime.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

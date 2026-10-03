@@ -1,4 +1,4 @@
-import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
+import { assertSqlMutationsAvailable } from '@finance/ledger/sql-runtime';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import {
@@ -181,7 +181,7 @@ export const syncIbkrForOwner = async (owner: string): Promise<JsonObjectLike> =
 };
 
 export const runIbkrSyncJob = async (): Promise<IbkrSyncResult> => {
-  await assertMutationsAvailable();
+  await assertSqlMutationsAvailable();
   const secretArn = process.env.IBKR_SECRET_ARN ?? '';
   if (!secretArn) {
     return { status: 'skipped', reason: 'IBKR_SECRET_ARN is not configured.' };

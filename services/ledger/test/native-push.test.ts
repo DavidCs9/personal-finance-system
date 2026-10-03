@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
-import { OlbiaSqlStore } from '../src/dsql/store.js';
+import { OlbiaSqlStore } from '../src/dsql/legacy-document-store.js';
 import { NATIVE_PUSH_SCHEMA_STATEMENT, nativePushMetadataGrant, nativePushReadGrant, nativePushWriteGrants } from '../src/dsql/push-schema.js';
 import { migratePushSubscriptions, preparePushCopy } from '../src/dsql/push-copy.js';
 import { pushSubscriptionId, readNativePushMetadata, readNativePushSubscriptions, upsertNativePushSubscription, deleteNativePushSubscription } from '../src/dsql/push.js';

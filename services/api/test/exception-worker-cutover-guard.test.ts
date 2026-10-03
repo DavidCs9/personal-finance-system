@@ -5,7 +5,7 @@ import { SQSClient } from '@aws-sdk/client-sqs';
 import { SESClient } from '@aws-sdk/client-ses';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { SCHEMA_STATEMENTS } from '@finance/ledger/dsql-schema';
-import { withStoreClient } from '@finance/ledger/dsql-store';
+import { withSqlClient } from '@finance/ledger/sql-runtime';
 import { insertReviewException,requestReviewRetry,readLatestRetry,readReviewException } from '@finance/ledger/native-exceptions';
 import { NATIVE_LEDGER_TABLES,LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../../ledger/src/dsql/ledger-schema.js';
 import type { SqlClient,TransactionPool } from '../../ledger/src/dsql/projection.js';
@@ -94,6 +94,6 @@ it('carries exact attempt identity through fallback extraction to the existing i
 });
 it('fails closed on sanitized driver errors with partial retries and no provider work',async()=>{
   const client:SqlClient={query:async()=>{throw Object.assign(new Error('private driver failure'),{code:'08006'});}};
-  expect(await withStoreClient(client,async()=>ingest())).toEqual(failed);expect(await withStoreClient(client,async()=>extract())).toEqual(failed);
-  await expect(withStoreClient(client,()=>dispatcher.handler({}))).rejects.toMatchObject({name:'StorageUnavailableException',message:'Olbia storage is unavailable.'});expect(s3).not.toHaveBeenCalled();expect(sqs).not.toHaveBeenCalled();expect(ses).not.toHaveBeenCalled();
+  expect(await withSqlClient(client,async()=>ingest())).toEqual(failed);expect(await withSqlClient(client,async()=>extract())).toEqual(failed);
+  await expect(withSqlClient(client,()=>dispatcher.handler({}))).rejects.toMatchObject({name:'StorageUnavailableException',message:'Olbia storage is unavailable.'});expect(s3).not.toHaveBeenCalled();expect(sqs).not.toHaveBeenCalled();expect(ses).not.toHaveBeenCalled();
 });

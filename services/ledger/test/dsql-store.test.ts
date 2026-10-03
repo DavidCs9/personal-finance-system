@@ -2,7 +2,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, afterAll, describe, it, expect, vi } from 'vitest';
 import { GetCommand, PutCommand, UpdateCommand, DeleteCommand, QueryCommand, ScanCommand, BatchGetCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
-import { OlbiaSqlStore, withStoreClient } from '../src/dsql/store.js';
+import { OlbiaSqlStore } from '../src/dsql/legacy-document-store.js';
+import { withSqlClient } from '../src/dsql/sql-runtime.js';
 import { conditionMatches, updateItem } from '../src/dsql/expressions.js';
 import { verifyKey } from '../src/dsql/verification.js';
 import type { SqlClient, TransactionPool } from '../src/dsql/projection.js';
@@ -65,7 +66,7 @@ describe('Olbia SQL write authority',()=>{
     await expect(store.send({input:{TableName}})).rejects.toMatchObject({name:'ValidationException'});
   });
   it('keeps same-transaction reads visible through the shared application context',async()=>{
-    const a=record('visible');await pool.transaction(client=>withStoreClient(client,async()=>{await store.send(new PutCommand({TableName,Item:a}));expect((await store.send(new GetCommand({TableName,Key:a}))).Item).toEqual(a);}));
+    const a=record('visible');await pool.transaction(client=>withSqlClient(client,async()=>{await store.send(new PutCommand({TableName,Item:a}));expect((await store.send(new GetCommand({TableName,Key:a}))).Item).toEqual(a);}));
   });
 });
 describe('checked-in Olbia expression grammar',()=>{

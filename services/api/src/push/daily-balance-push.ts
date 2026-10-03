@@ -1,4 +1,4 @@
-import { assertMutationsAvailable } from '@finance/ledger/dsql-store';
+import { assertSqlMutationsAvailable } from '@finance/ledger/sql-runtime';
 import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import {
   dailyBalancePushMessage,
@@ -20,7 +20,7 @@ export const handler = async (): Promise<{
   readonly expired: number;
   readonly failed: number;
 }> => {
-  await assertMutationsAvailable();
+  await assertSqlMutationsAvailable();
   if (!vapidSecretArn || !webAppUrl) {
     throw new Error('VAPID_SECRET_ARN and WEB_APP_URL are required.');
   }

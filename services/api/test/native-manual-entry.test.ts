@@ -5,7 +5,7 @@ import type { SqlClient, TransactionPool } from '../../ledger/src/dsql/projectio
 import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../../ledger/src/dsql/ledger-schema.js';
 import { saveNativeCapture } from '../../ledger/src/dsql/ledger-capture.js';
-import { runNativeTransaction } from '../../ledger/src/dsql/store.js';
+import { runSqlTransaction } from '../../ledger/src/dsql/sql-runtime.js';
 
 const harness = vi.hoisted(() => ({ pool: undefined as unknown as SqlClient & TransactionPool, s3: vi.fn() }));
 vi.mock('../../ledger/src/dsql/connection.js', () => ({ createPool: () => harness.pool }));
@@ -72,7 +72,7 @@ describe('manual capture with native financial authority', () => {
   });
 
   it('creates a distinct purchase when David explicitly enters an existing email purchase', async () => {
-    const existing = await runNativeTransaction(harness.pool, client => saveNativeCapture(client, {
+    const existing = await runSqlTransaction(harness.pool, client => saveNativeCapture(client, {
       captureSource: 'email', token: 'original-email', reconciliationAt: at,
       event: { id: '11111111-1111-4111-8111-111111111111', institution: input.institution,
         eventType: 'card_purchase', status: 'accepted', amount: { amountMinor: input.amountMinor, currency: 'MXN' },
