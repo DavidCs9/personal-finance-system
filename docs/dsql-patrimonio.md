@@ -1,5 +1,7 @@
 # DSQL Patrimonio migration
 
+**Historical projection rollout (2026-10-01).** Current implementation and release criteria are documented in [Native SQL Patrimonio](sql-native-wealth.md). The DynamoDB keys, embedded projection authorities and wealth read-mode rollback described below record that earlier rollout; they are not the native financial architecture.
+
 For current write authority and recovery, see [the coordinated SQL cutover](dsql-write-cutover.md). The phase evidence below records the earlier projection/read rollout.
 
 The completed [domain-read phase](dsql-domain-reads.md) enables guarded SQL for read-only categories/rules, standalone cards/cycles and worker/assistant movement consumers after separate verified shadow and promotion PRs. Its consumer inventory supersedes earlier remaining-read lists; all writes, authoritative decisions and strong freshness references remain in DynamoDB. Production evidence and rollback are recorded there.

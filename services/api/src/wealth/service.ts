@@ -1,7 +1,6 @@
 import { withNativeTransaction } from '@finance/ledger/dsql-store';
 import { createHash, randomUUID } from 'node:crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import {
   CAJITA_ACCOUNT_ID,
   cajitaEmergencyHolding,
@@ -17,26 +16,19 @@ import {
   wealthTotalMonthlyHistory,
   type CardLiabilitySnapshot,
   type WealthAccountId,
+  type WealthAccountDefinition,
   type WealthHolding,
   type WealthSnapshot,
   type WealthSnapshotSource,
 } from '@finance/domain';
 import { isValidCardId } from '../cards/cards.js';
 import type { CardRecord } from '../cards/cards.js';
-import { database, rawSourceBucketName, s3, tableName } from '../http/clients.js';
+import { rawSourceBucketName, s3 } from '../http/clients.js';
 import { errorName, type JsonObject } from '../http/response.js';
 import { listPayslipsForYear } from '../imports/cfdi-nomina-flow.js';
-import { toPublicSnapshot, toPublicLiabilitySnapshot } from './records.js';
-import { readConfiguredWealthInputs, type WealthInputsReader } from './sql-reads.js';
+import { readNativeWealthInputs, type NativeWealthInputsReader } from './native-reads.js';
 import { InvalidWealthSnapshotError, parseCajitaSnapshot, parseCardLiabilitySnapshot } from './input.js';
-import { insertNativeAssetCapture, insertNativeLiabilityCapture, validateAssetHoldings } from './native-writes.js';
-import { assertLegacyWealthReadAvailable } from './legacy-read-guard.js';
-import {
-  liabilitySnapshotSkPrefix,
-  seededWealthAccounts,
-  wealthSnapshotSkPrefix,
-} from './keys.js';
-
+import { insertNativeAssetCapture, insertNativeLiabilityCapture, validateAssetHoldings } from '@finance/ledger/native-wealth';
 const evidenceObjectKey = (kind: 'manual' | 'api', owner: string, sha256: string): string =>
   kind === 'manual' ? `wealth-manual/${owner}/${sha256}.json` : `wealth-api/${owner}/${sha256}.json`;
 
@@ -77,35 +69,8 @@ export interface WealthBalanceOverview {
   readonly liabilities: readonly WealthBalanceLiability[];
 }
 
-export const listCanonicalSnapshotsDynamo = async (owner: string): Promise<readonly WealthSnapshot[]> => {
-  await assertLegacyWealthReadAvailable();
-  const items: Record<string, unknown>[] = [];
-  let exclusiveStartKey: Record<string, unknown> | undefined;
-  do {
-    const page = await database.send(new QueryCommand({
-      TableName: tableName,
-      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-      ExpressionAttributeValues: {
-        ':pk': `USER#${owner}`,
-        ':sk': wealthSnapshotSkPrefix,
-      },
-      ExclusiveStartKey: exclusiveStartKey,
-      ConsistentRead: true,
-    }));
-    for (const item of page.Items ?? []) {
-      items.push(item as Record<string, unknown>);
-    }
-    exclusiveStartKey = page.LastEvaluatedKey as Record<string, unknown> | undefined;
-  } while (exclusiveStartKey);
-
-  return items
-    .map((item) => toPublicSnapshot(item))
-    .filter((snapshot): snapshot is WealthSnapshot => Boolean(snapshot))
-    .sort((left, right) => left.day.localeCompare(right.day) || left.accountId.localeCompare(right.accountId));
-};
-
 export const listWealthSnapshots = async (owner: string): Promise<readonly WealthSnapshot[]> =>
-  (await readConfiguredWealthInputs(owner)).snapshots;
+  (await readNativeWealthInputs(owner)).snapshots;
 
 /**
  * Canonical daily snapshots for a connected account. Used by read-only agent
@@ -116,7 +81,7 @@ export const listWealthSnapshotsForAccount = async (
   owner: string,
   accountId: WealthAccountId,
 ): Promise<readonly WealthSnapshot[]> =>
-  (await readConfiguredWealthInputs(owner)).snapshots.filter((snapshot) => snapshot.accountId === accountId);
+  (await readNativeWealthInputs(owner)).snapshots.filter((snapshot) => snapshot.accountId === accountId);
 
 const latestByAccount = (
   snapshots: readonly WealthSnapshot[],
@@ -187,33 +152,6 @@ const netWorthHistoryPoints = (
   });
 };
 
-export const listCanonicalLiabilitySnapshotsDynamo = async (owner: string): Promise<readonly CardLiabilitySnapshot[]> => {
-  await assertLegacyWealthReadAvailable();
-  const items: Record<string, unknown>[] = [];
-  let exclusiveStartKey: Record<string, unknown> | undefined;
-  do {
-    const page = await database.send(new QueryCommand({
-      TableName: tableName,
-      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-      ExpressionAttributeValues: {
-        ':pk': `USER#${owner}`,
-        ':sk': liabilitySnapshotSkPrefix,
-      },
-      ExclusiveStartKey: exclusiveStartKey,
-      ConsistentRead: true,
-    }));
-    for (const item of page.Items ?? []) {
-      items.push(item as Record<string, unknown>);
-    }
-    exclusiveStartKey = page.LastEvaluatedKey as Record<string, unknown> | undefined;
-  } while (exclusiveStartKey);
-
-  return items
-    .map((item) => toPublicLiabilitySnapshot(item))
-    .filter((snapshot): snapshot is CardLiabilitySnapshot => Boolean(snapshot))
-    .sort((left, right) => left.day.localeCompare(right.day) || left.cardId.localeCompare(right.cardId));
-};
-
 const latestLiabilityByCard = (
   snapshots: readonly CardLiabilitySnapshot[],
 ): ReadonlyMap<string, CardLiabilitySnapshot> => {
@@ -249,6 +187,7 @@ const derivedFondoSnapshot = (
 };
 
 const wealthBalanceOverview = (input: {
+  readonly accounts: readonly WealthAccountDefinition[];
   readonly snapshots: readonly WealthSnapshot[];
   readonly liabilitySnapshots: readonly CardLiabilitySnapshot[];
   readonly cards: readonly CardRecord[];
@@ -262,7 +201,7 @@ const wealthBalanceOverview = (input: {
   const fondoSnapshot = derivedFondoSnapshot(input.fondoTotalMinor, input.asOfDay, input.capturedAt);
   if (fondoSnapshot) latest.set(FONDO_AHORRO_ACCOUNT_ID, fondoSnapshot);
 
-  const accounts: readonly WealthBalanceAccount[] = seededWealthAccounts().map((account) => {
+  const accounts: readonly WealthBalanceAccount[] = input.accounts.map((account) => {
     const snapshot = latest.get(account.id) ?? null;
     return { ...account, connected: Boolean(snapshot), latestSnapshot: snapshot };
   });
@@ -298,14 +237,15 @@ export const getWealthOverviewAsOf = async (
   owner: string,
   asOfDay: string,
   readPayrollYear: typeof listPayslipsForYear = listPayslipsForYear,
-  readInputs: WealthInputsReader = readConfiguredWealthInputs,
+  readInputs: NativeWealthInputsReader = readNativeWealthInputs,
 ): Promise<WealthBalanceOverview> => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(asOfDay)) throw new Error('asOfDay must be YYYY-MM-DD.');
   const year = asOfDay.slice(0, 4);
   const [inputs, yearPayslips] = await Promise.all([readInputs(owner), readPayrollYear(owner, year)]);
-  const { snapshots, cards, liabilitySnapshots } = inputs;
+  const { accounts, snapshots, cards, liabilitySnapshots } = inputs;
   const eligiblePayslips = yearPayslips.filter((payslip) => payslip.fechaPago <= asOfDay);
   return wealthBalanceOverview({
+    accounts,
     snapshots,
     liabilitySnapshots,
     cards,
@@ -319,15 +259,16 @@ export const getWealthOverview = async (
   owner: string,
   now: Date = new Date(),
   readPayrollYear: typeof listPayslipsForYear = listPayslipsForYear,
-  readInputs: WealthInputsReader = readConfiguredWealthInputs,
+  readInputs: NativeWealthInputsReader = readNativeWealthInputs,
 ): Promise<JsonObject> => {
   const year = dayKeyInZone(now, FINANCE_TIME_ZONE).slice(0, 4);
   const [inputs, yearPayslips] = await Promise.all([readInputs(owner), readPayrollYear(owner, year)]);
-  const { snapshots, cards, liabilitySnapshots } = inputs;
+  const { accounts, snapshots, cards, liabilitySnapshots } = inputs;
   const fondoTotal = sumFondoAhorroDeduccionesMinor(yearPayslips);
   const fondoRunning = runningFondoAhorroByDay(yearPayslips);
   const today = dayKeyInZone(now, FINANCE_TIME_ZONE);
   const balance = wealthBalanceOverview({
+    accounts,
     snapshots,
     liabilitySnapshots,
     cards,
@@ -346,7 +287,7 @@ export const getWealthOverview = async (
     history: {
       all: historyAll,
       byAccount: Object.fromEntries(
-        WEALTH_ACCOUNTS.map((account) => [
+        accounts.map((account) => [
           account.id,
           account.id === FONDO_AHORRO_ACCOUNT_ID
             ? fondoRunning
@@ -360,7 +301,7 @@ export const getWealthOverview = async (
 /** One selected canonical bundle per report, reused across closing days. */
 export const getWealthOverviewsAsOf = async (owner: string, days: readonly string[],
   readPayrollYear: typeof listPayslipsForYear = listPayslipsForYear,
-  readInputs: WealthInputsReader = readConfiguredWealthInputs,
+  readInputs: NativeWealthInputsReader = readNativeWealthInputs,
 ): Promise<readonly WealthBalanceOverview[]> => {
   const inputs = await readInputs(owner);
   const years = [...new Set(days.map(day => day.slice(0, 4)))];

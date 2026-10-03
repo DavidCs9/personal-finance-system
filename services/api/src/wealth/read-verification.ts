@@ -1,9 +1,6 @@
-import { createHash } from 'node:crypto';
-import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { addCalendarMonths, dayKeyInZone, type WealthSnapshot } from '@finance/domain';
-import { s3 } from '../http/clients.js';
-import type { JsonObject } from '../http/response.js';
-import { readerPool } from '../events/sql-reads.js';
+import { readerPool, withLedgerVerificationSnapshot } from '../events/sql-reads.js';
+import { verifyWealthEvidence } from './evidence-verification.js';
 import { samePublicResult } from '../events/read-selection.js';
 import { listPayslipsForYear } from '../imports/cfdi-nomina-flow.js';
 import { readSqlPayslipsForYear } from '../months/sql-reads.js';
@@ -13,56 +10,20 @@ import { buildMonthlyCloseFacts, monthCloseDay } from '../reports/monthly-close.
 import { renderMonthEndBalanceReminder } from '../reports/month-end-balance-reminder.js';
 import { investmentHistoryFromSnapshots, portfolioSnapshotsFromAccounts } from '../agent/investment-history.js';
 import { getWealthOverview, getWealthOverviewAsOf, getWealthOverviewsAsOf } from './service.js';
-import { readSourceWealthInputs, readSqlWealthInputs, readSourceWealthRecords, readSqlWealthAudit,
-  readWealthAudit, wealthReadMode, wealthReadStatement, wealthAuditStatement, type WealthInputsReader } from './sql-reads.js';
-
-const normalizedDate = (value: unknown): unknown => value instanceof Date ? value.toISOString() : value;
-const storedSnapshotMatches = (row: JsonObject, item: JsonObject, version: boolean, wealth: boolean): boolean => {
-  const expected: JsonObject = { owner: item.owner, day: item.day, captured_at: item.capturedAt,
-    source: item.source, currency: item.currency, total_mxn_minor: String(item.totalMxnMinor),
-    evidence: item.evidence ?? null, payload: item, source_item: item,
-    row_id: version ? item.versionId : item.SK, source_pk: item.PK, source_sk: item.SK,
-    ...(wealth ? { account_id: item.accountId, holdings: item.holdings, fx_rate: item.fxRate ?? null, fx_source: item.fxSource ?? null } : { card_id: item.cardId }),
-    ...(version ? { version_id: item.versionId, superseded_at: item.supersededAt } : {}) };
-  const actual = { ...row, captured_at: normalizedDate(row.captured_at),
-    day: row.day instanceof Date ? row.day.toISOString().slice(0, 10) : row.day,
-    total_mxn_minor: String(row.total_mxn_minor),
-    ...(wealth ? { fx_rate: row.fx_rate == null ? null : Number(row.fx_rate) } : {}),
-    ...(version ? { superseded_at: normalizedDate(row.superseded_at) } : {}) };
-  return samePublicResult(actual, expected);
-};
+import { readNativeWealthInputs, readNativeWealthAudit, nativeAssetReadStatement, nativeLiabilityReadStatement, nativeAssetAuditReadStatement, nativeLiabilityAuditReadStatement, type NativeWealthInputsReader } from './native-reads.js';
+import { readIndependentWealthState, verifyWealthRecovery } from './native-verification.js';
 
 /** Independent complete content, finances, investment series and original evidence gate.
  * No guard may replace these explicit SQL reads. No report/notification is sent. */
-export const verifyWealthReads = async (owner: string, financialMonths: readonly string[], now: Date) => {
+const verifyWealthSnapshot = async (owner: string, financialMonths: readonly string[], now: Date) => {
   const started = Date.now(), client = readerPool();
-  const sourceRecords = await readSourceWealthRecords(owner);
-  const projected: JsonObject[] = [];
-  let mismatches = 0;
-  const tables = ['wealth_snapshots', 'wealth_versions', 'liability_snapshots', 'liability_versions', 'cards'];
-  for (const table of tables) {
-    const rows = (await client.query(`SELECT * FROM olbia.${table} WHERE source_pk=$1`, [`USER#${owner}`])).rows;
-    for (const row of rows) {
-      const item = sourceRecords.find(item => item.PK === row.source_pk && item.SK === row.source_sk);
-      projected.push(row.source_item as JsonObject);
-      if (!item) { mismatches++; continue; }
-      mismatches += Number(table === 'cards' ? !samePublicResult(row.payload, item.payload)
-        || row.id !== (item.payload as JsonObject).id || row.owner !== item.owner
-        || row.name !== (item.payload as JsonObject).name || row.cut_off_day !== (item.payload as JsonObject).cutOffDay
-        || row.payment_due_day !== (item.payload as JsonObject).paymentDueDay
-        : !storedSnapshotMatches(row, item, table.endsWith('_versions'), table.startsWith('wealth_')));
-    }
-  }
-  const sorted = (records: JsonObject[]) => [...records].sort((a, b) => String(a?.SK).localeCompare(String(b?.SK)));
-  mismatches += Number(!samePublicResult(sorted(sourceRecords), sorted(projected)));
-  const source = await readSourceWealthInputs(owner), sql = await readSqlWealthInputs(owner, client);
+  const state = await readIndependentWealthState(owner, client), recovery = await verifyWealthRecovery(owner, client, state);
+  const source = state.inputs, sql = await readNativeWealthInputs(owner, client);
+  let mismatches = state.mismatches + recovery.mismatches;
   mismatches += Number(!samePublicResult(source, sql));
-  const sourceReader: WealthInputsReader = async () => source, sqlReader: WealthInputsReader = async () => sql;
-  const sourceAudit = sourceRecords.filter(item => /^(WEALTH|LIAB)_VER#/.test(String(item.SK)));
-  mismatches += Number(!samePublicResult(sourceAudit, await readSqlWealthAudit(owner, client)));
-  mismatches += Number(!samePublicResult(sourceAudit, await readWealthAudit(owner)));
-  const dayOf = (item: JsonObject) => typeof item.day === 'string' ? item.day : undefined;
-  const days = new Set(sourceRecords.map(dayOf).filter((day): day is string => !!day));
+  mismatches += Number(!samePublicResult(state.audit, await readNativeWealthAudit(owner, client)));
+  const sourceReader: NativeWealthInputsReader = async () => source, sqlReader: NativeWealthInputsReader = async () => sql;
+  const days = new Set([...state.assetFacts.values(), ...state.liabilityFacts.values()].map(item => item.day));
   const months = new Set([...financialMonths, ...[...days].map(day => day.slice(0, 7)), dayKeyInZone(now).slice(0, 7)]);
   const firstMonth = [...months].sort()[0]!, lastMonth = [...months].sort().at(-1)!;
   for (let month = addCalendarMonths(firstMonth, -1); month <= addCalendarMonths(lastMonth, 1); month = addCalendarMonths(month, 1)) months.add(month);
@@ -110,37 +71,34 @@ export const verifyWealthReads = async (owner: string, financialMonths: readonly
   for (const month of [...months].sort()) {
     const before = [1, 2, 3].map(offset => addCalendarMonths(month, -offset));
     const events = await loadCategorizedMonthsEvents([month, ...before]);
-    const build = (reader: WealthInputsReader, payroll: typeof sourcePayroll) => buildMonthlyCloseFacts(owner, month, now, {
+    const build = (reader: NativeWealthInputsReader, payroll: typeof sourcePayroll) => buildMonthlyCloseFacts(owner, month, now, {
       loadEvents: async () => events, loadCategories: async () => categories,
       loadWealthAsOf: (_owner, day) => getWealthOverviewAsOf(owner, day, payroll, reader),
       loadWealthAsOfDays: (_owner, days) => getWealthOverviewsAsOf(owner, days, payroll, reader),
     });
     mismatches += Number(!samePublicResult(await build(sourceReader, sourcePayroll), await build(sqlReader, sqlPayroll))); reports++;
   }
-  let evidenceFiles = 0;
-  const evidenceSeen = new Set<string>();
-  for (const item of sourceRecords) {
-    if (!item.evidence) continue;
-    const evidence = item.evidence as { bucket: string; key: string; sha256: string };
-    const signature = `${evidence.bucket}/${evidence.key}/${evidence.sha256}`;
-    if (evidenceSeen.has(signature)) continue;
-    evidenceSeen.add(signature);
-    const object = await s3.send(new GetObjectCommand({ Bucket: evidence.bucket, Key: evidence.key }));
-    const bytes = await object.Body!.transformToByteArray();
-    mismatches += Number(createHash('sha256').update(bytes).digest('hex') !== evidence.sha256); evidenceFiles++;
-  }
-  // Configured freshness fallback is checked only after explicit independent comparisons.
   mismatches += Number(!samePublicResult(await getWealthOverview(owner, now), await getWealthOverview(owner, now, sqlPayroll, sqlReader)));
   const queryPlans = [];
-  for (const [query, statement] of [['wealth-inputs', wealthReadStatement], ['wealth-audit', wealthAuditStatement]]) {
-    const result = await client.query(`EXPLAIN ANALYZE VERBOSE ${statement}`, query === 'wealth-inputs' ? [`USER#${owner}`, owner] : [`USER#${owner}`]);
+  for (const [query, statement] of [['asset-captures', nativeAssetReadStatement], ['liability-captures', nativeLiabilityReadStatement], ['asset-history', nativeAssetAuditReadStatement], ['liability-history', nativeLiabilityAuditReadStatement]]) {
+    const result = await client.query(`EXPLAIN ANALYZE VERBOSE ${statement}`, [owner]);
     const lines = result.rows.map(row => String(row['QUERY PLAN']));
     queryPlans.push({ query, scanTypes: [...new Set(lines.flatMap(line => line.match(/(?:Index Only Scan|Index Scan|Seq Scan|Bitmap Heap Scan)/g) ?? []))],
       metrics: lines.filter(line => /(?:DPU|Planning Time|Execution Time)/i.test(line)).map(line => line.trim()).filter(line => /^[\w\s():.=,+-]+$/.test(line)) });
   }
-  const count = (prefix: string) => sourceRecords.filter(item => String(item.SK).startsWith(prefix)).length;
-  return { mode: wealthReadMode(), storedSnapshots: count('WEALTH_SNAP#'), storedVersions: count('WEALTH_VER#'),
-    storedLiabilities: count('LIAB_SNAP#'), storedLiabilityVersions: count('LIAB_VER#'), cards: count('CARD#'),
-    asOfDays, dailyOverviews, months: months.size, investmentChecks, reports, reminders, evidenceFiles,
-    mismatches, elapsedMs: Date.now() - started, queryPlans };
+  return { mode: 'native-sql', storedSnapshots: sql.snapshots.length, storedVersions: state.audit.filter(r => r.kind === 'asset').length,
+    storedLiabilities: sql.liabilitySnapshots.length, storedLiabilityVersions: state.audit.filter(r => r.kind === 'liability').length, cards: sql.cards.length,
+    captures: state.captures, holdings: state.holdings, replacements: state.replacements, validatedConstraints: state.validatedConstraints,
+    recoveryAssertions: recovery.assertions, recoveryMismatches: recovery.mismatches,
+    asOfDays, dailyOverviews, months: months.size, investmentChecks, reports, reminders,
+    mismatches, elapsedMs: Date.now() - started, queryPlans,
+    evidenceAssertions: [...state.assetFacts.values(), ...state.liabilityFacts.values()].map(snapshot => ({ owner, snapshot })) };
+};
+
+/** Close the SQL snapshot before original object IO; public verification returns aggregate proofs only. */
+export const verifyWealthReads = async (owner: string, financialMonths: readonly string[], now: Date) => {
+  const started = Date.now();
+  const { evidenceAssertions, ...facts } = await withLedgerVerificationSnapshot(() => verifyWealthSnapshot(owner, financialMonths, now));
+  const evidence = await verifyWealthEvidence(evidenceAssertions);
+  return { ...facts, evidence, evidenceFiles: evidence.evidenceFiles, mismatches: facts.mismatches + evidence.mismatches, elapsedMs: Date.now() - started };
 };

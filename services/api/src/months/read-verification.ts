@@ -13,7 +13,7 @@ import { getMonthlyPlan, getMonthlyPlanFromReads } from './service.js';
 import { planReadStatement, payrollReadStatement, readSqlPlanRecord, readSqlAllPlanRecords, readSqlPayslipsForMonth, readSqlPayslipsForYear } from './sql-reads.js';
 import { summarizeMonthFeed } from './summary.js';
 import { getWealthOverview, getWealthOverviewAsOf } from '../wealth/service.js';
-import { readSourceWealthInputs } from '../wealth/sql-reads.js';
+import { readNativeWealthInputs } from '../wealth/native-reads.js';
 import { monthCloseDay } from '../reports/monthly-close.js';
 
 /** Frozen evidence parity and native typed/domain/financial verification are independent gates. */
@@ -88,8 +88,8 @@ export const verifyPlanningReads = async (owner: string, movementPayloads: JsonO
     mismatches += Number(!samePublicResult(summarizeMonthFeed(month, sourcePlan, feedFromMovements([month], movementPayloads), now),
       summarizeMonthFeed(month, sqlPlan, await readSqlFeed([month], client), now))); summaries++;
     const day = monthCloseDay(month);
-    mismatches += Number(!samePublicResult(await getWealthOverviewAsOf(owner, day, listPayslipsForYear, readSourceWealthInputs),
-      await getWealthOverviewAsOf(owner, day, readSqlPayslipsForYear, readSourceWealthInputs))); wealthCloses++;
+    mismatches += Number(!samePublicResult(await getWealthOverviewAsOf(owner, day, listPayslipsForYear, readNativeWealthInputs),
+      await getWealthOverviewAsOf(owner, day, readSqlPayslipsForYear, readNativeWealthInputs))); wealthCloses++;
   }
   const years = new Set([...months].map(month => month.slice(0, 4)));
   let payrollYears = 0;
@@ -117,7 +117,7 @@ export const verifyPlanningReads = async (owner: string, movementPayloads: JsonO
   }
   const missing = '__dsql_missing_payroll__';
   mismatches += Number(await getPayslipSql(owner,'1900-01',missing)!==undefined);
-  mismatches += Number(!samePublicResult(await getWealthOverview(owner, now, listPayslipsForYear, readSourceWealthInputs), await getWealthOverview(owner, now, readSqlPayslipsForYear, readSourceWealthInputs)));
+  mismatches += Number(!samePublicResult(await getWealthOverview(owner, now, listPayslipsForYear, readNativeWealthInputs), await getWealthOverview(owner, now, readSqlPayslipsForYear, readNativeWealthInputs)));
   // The actual public path must succeed with the current native authority.
   mismatches += Number(!samePublicResult(await getMonthlyPlan(owner, monthKeyInZone(now)),
     await getMonthlyPlanFromReads(owner, monthKeyInZone(now), readSqlPlanRecord, sqlIncome)));

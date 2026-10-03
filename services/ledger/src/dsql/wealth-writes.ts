@@ -1,7 +1,8 @@
 import { type CardLiabilitySnapshot, type WealthHolding, type WealthSnapshot } from '@finance/domain';
-import type { SqlClient } from '@finance/ledger/native-ledger';
-import { InvalidWealthSnapshotError } from './input.js';
-import { toNativeAssetSnapshot } from './native-reads.js';
+import type { SqlClient } from './projection.js';
+import { toNativeAssetSnapshot } from './wealth-reads.js';
+
+export class InvalidWealthSnapshotError extends Error {}
 
 const invalid = (message: string): never => { throw new InvalidWealthSnapshotError(message); };
 const safeMoney = (value: number): boolean => Number.isSafeInteger(value);

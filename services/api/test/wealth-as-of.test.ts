@@ -1,18 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { WEALTH_ACCOUNTS } from '@finance/domain';
 
 process.env.METADATA_TABLE_NAME ??= 'test-metadata';
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-raw-email';
 
-const send = vi.fn();
+const readNativeWealthInputs = vi.fn();
 const listCards = vi.fn();
 const listPayslipsForYear = vi.fn();
 
 vi.mock('../src/http/clients.js', () => ({
-  database: { send },
+  database: { send: vi.fn() },
   s3: { send: vi.fn() },
   tableName: 'test-metadata',
   rawSourceBucketName: 'test-raw-email',
 }));
+vi.mock('../src/wealth/native-reads.js', () => ({ readNativeWealthInputs }));
 vi.mock('../src/cards/cards.js', () => ({
   isValidCardId: vi.fn().mockReturnValue(true),
   listCards,
@@ -58,20 +60,9 @@ describe('historical wealth overview', () => {
       fondoPayslip('2026-08-15', 5_000_00),
       fondoPayslip('2026-09-01', 7_000_00),
     ]);
-    send.mockImplementation(async (command: { input?: { ExpressionAttributeValues?: Record<string, string> } }) => {
-      const prefix = command.input?.ExpressionAttributeValues?.[':sk'];
-      if (prefix === 'WEALTH_SNAP#') {
-        return { Items: [
-          wealthItem('ibkr', '2026-08-30', 100_000_00),
-          wealthItem('ibkr', '2026-09-01', 120_000_00),
-          wealthItem('nu_cajita_emergencia', '2026-08-20', 50_000_00),
-        ] };
-      }
-      if (prefix === 'LIAB_SNAP#') {
-        return { Items: [liabilityItem('2026-08-31', 10_000_00), liabilityItem('2026-09-01', 20_000_00)] };
-      }
-      throw new Error(`Unexpected database command prefix ${prefix}`);
-    });
+    readNativeWealthInputs.mockResolvedValue({ accounts: WEALTH_ACCOUNTS, cards: [{ id: 'amex', name: 'Amex', cutOffDay: 10, paymentDueDay: 28, createdAt: '', updatedAt: '' }],
+      snapshots: [wealthItem('ibkr', '2026-08-30', 100_000_00), wealthItem('ibkr', '2026-09-01', 120_000_00), wealthItem('nu_cajita_emergencia', '2026-08-20', 50_000_00)],
+      liabilitySnapshots: [liabilityItem('2026-08-31', 10_000_00), liabilityItem('2026-09-01', 20_000_00)] });
   });
 
   it('carries balances forward to month end and excludes first-day snapshots and payslips', async () => {

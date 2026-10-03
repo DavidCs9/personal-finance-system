@@ -4,6 +4,17 @@ export const NATIVE_WEALTH_TABLES = [
   'liability_captures', 'liability_daily_captures', 'liability_capture_replacements',
 ] as const;
 
+export const nativeWealthReadGrant = (role: string): string =>
+  `GRANT SELECT ON ${NATIVE_WEALTH_TABLES.map(table => `olbia.${table}`).join(',')} TO ${role}`;
+
+/** Captured originals never change; only current daily selection is mutable. */
+export const nativeWealthWriteGrants = (role: string): string[] => [
+  `GRANT INSERT ON olbia.asset_captures,olbia.asset_holdings,olbia.asset_capture_replacements,olbia.liability_captures,olbia.liability_capture_replacements TO ${role}`,
+  `GRANT INSERT ON olbia.asset_daily_captures,olbia.liability_daily_captures TO ${role}`,
+  `GRANT UPDATE (capture_id) ON olbia.asset_daily_captures TO ${role}`,
+  `GRANT UPDATE (capture_id) ON olbia.liability_daily_captures TO ${role}`,
+];
+
 const signedMoney = 'BETWEEN -9007199254740991 AND 9007199254740991';
 const nonnegativeMoney = 'BETWEEN 0 AND 9007199254740991';
 const finiteQuantity = 'BETWEEN -1.7976931348623157e308::double precision AND 1.7976931348623157e308::double precision';

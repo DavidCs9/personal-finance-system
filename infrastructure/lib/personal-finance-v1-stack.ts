@@ -453,12 +453,10 @@ export class PersonalFinanceV1Stack extends Stack {
     // Financial readers use the native ledger directly.
     // Plans and payroll use their native SQL authority directly.
     // Production shadow gate verified all retained canonical/audit records, financial histories and original evidence.
-    const wealthReadMode = 'guarded-sql';
     // Categories, merchant rules and card profiles now read native SQL directly.
     // Independent production shadow gate passed complete operational envelopes and public/expiration contracts.
     const operationalReadMode = 'guarded-sql';
     apiFunction.addEnvironment('DSQL_OPERATIONAL_READ_MODE', operationalReadMode);
-    apiFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     dsqlProjection.grantReader(apiFunction);
     const readVerificationFunction = new NodejsFunction(this, 'DsqlReadVerification', {
       ...lambdaDefaults, functionName: 'personal-finance-v1-dsql-read-verification',
@@ -466,7 +464,7 @@ export class PersonalFinanceV1Stack extends Stack {
       timeout: Duration.minutes(10), memorySize: 512,
       logGroup: this.createLogGroup('DsqlReadVerificationLogGroup', 'personal-finance-v1-dsql-read-verification'),
       environment: { ...dataStorageEnvironment, AGENT_OWNER_SUB: agentOwnerSub.valueAsString,
-        DSQL_WEALTH_READ_MODE: wealthReadMode, DSQL_OPERATIONAL_READ_MODE: operationalReadMode },
+        DSQL_OPERATIONAL_READ_MODE: operationalReadMode },
     });
     metadataTable.grantReadData(readVerificationFunction);
     rawEmailBucket.grantRead(readVerificationFunction, 'inbound/*');
@@ -507,7 +505,6 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     metadataTable.grantReadData(agentToolsFunction);
-    agentToolsFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     dsqlProjection.grantReader(agentToolsFunction);
 
     const agentTagMutationFunction = new NodejsFunction(this, 'AgentTagMutationFunction', {
@@ -1326,7 +1323,6 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     if (SQL_AUTHORITY) metadataTable.grantReadData(monthEndBalanceReminderFunction); else metadataTable.grantReadWriteData(monthEndBalanceReminderFunction);
-    monthEndBalanceReminderFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     dsqlProjection.grantReader(monthEndBalanceReminderFunction);
     monthEndBalanceReminderFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ses:SendEmail'],
@@ -1376,7 +1372,6 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
     if (SQL_AUTHORITY) metadataTable.grantReadData(monthlyCloseEmailFunction); else metadataTable.grantReadWriteData(monthlyCloseEmailFunction);
-    monthlyCloseEmailFunction.addEnvironment('DSQL_WEALTH_READ_MODE', wealthReadMode);
     dsqlProjection.grantReader(monthlyCloseEmailFunction);
     monthlyCloseEmailFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ses:SendEmail'],

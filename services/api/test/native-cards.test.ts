@@ -23,7 +23,7 @@ beforeAll(async () => {
 afterAll(() => sql.close());
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 beforeEach(async () => {
-  await sql.exec('TRUNCATE olbia.card_profiles,olbia.liability_snapshots,olbia.liability_versions,olbia.projection_state,olbia.cards');
+  await sql.exec('TRUNCATE olbia.liability_daily_captures,olbia.liability_capture_replacements,olbia.liability_captures,olbia.card_profiles,olbia.liability_snapshots,olbia.liability_versions,olbia.projection_state,olbia.cards');
   vi.stubEnv('OLBIA_SQL_STORE_ENABLED', 'true'); vi.stubEnv('DSQL_DOMAIN_READ_MODE','dynamodb');
   vi.spyOn(connection, 'createPool').mockReturnValue({ query: (s: string, v?: unknown[]) => sql.query(s, v),
     transaction: (callback: (client: SqlClient) => Promise<unknown>) => sql.transaction(client => callback(client as unknown as SqlClient)),

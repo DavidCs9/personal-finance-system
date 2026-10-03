@@ -13,6 +13,8 @@ import { readNativeWealthInputs, readNativeWealthAudit } from '../src/wealth/nat
 process.env.METADATA_TABLE_NAME ??= 'test';
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-evidence';
 const { createCajitaSnapshot, createCardLiabilitySnapshot, persistWealthSnapshot } = await import('../src/wealth/service.js');
+const { syncBitsoAccount } = await import('../src/wealth/bitso-sync.js');
+const { syncIbkrAccount } = await import('../src/wealth/ibkr-sync.js');
 
 let sql: PGlite;
 let retryNext = false;
@@ -60,6 +62,31 @@ beforeEach(async () => {
 });
 
 describe('native Patrimonio mutations', () => {
+  it('persists successful Bitso and IBKR syncs directly, keeping signed provider cash and prior captures on failures', async () => {
+    const bitso = vi.fn(async () => new Response(JSON.stringify({ success: true, payload: {
+      balances: [{ currency: 'mxn', total: '100.5', locked: '0', available: '100.5' }],
+    } }), { status: 200 }));
+    const flex = '<FlexQueryResponse><OpenPosition currency="USD" symbol="VOO" description="ETF" conid="3000" position="1.2345678912345678" positionValue="100"/><CashReportCurrency currency="USD" endingCash="-10"/></FlexQueryResponse>';
+    const ibkr = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('SendRequest')) return new Response('<FlexStatementResponse><Status>Success</Status><ReferenceCode>123</ReferenceCode></FlexStatementResponse>');
+      if (url.includes('GetStatement')) return new Response(flex);
+      return new Response(JSON.stringify({ bmx: { series: [{ datos: [{ fecha: '30/09/2026', dato: '17.123456789' }] }] } }));
+    });
+    for (let capture = 0; capture < 2; capture++) {
+      expect((await syncBitsoAccount({ owner: 'owner', credentials: { apiKey: 'test', apiSecret: 'test' }, fetchImpl: bitso })).snapshot.totalMxnMinor).toBe(10050);
+      const result = await syncIbkrAccount({ owner: 'owner', credentials: { flexToken: 'test', flexQueryId: 'test' }, banxicoToken: 'test', fetchImpl: ibkr });
+      expect(result.snapshot.holdings.some(h => h.valueMxnMinor < 0)).toBe(true);
+      expect(result.snapshot.holdings.find(h => h.symbol === 'VOO')?.quantity).toBe(1.2345678912345678);
+    }
+    const before = await readNativeWealthInputs('owner', sql);
+    expect(await readNativeWealthAudit('owner', sql)).toHaveLength(2);
+    const io = vi.mocked(S3Client.prototype.send); io.mockClear();
+    const failure = vi.fn(async () => { throw new Error('Provider unavailable'); });
+    await expect(syncBitsoAccount({ owner: 'owner', credentials: { apiKey: 'test', apiSecret: 'test' }, fetchImpl: failure })).rejects.toThrow('Provider unavailable');
+    await expect(syncIbkrAccount({ owner: 'owner', credentials: { flexToken: 'test', flexQueryId: 'test' }, banxicoToken: 'test', fetchImpl: failure })).rejects.toThrow('Provider unavailable');
+    expect(io).not.toHaveBeenCalled(); expect(await readNativeWealthInputs('owner', sql)).toEqual(before);
+  });
   it('writes actual manual/provider paths once per capture, preserving equal-time replacement history, signed precision and paid zero', async () => {
     const first = await providerCapture(-100);
     const second = await providerCapture(200);

@@ -17,7 +17,7 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(() => sql.close());
 beforeEach(async () => {
-  await sql.exec('TRUNCATE olbia.card_profiles,olbia.cards,olbia.projection_state');
+  await sql.exec('TRUNCATE olbia.liability_daily_captures,olbia.liability_capture_replacements,olbia.liability_captures,olbia.card_profiles,olbia.cards,olbia.projection_state');
   await sql.query('DELETE FROM olbia.schema_migrations WHERE version=9');
   await store.send(new PutCommand({ TableName: 'metadata', Item: card }));
 });

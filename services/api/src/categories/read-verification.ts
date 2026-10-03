@@ -12,7 +12,8 @@ import { cardReadStatement } from '../cards/sql-reads.js';
 import { deduplicateFeed } from '../analytics/events.js';
 import { summarizeMonthFeed } from '../months/summary.js';
 import { getMonthlyPlan } from '../months/service.js';
-import { readSourceWealthInputs, readSqlWealthInputs, type WealthInputsReader } from '../wealth/sql-reads.js';
+import { readNativeWealthInputs, type NativeWealthInputsReader } from '../wealth/native-reads.js';
+import { readIndependentWealthState } from '../wealth/native-verification.js';
 import { getWealthOverviewsAsOf } from '../wealth/service.js';
 import { listPayslipsForYear } from '../imports/cfdi-nomina-flow.js';
 import { readSqlPayslipsForYear } from '../months/sql-reads.js';
@@ -66,22 +67,21 @@ export const verifyDomainReads = async (owner: string, movements: readonly JsonO
     && card.cutOffDay >= 1 && card.cutOffDay <= 31 && Number.isInteger(card.paymentDueDay)
     && card.paymentDueDay >= 1 && card.paymentDueDay <= 31));
   const invalidCardReferences = Number((await client.query(`SELECT count(*) AS count FROM (
-    SELECT card_id,owner FROM olbia.liability_snapshots UNION ALL SELECT card_id,owner FROM olbia.liability_versions
+    SELECT card_id,owner FROM olbia.liability_captures
   ) liabilities LEFT JOIN olbia.card_profiles card ON card.id=liabilities.card_id
     WHERE card.id IS NULL OR card.owner <> liabilities.owner OR liabilities.owner IS NULL`)).rows[0]?.count);
   check(0, invalidCardReferences);
   const cardConstraints = (await client.query(`SELECT conname,convalidated FROM pg_constraint WHERE
-    conrelid IN ('olbia.liability_snapshots'::regclass,'olbia.liability_versions'::regclass)
-    AND conname IN ('liability_snapshots_card_fk','liability_snapshots_card_required','liability_versions_card_fk','liability_versions_card_required') ORDER BY conname`)).rows;
-  check(cardConstraints, ['liability_snapshots_card_fk','liability_snapshots_card_required','liability_versions_card_fk','liability_versions_card_required']
+    conrelid='olbia.liability_captures'::regclass AND conname='liability_captures_card_id_fkey' ORDER BY conname`)).rows;
+  check(cardConstraints, ['liability_captures_card_id_fkey']
     .map(conname => ({ conname, convalidated: true })));
   const sqlMovements = await readLedgerMovements(client);
   const merchants = new Set([...movements.map(m => String(m.merchantRaw)), ...rules.map(r => r.merchantKey),
     ...rules.filter(r => r.pattern).map(r => `prefix ${r.pattern} suffix`)]);
   for (const merchant of merchants) check(resolveCategoryId(merchant, rules), resolveCategoryId(merchant, sqlRules));
-  const sourceWealth = await readSourceWealthInputs(owner), sqlWealth = await readSqlWealthInputs(owner, client);
+  const sourceWealth = (await readIndependentWealthState(owner, client)).inputs, sqlWealth = await readNativeWealthInputs(owner, client);
   const sqlCards = sqlWealth.cards; check(cards, sqlCards);
-  const sourceReader: WealthInputsReader = async () => sourceWealth, sqlReader: WealthInputsReader = async () => sqlWealth;
+  const sourceReader: NativeWealthInputsReader = async () => sourceWealth, sqlReader: NativeWealthInputsReader = async () => sqlWealth;
   const months = [...new Set([...financialMonths, '2026-02', '2028-02'])].sort();
   const years = [...new Set(months.flatMap(month => [month.slice(0, 4), addCalendarMonths(month, -3).slice(0, 4)]))];
   const payroll = new Map<string, { source: readonly PayslipSummary[]; sql: readonly PayslipSummary[] }>();
@@ -100,7 +100,7 @@ export const verifyDomainReads = async (owner: string, movements: readonly JsonO
     check(aggregateSpendByMerchant(sourceEvents, month), aggregateSpendByMerchant(sqlEvents, month));
     check(spendingRangeFromEvents(sourceEvents, { range: 'custom', fromDay: `${month}-01`, toDay: `${month}-${String(daysInCalendarMonth(month)).padStart(2, '0')}` }, now),
       spendingRangeFromEvents(sqlEvents, { range: 'custom', fromDay: `${month}-01`, toDay: `${month}-${String(daysInCalendarMonth(month)).padStart(2, '0')}` }, now)); assistantChecks += 3;
-    const build = (events: typeof sourceEvents, catalog: typeof categories, reader: WealthInputsReader, slips: typeof sourcePayroll) =>
+    const build = (events: typeof sourceEvents, catalog: typeof categories, reader: NativeWealthInputsReader, slips: typeof sourcePayroll) =>
       buildMonthlyCloseFacts(owner, month, now, { loadEvents: async () => events, loadCategories: async () => catalog,
         loadWealthAsOf: async (_owner, day) => (await getWealthOverviewsAsOf(owner, [day], slips, reader))[0]!,
         loadWealthAsOfDays: (_owner, days) => getWealthOverviewsAsOf(owner, days, slips, reader) });

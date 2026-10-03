@@ -1,4 +1,5 @@
-export class InvalidWealthSnapshotError extends Error {}
+import { InvalidWealthSnapshotError } from '@finance/ledger/native-wealth';
+export { InvalidWealthSnapshotError };
 
 export interface CajitaSnapshotInput {
   readonly amountMinor: number;
