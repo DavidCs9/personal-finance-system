@@ -1,5 +1,7 @@
 # SQL-native payroll receipts and SAT lines
 
+[PR #182](https://github.com/DavidCs9/personal-finance-system/pull/182) is deployed and independently accepted; marker 12 is active. The [completed run](autonomous-runs/2026-10-02-native-payroll.md) preserves exact receipt/line, immutable-source, role/index and rolled-back smoke acceptance. See the [current table audit](sql-relational-table-audit.md) for subsequent native domains.
+
 Olbia must feel born in SQL. `payslips` uses the actual CFDI UUID as its native UUID primary key; `payslip_lines` uses `(payslip_uuid,position)` with a native FK. Receipt fields hold payment/pay-period dates, payroll type, source MXN totals, employer, ingestion time and explicit XML evidence coordinates/hash/content type. Lines hold SAT kind/type/code/concept and safe nonnegative MXN amount. Every original line retains its order, including zero-value lines and repeated SAT descriptions.
 
 Month is derived from the payment date. Line group and the employer Fondo noncash flag are derived from SAT kind/type using the existing domain rules. Currency is expressed by MXN amount columns and the existing payroll contract. No duplicate operational month, currency, classification, line array, document keys, command envelopes or whole-document JSON remains. Native date-range reads LEFT JOIN ordered lines in one statement; receipts with no lines remain visible. Public UUIDs stay uppercase and optional-field behavior is preserved. Calendar dates are returned as SQL text, avoiding driver timezone conversions.
