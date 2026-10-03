@@ -1,3 +1,4 @@
+import { assertLegacyThreadAccess } from '@finance/ledger/dsql-store';
 import { GetCommand, QueryCommand, paginateScan, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { readerPool, type ReadSqlClient } from '../events/sql-reads.js';
 import { observe, selectLedgerRead, type LedgerReadMode } from '../events/read-selection.js';
@@ -33,9 +34,11 @@ export const sourceExceptionRecords = async (store: SourceStore): Promise<JsonOb
 // Select envelopes before public rendering; optional/unknown fields and TTL cannot be hidden by a lossy mapper.
 const keySort = (items: readonly JsonObject[]) => [...items].sort((a, b) => Buffer.compare(Buffer.from(`${a.PK}\0${a.SK}`), Buffer.from(`${b.PK}\0${b.SK}`)));
 export const sqlOperationalPartition = async (table: OperationalDisplayTable, PK: string, prefix: string, client: ReadSqlClient = readerPool()): Promise<JsonObject[]> => {
+  if (table === 'assistant_threads') await assertLegacyThreadAccess(client);
   return (await client.query(`SELECT source_item FROM olbia.${table} WHERE source_pk=$1 AND source_sk >= $2 AND source_sk < $3 ORDER BY source_sk COLLATE "C"`, [PK, prefix, `${prefix.slice(0, -1)}$`])).rows.map(row => row.source_item as JsonObject);
 };
 export const selectOperationalRecords = async (table: OperationalDisplayTable, source: () => Promise<JsonObject[]>, sql: () => Promise<JsonObject[]>): Promise<JsonObject[]> => {
+  if (table === 'assistant_threads') await assertLegacyThreadAccess();
   const mode = operationalReadMode();
   return selectLedgerRead({ mode, sql: async () => keySort(await sql()), source: async () => keySort(await source()),
     report: (outcome, selected) => observe('operational-list', mode, outcome, selected) });
@@ -43,6 +46,7 @@ export const selectOperationalRecords = async (table: OperationalDisplayTable, s
 export const readOperationalPartition = (table: OperationalDisplayTable, store: SourceStore, PK: string, prefix: string) =>
   selectOperationalRecords(table, () => sourceOperationalPartition(store, PK, prefix), () => sqlOperationalPartition(table, PK, prefix));
 export const readOperationalItem = async (table: OperationalDisplayTable, store: SourceStore, PK: string, SK: string): Promise<JsonObject | undefined> => {
+  if (table === 'assistant_threads') await assertLegacyThreadAccess();
   const mode = operationalReadMode();
   return selectLedgerRead({ mode, source: () => sourceOperationalItem(store, PK, SK),
     sql: async () => (await readerPool().query(`SELECT source_item FROM olbia.${table} WHERE source_pk=$1 AND source_sk=$2`, [PK, SK])).rows[0]?.source_item as JsonObject | undefined,
