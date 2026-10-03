@@ -1,3 +1,4 @@
+import { assertLegacyPushAccess } from '@finance/ledger/dsql-store';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DeleteCommand } from '@aws-sdk/lib-dynamodb';
@@ -100,6 +101,7 @@ export const sendPushToSubscriptions = async (input: {
   readonly buildMessage: (subscription: PushSubscriptionRecord) => DeclarativePushMessage;
   readonly send?: typeof webpush.sendNotification;
 }): Promise<{ readonly sent: number; readonly expired: number; readonly failed: number }> => {
+  await assertLegacyPushAccess();
   webpush.setVapidDetails(input.vapid.subject, input.vapid.publicKey, input.vapid.privateKey);
   const send = input.send ?? webpush.sendNotification.bind(webpush);
 
