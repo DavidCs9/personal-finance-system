@@ -1,3 +1,4 @@
+import { assertLegacyPushAccess } from '@finance/ledger/dsql-store';
 import { createHash } from 'node:crypto';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DeleteCommand, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
@@ -74,6 +75,7 @@ export const savePushSubscription = async (input: {
   readonly keys: PushSubscriptionKeys;
   readonly contentMode: PushContentMode;
 }): Promise<PushSubscriptionRecord> => {
+  await assertLegacyPushAccess();
   const subscriptionId = pushSubscriptionId(input.endpoint);
   const now = new Date().toISOString();
   const existing = await input.database.send(new GetCommand({
@@ -110,6 +112,7 @@ export const deletePushSubscription = async (input: {
   readonly owner: string;
   readonly subscriptionId: string;
 }): Promise<void> => {
+  await assertLegacyPushAccess();
   await input.database.send(new DeleteCommand({
     TableName: input.tableName,
     Key: pushSubscriptionKey(input.owner, input.subscriptionId),
@@ -120,6 +123,7 @@ export const listActivePushSubscriptions = async (input: {
   readonly database: DynamoDBDocumentClient;
   readonly tableName: string;
 }): Promise<readonly PushSubscriptionRecord[]> => {
+  await assertLegacyPushAccess();
   const subscriptions: PushSubscriptionRecord[] = [];
   let exclusiveStartKey: Record<string, unknown> | undefined;
   do {
@@ -156,6 +160,7 @@ export const listOwnerPushSubscriptions = async (input: {
   readonly tableName: string;
   readonly owner: string;
 }): Promise<readonly PushSubscriptionRecord[]> => {
+  await assertLegacyPushAccess();
   const result = await input.database.send(new QueryCommand({
     TableName: input.tableName,
     KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',

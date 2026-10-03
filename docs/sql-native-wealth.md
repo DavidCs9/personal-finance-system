@@ -1,6 +1,6 @@
 # Native SQL Patrimonio
 
-**Olbia must feel born in SQL. David is its sole owner.** Assets and card debt use native financial capture relations, without document keys, embedded authority envelopes, source freshness checks or read-mode fallback. Original S3 files and frozen migration tables preserve recovery evidence. The [run record](autonomous-runs/2026-10-02-native-wealth.md) records decisions and release acceptance; implementation is prepared, and production activation/independent acceptance remains pending.
+**Olbia must feel born in SQL. David is its sole owner.** Assets and card debt use native financial capture relations, without document keys, embedded authority envelopes, source freshness checks or read-mode fallback. Original S3 files and frozen migration tables preserve recovery evidence. The [run record](autonomous-runs/2026-10-02-native-wealth.md) records decisions and release acceptance; [PR #191](https://github.com/DavidCs9/personal-finance-system/pull/191) is deployed and independently accepted.
 
 ## Financial model
 
