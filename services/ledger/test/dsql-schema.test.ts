@@ -6,6 +6,7 @@ const bootstrapSchema = (client: SqlClient, roleArns: readonly string[], options
   realBootstrapSchema(client, roleArns, { transactionPool: { transaction: callback => callback({ query: (s,v) =>
     s.includes('AS count FROM olbia.payroll') ? Promise.resolve({ rows: [{ count: 2 }] }) : client.query(s,v) }) }, ...options });
 const ready = (statement: string) => ({ rows:
+  statement.includes('WHERE version=18') ? [{ version: 18 }] :
   statement.includes('WHERE version=17') ? [{ version: 17 }] :
   statement.includes('WHERE version=16') ? [{ version: 16 }] :
   statement.includes('WHERE version=15') ? [{ version: 15 }] :
@@ -162,6 +163,10 @@ it('validates native primary ownership before activation and completes grants/in
   expect(deliveryActivation).toBeGreaterThan(pushActivation);
   expect(deliveryActivation).toBeGreaterThan(statements.findIndex(statement=>statement.startsWith('GRANT INSERT ON olbia.monthly_email_preparations')));
   expect(deliveryActivation).toBeGreaterThan(statements.findIndex(statement=>statement.startsWith('REVOKE ALL PRIVILEGES ON olbia.delivery_records')));
+  const threadActivation = statements.findIndex(statement => statement.includes('WHERE version=18'));
+  expect(threadActivation).toBeGreaterThan(deliveryActivation);
+  expect(threadActivation).toBeGreaterThan(statements.findIndex(statement=>statement.startsWith('GRANT UPDATE (thread_id,updated_at) ON olbia.assistant_thread_selection')));
+  expect(threadActivation).toBeGreaterThan(statements.findIndex(statement=>statement === 'REVOKE ALL PRIVILEGES ON olbia.assistant_threads FROM olbia_application'));
   expect(statements).toContain('GRANT SELECT (subscription_id,owner,content_mode,active,created_at,updated_at) ON olbia.web_push_subscriptions TO olbia_reader');
   expect(statements).toContain('GRANT UPDATE (status,applied_at,undone_at) ON olbia.ledger_bulk_operations TO olbia_application');
   const failure = vi.fn(async (statement: string) => ({ rows:

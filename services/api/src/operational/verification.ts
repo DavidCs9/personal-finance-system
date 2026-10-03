@@ -1,14 +1,13 @@
+import { verifyNativeConversationMetadata } from '../agent/thread-verification.js';
 import { verifyNativeMonthlyDeliveries } from '../reports/delivery-verification.js';
 import { currentStoreTransaction } from '@finance/ledger/dsql-store';
-import { publicThread, isValidAssistantThreadId } from '../agent/threads.js';
 import { createPool } from '@finance/ledger/dsql-connection';
 import { paginateScan } from '@aws-sdk/lib-dynamodb';
 import { database, tableName } from '../http/clients.js';
 import { type ReadSqlClient } from '../events/sql-reads.js';
 import { samePublicResult } from '../events/read-selection.js';
 import type { JsonObject } from '../http/response.js';
-import { operationalReadMode, isRetainedLive, publicExceptions, readOperationalPartition, readOperationalItem,
-  sqlOperationalPartition } from './reads.js';
+import { operationalReadMode, isRetainedLive, publicExceptions, readOperationalItem } from './reads.js';
 import { terminalImportDisplay } from './import-display.js';
 import { verifyNativePushSubscriptions } from '../push/read-verification.js';
 import { verifyNativeImports } from '../imports/read-verification.js';
@@ -88,23 +87,6 @@ export const verifyOperationalReads = async (owner: string, now: Date, client?: 
   }
   const exceptionRecords = source.filter(item => operationalFamily(item) === 'ingestion_exceptions' && item.GSI1PK === 'EXCEPTIONS');
   check(publicExceptions(exceptionRecords, now), publicExceptions(targets.get('ingestion_exceptions')!.map(row => row.source_item as JsonObject), now)); publicResponses++;
-  for (const family of ['assistant_threads'] as const) {
-    const prefix = 'ASSISTANT_THREAD#';
-    const expected = source.filter(item => item.PK === `USER#${owner}` && String(item.SK).startsWith(prefix)).sort((a, b) => Buffer.compare(Buffer.from(String(a.SK)), Buffer.from(String(b.SK))));
-    const sql = await sqlOperationalPartition(family, `USER#${owner}`, prefix, client);
-    check(expected, sql); check(expected, await readOperationalPartition(family, { database, tableName }, `USER#${owner}`, prefix));
-    if (family === 'assistant_threads') {
-      const visible = (items: readonly JsonObject[]) => items.filter(item => item.SK !== 'ASSISTANT_THREAD#ACTIVE' && isRetainedLive(item, now))
-        .map(publicThread).filter(thread => thread !== undefined).sort((a,b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0,20);
-      check(visible(expected), visible(sql));
-      for (const item of expected) {
-        if (typeof item.sessionId !== 'string' || !isValidAssistantThreadId(item.sessionId) || item.SK === 'ASSISTANT_THREAD#ACTIVE') continue;
-        const match = sql.find(row => row.SK === item.SK); check(publicThread(item), match ? publicThread(match) : undefined); publicResponses++;
-      }
-    }
-    // Thread transcript, native session discovery, active-state decisions are intentionally never invoked by this read-only gate.
-    publicResponses++;
-  }
   for (const item of source.filter(item => operationalFamily(item) === 'import_records')) {
     const family = String(item.SK).split('#')[1];
     if (family !== 'AMEX' && family !== 'SANTANDER_STATEMENT') continue;
@@ -112,18 +94,19 @@ export const verifyOperationalReads = async (owner: string, now: Date, client?: 
     const row = targets.get('import_records')!.find(row => row.source_pk === item.PK && row.source_sk === item.SK);
     check(terminalImportDisplay(id, family, item), terminalImportDisplay(id, family, row?.source_item as JsonObject | undefined)); publicResponses++;
   }
-  for (const family of ['ingestion_exceptions', 'assistant_threads'] as const) {
+  for (const family of ['ingestion_exceptions'] as const) {
     for (const item of source.filter(item => operationalFamily(item) === family)) {
       // Raw input-only adapters: no PDF polling, retry dispatch, native memory backfill or delivery.
       check(item, await readOperationalItem(family, { database, tableName }, String(item.PK), String(item.SK))); configuredReads++;
     }
   }
-  for (const family of ['ingestion_exceptions', 'assistant_threads'] as const) {
+  for (const family of ['ingestion_exceptions'] as const) {
     check(undefined, await readOperationalItem(family, { database, tableName }, `USER#${owner}`, '__missing_operational_verification__')); publicResponses++;
   }
   const imports = await verifyNativeImports(owner, source.filter(item=>operationalFamily(item)==='import_records'), client);
   mismatches += imports.mismatches;
   const push = await verifyNativePushSubscriptions(owner, providedClient); mismatches += push.mismatches;
   const deliveries = await verifyNativeMonthlyDeliveries(owner, providedClient); mismatches += deliveries.mismatches;
-  return { mode: operationalReadMode(), imports, push, deliveries, retained, sourcePages, targetPages, publicResponses, configuredReads, expirationChecks, mismatches, elapsedMs: Date.now() - started };
+  const threads = await verifyNativeConversationMetadata(owner,now,providedClient); mismatches += threads.mismatches;
+  return { mode: operationalReadMode(), imports, push, deliveries, threads, retained, sourcePages, targetPages, publicResponses, configuredReads, expirationChecks, mismatches, elapsedMs: Date.now() - started };
 };

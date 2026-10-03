@@ -1,4 +1,5 @@
-import { assertLegacyThreadAccess } from '@finance/ledger/dsql-store';
+import { applicationStoreClient, withNativeTransaction } from '@finance/ledger/dsql-store';
+import { isConversationId, conversationPresentation, readConversationMetadata, readConversationIndex, readConversationSelection, upsertConversation, selectConversation, deleteConversationMetadata } from '@finance/ledger/native-threads';
 import {
   BedrockAgentCoreClient,
   DeleteEventCommand,
@@ -6,14 +7,10 @@ import {
   ListSessionsCommand,
   type Event,
 } from '@aws-sdk/client-bedrock-agentcore';
-import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { DeleteCommand, GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
-const THREAD_PREFIX = 'ASSISTANT_THREAD#';
-const ACTIVE_THREAD_SK = `${THREAD_PREFIX}ACTIVE`;
 const DEFAULT_VISIBLE_THREADS = 20;
 const MAX_VISIBLE_THREADS = 20;
-const EVENT_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
+
 const DELETE_EVENT_CONCURRENCY = 8;
 
 export type AssistantThread = {
@@ -31,13 +28,7 @@ export type AssistantThreadMessage = {
   readonly createdAt: string;
 };
 
-type StoreDependencies = {
-  readonly database: DynamoDBDocumentClient;
-  readonly tableName: string;
-  readonly now?: () => Date;
-  // Display-only envelope selection. Discovery, activation, backfill and deletion never use this reader.
-  readonly displayIndices?: (owner: string) => Promise<readonly Record<string, unknown>[]>;
-};
+type StoreDependencies = { readonly now?: () => Date };
 
 type HistoryDependencies = StoreDependencies & {
   readonly memory: BedrockAgentCoreClient;
@@ -46,15 +37,7 @@ type HistoryDependencies = StoreDependencies & {
 
 export class InvalidAssistantThreadError extends Error {}
 
-export const isValidAssistantThreadId = (value: string): boolean =>
-  value.length >= 33 && value.length <= 100 && /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(value);
-
-const userPk = (owner: string): string => `USER#${owner}`;
-const threadKey = (owner: string, sessionId: string) => ({
-  PK: userPk(owner),
-  SK: `${THREAD_PREFIX}${sessionId}`,
-});
-const activeThreadKey = (owner: string) => ({ PK: userPk(owner), SK: ACTIVE_THREAD_SK });
+export const isValidAssistantThreadId = isConversationId;
 
 export const assistantThreadTitle = (message: string): string => {
   const normalized = message.replace(/\s+/g, ' ').trim();
@@ -62,155 +45,45 @@ export const assistantThreadTitle = (message: string): string => {
   return normalized.length <= 72 ? normalized : `${normalized.slice(0, 69).trimEnd()}…`;
 };
 
-export const publicThread = (item: Record<string, unknown>): AssistantThread | undefined => {
-  if (
-    typeof item.sessionId !== 'string'
-    || !isValidAssistantThreadId(item.sessionId)
-    || typeof item.title !== 'string'
-    || typeof item.firstMonth !== 'string'
-    || typeof item.createdAt !== 'string'
-    || typeof item.updatedAt !== 'string'
-  ) return undefined;
-  return {
-    id: item.sessionId,
-    title: item.title,
-    firstMonth: item.firstMonth,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-  };
+const unavailableStorage = () => Object.assign(new Error('Olbia storage is unavailable.'), { name:'StorageUnavailableException' });
+const assertNativeThreadsActive = async (client:ReturnType<typeof applicationStoreClient>):Promise<void> => {
+  if (!(await client.query('SELECT version FROM olbia.schema_migrations WHERE version=18')).rows.length)
+    throw Object.assign(new Error('Olbia está en mantenimiento. Intenta de nuevo más tarde.'),{name:'MigrationPausedException'});
 };
+const readMetadata = async <T>(operation: () => Promise<T>): Promise<T> => {
+  try { await assertNativeThreadsActive(applicationStoreClient()); return await operation(); }
+  catch (error) { if ((error as Error).name === 'MigrationPausedException') throw error; throw unavailableStorage(); }
+};
+const writeMetadata = async <T>(operation: Parameters<typeof withNativeTransaction<T>>[0]): Promise<T> => {
+  try { return await withNativeTransaction(async client => { await assertNativeThreadsActive(client); return operation(client); }); }
+  catch (error) {
+    if ((error as Error).name === 'ConversationUnavailableException') throw new InvalidAssistantThreadError('La conversación ya no está disponible.');
+    if ((error as {code?:string}).code) throw unavailableStorage();
+    throw error;
+  }
+};
+// The read-only verifier uses these actual product metadata adapters without provider IO or backfill.
+export const readStoredConversation = (owner:string,id:string) => readMetadata(() => readConversationMetadata(applicationStoreClient(),owner,id));
+export const readStoredConversationIndex = (owner:string,at:Date) => readMetadata(() => readConversationIndex(applicationStoreClient(),owner,at));
+export const readStoredConversationSelection = (owner:string) => readMetadata(() => readConversationSelection(applicationStoreClient(),owner));
 
 export const saveAssistantThread = async (
   dependencies: StoreDependencies,
-  input: {
-    readonly owner: string;
-    readonly sessionId: string;
-    readonly message: string;
-    readonly month: string;
-    readonly activate?: boolean;
-  },
+  input: { readonly owner:string; readonly sessionId:string; readonly message:string; readonly month:string; readonly activate?:boolean },
 ): Promise<AssistantThread> => {
-  if (!isValidAssistantThreadId(input.sessionId)) {
-    throw new InvalidAssistantThreadError('La conversación no es válida.');
-  }
-  await assertLegacyThreadAccess();
-  const now = (dependencies.now?.() ?? new Date()).toISOString();
-  const expiresAt = Math.floor((new Date(now).getTime() + EVENT_RETENTION_MS) / 1000);
-  await assertLegacyThreadAccess();
-  const result = await dependencies.database.send(new UpdateCommand({
-    TableName: dependencies.tableName,
-    Key: threadKey(input.owner, input.sessionId),
-    UpdateExpression: [
-      'SET entityType = :entityType',
-      '#owner = :owner',
-      'sessionId = :sessionId',
-      'title = if_not_exists(title, :title)',
-      'firstMonth = if_not_exists(firstMonth, :month)',
-      'createdAt = if_not_exists(createdAt, :now)',
-      'updatedAt = :now',
-      'expiresAt = :expiresAt',
-    ].join(', '),
-    ExpressionAttributeNames: {
-      '#owner': 'owner',
-    },
-    ExpressionAttributeValues: {
-      ':entityType': 'assistant_thread',
-      ':owner': input.owner,
-      ':sessionId': input.sessionId,
-      ':title': assistantThreadTitle(input.message),
-      ':month': input.month,
-      ':now': now,
-      ':expiresAt': expiresAt,
-    },
-    ReturnValues: 'ALL_NEW',
-  }));
-  if (input.activate !== false) {
-    await setActiveAssistantThread(dependencies, input.owner, input.sessionId);
-  }
-  const thread = result.Attributes ? publicThread(result.Attributes) : undefined;
-  if (!thread) throw new Error('No se pudo guardar la conversación.');
-  return thread;
+  if (!isValidAssistantThreadId(input.sessionId)) throw new InvalidAssistantThreadError('La conversación no es válida.');
+  const at = (dependencies.now?.() ?? new Date()).toISOString();
+  return writeMetadata(async client => {
+    const thread = await upsertConversation(client,{owner:input.owner,id:input.sessionId,title:assistantThreadTitle(input.message),month:input.month,at});
+    if (input.activate !== false) await selectConversation(client,input.owner,input.sessionId,at);
+    return thread;
+  });
 };
 
-export const setActiveAssistantThread = async (
-  dependencies: StoreDependencies,
-  owner: string,
-  sessionId: string | undefined,
-): Promise<void> => {
-  if (sessionId !== undefined && !isValidAssistantThreadId(sessionId)) {
-    throw new InvalidAssistantThreadError('La conversación no es válida.');
-  }
-  await assertLegacyThreadAccess();
-  if (!sessionId) {
-    await assertLegacyThreadAccess();
-    await dependencies.database.send(new PutCommand({
-      TableName: dependencies.tableName,
-      Item: {
-        ...activeThreadKey(owner),
-        entityType: 'assistant_active_thread',
-        owner,
-        sessionId: null,
-        updatedAt: (dependencies.now?.() ?? new Date()).toISOString(),
-      },
-    }));
-    return;
-  }
-  await assertLegacyThreadAccess();
-  const existing = await dependencies.database.send(new GetCommand({
-    TableName: dependencies.tableName,
-    Key: threadKey(owner, sessionId),
-    ConsistentRead: true,
-  }));
-  if (!existing.Item) throw new InvalidAssistantThreadError('La conversación ya no está disponible.');
-  await assertLegacyThreadAccess();
-  await dependencies.database.send(new PutCommand({
-    TableName: dependencies.tableName,
-    Item: {
-      ...activeThreadKey(owner),
-      entityType: 'assistant_active_thread',
-      owner,
-      sessionId,
-      updatedAt: (dependencies.now?.() ?? new Date()).toISOString(),
-    },
-  }));
-};
-
-const indexedThreads = async (dependencies: StoreDependencies, owner: string): Promise<AssistantThread[]> => {
-  const threads: AssistantThread[] = [];
-  let exclusiveStartKey: Record<string, unknown> | undefined;
-  do {
-    await assertLegacyThreadAccess();
-    const page = await dependencies.database.send(new QueryCommand({
-      TableName: dependencies.tableName,
-      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
-      ExpressionAttributeValues: { ':pk': userPk(owner), ':prefix': THREAD_PREFIX },
-      ExclusiveStartKey: exclusiveStartKey,
-      ConsistentRead: true,
-    }));
-    for (const item of page.Items ?? []) {
-      if (item.SK === ACTIVE_THREAD_SK || (typeof item.expiresAt === 'number' && item.expiresAt <= Math.floor((dependencies.now?.() ?? new Date()).getTime() / 1000))) continue;
-      const thread = publicThread(item);
-      if (thread) threads.push(thread);
-    }
-    exclusiveStartKey = page.LastEvaluatedKey;
-  } while (exclusiveStartKey);
-  return threads;
-};
-
-const activeThreadSelection = async (
-  dependencies: StoreDependencies,
-  owner: string,
-): Promise<{ readonly configured: boolean; readonly id?: string }> => {
-  await assertLegacyThreadAccess();
-  const result = await dependencies.database.send(new GetCommand({
-    TableName: dependencies.tableName,
-    Key: activeThreadKey(owner),
-    ConsistentRead: true,
-  }));
-  if (!result.Item) return { configured: false };
-  return typeof result.Item.sessionId === 'string' && isValidAssistantThreadId(result.Item.sessionId)
-    ? { configured: true, id: result.Item.sessionId }
-    : { configured: true };
+export const setActiveAssistantThread = async (dependencies:StoreDependencies,owner:string,sessionId:string|undefined):Promise<void> => {
+  if (sessionId !== undefined && !isValidAssistantThreadId(sessionId)) throw new InvalidAssistantThreadError('La conversación no es válida.');
+  const at = (dependencies.now?.() ?? new Date()).toISOString();
+  await writeMetadata(client => selectConversation(client,owner,sessionId,at));
 };
 
 const allMemoryEvents = async (
@@ -221,7 +94,6 @@ const allMemoryEvents = async (
   const events: Event[] = [];
   let nextToken: string | undefined;
   do {
-    await assertLegacyThreadAccess();
     const page = await dependencies.memory.send(new ListEventsCommand({
       memoryId: dependencies.memoryId,
       actorId: owner,
@@ -346,16 +218,10 @@ export const getAssistantThread = async (
   sessionId: string,
 ): Promise<{ readonly thread: AssistantThread; readonly messages: readonly AssistantThreadMessage[] }> => {
   if (!isValidAssistantThreadId(sessionId)) throw new InvalidAssistantThreadError('La conversación no es válida.');
-  await assertLegacyThreadAccess();
+  const existing = await readStoredConversation(owner,sessionId);
   const events = await allMemoryEvents(dependencies, owner, sessionId);
   const messages = messagesFromMemoryEvents(events);
-  await assertLegacyThreadAccess();
-  const existing = await dependencies.database.send(new GetCommand({
-    TableName: dependencies.tableName,
-    Key: threadKey(owner, sessionId),
-    ConsistentRead: true,
-  }));
-  let thread = existing.Item ? publicThread(existing.Item) : undefined;
+  let thread = existing ? conversationPresentation(existing) : undefined;
   if (!thread) {
     const firstUser = messages.find((message) => message.role === 'user');
     if (!firstUser) throw new InvalidAssistantThreadError('La conversación ya no está disponible.');
@@ -366,12 +232,6 @@ export const getAssistantThread = async (
       month: monthFromMemoryEvents(events) ?? firstUser.createdAt.slice(0, 7),
     });
   }
-  if (dependencies.displayIndices) {
-    const indices = await dependencies.displayIndices(owner);
-    const selected = indices.find(item => item.sessionId === sessionId && item.SK !== ACTIVE_THREAD_SK);
-    if (!selected) throw new InvalidAssistantThreadError('La conversación ya no está disponible.');
-    thread = publicThread(selected) ?? thread;
-  }
   return { thread, messages };
 };
 
@@ -380,16 +240,12 @@ export const listAssistantThreads = async (
   owner: string,
   limit = DEFAULT_VISIBLE_THREADS,
 ): Promise<{ readonly threads: readonly AssistantThread[]; readonly activeThreadId?: string }> => {
-  await assertLegacyThreadAccess();
   const boundedLimit = Math.max(1, Math.min(MAX_VISIBLE_THREADS, Math.trunc(limit)));
-  const cutoff = (dependencies.now?.() ?? new Date()).getTime() - EVENT_RETENTION_MS;
-  const indexed = (await indexedThreads(dependencies, owner))
-    .filter((thread) => new Date(thread.updatedAt).getTime() >= cutoff);
+  const indexed = await readStoredConversationIndex(owner,dependencies.now?.() ?? new Date());
   const byId = new Map(indexed.map((thread) => [thread.id, thread]));
   let nextToken: string | undefined;
   const nativeSessions: { id: string; createdAt: Date }[] = [];
   do {
-    await assertLegacyThreadAccess();
     const page = await dependencies.memory.send(new ListSessionsCommand({
       memoryId: dependencies.memoryId,
       actorId: owner,
@@ -439,17 +295,11 @@ export const listAssistantThreads = async (
   const threads = [...byId.values()]
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .slice(0, boundedLimit);
-  const active = await activeThreadSelection(dependencies, owner);
+  const active = await readStoredConversationSelection(owner);
   const selectedActive = active.configured
     ? active.id && threads.some((thread) => thread.id === active.id) ? active.id : undefined
     : threads[0]?.id;
-  // Native session membership, ordering/page membership and active-state decisions above remain source-owned.
-  const indices = dependencies.displayIndices ? await dependencies.displayIndices(owner) : undefined;
-  const displayThreads = indices ? threads.flatMap(thread => {
-    const item = indices.find(item => item.sessionId === thread.id && item.SK !== ACTIVE_THREAD_SK);
-    return item ? [publicThread(item) ?? thread] : [];
-  }) : threads;
-  return { threads: displayThreads, ...(selectedActive && displayThreads.some(thread => thread.id === selectedActive) ? { activeThreadId: selectedActive } : {}) };
+  return { threads, ...(selectedActive ? { activeThreadId:selectedActive } : {}) };
 };
 
 export const deleteAssistantThread = async (
@@ -458,21 +308,12 @@ export const deleteAssistantThread = async (
   sessionId: string,
 ): Promise<void> => {
   if (!isValidAssistantThreadId(sessionId)) throw new InvalidAssistantThreadError('La conversación no es válida.');
-  await assertLegacyThreadAccess();
+  const indexed = await readStoredConversation(owner,sessionId);
   const events = await allMemoryEvents(dependencies, owner, sessionId);
-  await assertLegacyThreadAccess();
-  const indexed = await dependencies.database.send(new GetCommand({
-    TableName: dependencies.tableName,
-    Key: threadKey(owner, sessionId),
-    ConsistentRead: true,
-  }));
-  if (events.length === 0 && !indexed.Item) {
-    throw new InvalidAssistantThreadError('La conversación ya no está disponible.');
-  }
+  if (events.length === 0 && !indexed) throw new InvalidAssistantThreadError('La conversación ya no está disponible.');
   for (let index = 0; index < events.length; index += DELETE_EVENT_CONCURRENCY) {
     await Promise.all(events.slice(index, index + DELETE_EVENT_CONCURRENCY).map(async (event) => {
       if (!event.eventId) return;
-      await assertLegacyThreadAccess();
       await dependencies.memory.send(new DeleteEventCommand({
         memoryId: dependencies.memoryId,
         actorId: owner,
@@ -481,13 +322,8 @@ export const deleteAssistantThread = async (
       }));
     }));
   }
-  await assertLegacyThreadAccess();
-  await dependencies.database.send(new DeleteCommand({
-    TableName: dependencies.tableName,
-    Key: threadKey(owner, sessionId),
-  }));
-  const active = await activeThreadSelection(dependencies, owner);
-  if (active.id === sessionId) await setActiveAssistantThread(dependencies, owner, undefined);
+  const at = (dependencies.now?.() ?? new Date()).toISOString();
+  await writeMetadata(client => deleteConversationMetadata(client,owner,sessionId,at));
 };
 
 export const parseActiveAssistantThreadInput = (raw: string | undefined): string | undefined => {

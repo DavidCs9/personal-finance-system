@@ -21,7 +21,7 @@ afterAll(async () => sql.close());
 beforeEach(async () => {
   records = []; calls = [];
   await sql.exec(`TRUNCATE olbia.projection_state,${TABLE_NAMES.map(t => `olbia.${t}`).join(',')}`);
-  await sql.query('INSERT INTO olbia.schema_migrations VALUES (13,CURRENT_TIMESTAMP),(16,CURRENT_TIMESTAMP),(17,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING');
+  await sql.query('INSERT INTO olbia.schema_migrations VALUES (13,CURRENT_TIMESTAMP),(16,CURRENT_TIMESTAMP),(17,CURRENT_TIMESTAMP),(18,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING');
   vi.spyOn(readers, 'readerPool').mockReturnValue(sql as unknown as ReadSqlClient);
   vi.stubEnv('DSQL_OPERATIONAL_READ_MODE', 'guarded-sql');
   vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -51,19 +51,19 @@ describe('guarded operational displays and independent gate', () => {
     expect(gate.mismatches).toBe(0); expect(gate.retained.ingestion_exceptions).toBe(104); expect(gate.targetPages).toBeGreaterThan(9);
   });
   it('falls back for stale create/edit/delete without allowing a matching public response to hide envelope corruption', async () => {
-    records = [sub()]; await sync();
-    const list = () => reads.readOperationalPartition('assistant_threads', { database: DynamoDBDocumentClient.prototype as never, tableName: 'test' }, 'USER#owner', 'ASSISTANT_THREAD#');
+    records = [exception(1)]; await sync();
+    const list = () => reads.readOperationalPartition('ingestion_exceptions', { database: DynamoDBDocumentClient.prototype as never, tableName: 'test' }, 'EXCEPTION#1', 'EXCEPTION');
     records[0] = { ...records[0], active: false, unknown: { changed: true } };
     expect(await list()).toEqual(records);
-    await sync(); await sql.query("UPDATE olbia.assistant_threads SET source_item=source_item || '{\"unknown\":false}'::jsonb");
+    await sync(); await sql.query("UPDATE olbia.ingestion_exceptions SET source_item=source_item || '{\"unknown\":false}'::jsonb");
     expect(await list()).toEqual(records);
     records = []; expect(await list()).toEqual([]);
-    records = [sub(), { ...sub(), SK: 'ASSISTANT_THREAD#new', subscriptionId: 'new' }]; expect(await list()).toEqual([...records].sort((a,b) => a.SK.localeCompare(b.SK)));
+    records = [exception(1), { ...exception(1), SK: 'EXCEPTION_ALT', extra:'new' }]; expect(await list()).toEqual([...records].sort((a,b) => a.SK.localeCompare(b.SK)));
   });
   it('has one bounded SQL attempt on outage, propagates source failure and skips SQL in rollback mode', async () => {
-    records = [sub()]; const query = vi.fn(async () => { throw new Error('SQL outage'); });
+    records = [exception(1)]; const query = vi.fn(async () => { throw new Error('SQL outage'); });
     vi.mocked(readers.readerPool).mockReturnValue({ query });
-    const list = () => reads.readOperationalPartition('assistant_threads', { database: DynamoDBDocumentClient.prototype as never, tableName: 'test' }, 'USER#owner', 'ASSISTANT_THREAD#');
+    const list = () => reads.readOperationalPartition('ingestion_exceptions', { database: DynamoDBDocumentClient.prototype as never, tableName: 'test' }, 'EXCEPTION#1', 'EXCEPTION');
     expect(await list()).toEqual(records); expect(query).toHaveBeenCalledTimes(1);
     vi.mocked(DynamoDBDocumentClient.prototype.send).mockRejectedValueOnce(new Error('source failure'));
     await expect(list()).rejects.toThrow('source failure');
