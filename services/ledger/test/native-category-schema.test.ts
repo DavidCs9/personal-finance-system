@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { OlbiaSqlStore } from '../src/dsql/legacy-document-store.js';
 import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import type { SqlClient } from '../src/dsql/projection.js';

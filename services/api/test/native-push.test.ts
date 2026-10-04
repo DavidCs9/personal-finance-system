@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { withSqlClient } from '@finance/ledger/sql-runtime';
-import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from '../../ledger/test/helpers/migration-schema.js';
 import { NATIVE_PUSH_SCHEMA_STATEMENT, nativePushMetadataGrant } from '../../ledger/src/dsql/push-schema.js';
 import { upsertNativePushSubscription } from '@finance/ledger/native-push';
 import { listPublicPushSubscriptions } from '../src/push/subscription-reads.js';

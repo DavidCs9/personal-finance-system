@@ -9,7 +9,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SPEND_CATEGORIES, resolveCategoryId, cardRemindersForDay } from '@finance/domain';
-import { SCHEMA_STATEMENTS, migrateCardProfiles } from '../../ledger/src/dsql/schema.js';
+import { SCHEMA_STATEMENTS, migrateCardProfiles } from '../../ledger/test/helpers/migration-schema.js';
 import { TABLE_NAMES, type SourceItem, type SourceKey } from '../../ledger/src/dsql/model.js';
 import { reconcileKey, type TransactionPool, type SqlClient } from '../../ledger/src/dsql/projection.js';
 

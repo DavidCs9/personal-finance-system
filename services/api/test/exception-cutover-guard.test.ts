@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { S3Client } from '@aws-sdk/client-s3';
-import { SCHEMA_STATEMENTS } from '@finance/ledger/dsql-schema';
+import { SCHEMA_STATEMENTS } from '../../ledger/test/helpers/migration-schema.js';
 import { withSqlClient } from '@finance/ledger/sql-runtime';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 process.env.METADATA_TABLE_NAME ??= 'metadata';

@@ -6,7 +6,7 @@ import {
 } from '@aws-sdk/client-bedrock-agentcore';
 import { DeleteEventCommand } from '@aws-sdk/client-bedrock-agentcore';
 import { PGlite } from '@electric-sql/pglite';
-import { SCHEMA_STATEMENTS } from '@finance/ledger/dsql-schema';
+import { SCHEMA_STATEMENTS } from '../../../ledger/test/helpers/migration-schema.js';
 import { withSqlClient } from '@finance/ledger/sql-runtime';
 import { readConversationMetadata, readConversationSelection } from '@finance/ledger/native-threads';
 import { NATIVE_THREAD_SCHEMA_STATEMENTS } from '../../../ledger/src/dsql/thread-schema.js';

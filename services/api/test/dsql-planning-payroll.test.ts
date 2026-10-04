@@ -10,7 +10,7 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { S3Client } from '@aws-sdk/client-s3';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { deriveMonthCompensation, runningFondoAhorroByDay, sumFondoAhorroDeduccionesMinor } from '@finance/domain';
-import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from '../../ledger/test/helpers/migration-schema.js';
 import { TABLE_NAMES, type SourceItem, type SourceKey } from '../../ledger/src/dsql/model.js';
 import { reconcileKey, type TransactionPool, type SqlClient } from '../../ledger/src/dsql/projection.js';
 import { verifyKey } from '../../ledger/src/dsql/verification.js';
@@ -115,11 +115,14 @@ describe('DSQL planning and payroll contracts', () => {
     const extraHash = createHash('sha256').update(extraXml).digest('hex');
     vi.mocked(S3Client.prototype.send).mockImplementation(async (command:any)=>({Body:{transformToByteArray:async()=>
       Buffer.from(String(command.input.Key).endsWith(`${extraHash}.xml`) ? extraXml : fixture)}}) as never);
-    expect(await verifyPlanningReads(owner,[],['2026-07','2026-10'],now)).toMatchObject({storedPayroll:2,frozenPayroll:1,
+    expect(await verifyPlanningReads(owner,[],['2026-07','2026-10'],now)).toMatchObject({storedPayroll:2,
       payrollLines:baseline.lines.length*2,evidenceFiles:2,mismatches:0});
     const corrupt = { ...records.get(recordId(key))!, payload: { ...baseline, totalMinor: baseline.totalMinor + 1 } };
     await sql.query('UPDATE olbia.payroll SET source_item=$1 WHERE source_pk=$2 AND source_sk=$3', [JSON.stringify(corrupt), key.PK, key.SK]);
+    expect((await verifyPlanningReads(owner, [], ['2026-07', '2026-10'], now)).mismatches).toBe(0);
+    await sql.query('UPDATE olbia.payslips SET total_mxn_minor=total_mxn_minor+1 WHERE uuid=$1::uuid',[baseline.uuid]);
     expect((await verifyPlanningReads(owner, [], ['2026-07', '2026-10'], now)).mismatches).toBeGreaterThan(0);
+    await sql.query('UPDATE olbia.payslips SET total_mxn_minor=total_mxn_minor-1 WHERE uuid=$1::uuid',[baseline.uuid]);
     expect(await getPayslip(owner, '2026-07', baseline.uuid)).toMatchObject({ totalMinor: baseline.totalMinor });
   });
   it('keeps native history and XML identity through duplicate or stale frozen backfill/replay', async () => {
@@ -228,14 +231,14 @@ describe('DSQL planning and payroll contracts', () => {
     await expect(listPayslipsForMonth(owner,'2026-09')).rejects.toThrow('SQL unavailable');
   });
 
-  it('verifies frozen evidence with native SQL and never consults the retired document source', async () => {
+  it('verifies current financial facts and original XML without any migration relation or document source', async () => {
     const item=payroll('2026-07',baseline.uuid,'31');put(item);await sync(item);
     vi.mocked(S3Client.prototype.send).mockResolvedValue({Body:{transformToByteArray:async()=>Buffer.from(fixture)}} as never);
     const send=vi.mocked(DynamoDBDocumentClient.prototype.send);
     const query=vi.spyOn(sql,'query');
-    expect(await verifyPlanningReads(owner,[],['2026-07','2026-10'],now)).toMatchObject({storedPayroll:1,frozenPayroll:1,mismatches:0});
+    expect(await verifyPlanningReads(owner,[],['2026-07','2026-10'],now)).toMatchObject({storedPayroll:1,mismatches:0});
     expect(send).not.toHaveBeenCalled();
-    expect(query.mock.calls.some(([statement])=>statement.startsWith('SELECT source_pk,source_sk,source_item FROM olbia.projection_state'))).toBe(true);
+    expect(query.mock.calls.some(([statement])=>/olbia\.(projection_state|monthly_plans|payroll)(?:\s|$)/.test(statement))).toBe(false);
 
   });
 });

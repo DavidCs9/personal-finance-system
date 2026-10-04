@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Called only by deploy-production, after CloudFormation finishes. Never release
-# code, change authority or mutate DynamoDB here. SQL maintenance verifies retained
-# recovery envelopes; the native financial probe verifies current relational authority.
+# code, change authority or mutate DynamoDB here. Current catalog, financial and
+# rollback gates precede the reviewed removal of retired SQL migration tables.
 aws sts get-caller-identity --query '{Account:Account,Arn:Arn}' --output json
 operator_function="$(aws cloudformation describe-stacks --stack-name PersonalFinanceV1 \
   --query "Stacks[0].Outputs[?OutputKey=='DsqlCutoverFunction'].OutputValue | [0]" --output text)"
@@ -52,6 +52,30 @@ while (( SECONDS < deadline )); do
         --payload '{"action":"smoke"}' --cli-read-timeout 180 "$response_file" > "$metadata_file"
       jq -e '.StatusCode == 200 and .FunctionError == null' "$metadata_file" > /dev/null || { echo 'Native SQL write smoke failed' >&2; exit 1; }
       jq -e '.verified == true and .rolledBack == true and .nativeLedger == true and .nativeWealth == true and .nativePush == true and .nativeDeliveries == true and .nativeThreads == true and .nativeExceptions == true' "$response_file" > /dev/null || { echo 'Native SQL rollback verification failed' >&2; exit 1; }
+      cat "$response_file"
+      # Destructive schema cleanup belongs exclusively to this reviewed deployment,
+      # after every updated native reader and writer has passed its real gate.
+      aws sts get-caller-identity --query '{Account:Account,Arn:Arn}' --output json
+      schema_function="$(aws cloudformation describe-stacks --stack-name PersonalFinanceV1 \
+        --query "Stacks[0].Outputs[?OutputKey=='DsqlSchemaFunction'].OutputValue | [0]" --output text)"
+      [[ -n "$schema_function" && "$schema_function" != 'None' ]] || { echo 'Schema cleanup output missing' >&2; exit 1; }
+      aws lambda invoke --function-name "$schema_function" --cli-binary-format raw-in-base64-out \
+        --payload '{"action":"retire-migration-evidence"}' --cli-read-timeout 900 "$response_file" > "$metadata_file"
+      jq -e '.StatusCode == 200 and .FunctionError == null' "$metadata_file" > /dev/null || { echo 'SQL catalog cleanup invocation failed' >&2; exit 1; }
+      jq -e '.verified == true and .mode == "native-sql" and .remainingTables == 41 and .domainTables == 38 and .controlTables == 3 and .migrationEvidenceTables == 0' "$response_file" > /dev/null || { echo 'SQL catalog cleanup failed' >&2; exit 1; }
+      cat "$response_file"
+      # Re-run current finances and original-object checks against the clean catalog.
+      aws sts get-caller-identity --query '{Account:Account,Arn:Arn}' --output json
+      aws lambda invoke --function-name "$reader_function" --cli-binary-format raw-in-base64-out \
+        --payload '{}' --cli-read-timeout 900 "$response_file" > "$metadata_file"
+      jq -e '.StatusCode == 200 and .FunctionError == null' "$metadata_file" > /dev/null || { echo 'Clean SQL read verification invocation failed' >&2; exit 1; }
+      jq -e '.verified == true and .mode == "native-sql" and .mismatches == 0 and .provenance.mismatches == 0 and .evidence.mismatches == 0' "$response_file" > /dev/null || { echo 'Clean SQL financial verification failed' >&2; exit 1; }
+      cat "$response_file"
+      aws sts get-caller-identity --query '{Account:Account,Arn:Arn}' --output json
+      aws lambda invoke --function-name "$operator_function" --cli-binary-format raw-in-base64-out \
+        --payload '{"action":"smoke"}' --cli-read-timeout 180 "$response_file" > "$metadata_file"
+      jq -e '.StatusCode == 200 and .FunctionError == null' "$metadata_file" > /dev/null || { echo 'Clean SQL write smoke invocation failed' >&2; exit 1; }
+      jq -e '.verified == true and .rolledBack == true and .nativeLedger == true and .nativeWealth == true and .nativePush == true and .nativeDeliveries == true and .nativeThreads == true and .nativeExceptions == true' "$response_file" > /dev/null || { echo 'Clean SQL rollback verification failed' >&2; exit 1; }
       cat "$response_file"
       exit 0 ;;
     FAILED|TIMED_OUT|ABORTED)

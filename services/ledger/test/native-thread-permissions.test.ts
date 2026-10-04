@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
-import { SCHEMA_STATEMENTS, bootstrapSchema } from '../src/dsql/schema.js';
+import { bootstrapSchema } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../src/dsql/ledger-schema.js';
 import { smokeNativeThreads } from '../src/dsql/thread-smoke.js';
 import { upsertConversation, selectConversation, readConversationMetadata, deleteConversationMetadata } from '../src/dsql/thread.js';
@@ -16,6 +17,7 @@ beforeAll(async()=>{
     if(s.startsWith('ALTER TABLE ASYNC')){await sql.query(s.replace('TABLE ASYNC','TABLE'),v);return{rows:[{job_id:'local-validation'}]};}return sql.query<Record<string,unknown>>(s,v);
   }};
   const identity=['arn:aws:iam::225989371926:role/permission-test'];
+  for(const version of [8,9,10,11,12,13,14,15,16,17,18,19,20]) await sql.query('INSERT INTO olbia.schema_migrations VALUES ($1,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING',[version]);
   await bootstrapSchema(client,[],{transactionPool:{transaction:fn=>sql.transaction(c=>fn(c as unknown as SqlClient))},applicationRoleArns:identity,
     cutoverRoleArns:identity,readerRoleArns:identity,operationalVerifierRoleArns:identity,storeReaderRoleArns:identity});
   await upsertConversation(sql,{owner,id,title:'Original title',month:'2026-10',at});await selectConversation(sql,owner,id,at);
@@ -44,11 +46,10 @@ it('enforces every actual role and only permits bounded native lifecycle writes'
     await sql.query('RESET ROLE');
   }
 });
-it('allows only isolated historical recovery reads and denies every frozen metadata mutation',async()=>{
+it('denies all historical recovery reads and denies every frozen metadata mutation',async()=>{
   for(const role of ['olbia_application','olbia_cutover','olbia_reader','olbia_store_reader','olbia_operational_verifier','olbia_projector']){
     await sql.query(`SET ROLE ${role}`);
-    if(['olbia_projector','olbia_operational_verifier'].includes(role))await expect(sql.query('SELECT * FROM olbia.assistant_threads')).resolves.toBeDefined();
-    else await expect(sql.query('SELECT * FROM olbia.assistant_threads')).rejects.toMatchObject({code:'42501'});
+    await expect(sql.query('SELECT * FROM olbia.assistant_threads')).rejects.toMatchObject({code:'42501'});
     for(const action of ['DELETE FROM olbia.assistant_threads','UPDATE olbia.assistant_threads SET source_item=source_item'])await expect(sql.query(action)).rejects.toMatchObject({code:'42501'});
     await sql.query('RESET ROLE');
   }

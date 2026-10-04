@@ -1,14 +1,14 @@
 import { PGlite } from '@electric-sql/pglite';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from '../../ledger/test/helpers/migration-schema.js';
 import { TABLE_NAMES, type SourceItem } from '../../ledger/src/dsql/model.js';
 import type { ReadSqlClient } from '../src/events/sql-reads.js';
 import { reconcileKey, type SqlClient, type TransactionPool } from '../../ledger/src/dsql/projection.js';
 process.env.METADATA_TABLE_NAME ??= 'test'; process.env.RAW_EMAIL_BUCKET_NAME ??= 'test';
 const readers = await import('../src/events/sql-reads.js');
 const reads = await import('../src/operational/reads.js');
-const verify = await import('../src/operational/verification.js');
+const verify = await import('./helpers/operational-migration.js');
 
 let sql: PGlite, pool: TransactionPool, records: SourceItem[], calls: unknown[];
 const now = new Date('2026-10-01T12:00:00.000Z');

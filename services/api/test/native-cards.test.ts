@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cardRemindersForDay } from '@finance/domain';
-import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from '../../ledger/test/helpers/migration-schema.js';
 import type { SqlClient } from '../../ledger/src/dsql/projection.js';
 import * as connection from '../../ledger/src/dsql/connection.js';
 import { withSqlClient } from '../../ledger/src/dsql/sql-runtime.js';

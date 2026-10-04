@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll,beforeEach,afterAll,expect,it,vi } from 'vitest';
-import { readRetainedEvidencePages } from '../src/events/retained-evidence.js';
+import { readRetainedEvidencePages } from './helpers/retained-evidence.js';
 let sql:PGlite;
 beforeAll(async()=>{sql=new PGlite();await sql.exec('CREATE SCHEMA olbia;CREATE TABLE olbia.projection_state(source_pk text,source_sk text,deleted boolean NOT NULL,source_item jsonb,PRIMARY KEY(source_pk,source_sk))');},30_000);
 afterAll(()=>sql.close());beforeEach(()=>sql.exec('TRUNCATE olbia.projection_state'));

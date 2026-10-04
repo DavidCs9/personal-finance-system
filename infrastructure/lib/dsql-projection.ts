@@ -109,6 +109,7 @@ export class DsqlProjection extends Construct {
     }
     props.table.grant(maintenance, 'dynamodb:Scan');
     schema.addToRolePolicy(new iam.PolicyStatement({ actions: ['dsql:DbConnectAdmin'], resources: [cluster.attrResourceArn] }));
+    props.table.grant(schema, 'dynamodb:DescribeTable', 'dynamodb:DescribeContinuousBackups');
     recovery.grantRead(replay, 'aws/lambda/*');
     recovery.grantPut(maintenance, 'reconciliation/*');
     const provider = new cr.Provider(this, 'SchemaProvider', {
@@ -117,7 +118,7 @@ export class DsqlProjection extends Construct {
     });
     const bootstrap = new CustomResource(this, 'Bootstrap', {
       serviceToken: provider.serviceToken,
-      properties: { Version: 23, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
+      properties: { Version: 24, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
     });
     this.bootstrap = bootstrap;
     // IAM policies must be installed before the bootstrap handler connects.
@@ -206,6 +207,7 @@ export class DsqlProjection extends Construct {
     operator.addEnvironment('OLBIA_ALLOW_SQL_ACTIVATION',String(SQL_AUTHORITY));
     this.grantSqlAccess(operator,'operator');
     operator.grantInvoke(deployRole);
+    schema.grantInvoke(deployRole);
     const vault=new backup.BackupVault(this,'BackupVault',{backupVaultName:'personal-finance-v1-dsql',encryptionKey:props.encryptionKey,removalPolicy:RemovalPolicy.RETAIN});
     const backupRole=new iam.Role(this,'BackupRole',{assumedBy:new iam.ServicePrincipal('backup.amazonaws.com'),managedPolicies:[iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSBackupServiceRolePolicyForBackup')]});
     props.encryptionKey.grantEncryptDecrypt(backupRole);
@@ -217,6 +219,7 @@ export class DsqlProjection extends Construct {
     props.encryptionKey.grantEncryptDecrypt(deployRole);
     deployRole.addToPrincipalPolicy(new iam.PolicyStatement({actions:['dynamodb:CreateBackup'],resources:[props.table.tableArn]}));
     deployRole.addToPrincipalPolicy(new iam.PolicyStatement({actions:['dynamodb:DescribeBackup'],resources:[`${props.table.tableArn}/backup/*`]}));
+    new CfnOutput(Stack.of(this),'DsqlSchemaFunction',{value:schema.functionName});
     new CfnOutput(Stack.of(this),'DsqlCutoverFunction',{value:operator.functionName});
     new CfnOutput(Stack.of(this),'DsqlClusterArn',{value:cluster.attrResourceArn});
     new CfnOutput(Stack.of(this),'DsqlBackupRole',{value:backupRole.roleArn});

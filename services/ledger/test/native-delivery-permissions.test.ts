@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
-import { SCHEMA_STATEMENTS, bootstrapSchema } from '../src/dsql/schema.js';
+import { bootstrapSchema } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../src/dsql/ledger-schema.js';
 import { smokeNativeDeliveries } from '../src/dsql/delivery-smoke.js';
 import { insertMonthlyDeliveryPreparation, insertMonthlyDeliveryReceipt, readMonthlyDelivery } from '../src/dsql/delivery.js';
@@ -19,6 +20,7 @@ beforeAll(async()=>{
     return sql.query<Record<string,unknown>>(s,v);
   }};
   const identity=['arn:aws:iam::225989371926:role/permission-test'];
+  for(const version of [8,9,10,11,12,13,14,15,16,17,18,19,20]) await sql.query('INSERT INTO olbia.schema_migrations VALUES ($1,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING',[version]);
   await bootstrapSchema(client,[],{transactionPool:{transaction:fn=>sql.transaction(c=>fn(c as unknown as SqlClient))},applicationRoleArns:identity,
     cutoverRoleArns:identity,readerRoleArns:identity,operationalVerifierRoleArns:identity,storeReaderRoleArns:identity});
   await insertMonthlyDeliveryPreparation(sql,{kind:'monthly_close',owner,month,preparedAt:at,email:{subject:'Original subject',html:'Original html',text:'Original text'},
@@ -51,11 +53,10 @@ it('enforces actual append-only writer permissions and no private delivery acces
   }
 });
 
-it('allows only isolated historical recovery reads and forbids every role from mutating frozen delivery documents',async()=>{
+it('denies all historical recovery reads and forbids every role from mutating frozen delivery documents',async()=>{
   for(const role of ['olbia_application','olbia_cutover','olbia_reader','olbia_store_reader','olbia_operational_verifier','olbia_projector']){
     await sql.query(`SET ROLE ${role}`);
-    if(['olbia_projector','olbia_operational_verifier'].includes(role))await expect(sql.query('SELECT * FROM olbia.delivery_records')).resolves.toBeDefined();
-    else await expect(sql.query('SELECT * FROM olbia.delivery_records')).rejects.toMatchObject({code:'42501'});
+    await expect(sql.query('SELECT * FROM olbia.delivery_records')).rejects.toMatchObject({code:'42501'});
     for(const action of ['DELETE FROM olbia.delivery_records','UPDATE olbia.delivery_records SET source_item=source_item'])await expect(sql.query(action)).rejects.toMatchObject({code:'42501'});
     await sql.query('RESET ROLE');
   }

@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
-import { readRetainedEvidencePages } from '../events/retained-evidence.js';
-import { addCalendarMonths, monthKeyInZone, deriveMonthCompensation, runningFondoAhorroByDay, sumFondoAhorroDeduccionesMinor, type PayslipSummary } from '@finance/domain';
+import { addCalendarMonths, monthKeyInZone, deriveMonthCompensation, runningFondoAhorroByDay, sumFondoAhorroDeduccionesMinor } from '@finance/domain';
 import { s3 } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
 import { samePublicResult } from '../events/read-selection.js';
@@ -9,6 +8,7 @@ import { readerPool, readSqlFeed } from '../events/sql-reads.js';
 import { feedFromMovements } from '../events/month-feed.js';
 import { getPayslip,getPayslipSql,incomeFieldsForMonth,listPayslipsForYear,toPublicPayslip } from '../imports/cfdi-nomina-flow.js';
 import { readSqlAllPayrollRecords } from '../imports/payroll-sql.js';
+import { parseCfdiNominaXml } from '../imports/cfdi-nomina.js';
 import { getMonthlyPlan, getMonthlyPlanFromReads } from './service.js';
 import { planReadStatement, payrollReadStatement, readSqlPlanRecord, readSqlAllPlanRecords, readSqlPayslipsForMonth, readSqlPayslipsForYear } from './sql-reads.js';
 import { summarizeMonthFeed } from './summary.js';
@@ -16,18 +16,11 @@ import { getWealthOverview, getWealthOverviewAsOf } from '../wealth/service.js';
 import { readNativeWealthInputs } from '../wealth/native-reads.js';
 import { monthCloseDay } from '../reports/monthly-close.js';
 
-/** Frozen evidence parity and native typed/domain/financial verification are independent gates. */
+/** Independent native typed/domain/financial and original XML verification. */
 export const verifyPlanningReads = async (owner: string, movementPayloads: JsonObject[], financialMonths: readonly string[], now: Date) => {
   const started = Date.now();
-  const source: JsonObject[] = [];
-  const client=readerPool();
-  for await(const page of readRetainedEvidencePages(client,owner))source.push(...page);
-  const projected = await client.query(`SELECT source_item FROM olbia.monthly_plans WHERE source_pk=$1
-    UNION ALL SELECT source_item FROM olbia.payroll WHERE source_pk=$1`, [`USER#${owner}`]);
-  const sorted = (items: JsonObject[]) => [...items].sort((a, b) => String(a.SK).localeCompare(String(b.SK)));
-  let mismatches = Number(!samePublicResult(sorted(source), sorted(projected.rows.map(row => row.source_item as JsonObject))));
-  // Frozen month documents remain separately verified evidence. Native plans
-  // supply every operational financial comparison, including after native edits.
+  const client = readerPool();
+  let mismatches = 0;
   const nativePlans = await readSqlAllPlanRecords(owner, client);
   const parents = (await client.query('SELECT month,owner,updated_at FROM olbia.month_plans WHERE owner=$1 ORDER BY month', [owner])).rows;
   mismatches += Number(!samePublicResult(parents.map(row => ({ ...row, updated_at: new Date(row.updated_at as string | Date).toISOString() })),
@@ -65,8 +58,7 @@ export const verifyPlanningReads = async (owner: string, movementPayloads: JsonO
   const payrollConstraints = (await client.query(`SELECT conname,convalidated FROM pg_constraint WHERE conrelid IN ('olbia.payslips'::regclass,'olbia.payslip_lines'::regclass)
     AND conname IN ('payslips_pkey','payslip_lines_pkey','payslip_lines_receipt_fk') ORDER BY conname`)).rows;
   mismatches += Number(!samePublicResult(payrollConstraints,['payslip_lines_pkey','payslip_lines_receipt_fk','payslips_pkey'].map(conname=>({conname,convalidated:true}))));
-  const records = [...source, ...projected.rows.map(row => row.source_item as JsonObject)];
-  const months = new Set([...financialMonths, ...nativePlans.map(plan => plan.month), ...nativePayroll.map(record=>record.payslip.month), ...records.map(item => String(item.month))]);
+  const months = new Set([...financialMonths, ...nativePlans.map(plan => plan.month), ...nativePayroll.map(record=>record.payslip.month)]);
   const ordered = [...months].sort();
   // Include gaps and inheritance after the last stored plan, plus empty boundaries.
   for (let month = addCalendarMonths(ordered[0]!, -1); month <= addCalendarMonths(ordered.at(-1)!, 1); month = addCalendarMonths(month, 1)) months.add(month);
@@ -97,19 +89,19 @@ export const verifyPlanningReads = async (owner: string, movementPayloads: JsonO
     mismatches += Number(!samePublicResult(runningFondoAhorroByDay(sourceSlips), runningFondoAhorroByDay(sqlSlips))); payrollYears++;
   }
   let details = 0, evidenceFiles = 0;
-  for (const item of source.filter(item => String(item.SK).startsWith('PAYROLL#'))) {
-    const month = String(item.month), uuid = String(item.uuid);
-    const sourceDetail = toPublicPayslip(item.payload as unknown as PayslipSummary,String(item.ingestedAt),item.source as JsonObject);
-    mismatches += Number(!samePublicResult(sourceDetail, await getPayslipSql(owner, month, uuid.toLowerCase())));
-    mismatches += Number(!samePublicResult(sourceDetail, await getPayslip(owner, month, uuid))); details++;
-  }
   for (const record of nativePayroll) {
     const evidence = record.source;
     mismatches += Number(!samePublicResult(await getPayslip(owner,record.payslip.month,record.payslip.uuid),
       { ...record.payslip,ingestedAt:record.ingestedAt,source:record.source }));
+    mismatches += Number(!samePublicResult(await getPayslipSql(owner,record.payslip.month,record.payslip.uuid),
+      toPublicPayslip(record.payslip,record.ingestedAt,record.source))); details++;
     const object = await s3.send(new GetObjectCommand({ Bucket: evidence.bucket, Key: evidence.key }));
     const bytes = await object.Body!.transformToByteArray();
     mismatches += Number(createHash('sha256').update(bytes).digest('hex') !== evidence.sha256); evidenceFiles++;
+    // The retained XML is the original financial assertion. Compare every native
+    // receipt/line to that evidence without requiring a migration-table copy.
+    try { mismatches += Number(!samePublicResult(parseCfdiNominaXml(Buffer.from(bytes).toString('utf8')), record.payslip)); }
+    catch { mismatches++; }
   }
   const missing = '__dsql_missing_payroll__';
   mismatches += Number(await getPayslipSql(owner,'1900-01',missing)!==undefined);
@@ -130,6 +122,6 @@ export const verifyPlanningReads = async (owner: string, movementPayloads: JsonO
   }
   return { mode: 'native-sql', payrollAuthority: 'native-sql', planAuthority: 'native-sql', storedPlans: nativePlans.length, plannedPayments: children.length,
     explicitEmptyPlans: nativePlans.filter(plan => plan.upcomingPayments.length === 0).length, invalidPlanReferences, validatedPlanConstraints: nativeConstraints.filter(row => row.convalidated).length,
-    storedPayroll: nativePayroll.length, payrollLines: payrollLines.length, invalidPayrollReferences, validatedPayrollConstraints: payrollConstraints.filter(row=>row.convalidated).length, frozenPayroll: details, plans, summaries, compensation, payrollYears, wealthCloses, wealthOverview: 1, details, evidenceFiles,
+    storedPayroll: nativePayroll.length, payrollLines: payrollLines.length, invalidPayrollReferences, validatedPayrollConstraints: payrollConstraints.filter(row=>row.convalidated).length, plans, summaries, compensation, payrollYears, wealthCloses, wealthOverview: 1, details, evidenceFiles,
     missingLookups: 1, mismatches, elapsedMs: Date.now() - started, queryPlans };
 };

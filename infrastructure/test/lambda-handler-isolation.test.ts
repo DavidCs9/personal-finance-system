@@ -17,9 +17,11 @@ const bundleEntry = async (entryFile: string): Promise<string> => {
     format: 'cjs',
     target: 'node24',
     minify: false,
+    metafile: true,
     // Mirror CDK NodejsFunction for nodejs18+: AWS SDK stays in the runtime.
     external: ['@aws-sdk/*', '@aws-lambda-powertools/*', 'web-push'],
   });
+  expect(Object.keys(result.metafile!.inputs).some(input => /(?:test\/helpers|legacy-document-store|retained-evidence)\b/.test(input))).toBe(false);
   const file = result.outputFiles[0];
   if (!file) throw new Error(`esbuild produced no output for ${entryFile}`);
   for (const retired of ['@aws-sdk/lib-dynamodb', '@aws-sdk/client-dynamodb', 'METADATA_TABLE_NAME',
@@ -30,6 +32,16 @@ const bundleEntry = async (entryFile: string): Promise<string> => {
 };
 
 describe('lambda handler bundle isolation', () => {
+  it('schema entry includes only native bootstrap and explicit retirement, with no historical copy implementation', async () => {
+    const result = await esbuild.build({ absWorkingDir: repoRoot, entryPoints: [path.join(lambdaDir, 'dsql-schema.ts')],
+      bundle: true, write: false, metafile: true, platform: 'node', format: 'cjs', target: 'node24', external: ['@aws-sdk/*'] });
+    const inputs = Object.keys(result.metafile!.inputs);
+    expect(inputs.some(input => /(?:test\/helpers|legacy-document-store|(?:ledger|wealth|card|month-plan|payroll|import)-copy)\b/.test(input))).toBe(false);
+    expect(result.outputFiles[0].text).not.toMatch(/CREATE TABLE IF NOT EXISTS olbia\.(?:projection_state|command_receipts|movements|payroll)\b/);
+    expect(result.outputFiles[0].text).toContain('DROP TABLE IF EXISTS olbia.');
+    expect(result.outputFiles[0].text).not.toMatch(/SELECT source_item|ScanCommand|GetItemCommand/);
+  });
+
   it('api entry does not load apple-pay capture env requirements', async () => {
     const code = await bundleEntry('api.ts');
     expect(code).toContain('RAW_EMAIL_BUCKET_NAME');

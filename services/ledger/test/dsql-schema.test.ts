@@ -1,11 +1,13 @@
+import { ensureMovementCategoryForeignKey, ensureCardLiabilityRelationships } from './helpers/migration-schema.js';
 import { describe, expect, it, vi } from 'vitest';
-import { bootstrapSchema as realBootstrapSchema, ensureMovementCategoryForeignKey, ensureCardLiabilityRelationships, ensureLedgerPrimaryObservation } from '../src/dsql/schema.js';
+import { bootstrapSchema as realBootstrapSchema, ensureLedgerPrimaryObservation } from '../src/dsql/schema.js';
 import type { SqlClient } from '../src/dsql/projection.js';
 
 const bootstrapSchema = (client: SqlClient, roleArns: readonly string[], options: Parameters<typeof realBootstrapSchema>[2] = {}) =>
   realBootstrapSchema(client, roleArns, { transactionPool: { transaction: callback => callback({ query: (s,v) =>
     s.includes('AS count FROM olbia.payroll') ? Promise.resolve({ rows: [{ count: 2 }] }) : client.query(s,v) }) }, ...options });
 const ready = (statement: string) => ({ rows:
+  statement.includes('WHERE version=20') ? [{ version: 20 }] :
   statement.includes('WHERE version=19') ? [{ version: 19 }] :
   statement.includes('WHERE version=18') ? [{ version: 18 }] :
   statement.includes('WHERE version=17') ? [{ version: 17 }] :
@@ -64,7 +66,7 @@ describe('DSQL-specific schema bootstrap', () => {
     expect(statements).toContain('CREATE ROLE olbia_reader WITH LOGIN');
     expect(statements).toContain('GRANT USAGE ON SCHEMA olbia TO olbia_reader');
     expect(statements.some(s=>s.startsWith('GRANT SELECT ON olbia.ledger_movements'))).toBe(true);
-    expect(statements.some(s=>s.startsWith('REVOKE ALL PRIVILEGES ON olbia.projection_state,olbia.command_receipts'))).toBe(true);
+    expect(statements.join()).not.toContain('projection_state');
     expect(statements.join()).not.toContain('GRANT SELECT ON olbia.movements,');
     expect(statements).toContain("AWS IAM GRANT olbia_reader TO 'arn:aws:iam::225989371926:role/api-reader'");
     expect(statements.join()).not.toMatch(/GRANT (?:ALL|INSERT|UPDATE|DELETE)|olbia_projector TO/);
@@ -74,7 +76,8 @@ describe('DSQL-specific schema bootstrap', () => {
     const query = vi.fn(async (statement: string) => ready(statement));
     await bootstrapSchema({ query } as SqlClient, [], { operationalVerifierRoleArns: ['arn:aws:iam::225989371926:role/probe'] });
     const statements = query.mock.calls.map(([statement]) => statement).filter(statement => statement.includes('olbia_operational_verifier'));
-    expect(statements).toContain('GRANT SELECT ON olbia.dedupe_claims,olbia.exception_claims,olbia.ingestion_exceptions,olbia.ingestion_retries,olbia.import_records,olbia.bulk_edit_operations,olbia.delivery_records,olbia.push_subscriptions,olbia.assistant_threads TO olbia_operational_verifier');
+    expect(statements).toContain('GRANT SELECT ON olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates,olbia.schema_migrations TO olbia_operational_verifier');
+    expect(statements.join()).not.toContain('source_item');
     expect(statements.join()).not.toMatch(/GRANT (?:ALL|INSERT|UPDATE|DELETE)|olbia_projector TO/);
     await expect(bootstrapSchema({ query } as SqlClient, [], { operationalVerifierRoleArns: ["unsafe' ARN"] })).rejects.toThrow('Invalid verifier role ARN');
   });
@@ -99,7 +102,7 @@ describe('DSQL-specific schema bootstrap', () => {
   });
   it('blocks capture when a native build fails or exceeds its deadline', async () => {
     for (const status of ['failed', 'processing']) {
-      const query = vi.fn(async (statement: string) => ({ rows: statement.includes('pg_constraint') ? [{ convalidated: true }] : statement.includes('indisvalid') ? [{ indisvalid: false }] : statement.includes('sys.jobs') ? [{ status }] : [] }));
+      const query = vi.fn(async (statement: string) => ({ rows: statement.includes('WHERE version=20') ? [{version:20}] : statement.includes('pg_constraint') ? [{ convalidated: true }] : statement.includes('indisvalid') ? [{ indisvalid: false }] : statement.includes('sys.jobs') ? [{ status }] : [] }));
       await expect(bootstrapSchema({ query } as SqlClient, [], { indexWaitMs: 0 })).rejects.toThrow(status === 'failed' ? 'index-build' : 'index-timeout');
       expect(query.mock.calls.some(([statement]) => statement.startsWith('AWS IAM GRANT'))).toBe(false);
     }
@@ -114,7 +117,7 @@ describe('DSQL-specific schema bootstrap', () => {
     await bootstrapSchema({ query } as SqlClient, [], { pause });
     expect(pause).toHaveBeenCalledWith(25);
     const failure = vi.fn(async () => { throw Object.assign(new Error('private token/value'), { code: '0A000', detail: 'private' }); });
-    await expect(bootstrapSchema({ query: failure } as SqlClient, [])).rejects.toThrow('schema-statement-1 (0A000)');
+    await expect(bootstrapSchema({ query: failure } as SqlClient, [])).rejects.toThrow('native-baseline (0A000)');
     expect(failure).toHaveBeenCalledTimes(1);
     try { await bootstrapSchema({ query: failure } as SqlClient, []); }
     catch (error) { expect(String(error)).not.toContain('private'); }
@@ -149,47 +152,13 @@ it('does not mark liability relationships complete until every native constraint
 });
 
 
-it('validates native primary ownership before activation and completes grants/indexes before atomic copy', async () => {
-  const query = vi.fn(async (statement: string) => ready(statement));
-  await bootstrapSchema({query}, [], {applicationRoleArns:['arn:aws:iam::225989371926:role/product'],readerRoleArns:['arn:aws:iam::225989371926:role/api-reader']});
-  const statements = query.mock.calls.map(([statement]) => statement);
-  const activation = statements.findIndex(statement => statement.includes('WHERE version=14'));
-  expect(activation).toBeGreaterThan(statements.findIndex(statement => statement.includes('ledger_revisions_movement_idx')));
-  expect(activation).toBeGreaterThan(statements.findIndex(statement => statement.startsWith('GRANT INSERT ON olbia.ledger_observations')));
-  const wealthActivation = statements.findIndex(statement => statement.includes('WHERE version=15'));
-  expect(wealthActivation).toBeGreaterThan(activation);
-  expect(wealthActivation).toBeGreaterThan(statements.findIndex(statement => statement.startsWith('GRANT INSERT ON olbia.asset_captures')));
-  expect(wealthActivation).toBeGreaterThan(statements.findIndex(statement => statement.startsWith('REVOKE ALL PRIVILEGES ON olbia.wealth_snapshots')));
+it('keeps current ownership, scoped writes and metadata-only push access without any source-copy operation', async () => {
+  const query=vi.fn(async(statement:string)=>ready(statement));
+  await bootstrapSchema({query},[],{applicationRoleArns:['arn:aws:iam::225989371926:role/product'],readerRoleArns:['arn:aws:iam::225989371926:role/reader']});
+  const statements=query.mock.calls.map(([s])=>s);
+  expect(statements.join()).not.toMatch(/source_item|SELECT version FROM olbia.schema_migrations WHERE version=(9|11|12|13|14|15|16|17|18|19)(?:$|\D)/);
   expect(statements).toContain('GRANT UPDATE (capture_id) ON olbia.asset_daily_captures TO olbia_application');
-  expect(statements).toContain('GRANT UPDATE (capture_id) ON olbia.liability_daily_captures TO olbia_application');
-  const pushActivation = statements.findIndex(statement => statement.includes('WHERE version=16'));
-  expect(pushActivation).toBeGreaterThan(wealthActivation);
-  expect(pushActivation).toBeGreaterThan(statements.findIndex(statement => statement.startsWith('GRANT INSERT,DELETE ON olbia.web_push_subscriptions')));
-  expect(pushActivation).toBeGreaterThan(statements.findIndex(statement => statement === 'REVOKE ALL PRIVILEGES ON olbia.push_subscriptions FROM olbia_application'));
-  const deliveryActivation = statements.findIndex(statement => statement.includes('WHERE version=17'));
-  expect(deliveryActivation).toBeGreaterThan(pushActivation);
-  expect(deliveryActivation).toBeGreaterThan(statements.findIndex(statement=>statement.startsWith('GRANT INSERT ON olbia.monthly_email_preparations')));
-  expect(deliveryActivation).toBeGreaterThan(statements.findIndex(statement=>statement.startsWith('REVOKE ALL PRIVILEGES ON olbia.delivery_records')));
-  const threadActivation = statements.findIndex(statement => statement.includes('WHERE version=18'));
-  expect(threadActivation).toBeGreaterThan(deliveryActivation);
-  expect(threadActivation).toBeGreaterThan(statements.findIndex(statement=>statement.startsWith('GRANT UPDATE (thread_id,updated_at) ON olbia.assistant_thread_selection')));
-  expect(threadActivation).toBeGreaterThan(statements.findIndex(statement=>statement === 'REVOKE ALL PRIVILEGES ON olbia.assistant_threads FROM olbia_application'));
-  expect(statements.at(-1)).toBe('INSERT INTO olbia.schema_migrations VALUES (20,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
-  const exceptionActivation = statements.findIndex(statement => statement.includes('WHERE version=19'));
-  expect(exceptionActivation).toBeGreaterThan(threadActivation);
-  expect(exceptionActivation).toBeGreaterThan(statements.findIndex(statement=>statement.startsWith('GRANT INSERT ON olbia.ingestion_review_exceptions')));
-  expect(exceptionActivation).toBeGreaterThan(statements.findIndex(statement=>statement === 'REVOKE ALL PRIVILEGES ON olbia.ingestion_exceptions,olbia.exception_claims,olbia.ingestion_retries FROM olbia_application'));
-  const recoveryRevoke=statements.findIndex(statement=>statement.startsWith('REVOKE ALL PRIVILEGES ON olbia.projection_state,olbia.command_receipts')&&statement.endsWith('FROM olbia_application'));
-  expect(recoveryRevoke).toBeGreaterThan(-1);
-  expect(activation).toBeGreaterThan(recoveryRevoke);
-  expect(exceptionActivation).toBeGreaterThan(statements.findIndex(statement=>statement.startsWith('REVOKE INSERT,UPDATE,DELETE ON olbia.projection_state,olbia.command_receipts')&&statement.endsWith('FROM olbia_projector')));
   expect(statements).toContain('GRANT SELECT (subscription_id,owner,content_mode,active,created_at,updated_at) ON olbia.web_push_subscriptions TO olbia_reader');
   expect(statements).toContain('GRANT UPDATE (status,applied_at,undone_at) ON olbia.ledger_bulk_operations TO olbia_application');
-  const failure = vi.fn(async (statement: string) => ({ rows:
-    statement.includes('pg_constraint') ? [{convalidated:false}] :
-    statement.startsWith('ALTER TABLE ASYNC') ? [{job_id:'ownership-job'}] :
-    statement.includes('sys.jobs') ? [{status:'failed'}] : [],
-  }));
-  await expect(ensureLedgerPrimaryObservation({query:failure})).rejects.toThrow('ledger-primary-validation');
-  expect(failure.mock.calls.map(([statement]) => statement).join()).not.toContain('schema_migrations');
+  expect(statements.at(-1)).toBe('INSERT INTO olbia.schema_migrations VALUES (20,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 });

@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { types as pgTypes } from 'pg';
 import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_SPEND_CATEGORIES, buildMsiSchedule } from '@finance/domain';
-import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { projectRows, TABLE_NAMES, type SourceItem, type SourceKey } from '../src/dsql/model.js';
 import { reconcileKey, processStream, sourceHash, type SqlClient, type TransactionPool } from '../src/dsql/projection.js';
 import { verifyKey } from '../src/dsql/verification.js';

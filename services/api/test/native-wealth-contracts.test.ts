@@ -1,16 +1,17 @@
+import { verifyWealthRecovery } from './helpers/wealth-migration.js';
 import { PGlite } from '@electric-sql/pglite';
 import { createHash } from 'node:crypto';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { S3Client } from '@aws-sdk/client-s3';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as connection from '../../ledger/src/dsql/connection.js';
-import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from '../../ledger/test/helpers/migration-schema.js';
 import { NATIVE_WEALTH_SCHEMA_STATEMENTS, NATIVE_WEALTH_TABLES } from '../../ledger/src/dsql/wealth-schema.js';
 import { migrateWealth } from '../../ledger/src/dsql/wealth-copy.js';
 import { projectRows, type SourceItem } from '../../ledger/src/dsql/model.js';
 import { currentSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
 import type { SqlClient, TransactionPool } from '../../ledger/src/dsql/projection.js';
-import { readIndependentWealthState, verifyWealthRecovery } from '../src/wealth/native-verification.js';
+import { readIndependentWealthState } from '../src/wealth/native-verification.js';
 
 process.env.METADATA_TABLE_NAME ??= 'test'; process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-evidence';
 const wealth = await import('../src/wealth/service.js');
@@ -76,7 +77,7 @@ describe('native wealth public contracts and independent acceptance', () => {
   it('verifies every immutable original, current/history relationship, report and evidence outside the snapshot', async () => {
     expect(await verifyWealthReads('owner', ['2026-08', '2026-10'], now)).toMatchObject({ mode: 'native-sql', storedSnapshots: 4,
       storedLiabilities: 2, storedVersions: 1, storedLiabilityVersions: 1, captures: 8, holdings: 5, replacements: 2,
-      recoveryAssertions: 8, validatedConstraints: 24, evidenceFiles: 8, mismatches: 0 });
+      validatedConstraints: 24, evidenceFiles: 8, mismatches: 0 });
     expect(DynamoDBDocumentClient.prototype.send).not.toHaveBeenCalled();
   });
   it('preserves month-end carry forward, paid zero, Chihuahua boundaries, monthly trend and actual assistant/report paths', async () => {
@@ -97,7 +98,7 @@ describe('native wealth public contracts and independent acceptance', () => {
     const id = [...first.assetFacts].find(([, s]) => s.accountId === 'bitso' && s.day === '2026-09-30' && s.totalMxnMinor === 15000)![0];
     await sql.query('UPDATE olbia.asset_holdings SET value_mxn_minor=value_mxn_minor+1 WHERE capture_id=$1', [id]);
     expect((await wealth.getWealthOverviewAsOf('owner', '2026-09-30')).assetsMxnMinor).toBe(35001);
-    expect((await verifyWealthReads('owner', ['2026-09'], now)).recoveryMismatches).toBeGreaterThan(0);
+    expect((await verifyWealthReads('owner', ['2026-09'], now)).mismatches).toBeGreaterThan(0);
     await sql.query('UPDATE olbia.asset_holdings SET value_mxn_minor=value_mxn_minor-1 WHERE capture_id=$1', [id]);
     await sql.query("UPDATE olbia.asset_daily_captures SET capture_id='10000000-0000-4000-8000-000000000001' WHERE account_id='bitso' AND day='2026-09-30'");
     expect((await readIndependentWealthState('owner', sql)).mismatches).toBeGreaterThan(0);
@@ -107,9 +108,9 @@ describe('native wealth public contracts and independent acceptance', () => {
     const holdings = [{ id: 'mxn', symbol: 'MXN', name: 'Cash', quantity: 1, currency: 'MXN', valueNativeMinor: 222, valueMxnMinor: 222 }];
     await wealth.persistWealthSnapshot({ owner: 'owner', accountId: 'bitso', source: 'api', holdings, evidenceKind: 'api',
       evidenceBody: JSON.stringify({ kind: 'wealth_bitso_snapshot', owner: 'owner', day: '2026-09-30', accountId: 'bitso', holdings }) });
-    expect(await verifyWealthReads('owner', ['2026-09'], now)).toMatchObject({ captures: 9, replacements: 3, recoveryAssertions: 8, recoveryMismatches: 0, mismatches: 0 });
+    expect(await verifyWealthReads('owner', ['2026-09'], now)).toMatchObject({ captures: 9, replacements: 3, mismatches: 0 });
     await sql.query("UPDATE olbia.asset_holdings SET value_mxn_minor=223 WHERE id='mxn'");
-    expect(await verifyWealthReads('owner', ['2026-09'], now)).toMatchObject({ recoveryMismatches: 0, evidence: { factMismatches: 1 }, mismatches: 1 });
+    expect(await verifyWealthReads('owner', ['2026-09'], now)).toMatchObject({ evidence: { factMismatches: 1 }, mismatches: 1 });
     await sql.query("UPDATE olbia.asset_holdings SET value_mxn_minor=222 WHERE id='mxn'");
     await sql.query("UPDATE olbia.wealth_versions SET source_item=jsonb_set(source_item,'{totalMxnMinor}','999')");
     const state = await readIndependentWealthState('owner', sql);

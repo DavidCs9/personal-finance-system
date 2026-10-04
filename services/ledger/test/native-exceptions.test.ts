@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll,beforeEach,afterAll,expect,it } from 'vitest';
-import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { NATIVE_EXCEPTION_SCHEMA_STATEMENTS } from '../src/dsql/exception-schema.js';
 import { insertReviewException,saveClaimedReviewException,readReviewException,listReviewExceptions,requestReviewRetry,readLatestRetry,
   resolveRetryAttempt,completeRetryAttempt,failRetryAttempt,discardReviewException,pendingReviewRetries,markReviewRetryDispatched,expireReviewClaims,

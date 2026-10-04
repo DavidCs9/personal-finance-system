@@ -32,6 +32,8 @@ Decisión explícita de David Castro, 2026-10-01: **Olbia debe sentirse como una
 
 Las claves `PK`/`SK`, los campos `GSI`, los comandos de documentos, los envelopes y las proyecciones heredadas de DynamoDB son mecanismos temporales de compatibilidad y recuperación. No son el diseño final de persistencia ni deben reaparecer bajo nombres nuevos. Cada entrega de normalización debe acercar un dominio completo a una única autoridad relacional y migrar sus lectores y escritores. JSON sigue siendo válido para evidencia original, cambios históricos y metadata variable cuando su significado lo justifica; no sustituye relaciones y campos operativos canónicos.
 
+Decisión explícita de David Castro, 2026-10-04: **DSQL debe quedar limpio, sin tablas ni copias de evidencia de la migración.** DynamoDB se conserva precisamente como fuente de recuperación previa al cambio. Retirar las 24 tablas históricas de dominio, `projection_state` y `command_receipts` de DSQL; no trasladarlas a otro esquema de archivo. El bootstrap y las verificaciones actuales no deben recrearlas ni depender de ellas. Conservar las observaciones financieras, revisiones, capturas e importaciones nativas, los originales en S3 y los respaldos nativos de las finanzas actuales. `schema_migrations`, `runtime_state` y `application_barrier` siguen siendo controles operativos del sistema SQL; no son copias del modelo anterior. Esta decisión sustituye la retención de copias de migración dentro de DSQL indicada en auditorías anteriores.
+
 La pregunta para cada cambio es: **¿esto ayuda a David a entender o controlar mejor su situación financiera, con datos confiables y menos esfuerzo?**
 
 - Priorizar sus necesidades concretas y los patrones de consulta de sus datos reales.

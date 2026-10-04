@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from '../../ledger/test/helpers/migration-schema.js';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../../ledger/src/dsql/ledger-schema.js';
 import * as connection from '../../ledger/src/dsql/connection.js';
 import { currentSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
@@ -17,7 +17,7 @@ const amex=await import('../src/imports/amex-statement-flow.js');
 const santander=await import('../src/imports/santander-statement-flow.js');
 const csvFlow=await import('../src/imports/santander-csv-flow.js');
 const shared=await import('../src/imports/statement-shared.js');
-const {verifyNativeImports}=await import('../src/imports/read-verification.js');
+const {verifyNativeImports}=await import('./helpers/import-migration.js');
 const providers=[
   {kind:'amex_statement' as const,provider:'amex' as const,preview:amex.previewAmexImport,get:amex.getAmexImport,apply:amex.applyAmexImport,fixture:'amex-gold-live-extraction.json'},
   {kind:'santander_statement' as const,provider:'santander' as const,preview:santander.previewSantanderStatementImport,get:santander.getSantanderStatementImport,apply:santander.applySantanderStatementImport,fixture:'santander-live-extraction.json'},

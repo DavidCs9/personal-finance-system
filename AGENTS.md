@@ -20,6 +20,8 @@ Design around domain entities, domain primary keys, typed columns, explicit rela
 
 Finish each normalization slice by making its relational representation authoritative and migrating its readers and writers. Adding SQL columns while retaining a DynamoDB-shaped source of truth does not complete normalization. Keep JSON only where its meaning warrants it, such as original evidence, immutable audit changes or genuinely variable provider metadata. Preserve financial behavior, history, recovery and the normal PR/deployment workflow throughout the transition.
 
+David's explicit decision, 2026-10-04: DSQL must contain no migration evidence tables or copies. Retained DynamoDB is the pre-cutover recovery source. Remove the 24 frozen domain tables plus `projection_state` and `command_receipts`; do not move them to an archive schema or recreate them in bootstrap/verifiers. Preserve current native financial observations, revisions, captures/imports, S3 originals and native DSQL backups. The three current SQL controls remain operational. This supersedes earlier instructions to retain migration copies inside DSQL; historical audit documents remain historical records, not today's retention policy.
+
 ## User-interface changes
 
 Before planning, implementing, or reviewing any user-facing UI change, read these files completely:

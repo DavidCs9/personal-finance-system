@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { GetCommand, PutCommand, UpdateCommand, DeleteCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { OlbiaSqlStore } from '../src/dsql/legacy-document-store.js';
 import type { SqlClient } from '../src/dsql/projection.js';
 

@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { NATIVE_WEALTH_SCHEMA_STATEMENTS, NATIVE_WEALTH_TABLES } from '../src/dsql/wealth-schema.js';
 import { prepareWealthCopy, readRetainedWealth, migrateWealth } from '../src/dsql/wealth-copy.js';
 import { projectRows, type SourceItem } from '../src/dsql/model.js';
