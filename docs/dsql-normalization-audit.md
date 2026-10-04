@@ -4,7 +4,7 @@ Audit date: **2026-10-01, America/Chihuahua**. Code baseline: `1baea36` (verifie
 
 ## Current decision — 2026-10-04
 
-David explicitly requests no migration evidence in DSQL. The [clean catalog release](autonomous-runs/2026-10-04-clean-dsql-catalog.md) removes all 26 frozen migration relations, leaving 38 native domain tables and three ordinary operational controls. DynamoDB remains the pre-cutover recovery source. Native financial observations, revisions, import evidence and immutable asset/debt captures remain current domain history. Bootstrap and deployed verification use only the current relational model. See [the current schema map](dsql-schema.md) and [updated table audit](sql-relational-table-audit.md). Earlier SQL-copy retention decisions below are historical and superseded by this explicit request.
+David explicitly requests no migration evidence in DSQL. The [accepted clean catalog release](autonomous-runs/2026-10-04-clean-dsql-catalog.md) removed all 26 frozen migration relations, leaving 38 native domain tables and three ordinary operational controls. DynamoDB remains the pre-cutover recovery source. Native financial observations, revisions, import evidence and immutable asset/debt captures remain current domain history. Bootstrap and deployed verification use only the current relational model. See [the current schema map](dsql-schema.md) and [updated table audit](sql-relational-table-audit.md). Earlier SQL-copy retention decisions below are historical and superseded by this explicit request.
 
 ## Accepted state before cleanup — 2026-10-03
 

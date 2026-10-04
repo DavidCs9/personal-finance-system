@@ -1,6 +1,6 @@
 # Olbia SQL schema
 
-Olbia's current model has **38 financial/application tables and three operational controls**, all in `olbia`. Each domain fact has one relational authority. The October 4 cleanup removes all 26 frozen migration tables; [deployment and acceptance](autonomous-runs/2026-10-04-clean-dsql-catalog.md) track the release. Retained DynamoDB provides pre-cutover recovery; current DSQL backups protect subsequent finances.
+Olbia's current model has **38 financial/application tables and three operational controls**, all in `olbia`. Each domain fact has one relational authority. The October 4 cleanup removed all 26 frozen migration tables and is [deployed and independently accepted](autonomous-runs/2026-10-04-clean-dsql-catalog.md). Retained DynamoDB provides pre-cutover recovery; current DSQL backups protect subsequent finances.
 
 ## Where to start
 
