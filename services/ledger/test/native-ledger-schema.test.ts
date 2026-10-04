@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../src/dsql/ledger-schema.js';
 
 let sql: PGlite;

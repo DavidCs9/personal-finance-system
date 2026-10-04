@@ -1,5 +1,5 @@
-import type { ReadSqlClient } from './sql-reads.js';
-import type { JsonObject } from '../http/response.js';
+import type { ReadSqlClient } from '../../src/events/sql-reads.js';
+import type { JsonObject } from '../../src/http/response.js';
 
 /** Frozen migration evidence only. Product decisions read native domain relations. */
 export async function* readRetainedEvidencePages(client:ReadSqlClient,planningOwner?:string,pageSize=100):AsyncGenerator<readonly JsonObject[]> {

@@ -4,7 +4,7 @@ import { samePublicResult } from '../events/read-selection.js';
 import { readerPool, withLedgerVerificationSnapshot, type ReadSqlClient } from '../events/sql-reads.js';
 import { getMonthlyEmailDelivery } from './delivery-store.js';
 
-/** Independent current facts; frozen delivery recovery is verified separately. Never sends or renders. */
+/** Independent current preparation, content hash and provider receipt facts. Never sends or renders. */
 const verifyDeliverySnapshot=async(owner:string,client:ReadSqlClient)=>{
   const started=Date.now();let mismatches=0,workerReads=0;
   const activated=(await client.query('SELECT version FROM olbia.schema_migrations WHERE version=17')).rows.length===1;mismatches+=Number(!activated);

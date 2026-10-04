@@ -11,15 +11,15 @@ import { renderMonthEndBalanceReminder } from '../reports/month-end-balance-remi
 import { investmentHistoryFromSnapshots, portfolioSnapshotsFromAccounts } from '../agent/investment-history.js';
 import { getWealthOverview, getWealthOverviewAsOf, getWealthOverviewsAsOf } from './service.js';
 import { readNativeWealthInputs, readNativeWealthAudit, nativeAssetReadStatement, nativeLiabilityReadStatement, nativeAssetAuditReadStatement, nativeLiabilityAuditReadStatement, type NativeWealthInputsReader } from './native-reads.js';
-import { readIndependentWealthState, verifyWealthRecovery } from './native-verification.js';
+import { readIndependentWealthState } from './native-verification.js';
 
 /** Independent complete content, finances, investment series and original evidence gate.
  * No guard may replace these explicit SQL reads. No report/notification is sent. */
 const verifyWealthSnapshot = async (owner: string, financialMonths: readonly string[], now: Date) => {
   const started = Date.now(), client = readerPool();
-  const state = await readIndependentWealthState(owner, client), recovery = await verifyWealthRecovery(owner, client, state);
+  const state = await readIndependentWealthState(owner, client);
   const source = state.inputs, sql = await readNativeWealthInputs(owner, client);
-  let mismatches = state.mismatches + recovery.mismatches;
+  let mismatches = state.mismatches;
   mismatches += Number(!samePublicResult(source, sql));
   mismatches += Number(!samePublicResult(state.audit, await readNativeWealthAudit(owner, client)));
   const sourceReader: NativeWealthInputsReader = async () => source, sqlReader: NativeWealthInputsReader = async () => sql;
@@ -89,7 +89,6 @@ const verifyWealthSnapshot = async (owner: string, financialMonths: readonly str
   return { mode: 'native-sql', storedSnapshots: sql.snapshots.length, storedVersions: state.audit.filter(r => r.kind === 'asset').length,
     storedLiabilities: sql.liabilitySnapshots.length, storedLiabilityVersions: state.audit.filter(r => r.kind === 'liability').length, cards: sql.cards.length,
     captures: state.captures, holdings: state.holdings, replacements: state.replacements, validatedConstraints: state.validatedConstraints,
-    recoveryAssertions: recovery.assertions, recoveryMismatches: recovery.mismatches,
     asOfDays, dailyOverviews, months: months.size, investmentChecks, reports, reminders,
     mismatches, elapsedMs: Date.now() - started, queryPlans,
     evidenceAssertions: [...state.assetFacts.values(), ...state.liabilityFacts.values()].map(snapshot => ({ owner, snapshot })) };

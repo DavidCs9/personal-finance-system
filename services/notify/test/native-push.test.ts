@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import webpush from 'web-push';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import * as connection from '../../ledger/src/dsql/connection.js';
-import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from '../../ledger/test/helpers/migration-schema.js';
 import { NATIVE_PUSH_SCHEMA_STATEMENT } from '../../ledger/src/dsql/push-schema.js';
 import type { SqlClient } from '../../ledger/src/dsql/projection.js';
 import { savePushSubscription, deletePushSubscription, listActivePushSubscriptions, listOwnerPushSubscriptions, InvalidPushSubscriptionError } from '../src/push-subscriptions.js';

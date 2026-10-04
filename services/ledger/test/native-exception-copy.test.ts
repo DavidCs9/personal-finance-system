@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { createHash } from 'node:crypto';
 import { PutCommand,UpdateCommand,DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { beforeAll,beforeEach,afterAll,expect,it,vi } from 'vitest';
-import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { NATIVE_EXCEPTION_SCHEMA_STATEMENTS } from '../src/dsql/exception-schema.js';
 import { migrateIngestionReview,prepareExceptionCopy,originalEmailSourceToken,type RetainedExceptionSnapshot } from '../src/dsql/exception-copy.js';
 import { readReviewException,readLatestRetry } from '../src/dsql/exception.js';

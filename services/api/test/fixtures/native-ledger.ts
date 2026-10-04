@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
-import { SCHEMA_STATEMENTS } from '../../../ledger/src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from '../../../ledger/test/helpers/migration-schema.js';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../../../ledger/src/dsql/ledger-schema.js';
 import { runSqlTransaction } from '../../../ledger/src/dsql/sql-runtime.js';
 import { appendLedgerObservation, insertLedgerMovement } from '../../../ledger/src/dsql/ledger-writes.js';

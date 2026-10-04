@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, afterAll, beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from '../../ledger/test/helpers/migration-schema.js';
 import type { SqlClient } from '../../ledger/src/dsql/projection.js';
 import * as connection from '../../ledger/src/dsql/connection.js';
 import { withSqlClient, currentSqlClient } from '../../ledger/src/dsql/sql-runtime.js';

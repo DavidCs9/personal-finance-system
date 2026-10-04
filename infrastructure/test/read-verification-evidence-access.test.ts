@@ -45,7 +45,7 @@ it('gives the deployed verifier read-only access to every supported evidence fam
   expect(schema.Properties.Environment.Variables.RAW_EMAIL_BUCKET_NAME).toEqual({Ref:rawBucket});
   expect(schemaStatements.flatMap(actions).some(a=>/^s3:(?:Put|Delete|\*)/.test(a))).toBe(false);
   expect(schemaStatements.flatMap(actions)).toContain('kms:Decrypt');
-  const bootstrap=Object.values(template.findResources('AWS::CloudFormation::CustomResource')).find(r=>r.Properties.Version===23)!;
+  const bootstrap=Object.values(template.findResources('AWS::CloudFormation::CustomResource')).find(r=>r.Properties.Version===24)!;
   const schemaPolicy=Object.keys(template.findResources('AWS::IAM::Policy')).find(id=>id.startsWith('DsqlProjectionSchemaServiceRoleDefaultPolicy'))!;
   expect(bootstrap.DependsOn).toContain(schemaPolicy);
   const functions=template.findResources('AWS::Lambda::Function');

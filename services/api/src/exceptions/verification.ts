@@ -14,7 +14,7 @@ const readOriginal:Reader=async source=>{
   const object=await s3.send(new GetObjectCommand({Bucket:source.bucket,Key:source.key}));if(!object.Body)throw new Error('Review original has no body');return object.Body.transformToByteArray();
 };
 const verifySnapshot=async(now:Date,client:ReadSqlClient,read:Reader)=>{
-  const started=Date.now();let mismatches=0,productReads=0,originalChecks=0,retainedChecks=0;
+  const started=Date.now();let mismatches=0,productReads=0,originalChecks=0;
   const check=(a:unknown,b:unknown)=>{mismatches+=Number(!samePublicResult(a,b));};
   const activated=(await client.query('SELECT version FROM olbia.schema_migrations WHERE version=19')).rows.length===1;mismatches+=Number(!activated);
   const headers=(await client.query('SELECT * FROM olbia.ingestion_review_exceptions')).rows,claims=(await client.query('SELECT * FROM olbia.ingestion_review_claims')).rows,attempts=(await client.query('SELECT * FROM olbia.ingestion_retry_attempts')).rows;
@@ -39,27 +39,6 @@ const verifySnapshot=async(now:Date,client:ReadSqlClient,read:Reader)=>{
       const messageId=email.messageId?.trim().replace(/^<|>$/g,'').toLowerCase()||'no-message-id';proof={sha256,token:createHash('sha256').update(`${messageId}:${sha256}`).digest('hex')};originals.set(key,proof);}
     check([r.source_sha256,r.source_token,r.source_content_type],[proof.sha256,proof.token,'message/rfc822']);originalChecks++;
   }
-  const rawHeaders=(await client.query('SELECT source_item FROM olbia.ingestion_exceptions')).rows.map(r=>r.source_item as Row);
-  for(const p of rawHeaders){const e=p.payload as Row,r=parentById.get(String(e.id));retainedChecks++;
-    if(!r){mismatches++;continue;}const source=e.source as Row;
-    check([r.received_at==null?null:iso(r.received_at),r.institution,r.reason,r.details,r.source_bucket,r.source_key,r.source_sha256,r.source_content_type],
-      [iso(e.receivedAt),e.institution??null,e.reason,e.details,source.bucket,source.key,source.sha256,source.contentType]);
-    if(e.discarded){const d=e.discarded as Row;check([iso(r.discarded_at),r.discarded_by],[iso(d.at),d.by]);}
-    if(e.retry){const retry=e.retry as Row,a=attempts.find(a=>a.exception_id===e.id&&iso(a.requested_at)===iso(retry.requestedAt));
-      if(!a){mismatches++;continue;}check([a.requested_by,a.request_id],[retry.requestedBy,retry.requestId??null]);
-      if(retry.status==='completed')check([iso(a.completed_at),a.movement_id],[iso(retry.completedAt),retry.eventId]);
-    }
-  }
-  const rawClaims=(await client.query('SELECT source_item FROM olbia.exception_claims')).rows.map(r=>r.source_item as Row);
-  for(const p of rawClaims){retainedChecks++;if(typeof p.expiresAt==='number'&&p.expiresAt*1000<=now.getTime())continue;
-    const matches=claims.filter(r=>r.source_token===p.sourceDedupeKey&&r.extractor_version===p.extractorVersion&&`EXCEPTION_DEDUPE#${createHash('sha256').update(`${r.source_token}:${r.extractor_version}:${r.reason}`).digest('hex')}`===p.PK);
-    mismatches+=Number(matches.length!==1);if(matches[0])check(iso(matches[0].created_at),iso(p.createdAt));
-  }
-  const rawRetries=(await client.query('SELECT source_item FROM olbia.ingestion_retries')).rows.map(r=>r.source_item as Row);
-  for(const p of rawRetries){retainedChecks++;const job=p.job as Row,source=job.source as Row,a=attempts.find(a=>a.exception_id===job.retryExceptionId&&iso(a.requested_at)===iso(p.createdAt));
-    if(!a){mismatches++;continue;}check([a.dispatched_at==null?null:iso(a.dispatched_at),a.job_source_sha256,a.job_source_content_type,a.job_source_message_id],[p.dispatchedAt==null?null:iso(p.dispatchedAt),source.sha256??null,source.contentType??null,job.sourceMessageId??null]);
-    const parent=parentById.get(String(job.retryExceptionId));check([parent?.source_bucket,parent?.source_key,parent?iso(parent.received_at):null],[source.bucket,source.key,iso(job.receivedAt)]);
-  }
   const presentation=(r:Row)=>({id:r.id,receivedAt:iso(r.received_at),...(r.institution==null?{}:{institution:r.institution}),reason:r.reason,details:r.details});
   const clocks=new Set([now.getTime(),...headers.flatMap(r=>r.expires_at==null?[]:[Date.parse(iso(r.expires_at))-1,Date.parse(iso(r.expires_at)),Date.parse(iso(r.expires_at))+1])]);
   const firstPage=[...headers].sort((a,b)=>iso(b.received_at).localeCompare(iso(a.received_at))||String(b.id).localeCompare(String(a.id))).slice(0,100);
@@ -71,7 +50,7 @@ const verifySnapshot=async(now:Date,client:ReadSqlClient,read:Reader)=>{
         ...(r.discarded_at==null?{}:{discarded:{at:iso(r.discarded_at),by:r.discarded_by}}),...(r.expires_at==null?{}:{expiresAt:iso(r.expires_at)})}:undefined,actual);productReads++;}
   }
   check(undefined,await readStoredException('00000000-0000-4000-8000-000000000000',now));productReads++;
-  return {mode:'native-sql',activated,headers:headers.length,claims:claims.length,attempts:attempts.length,productReads,originalChecks,originalObjects:originals.size,retainedChecks,validatedConstraints:constraints.filter(r=>r.convalidated===true).length,requiredColumns,mismatches,elapsedMs:Date.now()-started};
+  return {mode:'native-sql',activated,headers:headers.length,claims:claims.length,attempts:attempts.length,productReads,originalChecks,originalObjects:originals.size,validatedConstraints:constraints.filter(r=>r.convalidated===true).length,requiredColumns,mismatches,elapsedMs:Date.now()-started};
 };
 export const verifyNativeExceptions=(now:Date,client?:ReadSqlClient,read:Reader=readOriginal)=>client
   ?withSqlClient(client,()=>verifySnapshot(now,client,read))

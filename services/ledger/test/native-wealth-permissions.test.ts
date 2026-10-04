@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
-import { SCHEMA_STATEMENTS, bootstrapSchema } from '../src/dsql/schema.js';
+import { bootstrapSchema } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../src/dsql/ledger-schema.js';
 import { NATIVE_WEALTH_TABLES, nativeWealthReadGrant, nativeWealthWriteGrants } from '../src/dsql/wealth-schema.js';
 import { insertNativeAssetCapture } from '../src/dsql/wealth-writes.js';
@@ -21,6 +22,8 @@ beforeAll(async () => {
     return sql.query<Record<string, unknown>>(statement, values);
   } };
   const identity = ['arn:aws:iam::225989371926:role/permission-test'];
+  for(const version of [8,9,10,11,12,13,14,15,16,17,18,19,20]) await sql.query('INSERT INTO olbia.schema_migrations VALUES ($1,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING',[version]);
+  await sql.query(`INSERT INTO olbia.asset_accounts VALUES ('nu_cajita_emergencia','Cajita','Nu','emergency_fund','manual',0),('bitso','Bitso','Bitso','crypto','api',1),('ibkr','IBKR','IBKR','brokerage','flex',2) ON CONFLICT DO NOTHING`);
   await bootstrapSchema(client, [], { transactionPool: { transaction: fn => sql.transaction(c => fn(c as unknown as SqlClient)) },
     applicationRoleArns: identity, readerRoleArns: identity, operationalVerifierRoleArns: identity, storeReaderRoleArns: identity, cutoverRoleArns: identity });
   const at = '2026-10-02T12:00:00.123Z';
@@ -75,13 +78,12 @@ it('defines the native relation grant without granting a mutable original or acc
   expect(nativeWealthWriteGrants('olbia_application').join()).not.toMatch(/GRANT UPDATE ON|DELETE|INSERT ON olbia.asset_accounts/);
 });
 
-it('isolates frozen wealth recovery reads to the verifier/projector and prevents every runtime recovery mutation', async () => {
+it('revokes frozen wealth recovery reads for every role and prevents every runtime recovery mutation', async () => {
   const retained = ['wealth_snapshots', 'wealth_versions', 'liability_snapshots', 'liability_versions'];
   for (const role of ['olbia_application', 'olbia_cutover', 'olbia_store_reader', 'olbia_reader', 'olbia_operational_verifier', 'olbia_projector']) {
     await sql.query(`SET ROLE ${role}`);
     for (const table of retained) {
-      if (role === 'olbia_operational_verifier' || role === 'olbia_projector') await expect(sql.query(`SELECT 1 FROM olbia.${table}`)).resolves.toBeDefined();
-      else await expect(sql.query(`SELECT 1 FROM olbia.${table}`)).rejects.toMatchObject({ code: '42501' });
+      await expect(sql.query(`SELECT 1 FROM olbia.${table}`)).rejects.toMatchObject({ code: '42501' });
       await expect(sql.query(`DELETE FROM olbia.${table}`)).rejects.toMatchObject({ code: '42501' });
       await expect(sql.query(`UPDATE olbia.${table} SET source_item=source_item`)).rejects.toMatchObject({ code: '42501' });
     }

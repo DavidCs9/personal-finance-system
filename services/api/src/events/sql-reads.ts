@@ -17,7 +17,7 @@ export const readerPool = (): ReadSqlClient => currentSqlClient() ?? nativeReade
 export const withLedgerReadSnapshot = <T>(callback: () => Promise<T>): Promise<T> =>
   currentSqlClient() ? callback() : nativeReaderPool().transaction(client => withSqlClient(client, callback));
 
-/** The deployed verifier alone can read frozen recovery assertions in the same snapshot. */
+/** The deployed verifier has a bounded read-only snapshot of the current native model. */
 export const withLedgerVerificationSnapshot = <T>(callback: () => Promise<T>): Promise<T> => {
   if (currentSqlClient()) return callback();
   verifierPool ??= createPool('olbia_operational_verifier', { connectionTimeoutMillis: 1_500, queryTimeoutMillis: 3_000 });

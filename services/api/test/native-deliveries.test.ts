@@ -3,7 +3,7 @@ import { WEALTH_ACCOUNTS } from '@finance/domain';
 import { SESClient } from '@aws-sdk/client-ses';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { withSqlClient } from '@finance/ledger/sql-runtime';
-import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from '../../ledger/test/helpers/migration-schema.js';
 import { NATIVE_DELIVERY_SCHEMA_STATEMENTS } from '../../ledger/src/dsql/delivery-schema.js';
 import { verifyNativeMonthlyDeliveries } from '../src/reports/delivery-verification.js';
 import { monthlyEmailContentHash } from '@finance/ledger/native-deliveries';

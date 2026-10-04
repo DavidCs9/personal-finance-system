@@ -4,7 +4,7 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { SQSClient } from '@aws-sdk/client-sqs';
 import { SESClient } from '@aws-sdk/client-ses';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { SCHEMA_STATEMENTS } from '@finance/ledger/dsql-schema';
+import { SCHEMA_STATEMENTS } from '../../ledger/test/helpers/migration-schema.js';
 import { withSqlClient } from '@finance/ledger/sql-runtime';
 import { insertReviewException,requestReviewRetry,readLatestRetry,readReviewException } from '@finance/ledger/native-exceptions';
 import { NATIVE_LEDGER_TABLES,LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../../ledger/src/dsql/ledger-schema.js';

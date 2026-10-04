@@ -3,7 +3,7 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { S3Client } from '@aws-sdk/client-s3';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as connection from '../../ledger/src/dsql/connection.js';
-import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from '../../ledger/test/helpers/migration-schema.js';
 import { NATIVE_WEALTH_SCHEMA_STATEMENTS, NATIVE_WEALTH_TABLES } from '../../ledger/src/dsql/wealth-schema.js';
 import { migrateWealth } from '../../ledger/src/dsql/wealth-copy.js';
 import { runSqlTransaction } from '../../ledger/src/dsql/sql-runtime.js';

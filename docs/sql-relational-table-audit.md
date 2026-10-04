@@ -1,6 +1,8 @@
-# Current SQL relational table audit — 2026-10-03
+# Current SQL relational table audit — 2026-10-04
 
-**OLBIA MUST FEEL AS IF IT WAS BORN IN SQL. David Castro is its sole owner/user.** Domain facts have native keys, columns, relationships, constraints and SQL transactions. DynamoDB routing/envelopes are isolated recovery evidence, never product authority. See [the binding north star](product-north-star.md).
+**OLBIA MUST FEEL AS IF IT WAS BORN IN SQL. David Castro is its sole owner/user.** Domain facts have native keys, columns, relationships, constraints and SQL transactions. Pre-cutover DynamoDB remains the migration recovery source; DSQL keeps only current domain facts and operational controls. See [the binding north star](product-north-star.md).
+
+October 4 decision: remove all 26 frozen SQL migration relations and retain the 38 native domain tables plus three controls. [Cleanup deployment/acceptance](autonomous-runs/2026-10-04-clean-dsql-catalog.md) records release status. The detailed native facts below use the preceding accepted snapshot until the new independent acceptance is recorded.
 
 This is the current table-by-table replacement for the [historical initial audit](dsql-normalization-audit.md). Snapshot: **2026-10-03T20:40:04.208Z**, independently accepted [#203](autonomous-runs/2026-10-03-native-ledger-public-boundary.md). Every #202 row/catalog/grant fact is unchanged. Counts are a snapshot, not live counters. Read-only STS-confirmed SQL catalog/data inspection, preserved complete pre/post comparisons and actual deployed gates establish these facts. Original source review is separately bounded below.
 
@@ -19,15 +21,16 @@ The active product's SQL-native redesign is implemented, deployed and independen
 | Real query plans and proportional indexes | Deployed EXPLAIN ANALYZE checks exercise financial, planning, payroll, wealth/history, category/rule/card reads. Native month scans use indexes; the #203 snapshot records 49.084 ms execution. Three native secondary indexes plus domain PK/UNIQUE indexes cover current access patterns without a speculative index framework or performance guarantee. |
 | Native controls and reviewed delivery | Marker 20 follows five validated control CHECKs and scoped mutable columns. All 13,542 table/column privilege assertions are exact. Every release follows final-head quality, linear merge, deploy-production and independent acceptance; #203 completes the current public/guide boundary. |
 
-The [closeout record](autonomous-runs/2026-10-03-sql-normalization-closeout.md) distinguishes architectural acceptance from any subsequent evidence-backed financial cleanup. Retained recovery tables and purposeful history JSON are intentional dispositions, not unfinished product normalization.
+The [closeout record](autonomous-runs/2026-10-03-sql-normalization-closeout.md) distinguishes architectural acceptance from any subsequent evidence-backed financial cleanup. Purposeful native financial history JSON remains intentional. The October 4 decision supersedes retention of migration copies inside DSQL.
 
 ## Inventory and current authority
 
-**67 base tables / one view / 663 columns / 328 validated constraints / 92 indexes.** There are 38 native domain tables, 24 frozen historical domain tables and five storage/control tables. All active readers/writers use direct SQL; 17 actual deployed native functions have scoped SQL access with no product DynamoDB data permissions or old document-store flags. Product roles cannot read or mutate frozen originals; projector/verifier have SELECT only.
+**Cleanup target: 41 base tables / one view / 355 columns / 297 validated constraints.** These are 38 native domain tables and three current operational controls. The pre-cleanup accepted catalog contained 67 tables, 663 columns, 328 constraints and 92 indexes. All active readers/writers use direct SQL; native roles retain their scoped current access. Frozen migration copies, their columns, constraints and indexes are removed, with no archive schema.
+
 
 The 38 native tables have **348 columns, 236 NOT NULL columns, 38 primary keys, 20 additional UNIQUE constraints, 36 FKs and 195 CHECKs** (289 constraints). Native domain rows total **4,237**. There are **zero** native source_pk/source_sk/row_id/payload/source_item/index_pk/index_sk columns. Nine JSON columns retain only purposeful history/evidence/provider metadata. SQL integers preserve minor-unit arithmetic and nullable Mi parte, including zero; timestamps retain milliseconds; currency/financial semantics remain unchanged.
 
-The three standalone native indexes cover installment months, movement revision chronology and payroll payment dates. PK/UNIQUE indexes cover actual domain identities; two historical month indexes remain with recovery evidence. No speculative general index catalog or new account/card mapping is introduced.
+The three standalone native indexes cover installment months, movement revision chronology and payroll payment dates. PK/UNIQUE indexes cover actual domain identities; the two historical month indexes leave with their retired tables. No speculative general index catalog or new account/card mapping is introduced.
 
 ## Native domain tables
 
@@ -84,48 +87,19 @@ Each row below audits its actual PK, required-column count, CHECK/UNIQUE counts,
 
 `source_claims` explicitly retains two historical_missing and three unresolved_suppression outcomes; no absent movement/observation is fabricated. Installment provenance retains 19 direct bank-row cases, five ambiguous cases (ten candidate rows), two legacy-backfill cases and 82 entries with no asserted provenance. Rejected financial/schedule history stays present and excluded according to existing financial rules.
 
-## Frozen historical domain tables
+## Removed migration relations
 
-All 24 tables retain `(source_pk,source_sk,row_id)` as their **historical source identity only**. They are immutable independently verifiable originals, outside product authority. Their 294 columns/72 required columns, 24 PKs, three FKs and two CHECKs are retained exactly; imposing invented constraints or removing envelopes would weaken the recovery oracle. No normalized reader or writer falls back to them. Rows total **2,677**.
-
-| Frozen table | Rows | Native authority replacing product use | Audit disposition |
-| --- | ---: | --- | --- |
-| `movements` | 499 | ledger_movements | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `movement_observations` | 522 | ledger_observations / ledger_observation_warnings | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `movement_revisions` | 420 | ledger_revisions | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `categories` | 13 | spend_categories | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `merchant_category_rules` | 174 | merchant_rules | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `cards` | 3 | card_profiles | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `movement_tags` | 83 | ledger_tags | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `msi_plans` | 20 | installment_plans | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `msi_installments` | 108 | installment_entries / installment_evidence_candidates | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `monthly_plans` | 6 | month_plans / planned_payments | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `payroll` | 19 | payslips / payslip_lines | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `wealth_snapshots` | 122 | asset_captures / asset_holdings / asset_daily_captures | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `wealth_versions` | 4 | asset_captures / asset_capture_replacements | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `liability_snapshots` | 22 | liability_captures / liability_daily_captures | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `liability_versions` | 3 | liability_captures / liability_capture_replacements | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `dedupe_claims` | 546 | source_claims | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `exception_claims` | 4 | ingestion_review_claims | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `ingestion_exceptions` | 8 | ingestion_review_exceptions | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `ingestion_retries` | 3 | ingestion_retry_attempts | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `import_records` | 15 | bank_imports / bank_import_rows / bank_import_candidates | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `bulk_edit_operations` | 43 | ledger_bulk_operations / ledger_bulk_members | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `delivery_records` | 3 | monthly_email_preparations / monthly_email_receipts | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `push_subscriptions` | 1 | web_push_subscriptions | Preserve original rows/envelopes and SELECT-only recovery comparison. |
-| `assistant_threads` | 36 | conversation_threads / assistant_thread_selection | Preserve original rows/envelopes and SELECT-only recovery comparison. |
+The cleanup removes 24 historical domain copies plus `projection_state` and `command_receipts`. None is a fallback or financial authority. DynamoDB remains retained, deletion protected and backed by PITR. The deployed bootstrap, catalog checks and financial verifiers no longer recreate or read these relations. The [explicit retirement allowlist](../services/ledger/src/dsql/catalog.ts) bounds deletion; no native table is discovered as a deletion target by a naming pattern.
 
 ## Storage/control relations
 
-These five relations have 21 columns/16 required columns, five PKs and five validated operational CHECKs. Two are frozen originals; three are native operational controls, not financial domain documents. The [completed native control slice](autonomous-runs/2026-10-03-sql-control-invariants.md) validates the five native CHECKs and scopes the existing mutable control columns. Marker 20 is active after reviewed deployment and independent acceptance.
+The three current controls have seven columns, three PKs and five validated CHECKs. The [completed native control slice](autonomous-runs/2026-10-03-sql-control-invariants.md) validates the five native CHECKs and scopes the existing mutable control columns. Marker 20 is active after reviewed deployment and independent acceptance.
 
 | Table | Rows | Actual identity and meaning | Current gap / disposition |
 | --- | ---: | --- | --- |
-| `schema_migrations` | 20 | `version`; applied-at required; reviewed bootstrap alone writes facts. | Validated positive-version CHECK; marker 20 recorded last. |
+| `schema_migrations` | 20 | `version`; applied-at required; reviewed bootstrap alone writes facts. | Validated positive-version CHECK; cleanup marker 21 follows successful removal; version history remains normal schema bookkeeping. |
 | `runtime_state` | 1 | `id=storage`; persisted authority mode and changed-at required. | Validated identity/finite-mode CHECKs; existing operator UPDATE scoped to mode/changed_at. Preserve reviewed dynamodb/paused/sql modes. |
 | `application_barrier` | 1 | `id=storage`; generation required; native OCC ordering dependency. | Validated identity/nonnegative-generation CHECKs; existing application/operator/projector UPDATE scoped to generation. |
-| `projection_state` | 2466 | `(source_pk,source_sk)`; original checkpoint/hash/envelope metadata. | Frozen SELECT-only oracle; no product authority, SDK pagination or recovery write grant. |
-| `command_receipts` | 10 | `token`; historical document idempotency receipt. | Frozen historical evidence; native operations use domain identities/claims/transaction semantics. |
 
 `movement_months` is the single view: a direct UNION of current native movement-derived month membership and installment-entry months. It has no stored payload, source checkpoint or independently writable aggregate. Financial read consumers use this SQL relationship.
 
@@ -147,4 +121,4 @@ Private data, originals, rendered pages, catalog and acceptance receipts remain 
 
 The [public core export/current operating-guide slice](autonomous-runs/2026-10-03-native-ledger-public-boundary.md) is deployed and independently accepted. #203 preserves every #202 data/catalog/grant/control fact; actual native function IAM, original evidence and all deployed financial/rollback gates pass. Current design entry points and the requirement matrix above now distinguish accepted authorities from historical rollout checkpoints.
 
-Further financial reconciliation requires new source evidence or an explicit financial decision where identity remains unproven. Frozen originals/provider resources are intentionally retained until a separately evidenced recovery/retention decision; deleting them is not a condition for SQL-native product authority. Do not invent account/card entities, flatten purposeful provider/audit JSON or manufacture missing history merely to create another normalization slice.
+Further financial reconciliation requires new source evidence or an explicit financial decision where identity remains unproven. David made the explicit recovery/retention decision on October 4: migration copies leave DSQL, while DynamoDB and native provider recovery remain. Do not invent account/card entities, flatten purposeful provider/audit JSON or manufacture missing history merely to create another normalization slice.

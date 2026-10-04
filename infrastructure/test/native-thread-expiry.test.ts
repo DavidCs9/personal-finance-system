@@ -9,7 +9,7 @@ const harness=vi.hoisted(()=>({pool:undefined as unknown as SqlClient&Transactio
 vi.mock('../../services/ledger/src/dsql/connection.js',()=>({createPool:()=>harness.pool}));
 let sql:PGlite;
 beforeAll(async()=>{
-  sql=new PGlite();for(const s of SCHEMA_STATEMENTS)await sql.query(s);await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");await sql.query('INSERT INTO olbia.schema_migrations VALUES (18,CURRENT_TIMESTAMP),(19,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING');
+  sql=new PGlite();for(const s of SCHEMA_STATEMENTS)await sql.query(s);await sql.query("INSERT INTO olbia.runtime_state(id,mode,changed_at) VALUES ('storage','sql',CURRENT_TIMESTAMP)");await sql.query("INSERT INTO olbia.application_barrier VALUES ('storage',0)");await sql.query('INSERT INTO olbia.schema_migrations VALUES (18,CURRENT_TIMESTAMP),(19,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING');
   harness.pool={query:async(s,v)=>{harness.statements.push(s);return sql.query<Record<string,unknown>>(s,v);},transaction:fn=>sql.transaction(async c=>{harness.inTransaction=true;try{return await fn({query:async(s,v)=>{harness.statements.push(s);return c.query<Record<string,unknown>>(s,v);}});}finally{harness.inTransaction=false;}})};
 },30_000);
 afterAll(()=>sql.close());afterEach(()=>{vi.restoreAllMocks();vi.unstubAllEnvs();});

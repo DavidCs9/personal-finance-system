@@ -19,7 +19,7 @@ if operation == ['sts', 'get-caller-identity']:
     print(json.dumps({'Account': '225989371926', 'Arn': 'test-deployment-role'}))
 elif operation == ['cloudformation', 'describe-stacks']:
     query = a[a.index('--query') + 1]
-    print('operator' if 'DsqlCutoverFunction' in query else 'reader' if 'DsqlReadVerificationFunction' in query else 'state-machine')
+    print('operator' if 'DsqlCutoverFunction' in query else 'reader' if 'DsqlReadVerificationFunction' in query else 'schema' if 'DsqlSchemaFunction' in query else 'state-machine')
 elif operation == ['stepfunctions', 'start-execution']:
     print('execution')
 elif operation == ['stepfunctions', 'describe-execution']:
@@ -32,6 +32,8 @@ elif operation == ['lambda', 'invoke']:
     payload = json.loads(a[a.index('--payload') + 1])
     action = payload.get('action', 'read')
     response = {'mode': os.environ.get('AUTHORITY', 'sql')} if action == 'status' else {'verified': True, 'rolledBack': True, 'nativeLedger': True, 'nativeWealth': True, 'nativePush': True, 'nativeDeliveries': True, 'nativeThreads': True, 'nativeExceptions': True} if action == 'smoke' else {'verified': True, 'mode': 'native-sql', 'mismatches': 0, 'provenance': {'mismatches': 0}, 'evidence': {'mismatches': 0}}
+    if action == 'retire-migration-evidence':
+        response = {'verified': True, 'mode': 'native-sql', 'remainingTables': 41, 'domainTables': 38, 'controlTables': 3, 'migrationEvidenceTables': 0}
     if os.environ.get('FAIL_GATE') == action:
         response = {'verified': False, 'rolledBack': False, 'mismatches': 1}
     if os.environ.get('LEGACY_PROBE') == action:
@@ -60,14 +62,14 @@ class RoutineVerificationTests(unittest.TestCase):
             calls = [json.loads(line) for line in calls_file.read_text().splitlines()]
             return result, calls
 
-    def test_sql_verification_runs_once_without_authority_or_backup_mutations(self):
+    def test_verified_native_deployment_retires_catalog_and_rechecks_finances_without_authority_or_backup_mutations(self):
         result, calls = self.run_gate()
         self.assertEqual(result.returncode, 0, result.stderr)
         executions = [call for call in calls if call[:2] == ['stepfunctions', 'start-execution']]
         self.assertEqual(len(executions), 1)
         self.assertEqual(executions[0][executions[0].index('--name') + 1], 'deploy-42-1-sql')
         payloads = [json.loads(call[call.index('--payload') + 1]) for call in calls if call[:2] == ['lambda', 'invoke']]
-        self.assertEqual(payloads, [{'action': 'status'}, {}, {'action': 'smoke'}])
+        self.assertEqual(payloads, [{'action': 'status'}, {}, {'action': 'smoke'}, {'action': 'retire-migration-evidence'}, {}, {'action': 'smoke'}])
         self.assertFalse(any(call[0] in ['dynamodb', 'backup'] for call in calls))
 
     def test_unexpected_authority_never_starts_reconciliation(self):
@@ -93,13 +95,20 @@ class RoutineVerificationTests(unittest.TestCase):
         result, calls = self.run_gate(FAIL_GATE='read')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Public read equivalence failed', result.stderr)
-        self.assertFalse(any('"action":"smoke"' in call for call in calls))
+        self.assertFalse(any('"action":"smoke"' in call or '"action":"retire-migration-evidence"' in call for call in calls))
 
     def test_legacy_success_cannot_satisfy_native_release_gates(self):
         for action in ['read', 'smoke']:
             with self.subTest(action=action):
                 result, _ = self.run_gate(LEGACY_PROBE=action)
                 self.assertNotEqual(result.returncode, 0)
+
+    def test_cleanup_failure_prevents_success_and_post_cleanup_probes(self):
+        for setting in ['FAIL_GATE', 'FAIL_INVOCATION']:
+            result, calls = self.run_gate(**{setting: 'retire-migration-evidence'})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('cleanup', result.stderr)
+            self.assertEqual(sum(call[:2] == ['lambda', 'invoke'] for call in calls), 4)
 
     def test_write_smoke_must_confirm_rollback(self):
         result, _ = self.run_gate(FAIL_GATE='smoke')

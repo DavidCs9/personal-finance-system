@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll,beforeAll,beforeEach,describe,expect,it } from 'vitest';
-import { SCHEMA_STATEMENTS,migratePayroll } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS, migratePayroll } from './helpers/migration-schema.js';
 import { OlbiaSqlStore } from '../src/dsql/legacy-document-store.js';
 import type { SqlClient,TransactionPool } from '../src/dsql/projection.js';
 

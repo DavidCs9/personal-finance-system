@@ -26,14 +26,14 @@ describe('CloudFormation DSQL bootstrap diagnostics', () => {
     const release = vi.fn();
     vi.spyOn(AuroraDSQLPool.prototype, 'connect').mockResolvedValue({ query: vi.fn(async () => { throw Object.assign(new Error('private payload'), { code: '42501' }); }), release } as never);
     const runtime = vi.spyOn(AuroraDSQLPool.prototype, 'query');
-    await expect(schemaHandler({ RequestType: 'Update', PhysicalResourceId: 'existing', ResourceProperties: {} })).rejects.toThrow('schema-statement-1 (42501)');
+    await expect(schemaHandler({ RequestType: 'Update', PhysicalResourceId: 'existing', ResourceProperties: {} })).rejects.toThrow('native-baseline (42501)');
     expect(release).toHaveBeenCalledOnce();
     expect(runtime).not.toHaveBeenCalled();
   });
   it('distinguishes runtime IAM failures after a successful schema', async () => {
     vi.stubEnv('DSQL_ENDPOINT', 'example.dsql.us-east-2.on.aws');
     vi.spyOn(AuroraDSQLPool.prototype, 'connect').mockResolvedValue({ query: async (statement: string) => ({ rows:
-      statement.includes('pg_constraint') ? [{ convalidated: true }] :
+      statement.includes('WHERE version=20') ? [{version:20}] : statement.includes('pg_constraint') ? [{ convalidated: true }] :
       statement.includes('indisvalid') ? [{ indisvalid: true }] : statement.includes('pg_roles') ? [{ rolname: 'olbia_projector' }] : [],
     }), release: () => {} } as never);
     vi.spyOn(AuroraDSQLPool.prototype, 'transaction').mockImplementation(async callback => callback({ query: async (s: string) =>

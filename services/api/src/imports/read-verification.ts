@@ -24,12 +24,9 @@ const candidateColumns=(r:BankImportRecord)=>r.rows.flatMap((l,row_position)=>l.
   return {kind:r.kind,content_sha256:r.importId,row_position,position,movement_id:id,merchant_raw:label?.merchantRaw??null,
     occurred_at:label?.occurredAt??null};
 }));
-const kindFromFrozen=(item:JsonObject):BankImportKind=>String(item.SK).startsWith('IMPORT#AMEX#')?'amex_statement':
-  String(item.SK).startsWith('IMPORT#SANTANDER_STATEMENT#')?'santander_statement':'santander_csv';
-
 /** Independent raw-column, immutable capture and original-file checks; never polls or mutates imports. */
-export const verifyNativeImports=async(owner:string,frozen:readonly JsonObject[],client:ReadSqlClient)=>{
-  const started=Date.now();let mismatches=0,evidenceFiles=0,extractionFiles=0,frozenApplied=0;
+export const verifyNativeImports=async(owner:string,client:ReadSqlClient)=>{
+  const started=Date.now();let mismatches=0,evidenceFiles=0,extractionFiles=0;
   const check=(a:unknown,b:unknown)=>{mismatches+=Number(!samePublicResult(a,b));};
   const headers=(await client.query(`SELECT *,period_start::text AS period_start,period_end::text AS period_end
     FROM olbia.bank_imports WHERE owner=$1 ORDER BY kind,content_sha256`,[owner])).rows;
@@ -55,19 +52,6 @@ export const verifyNativeImports=async(owner:string,frozen:readonly JsonObject[]
       extractionFiles++;
     }
   }
-  for(const item of frozen){
-    const kind=kindFromFrozen(item),importId=String(item.SK).split('#')[2]!;
-    const r=records.find(r=>r.kind===kind && r.importId===importId);
-    // Pending captures may legitimately refresh/apply. Their source identity and first creation remain immutable.
-    check(r?.source,item.source);check(r?.createdAt,iso(item.createdAt??item.previewedAt));
-    if(item.status!=='applied')continue;
-    frozenApplied++;
-    if(!r){mismatches++;continue;}
-    const expected={kind,importId,owner,status:'applied',createdAt:iso(item.createdAt??item.previewedAt),source:item.source,
-      rows:item.rows,...Object.fromEntries(['previewedAt','appliedAt','accountLastFour','product','period','textractJobId','extractionKey','textractAnswers','errorMessage','result']
-        .filter(k=>item[k]!==undefined).map(k=>[k,item[k]]))};
-    check(r,expected);
-  }
   const invalidReferences=Number((await client.query(`SELECT count(*) AS count FROM (
     SELECT line.kind FROM olbia.bank_import_rows line LEFT JOIN olbia.bank_imports parent
       ON parent.kind=line.kind AND parent.content_sha256=line.content_sha256 WHERE parent.kind IS NULL
@@ -86,6 +70,6 @@ export const verifyNativeImports=async(owner:string,frozen:readonly JsonObject[]
   return {authority:'native-sql',imports:records.length,rows:records.reduce((n,r)=>n+r.rows.length,0),
     candidates:records.reduce((n,r)=>n+r.rows.reduce((n,l)=>n+l.candidateEventIds.length,0),0),
     candidateLabels:records.reduce((n,r)=>n+r.rows.reduce((n,l)=>n+l.candidates.length,0),0),
-    frozenApplied,invalidReferences,validatedConstraints:constraints.filter(c=>c.convalidated).length,evidenceFiles,extractionFiles,
+    invalidReferences,validatedConstraints:constraints.filter(c=>c.convalidated).length,evidenceFiles,extractionFiles,
     missingLookups:1,mismatches,elapsedMs:Date.now()-started};
 };

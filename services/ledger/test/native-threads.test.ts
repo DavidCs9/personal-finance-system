@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
-import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { NATIVE_THREAD_SCHEMA_STATEMENTS, nativeThreadReadGrant, nativeThreadWriteGrants } from '../src/dsql/thread-schema.js';
 import { migrateConversationMetadata, prepareThreadCopy } from '../src/dsql/thread-copy.js';
 import { CONVERSATION_RETENTION_MS, readConversationMetadata, readConversationIndex, readConversationSelection, upsertConversation, selectConversation, deleteConversationMetadata, expireConversationMetadata } from '../src/dsql/thread.js';

@@ -10,7 +10,7 @@ import type { JsonObject } from '../src/http/response.js';
 const harness = vi.hoisted(() => ({ pool: undefined as unknown as SqlClient & TransactionPool }));
 vi.mock('../../ledger/src/dsql/connection.js', () => ({ createPool: () => harness.pool }));
 let fixture: Awaited<ReturnType<typeof nativeFixture>>;
-let verify: typeof import('../src/events/provenance-verification.js')['verifyNativeLedgerProvenance'];
+let verify: typeof import('./helpers/provenance-migration.js')['verifyNativeLedgerProvenance'];
 let bulk: typeof import('../src/events/bulk-storage.js');
 const at = '2026-10-02T12:00:00.123Z';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -18,7 +18,7 @@ beforeAll(async () => {
   vi.stubEnv('METADATA_TABLE_NAME', 'metadata'); vi.stubEnv('RAW_EMAIL_BUCKET_NAME', 'evidence');
   fixture = await nativeFixture();
   harness.pool = fixture.pool;
-  verify = (await import('../src/events/provenance-verification.js')).verifyNativeLedgerProvenance;
+  verify = (await import('./helpers/provenance-migration.js')).verifyNativeLedgerProvenance;
   bulk = await import('../src/events/bulk-storage.js');
 }, 30_000);
 beforeEach(async () => {
@@ -45,6 +45,25 @@ const bankRow = async (sha: string, identity: string, kind = 'amex_statement') =
 };
 
 describe('independent ledger provenance and immutable recovery assertions', () => {
+  it('verifies current provenance with every migration table removed and rejects a bank identity corruption', async () => {
+    const id = await fixture.create();
+    await bankRow('d'.repeat(64), 'bank-original');
+    await insertSourceClaim(fixture.pool, { captureSource: 'amex_statement', token: digest('bank-original'),
+      createdAt: at, movementId: id, rowIdentity: 'bank-original' });
+    const { verifyNativeLedgerProvenance } = await import('../src/events/provenance-verification.js');
+    const { retireMigrationEvidence } = await import('../../ledger/src/dsql/catalog-retirement.js');
+    // Roll back the catalog change so historical fixture cases remain independent.
+    const rollback = new Error('ROLLBACK_NATIVE_CATALOG_TEST');
+    await expect(fixture.sql.transaction(async client => {
+      await client.query('INSERT INTO olbia.schema_migrations VALUES (20,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING');
+      await retireMigrationEvidence(client, async () => {});
+      expect(await verifyNativeLedgerProvenance(client)).toMatchObject({ bankClaims: 1, linkedClaimsWithoutObservation: 1, mismatches: 0 });
+      await client.query("UPDATE olbia.source_claims SET row_identity='wrong-original'");
+      expect((await verifyNativeLedgerProvenance(client)).mismatches).toBeGreaterThan(0);
+      throw rollback;
+    })).rejects.toBe(rollback);
+  });
+
   it('allows current edits and new captures while detecting altered original observations, warnings and revisions', async () => {
     const id = await fixture.create({ parseWarnings: ['Original warning'] });
     const original = (await readLedgerDetail(fixture.pool, id))!.observations as JsonObject[];

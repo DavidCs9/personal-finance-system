@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
-import { SCHEMA_STATEMENTS, bootstrapSchema } from '../src/dsql/schema.js';
+import { bootstrapSchema } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../src/dsql/ledger-schema.js';
 import { smokeNativeLedger } from '../src/dsql/ledger-smoke.js';
 import type { SqlClient } from '../src/dsql/projection.js';
@@ -22,6 +23,7 @@ beforeAll(async () => {
     return sql.query<Record<string,unknown>>(statement, values);
   }};
   const identity = ['arn:aws:iam::225989371926:role/permission-test'];
+  for(const version of [8,9,10,11,12,13,14,15,16,17,18,19,20]) await sql.query('INSERT INTO olbia.schema_migrations VALUES ($1,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING',[version]);
   await bootstrapSchema(client, [], {transactionPool: {transaction: fn => sql.transaction(c => fn(c as unknown as SqlClient))},
     applicationRoleArns: identity, readerRoleArns: identity, operationalVerifierRoleArns: identity});
 }, 30_000);
@@ -72,9 +74,14 @@ it('keeps the product SQL reader read-only and without recovery assertions', asy
 
 it('lets only the isolated verifier read current native facts and retained assertions without write access', async () => {
   await sql.query('SET ROLE olbia_operational_verifier');
-  for (const table of [...NATIVE_LEDGER_TABLES,'projection_state','dedupe_claims','bulk_edit_operations',
-    'monthly_plans','payroll','wealth_snapshots','liability_versions','payslips','planned_payments','bank_imports']) {
+  for (const table of [...NATIVE_LEDGER_TABLES,'payslips','planned_payments','bank_imports']) {
     await expect(sql.query(`SELECT 1 FROM olbia.${table}`)).resolves.toBeDefined();
     await expect(sql.query(`DELETE FROM olbia.${table}`)).rejects.toMatchObject({code:'42501'});
   }
+});
+
+it('denies migration copies to the native verifier before catalog retirement', async () => {
+  await sql.query('SET ROLE olbia_operational_verifier');
+  for(const table of ['projection_state','dedupe_claims','bulk_edit_operations','monthly_plans','payroll','wealth_snapshots'])
+    await expect(sql.query(`SELECT 1 FROM olbia.${table}`)).rejects.toMatchObject({code:'42501'});
 });

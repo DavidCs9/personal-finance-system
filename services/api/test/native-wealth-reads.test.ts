@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as connection from '../../ledger/src/dsql/connection.js';
-import { SCHEMA_STATEMENTS } from '../../ledger/src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from '../../ledger/test/helpers/migration-schema.js';
 import { NATIVE_WEALTH_SCHEMA_STATEMENTS, NATIVE_WEALTH_TABLES } from '../../ledger/src/dsql/wealth-schema.js';
 import { projectRows, type SourceItem } from '../../ledger/src/dsql/model.js';
 import { migrateWealth } from '../../ledger/src/dsql/wealth-copy.js';

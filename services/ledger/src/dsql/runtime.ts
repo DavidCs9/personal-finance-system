@@ -1,60 +1,53 @@
 import type { AuroraDSQLPool } from '@aws/aurora-dsql-node-postgres-connector';
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { createHash } from 'node:crypto';
-import { DEFAULT_SPEND_CATEGORIES } from '@finance/domain';
-import { canonicalJson, entityForKey, projectRows, TABLE_NAMES, PROJECTION_VERSION, type SourceItem, type SourceKey } from './model.js';
-import { processStream, reconcileKey, type TransactionPool, type SqlClient, type StreamDelivery } from './projection.js';
-import { verifyKeyDetails } from './verification.js';
+import { isOCCError } from '@aws/aurora-dsql-node-postgres-connector';
+import { DynamoDBClient, DescribeTableCommand, DescribeContinuousBackupsCommand } from '@aws-sdk/client-dynamodb';
 import { bootstrapSchema, BootstrapFailure } from './schema.js';
+import type { SqlClient } from './projection.js';
 import { createPool } from './connection.js';
-import { readStorageAuthority } from './sql-runtime.js';
+import { inspectNativeCatalog, retireMigrationEvidence } from './catalog-retirement.js';
+import { CURRENT_SQL_TABLES } from './catalog.js';
 import { NATIVE_LEDGER_TABLES } from './ledger-schema.js';
 export { createPool } from './connection.js';
-
-const required = (name: string): string => {
-  const value = process.env[name];
-  if (!value) throw new Error(`Missing ${name}`);
-  return value;
-};
+const required = (name: string): string => { const value = process.env[name]; if (!value) throw new Error(`Missing ${name}`); return value; };
 let pool: AuroraDSQLPool | undefined;
-const runtimePool = (): TransactionPool & SqlClient => pool ??= createPool();
-const database = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
-const s3 = new S3Client({});
-const readSource = async (key: SourceKey): Promise<SourceItem | undefined> => {
-  if(await readStorageAuthority(pool ??= createPool())==='sql') {
-    const rows=(await pool!.query('SELECT source_item FROM olbia.projection_state WHERE source_pk=$1 AND source_sk=$2 AND deleted=false',[key.PK,key.SK])).rows;return rows[0]?.source_item as SourceItem|undefined;
-  }
-  const result = await database.send(new GetCommand({ TableName: required('METADATA_TABLE_NAME'), Key: { PK: key.PK, SK: key.SK }, ConsistentRead: true }));
-  return result.Item as SourceItem | undefined;
-};
-const reconcile = (key: SourceKey, delivery?: StreamDelivery): Promise<void> => reconcileKey({transaction: callback => runtimePool().transaction(async client => {
-  await client.query("UPDATE olbia.application_barrier SET generation=generation+1 WHERE id='storage'");
-  if(await readStorageAuthority(client)==='sql') return undefined as never;
-  return callback(client);
-})}, readSource, key, delivery);
-export const streamHandler = async (event: { Records: Parameters<typeof processStream>[0] }): ReturnType<typeof processStream> => {
-  if(await readStorageAuthority(pool ??= createPool())==='sql') return {batchItemFailures:[]};
-  return processStream(event.Records,reconcile);
-};
-
+const database = new DynamoDBClient({});
+/** Retired stream mapping stays disabled. Stale deliveries cannot recreate migration data. */
+export const streamHandler = async (_event: { Records: unknown[] }) => ({ batchItemFailures: [] });
+/** Recovery is the retained DynamoDB source and native backups, not document projection into DSQL. */
+export const replayHandler = async (_event: { key: string }): Promise<never> => { throw new Error('DSQL migration replay is retired'); };
 export const schemaHandler = async (event: {
-  RequestType: string; PhysicalResourceId?: string;
-  ResourceProperties: { RuntimeRoleArns?: string[]; ReaderRoleArns?: string[]; OperationalVerifierRoleArns?: string[]; ApplicationRoleArns?: string[]; StoreReaderRoleArns?: string[]; CutoverRoleArns?: string[] };
-}): Promise<{ PhysicalResourceId: string }> => {
+  action?: 'retire-migration-evidence'; RequestType?: string; PhysicalResourceId?: string;
+  ResourceProperties?: { RuntimeRoleArns?: string[]; ReaderRoleArns?: string[]; OperationalVerifierRoleArns?: string[]; ApplicationRoleArns?: string[]; StoreReaderRoleArns?: string[]; CutoverRoleArns?: string[] };
+}): Promise<Record<string, unknown>> => {
+  if (event.action === 'retire-migration-evidence') {
+    const admin = createPool('admin');
+    try {
+      // One autocommit DDL statement per connector retry; never mix DDL and DML.
+      return await retireMigrationEvidence({ query: async (statement, values) => {
+        for (let attempt = 0; ; attempt++) {
+          try { return await admin.query(statement, values); }
+          catch (error) { if (!isOCCError(error) || attempt >= 4) throw error; }
+        }
+      } }, async () => {
+        const TableName = required('METADATA_TABLE_NAME');
+        const table = await database.send(new DescribeTableCommand({ TableName }));
+        const recovery = await database.send(new DescribeContinuousBackupsCommand({ TableName }));
+        if (table.Table?.TableStatus !== 'ACTIVE' || table.Table.DeletionProtectionEnabled !== true
+          || recovery.ContinuousBackupsDescription?.PointInTimeRecoveryDescription?.PointInTimeRecoveryStatus !== 'ENABLED')
+          throw new Error('Retained DynamoDB recovery is not ready');
+      });
+    } catch { throw new Error('DSQL catalog retirement failed; inspect deployment state and retry the reviewed release'); }
+    finally { await admin.end(); }
+  }
   const PhysicalResourceId = event.PhysicalResourceId ?? 'olbia-dsql-schema-v1';
   if (event.RequestType === 'Delete') return { PhysicalResourceId };
+  if (!['Create','Update'].includes(event.RequestType ?? '') || !event.ResourceProperties) throw new Error('Unknown DSQL schema operation');
   const admin = createPool('admin');
   let stage = 'admin-connect';
   try {
     const client = await admin.connect();
     try { await bootstrapSchema(client as SqlClient, event.ResourceProperties.RuntimeRoleArns ?? [], {
-      transactionPool: admin, readOriginalEmail:async source=>{
-        if(source.bucket!==required('RAW_EMAIL_BUCKET_NAME')||!source.key.startsWith('inbound/'))throw new Error('Original email source is outside bootstrap scope');
-        const object=await s3.send(new GetObjectCommand({Bucket:source.bucket,Key:source.key}));
-        if(!object.Body)throw new Error('Original email has no body');return object.Body.transformToByteArray();
-      }, readerRoleArns: event.ResourceProperties.ReaderRoleArns, operationalVerifierRoleArns: event.ResourceProperties.OperationalVerifierRoleArns,
+      transactionPool: admin, readerRoleArns: event.ResourceProperties.ReaderRoleArns, operationalVerifierRoleArns: event.ResourceProperties.OperationalVerifierRoleArns,
       applicationRoleArns: event.ResourceProperties.ApplicationRoleArns,storeReaderRoleArns:event.ResourceProperties.StoreReaderRoleArns,cutoverRoleArns:event.ResourceProperties.CutoverRoleArns,
     }); }
     finally { client.release(); }
@@ -62,7 +55,7 @@ export const schemaHandler = async (event: {
     stage = 'runtime-connect-and-smoke';
     const runtime = createPool();
     try {
-      const version = await runtime.query('SELECT version FROM olbia.schema_migrations WHERE version=$1', [PROJECTION_VERSION]);
+      const version = await runtime.query('SELECT version FROM olbia.schema_migrations WHERE version=20');
       if (version.rows.length !== 1 || (await runtime.query('SELECT version FROM olbia.schema_migrations WHERE version=14')).rows.length !== 1) throw new Error('Schema smoke failed');
       for (const table of NATIVE_LEDGER_TABLES) await runtime.query(`SELECT 1 FROM olbia.${table} LIMIT 1`);
     } finally { await runtime.end(); }
@@ -72,110 +65,19 @@ export const schemaHandler = async (event: {
   return { PhysicalResourceId };
 };
 
-export type MaintenanceProgress = {
-  phase: 'source' | 'target' | 'verify-source' | 'verify-target' | 'done';
-  cursor?: SourceKey | null; projected?: number; equal?: number; lag?: number; mismatch?: number;
-  sourceTotals?: Record<string, { count: number; amountMinor: string; personalAmountMinor: string }>;
-  summary?: Record<string, unknown>;
-};
-export type MaintenanceInput = MaintenanceProgress & { runId: string };
 
-const runMaintenance = async (event: MaintenanceInput): Promise<MaintenanceInput> => {
-  const runId = event.runId;
-  if (typeof runId !== 'string' || !runId) throw new Error('runId is required');
-  const sqlAuthority=await readStorageAuthority(pool ??= createPool())==='sql';
-  if(sqlAuthority && !event.phase.startsWith('verify') && event.phase!=='done') event={...event,phase:event.phase==='source'?'verify-source':'verify-target'};
-  const input: MaintenanceInput = { ...event, projected: event.projected ?? 0, equal: event.equal ?? 0, lag: event.lag ?? 0, mismatch: event.mismatch ?? 0, sourceTotals: { ...event.sourceTotals } };
-  let keys: SourceKey[];
-  let cursor: SourceKey | undefined;
-  if (input.phase === 'source' || input.phase === 'verify-source') {
-    const page = sqlAuthority ? await (async () => {
-      const result=await pool!.query('SELECT source_pk,source_sk FROM olbia.projection_state WHERE deleted=false AND (source_pk,source_sk)>($1,$2) ORDER BY source_pk,source_sk LIMIT 25',[input.cursor?.PK??'',input.cursor?.SK??'']);
-      const Items=result.rows.map(row=>({PK:String(row.source_pk),SK:String(row.source_sk)}));return {Items,LastEvaluatedKey:Items.length===25?Items.at(-1):undefined};
-    })() : await database.send(new ScanCommand({
-      TableName: required('METADATA_TABLE_NAME'), ConsistentRead: true, Limit: 25,
-      ProjectionExpression: 'PK,SK', ExclusiveStartKey: input.cursor ?? undefined,
-    }));
-    keys = (page.Items ?? []).map((key) => ({ PK: String(key.PK), SK: String(key.SK) })).filter((key) => entityForKey(key));
-    cursor = page.LastEvaluatedKey as SourceKey | undefined;
-    if (!input.cursor) keys.push(...DEFAULT_SPEND_CATEGORIES.map((category) => ({ PK: 'CATEGORY_CATALOG', SK: `CAT#${category.id}` })));
-  } else if (input.phase === 'target' || input.phase === 'verify-target') {
-    const page = await (pool ??= createPool()).query(`SELECT source_pk,source_sk FROM olbia.projection_state
-      WHERE (source_pk,source_sk) > ($1,$2) ORDER BY source_pk,source_sk LIMIT 25`, [input.cursor?.PK ?? '', input.cursor?.SK ?? '']);
-    keys = page.rows.map((row) => ({ PK: String(row.source_pk), SK: String(row.source_sk) }));
-    cursor = keys.length === 25 ? keys.at(-1) : undefined;
-  } else throw new Error('Invalid reconciliation phase');
-  for (const key of keys) {
-    if (input.phase.startsWith('verify')) {
-      const result = await verifyKeyDetails(runtimePool(), readSource, key);
-      input[result.status] = (input[result.status] ?? 0) + 1;
-      if (input.phase === 'verify-source' && result.source && entityForKey(key) === 'movements') {
-        const movement = projectRows(key, result.source)[0].values;
-        const group = JSON.stringify([movement.spend_month, movement.currency]);
-        const previous = input.sourceTotals![group] ?? { count: 0, amountMinor: '0', personalAmountMinor: '0' };
-        input.sourceTotals![group] = { count: previous.count + 1,
-          amountMinor: (BigInt(previous.amountMinor) + BigInt(String(movement.amount_minor))).toString(),
-          personalAmountMinor: (BigInt(previous.personalAmountMinor) + BigInt(String(movement.personal_amount_minor ?? movement.amount_minor))).toString() };
-      }
-    } else {
-      await reconcile(key);
-      input.projected = (input.projected ?? 0) + 1;
-    }
-  }
-  const next = { source: 'target', target: 'verify-source', 'verify-source': 'verify-target', 'verify-target': 'done' } as const;
-  const output: MaintenanceInput = { ...input, phase: cursor ? input.phase : next[input.phase as keyof typeof next], cursor: cursor ?? null };
-  if (output.phase === 'done') {
-    const summary = await runtimePool().transaction(async (client) => {
-      const tableCounts: Record<string, string> = {};
-      for (const table of TABLE_NAMES) {
-        const count = await client.query(`SELECT count(*) AS count FROM olbia.${table}`);
-        tableCounts[table] = String(count.rows[0].count);
-      }
-      for (const table of [...NATIVE_LEDGER_TABLES,'month_plans','planned_payments','payslips','payslip_lines','bank_imports','bank_import_rows','bank_import_candidates']) tableCounts[table] = String((await client.query(`SELECT count(*) AS count FROM olbia.${table}`)).rows[0].count);
-      tableCounts.card_profiles = String((await client.query('SELECT count(*) AS count FROM olbia.card_profiles')).rows[0].count);
-      tableCounts.spend_categories = String((await client.query('SELECT count(*) AS count FROM olbia.spend_categories')).rows[0].count);
-      tableCounts.merchant_rules = String((await client.query('SELECT count(*) AS count FROM olbia.merchant_rules')).rows[0].count);
-      const totals = await client.query(`SELECT spend_month,currency,count(*) AS count,
-        sum(amount_minor) AS amount_minor,sum(coalesce(personal_amount_minor,amount_minor)) AS personal_amount_minor
-        FROM olbia.movements GROUP BY spend_month,currency`);
-      const sqlTotals = Object.fromEntries(totals.rows.map((row) => [JSON.stringify([row.spend_month, row.currency]), {
-        count: Number(row.count), amountMinor: String(row.amount_minor), personalAmountMinor: String(row.personal_amount_minor),
-      }]));
-      const captured = await client.query('SELECT count(*) AS count, max(stream_delivered_at) AS latest FROM olbia.projection_state WHERE stream_sequence IS NOT NULL');
-      return { tableCounts, sqlTotals, financialTotalsAuthority: 'frozen-recovery', capturedKeys: String(captured.rows[0].count), latestStreamDelivery: captured.rows[0].latest };
-    });
-    output.summary = summary;
-    if (canonicalJson(summary.sqlTotals) !== canonicalJson(output.sourceTotals)) output.lag = (output.lag ?? 0) + 1;
-  }
-  // No source payloads: auditable progress survives retries, resumable at a saved cursor.
-  const runKey = createHash('sha256').update(runId).digest('hex');
-  await s3.send(new PutObjectCommand({ Bucket: required('DSQL_RECOVERY_BUCKET'), Key: `reconciliation/${runKey}/progress.json`, Body: JSON.stringify({ ...output, checkedAt: new Date().toISOString() }), ContentType: 'application/json' }));
-  return output;
-};
-
-// Replay uses the original failed batch only to recover keys, and reads live DDB.
-// Operators invoke this deployed capability; it never modifies the source table.
-const runReplay = async (event: { key: string }): Promise<{ replayed: number }> => {
-  if (typeof event.key !== 'string' || !event.key.startsWith('aws/lambda/')) throw new Error('Expected native Lambda failure object key');
-  const object = await s3.send(new GetObjectCommand({ Bucket: required('DSQL_RECOVERY_BUCKET'), Key: event.key }));
-  const body = JSON.parse(await object.Body!.transformToString());
-  const rawPayload = body.payload ?? body.requestPayload;
-  const payload = typeof rawPayload === 'string' ? JSON.parse(rawPayload) : rawPayload;
-  if (!Array.isArray(payload?.Records)) throw new Error('Invalid failure payload');
-  const result = await processStream(payload.Records, reconcile);
-  if (result.batchItemFailures.length) throw new Error('Replay incomplete; original object retained');
-  return { replayed: payload.Records.length };
-};
-
-// Lambda otherwise logs uncaught driver errors, which can include failing rows.
-const sanitizedFailure = (error: unknown): Error => {
-  const code = (error as { code?: unknown })?.code;
-  return new Error(`DSQL maintenance failed (${typeof code === 'string' && /^[A-Z0-9]{5}$/.test(code) ? code : 'operation'}); retained progress can be resumed`);
-};
+export type MaintenanceInput = { runId: string; phase: string; cursor?: unknown; projected?: number; equal?: number; lag?: number; mismatch?: number; sourceTotals?: unknown; summary?: unknown };
+/** Stable managed verification resource now inspects current SQL only; no copies, source scans or evidence reports. */
 export const maintenanceHandler = async (event: MaintenanceInput): Promise<MaintenanceInput> => {
-  try { return await runMaintenance(event); } catch (error) { throw sanitizedFailure(error); }
-};
-export const replayHandler = async (event: { key: string }): Promise<{ replayed: number }> => {
-  if (typeof event.key !== 'string' || !event.key.startsWith('aws/lambda/')) throw new Error('Expected native Lambda failure object key');
-  try { return await runReplay(event); } catch (error) { throw sanitizedFailure(error); }
+  if (typeof event.runId !== 'string' || !event.runId) throw new Error('runId is required');
+  pool ??= createPool();
+  try {
+    const catalog = await pool.transaction(async client => {
+      const catalog = await inspectNativeCatalog(client);
+      for (const table of CURRENT_SQL_TABLES) await client.query(`SELECT 1 FROM olbia.${table} LIMIT 1`);
+      return catalog;
+    });
+    return { runId: event.runId, phase: 'done', cursor: null, projected: 0, equal: catalog.current.length, lag: 0, mismatch: 0,
+      summary: { mode: 'native-sql', tables: catalog.current.length, nativeColumns: catalog.columns, nativeConstraints: catalog.constraints } };
+  } catch { throw new Error('Native DSQL catalog verification failed'); }
 };

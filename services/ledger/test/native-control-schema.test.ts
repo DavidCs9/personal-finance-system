@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
-import { SCHEMA_STATEMENTS, bootstrapSchema, ensureNativeControlConstraints, NATIVE_CONTROL_CONSTRAINTS } from '../src/dsql/schema.js';
+import { bootstrapSchema, ensureNativeControlConstraints, NATIVE_CONTROL_CONSTRAINTS } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../src/dsql/ledger-schema.js';
 import type { SqlClient } from '../src/dsql/projection.js';
 let sql:PGlite;
@@ -21,6 +22,7 @@ beforeAll(async()=>{
     return sql.query<Record<string,unknown>>(s,v);
   }};
   const identity=['arn:aws:iam::225989371926:role/control-test'];
+  await sql.query('INSERT INTO olbia.schema_migrations VALUES (20,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING');
   await bootstrapSchema(client,identity,{transactionPool:{transaction:fn=>sql.transaction(c=>fn(c as unknown as SqlClient))},applicationRoleArns:identity,
     cutoverRoleArns:identity,readerRoleArns:identity,operationalVerifierRoleArns:identity,storeReaderRoleArns:identity});
 },30_000);
@@ -60,7 +62,7 @@ it('allows only the existing operator to change authority mode/time while keepin
   }
 });
 it('stops bootstrap before financial copy/grants/completion if a native control validation fails',async()=>{
-  const query=vi.fn(async(s:string,v?:unknown[])=>({rows:s.includes('pg_constraint')?[{convalidated:v?.[1]!=='runtime_state_mode'}]:s.startsWith('ALTER TABLE ASYNC')?[{job_id:'failed-control-job'}]:s.includes('sys.jobs')?[{status:'failed'}]:[]}));
+  const query=vi.fn(async(s:string,v?:unknown[])=>({rows:s.includes('WHERE version=20')?[{version:20}]:s.includes('pg_constraint')?[{convalidated:v?.[1]!=='runtime_state_mode'}]:s.startsWith('ALTER TABLE ASYNC')?[{job_id:'failed-control-job'}]:s.includes('sys.jobs')?[{status:'failed'}]:[]}));
   await expect(bootstrapSchema({query},[],{transactionPool:{transaction:vi.fn()}})).rejects.toThrow('native-control-runtime_state_mode-validation');
   expect(query.mock.calls.map(([s])=>s).join()).not.toMatch(/AWS IAM GRANT|VALUES \(20,|SELECT version FROM olbia.schema_migrations WHERE version=9/);
 });

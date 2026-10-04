@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
-import { SCHEMA_STATEMENTS } from '@finance/ledger/dsql-schema';
+import { SCHEMA_STATEMENTS } from '../../../ledger/test/helpers/migration-schema.js';
 import { upsertConversation, selectConversation } from '@finance/ledger/native-threads';
 import { verifyNativeConversationMetadata } from './thread-verification.js';
 let sql:PGlite;

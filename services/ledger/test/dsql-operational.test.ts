@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { entityForKey, projectRows, type SourceItem } from '../src/dsql/model.js';
 import { reconcileKey, processStream, type SqlClient, type TransactionPool } from '../src/dsql/projection.js';
 import { verifyKey } from '../src/dsql/verification.js';

@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
-import { SCHEMA_STATEMENTS, bootstrapSchema } from '../src/dsql/schema.js';
+import { bootstrapSchema } from '../src/dsql/schema.js';
+import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../src/dsql/ledger-schema.js';
 import { smokeNativePush } from '../src/dsql/push-smoke.js';
 import { upsertNativePushSubscription, readNativePushMetadata, deleteNativePushSubscription } from '../src/dsql/push.js';
@@ -18,6 +19,7 @@ beforeAll(async()=>{
     return sql.query<Record<string,unknown>>(s,v);
   }};
   const identity=['arn:aws:iam::225989371926:role/permission-test'];
+  for(const version of [8,9,10,11,12,13,14,15,16,17,18,19,20]) await sql.query('INSERT INTO olbia.schema_migrations VALUES ($1,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING',[version]);
   await bootstrapSchema(client,[],{transactionPool:{transaction:fn=>sql.transaction(c=>fn(c as unknown as SqlClient))},applicationRoleArns:identity,
     cutoverRoleArns:identity,readerRoleArns:identity,operationalVerifierRoleArns:identity,storeReaderRoleArns:identity});
   await upsertNativePushSubscription(sql,{owner,endpoint,keys:{p256dh:'original_key',auth:'original_auth'},contentMode:'private',at:'2026-10-03T12:00:00.123Z'});
@@ -47,8 +49,7 @@ it('isolates product metadata from endpoint/key fields and keeps all reader role
   }
   for(const role of ['olbia_application','olbia_cutover','olbia_reader','olbia_store_reader','olbia_projector','olbia_operational_verifier']){
     await sql.query(`SET ROLE ${role}`);
-    if(['olbia_projector','olbia_operational_verifier'].includes(role))await expect(sql.query('SELECT * FROM olbia.push_subscriptions')).resolves.toBeDefined();
-    else await expect(sql.query('SELECT * FROM olbia.push_subscriptions')).rejects.toMatchObject({code:'42501'});
+    await expect(sql.query('SELECT * FROM olbia.push_subscriptions')).rejects.toMatchObject({code:'42501'});
     await expect(sql.query('DELETE FROM olbia.push_subscriptions')).rejects.toMatchObject({code:'42501'});
     await expect(sql.query('UPDATE olbia.push_subscriptions SET source_item=source_item')).rejects.toMatchObject({code:'42501'});
     await sql.query('RESET ROLE');
