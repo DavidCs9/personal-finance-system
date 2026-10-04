@@ -1,66 +1,41 @@
 # Repository guidance
 
-## Autonomous runs
+## Required reading
 
-When the user authorizes autonomous work or a long-running execution, read [`AUTONOMOUS_RUN_RULES.md`](AUTONOMOUS_RUN_RULES.md) completely before starting and follow it throughout the run. It defines how to resolve dilemmas, persist decisions, and resume work without losing context.
+Read [product north star](docs/product-north-star.md) before product, architecture, data or UI decisions. It is binding: Olbia is David Castro's private application, with David its sole user/owner. Design and validate for his real finances; anonymization, masking and synthetic datasets are not prerequisites. Existing owner/authentication identifiers protect his access, not a multiuser product. No signup, organizations, sharing, tenants or other users without his explicit decision.
 
-## Product north star
+Before persistence work, read [architecture](docs/architecture.md) and [financial rules](docs/financial-rules.md). **OLBIA MUST FEEL AS IF IT WAS BORN IN SQL**, David's explicit decision of 2026-10-01. Domain entities/keys, typed columns, relationships, native constraints, direct SQL and transactions are authoritative. No PK/SK, GSI, document-command emulation, envelopes or projection-first authority under renamed abstractions. All domain readers/writers must use its relational authority; adding columns beside a document source does not finish normalization. Keep JSON only for purposeful evidence/history/provider metadata; preserve financial behavior, originals, history and recovery.
 
-**Olbia is David Castro's private application for controlling his overall financial situation. David Castro is its sole user and owner.** Read [`docs/product-north-star.md`](docs/product-north-star.md) before making product, architecture, data, or UI decisions, and treat it as a binding product constraint.
+David's explicit decision of 2026-10-04: DSQL contains no migration evidence tables/copies, including in an archive schema. Bootstrap/verifiers must not recreate or depend on them. Preserve native financial history, the three operational controls, S3 originals and native backups; retained DynamoDB is pre-cutover recovery. The [architecture guide](docs/architecture.md#recovery-boundary-and-schema-changes) owns the current retention boundary.
 
-Design for David's actual finances and usage. Do not introduce other users, public signup, organizations, sharing, tenant isolation frameworks, or generic customer configuration without his explicit product decision. Existing owner identifiers and authentication protect David's access; they are not a requirement to support multiple users.
+Before planning, implementing or reviewing any user-facing change, read [UI direction](docs/ui-design-brief.md), [web instructions](apps/web/AGENTS.md) and [financial rules](docs/financial-rules.md) completely, including changes outside apps/web that affect visible behavior. Preserve Resumen / Movimientos / Patrimonio. Do not infer a conflicting style, interaction or tone. An explicit personality decision must update the UI guide and web instructions together.
 
-Use his real data to investigate and validate. Anonymization, masking, and synthetic datasets are not prerequisites. Keep the implementation proportional to this personal system while preserving financial correctness, recovery, and the existing PR/deployment workflow.
-
-## SQL-native architecture north star — binding
-
-**OLBIA MUST FEEL AS IF IT WAS BORN IN SQL.** This is David's explicit architecture decision, 2026-10-01. Read [`docs/product-north-star.md`](docs/product-north-star.md) and the [table audit](docs/dsql-normalization-audit.md) before data-model or persistence work.
-
-Design around domain entities, domain primary keys, typed columns, explicit relationships, native database constraints, direct SQL queries and transactional domain operations. Do not preserve DynamoDB's `PK`/`SK`, `GSI` fields, document-command emulation, envelopes or projection-first authority as the final model, including under renamed abstractions. Those mechanisms are temporary migration compatibility and recovery state.
-
-Finish each normalization slice by making its relational representation authoritative and migrating its readers and writers. Adding SQL columns while retaining a DynamoDB-shaped source of truth does not complete normalization. Keep JSON only where its meaning warrants it, such as original evidence, immutable audit changes or genuinely variable provider metadata. Preserve financial behavior, history, recovery and the normal PR/deployment workflow throughout the transition.
-
-David's explicit decision, 2026-10-04: DSQL must contain no migration evidence tables or copies. Retained DynamoDB is the pre-cutover recovery source. Remove the 24 frozen domain tables plus `projection_state` and `command_receipts`; do not move them to an archive schema or recreate them in bootstrap/verifiers. Preserve current native financial observations, revisions, captures/imports, S3 originals and native DSQL backups. The three current SQL controls remain operational. This supersedes earlier instructions to retain migration copies inside DSQL; historical audit documents remain historical records, not today's retention policy.
-
-## User-interface changes
-
-Before planning, implementing, or reviewing any user-facing UI change, read these files completely:
-
-1. [`docs/ui-design-brief.md`](docs/ui-design-brief.md) — product direction and approved design decisions.
-2. [`apps/web/AGENTS.md`](apps/web/AGENTS.md) — operational personality, voice, visual, mobile-first, and financial-state rules.
-
-Treat both documents as binding product constraints for every UI feature, including changes made outside `apps/web` that affect what the user sees or reads. Patrimonio product rules also live in [`docs/patrimonio.md`](docs/patrimonio.md); keep the three-tab model (Resumen / Movimientos / Patrimonio) intact unless an explicit product decision updates those guides.
-
-Do not introduce a conflicting visual direction, interaction pattern, or tone by inference. If a new explicit product decision changes the personality, update both guides in the same change so future work receives the new direction.
+When autonomous or long-running work is authorized, read [autonomous run rules](AUTONOMOUS_RUN_RULES.md) completely and follow them throughout the run.
 
 ## Prefer native capabilities
 
-Before designing or implementing a manual solution for infrastructure, observability, logging, authentication, caching, integrations, or other platform concerns, first verify whether the relevant provider or framework already offers a native capability that meets the need.
+Before a manual infrastructure, observability, logging, authentication, caching, integration or platform solution, verify native provider/framework capabilities. Prefer a native solution meeting behavior, reliability, security and observability requirements. Custom code requires a documented gap and reason the native option is insufficient. Do not duplicate provider-managed telemetry/data capture with application logs for convenience.
 
-Prefer the native capability when it provides the required behavior, reliability, security, and observability. Build custom code only for a documented gap, and state that gap and the reason the native option is insufficient before adding the custom implementation. Do not duplicate provider-managed telemetry or data capture with application logs merely because it is easier to add locally.
+## AWS access and production
 
-## AWS local access
-
-- Use `aws login` credentials for interactive local AWS access. Verify the active identity with `aws sts get-caller-identity` immediately before any production operation.
-- When AWS authentication is needed for an in-scope task, or the user explicitly asks to log in, infer authorization and run `aws login` without requesting separate confirmation unless the user explicitly says not to. Never replace an expired or broken login session with permanent access keys.
-- Keep production data changes auditable: use an already-deployed application/API capability when one exists. Do not write directly to DynamoDB to bypass domain mutations, revision history, validation, or authentication.
-
-## Production deployment
-
-- Never deploy application or infrastructure code manually from a local machine. Do not run `cdk deploy`, update Lambda code/configuration directly, or invoke deployment APIs as a shortcut.
-- All production code changes must go through a pull request and the required `quality` check. Production deployment is owned exclusively by the `deploy-production` GitHub Actions job after the approved change lands on `main`.
-- Local AWS access may be used for read-only diagnosis and for auditable production data operations supported by code that is already deployed. It must not be used to release unreviewed code.
+- Interactive local access uses aws login. When authentication is needed for in-scope work, infer authorization and run it without separate confirmation unless David says not to. Never substitute permanent keys for expired/broken login.
+- Verify aws sts get-caller-identity immediately before each production operation.
+- Production financial changes use already-deployed authenticated API/domain operations; never write directly to SQL/DynamoDB to bypass mutations, validation or revisions.
+- Never deploy code/infrastructure locally: no cdk deploy, direct Lambda update or deployment API shortcut. Production code changes require PR and quality; deploy-production owns deployment after the approved change lands on main.
+- Local AWS access may diagnose read-only or perform authorized auditable data operations supported by deployed code. It cannot release unreviewed code. [Operations](docs/operations.md) holds current procedures.
 
 ## Pull requests and linear history
 
-`main` requires linear history. Use this workflow for every pull request:
+1. Fetch the current base; create feature branch directly from origin/main.
+2. Before final push, git fetch origin and git rebase origin/main.
+3. Resolve conflicts intentionally, stage resolved files and git rebase --continue.
+4. Never merge main into a feature branch.
+5. If rebasing an already-pushed branch, git push --force-with-lease, never --force.
+6. Wait for required quality and confirm CLEAN/MERGEABLE before merging.
+7. Squash or rebase merge only; never Create a merge commit. Respect any user instruction to stop before merge.
 
-1. Fetch the current base and create the feature branch directly from `origin/main`.
-2. Before the final push, run `git fetch origin` followed by `git rebase origin/main`.
-3. Resolve rebase conflicts intentionally, stage the resolved files, and continue with `git rebase --continue`.
-4. Never merge `main` into a feature branch; that introduces a merge commit and can block the PR.
-5. If the branch was already pushed before rebasing, update it with `git push --force-with-lease`, never plain `--force`.
-6. Wait for the required `quality` check and confirm the PR is `CLEAN` and `MERGEABLE`.
-7. Complete the PR with **Squash and merge** or **Rebase and merge**. Do not use **Create a merge commit**.
+Preserve unrelated user changes. If rebase could overwrite or ambiguously combine them, stop and request direction.
 
-Preserve unrelated user changes throughout this workflow. If a rebase would overwrite or ambiguously combine them, stop and request direction.
+## Documentation
+
+Keep only the six current guides linked from [README](README.md) under docs/. Give each rule one canonical home; instruction files enforce/link it. Completed features/runs do not earn permanent pages. Keep resumable run notes and execution logs local only under Git-ignored work-notes/; never stage, force-add, commit or push them. Keep useful completed notes locally and extract lasting decisions into existing guides. Git retains previously committed history; no docs archive folder. Prefer omission over speculative, duplicated or historical guidance.

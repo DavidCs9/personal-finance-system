@@ -1,127 +1,36 @@
 # Olbia
 
-**Olbia is David Castro's private application for controlling his overall financial situation. David Castro is its sole user and owner.** Its [product north star](docs/product-north-star.md) guides product, design, data, and infrastructure decisions.
+**David Castro's private application for controlling his overall financial situation. David is its sole user and owner.**
 
-It brings together his income, spending, available liquidity, commitments, debts, investments, and net worth. It observes real purchases from bank email alerts and Apple Pay, keeps source evidence, and helps David understand his finances and make decisions with reliable numbers and less manual work.
+Olbia brings together income, spending, liquidity, commitments, investments, debt and net worth. Email alerts, Apple Pay and imports preserve original evidence; corrections and reconciliation remain auditable. It never asks for bank credentials. The code is public as a technical sample; the application and financial data are private.
 
-It never asks for bank credentials. It works from notifications already arriving by email, authenticated observations on the phone, statement PDFs, CFDI nómina XMLs, and read-only wealth APIs.
+## What to read
 
-## Design idea
+Start with the product north star, then read only what your task needs:
 
-The primary unit is not a final accounting transaction — it is an **observed event**.
+| Task | Document |
+| --- | --- |
+| Understand purpose and binding decisions | [Product north star](docs/product-north-star.md) |
+| Change a screen, message or report layout | [UI direction](docs/ui-design-brief.md) |
+| Change calculations, imports or financial behavior | [Financial rules](docs/financial-rules.md) |
+| Change data, persistence or service boundaries | [Architecture](docs/architecture.md) |
+| Configure integrations, diagnose, deliver or recover | [Operations](docs/operations.md) |
+| Change assistant tools, memory or runtime prompt | [Assistant](docs/ai-assistant.md) |
 
-- Every alert or automation leaves an immutable observation with its source.
-- Multiple observations of the same purchase can be reconciled; none are deleted.
-- Ambiguous cases stay for human review. A purchase is never invented by inference.
-- Original MIME, CSV, PDF and CFDI XML files and provider extraction evidence are retained encrypted in S3. Apple Pay preserves authenticated capture fields and source metadata in immutable SQL observations.
-- MSI schedules attach to the observed purchase: committed cuotas reduce remaining money until statement/CSV evidence marks them spent.
-- Month income comes from uploaded CFDI nómina XMLs (not a typed total). Patrimonio captures, holdings and current daily selections use native SQL relationships beside the spend ledger.
+[AGENTS.md](AGENTS.md) defines working instructions. Completed migration plans, audits and run records are available through Git history; they are not current operating guidance. `docs/` contains only these six documents. Add a section to the existing guide before proposing another file.
 
-That separates capture, evidence, reconciliation, and presentation so David can trust his financial information and recover mistakes with a manageable personal system.
+## Develop
 
-## Architecture
+Node.js 24+, npm workspaces, strict TypeScript and Vitest:
 
-**OLBIA MUST FEEL AS IF IT WAS BORN IN SQL.** Aurora DSQL is the sole product persistence authority: domain primary keys, typed relationships/constraints and native SQL transactions. [The current table audit](docs/sql-relational-table-audit.md) covers every native, control and frozen recovery relation. DynamoDB originals and prior SQL projections are isolated recovery evidence; product code has no document-command adapter or source fallback.
-
-System context ([C4](https://c4model.com/) level 1). Container and component diagrams live in [docs/architecture.md](docs/architecture.md).
-
-```mermaid
-flowchart TB
-  classDef person fill:#08427B,stroke:#052E56,color:#fff,stroke-width:1px
-  classDef system fill:#1168BD,stroke:#0B4884,color:#fff,stroke-width:1px
-  classDef external fill:#999999,stroke:#6B6B6B,color:#fff,stroke-width:1px
-
-  owner["`**David Castro**
-«Person»
-_Reviews spend, patrimonio, recovers failures, reconciles statements_`"]
-  olbia["`**Olbia**
-«Software System»
-_Personal spend ledger and net worth. Observes purchases without bank credentials_`"]
-  issuers["`**Card and billing alerts**
-«Software System»
-_Amex, Santander, Nu, AWS Billing_`"]
-  gmail["`**Gmail**
-«Software System»
-_Forwards matching alerts to Olbia_`"]
-  shortcuts["`**Apple Shortcuts**
-«Software System»
-_Posts Apple Pay captures_`"]
-  wealthApis["`**Wealth APIs**
-«Software System»
-_Bitso balances · IBKR Flex + Banxico FX_`"]
-  webpush["`**Web Push network**
-«Software System»
-_Delivers browser notifications_`"]
-
-  issuers -->|"Sends alerts"| gmail
-  gmail -->|"Forwards matching alerts"| olbia
-  shortcuts -->|"Posts Apple Pay observations"| olbia
-  wealthApis -->|"Read-only sync"| olbia
-  owner -->|"Signs in, reviews, reconciles"| olbia
-  olbia -->|"Emails ingestion and sync exceptions"| owner
-  olbia -->|"Sends optional push notices"| webpush
-  webpush -->|"Delivers notifications"| owner
-
-  class owner person
-  class olbia system
-  class issuers,gmail,shortcuts,wealthApis,webpush external
+```sh
+npm ci
+npm --workspace @finance/web run dev
+npm test
+npm run check
+npm run synth
 ```
 
-| Colour | Meaning |
-| --- | --- |
-| Dark blue | «Person» |
-| Mid blue | «Software System» in scope |
-| Grey | External «Software System» |
+The [web README](apps/web/README.md) explains local login/demo mode. The [architecture map](docs/architecture.md#where-changes-belong) locates each service and schema.
 
-The financial services and source evidence run on AWS (`us-east-2`); native AgentCore Harness/Memory and managed Web Search run in `us-east-1`. Infrastructure is defined with CDK in TypeScript. Deploys from `main` via GitHub Actions with OIDC — no AWS keys stored in the repository. Node.js **24** in CI and Lambdas.
-
-| Layer | Responsibility |
-| --- | --- |
-| Web | Resumen, Movimientos, Patrimonio (`apps/web`) |
-| Domain | Shared types, MSI, month summary, wealth, payroll, card cycle (`packages/domain`) |
-| API | Ledger HTTP, statements, nómina, wealth sync, Apple Pay, scheduled pushes (`services/api`) |
-| Ingestion | Email parsers and SES worker (`services/ingestion`) |
-| Ledger | Native SQL domains, relationships and transactions (`services/ledger`) |
-| Notify | Web Push subscriptions and delivery (`services/notify`) |
-| Infrastructure | CDK + thin Lambda adapters only (`infrastructure`) |
-
-## Monorepo
-
-```text
-apps/web              Review UI (React + Vite)
-services/api          Ledger API, imports, wealth, Apple Pay, card/daily push jobs
-services/ingestion    Email parsers + SES ingestion worker
-services/ledger       Native SQL domains, relationships and transactions
-services/notify       Web Push subscriptions and send helpers
-packages/domain       Shared contract across services
-infrastructure        CDK stacks + thin Lambda entrypoints (re-export services)
-docs                  Product, UI, and operational decisions
-tests/fixtures/email  Anonymized .eml fixtures — never real mail
-```
-
-npm workspaces, strict TypeScript, and Vitest. Parsers are tested against real American Express and Santander México formats.
-
-## Decisions that matter
-
-- **Traceability over convenience** — the full source is retained; parsing is reviewable and never rewrites the original.
-- **Idempotency per source** — forwards and retries do not duplicate the ledger.
-- **Explicit reconciliation** — a unique high-confidence match links; ambiguity requires a decision.
-- **Private access for David Castro** — Cognito with his sole user; no public signup. Technical owner IDs identify David and his integrations, without adding support for other users.
-- **Linear history on `main`** — PRs with a quality gate (tests, types, build, `cdk synth`) and automatic deploy.
-
-## Documentation
-
-- [Product north star](docs/product-north-star.md) — David Castro's private financial application and the decision criteria for every change
-- [Current SQL table audit](docs/sql-relational-table-audit.md) — actual native keys, constraints, evidence boundaries and acceptance
-- [Architecture (C4)](docs/architecture.md) — containers and components
-- [V1 decisions](docs/v1-decisions.md) — scope, data model, and infrastructure
-- [Patrimonio](docs/patrimonio.md) — net worth accounts, liabilities, and sync
-- [Meses sin intereses (MSI)](docs/msi.md) — plans, imports, UI, and month math
-- [Cobros manuales](docs/manual-observed-charges.md) — observed charges without automation
-- [UI direction](docs/ui-design-brief.md) — hierarchy, personality, and mobile navigation
-- [Gmail → SES forwarding](docs/gmail-forwarding.md)
-- [Apple Pay Shortcut](docs/apple-pay-shortcut.md)
-- [iOS home-screen web app](docs/ios-home-screen-web-app.md)
-- [Push on new observable](docs/push-on-new-observable.md) · [Daily balance](docs/daily-balance-push.md) · [Card cycle](docs/card-cycle-push.md)
-
-Personal project in production. The code is public as a sample of how I structure an end-to-end system.
+Production code ships by PR, required quality check, linear merge and the deploy-production GitHub Actions job. No local deployment. Aurora DSQL owns every product domain; native financial history and S3 originals remain intact, native backups protect current finances, and retained DynamoDB provides pre-cutover recovery. DSQL contains no migration-copy tables.

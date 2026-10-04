@@ -22,3 +22,7 @@ cdk.context.json
 # Local Textract debug downloads
 .debug/
 __pycache__/
+
+# Local autonomous run records (including the retired location)
+/work-notes/
+/docs/autonomous-runs/

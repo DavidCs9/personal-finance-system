@@ -1,154 +1,50 @@
-# Asistente Olbia (AgentCore Harness)
+# Assistant
 
-Documento técnico del asistente de consultas financieras. Decisiones de producto viven en [`ui-design-brief.md`](ui-design-brief.md) y [`apps/web/AGENTS.md`](../apps/web/AGENTS.md).
+Olbia's global financial assistant follows the [UI](ui-design-brief.md) and [financial rules](financial-rules.md). Answers use deterministic tool facts with citations; tools never reconstruct a document-store authority.
 
-## Norte
+## Runtime and access
 
-Un solo asistente: consultas ahora; asesor de decisión (“¿qué tan responsable…?”) después, como el mismo Harness con más tools.
+Cognito JWT → dedicated REST API POST /agent/chat → streaming Lambda → AgentCore Harness → IAM Gateways. Ledger's other routes stay on HTTP API. Browser reads SSE with fetch/ReadableStream, not EventSource; it never calls AgentCore. Authorizer/handler restrict claims.sub to AgentOwnerSub; tools use the configured AGENT_OWNER, never a model/browser-supplied owner. CORS permits Olbia's web origin, including authorization errors.
 
-## Arquitectura
+Harness owns the loop. Finance read tools and bounded mutations use separate Gateway/Lambda targets. Native Cedar Policy Engine ENFORCE denies by default and permits only the eight mutation actions to the exact Harness IAM role. Read tools have no write authority; no generic database-write tool or public /bulk-edits endpoint exists. Managed Web Search preserves citations; code interpreter is off.
 
-**Olbia debe sentirse nacida en SQL.** Las tools leen/escriben dominios nativos; no emulan comandos de documentos ni consultan envelopes. Los originales de recuperación permanecen aislados.
+Harness/Memory/Web Search run in us-east-1; finance Gateway/tools/DSQL in us-east-2. Model/prompt/inference are resolved at runtime, not hardcoded. The Sonnet adaptive-thinking path omits temperature from its invocation and reserves reasoning/answer tokens according to the adapter; provider configuration remains in Prompt Management. Inspect [agent code](../services/api/src/agent) for exact streaming/tool contracts.
 
-```
-SPA (JWT Cognito)
-  → API Gateway REST API  POST /agent/chat  ← chat producto (SSE nativo)
-    → Lambda agent-proxy (RESPONSE_STREAM)
-      → SSM pointer → Bedrock Prompt Management (versión pineada)
-      → AgentCore Harness (InvokeHarness + systemPrompt/model override)
-        → AgentCore Gateway (MCP, AWS_IAM)
-          → Lambda agent-tools (AGENT_OWNER) → SQL nativo + computeMonthSummary
-          → AWS-managed Web Search Tool → resultados con citas
-        → AgentCore Gateway de mutaciones (MCP, AWS_IAM + Policy ENFORCE)
-          → Lambda agent-tag-mutations (AGENT_OWNER) → transacción SQL nativa + revisiones
+## Tools and financial meaning
 
-SPA (JWT Cognito)
-  → API Gateway HTTP API  ← resto del ledger
-    → Lambda api / tools auxiliares
-```
+| Tools | Purpose |
+| --- | --- |
+| month_snapshot, spend_by_category, spend_by_merchant, list_movements, compare_months | Canonical spending, evidence, categories and comparisons; disclose truncation/uncertainty/date precision. |
+| plan_month_scenario | Deterministic currency, commitments, inclusive days/nights and month-close scenarios; derive the requested budget rather than asking David to invent it. |
+| wealth_snapshot | Neto/assets/debts, read-only. |
+| investment_history | Market investments Bitso + IBKR, account/holding selection, as-of/range/all-time history. |
+| WebSearch | Current public information with links/citations. |
+| preview/apply/undo_tag_edit; apply_tag_edits | Bounded tag-only operations. |
+| preview/apply/undo_category_edit; apply_category_edits | Bounded category-only operations. |
 
-- El browser **nunca** habla con AgentCore.
-- El chat de producto usa un API Gateway **REST** dedicado: `POST /agent/chat`, Lambda proxy y `ResponseTransferMode=STREAM`. El API HTTP se conserva para el ledger porque bufferiza respuestas Lambda.
-- El SPA lee SSE con `fetch` + `ReadableStream`; no usa `EventSource` porque el endpoint requiere `Authorization: Bearer <Cognito ID token>`.
-- El authorizer Cognito vive en API Gateway. La Lambda recibe `requestContext.authorizer.claims.sub`; no hay Function URL pública en la ruta de producto.
-- CORS pertenece a este REST API y a las respuestas de la Lambda proxy. El origen permitido es el dominio web de Olbia; las respuestas de autorización 4xx/5xx también incluyen CORS.
-- El loop del agente lo corre **Harness** (no un Converse manual en la Lambda).
-- Claude Sonnet 4.6 usa adaptive thinking con esfuerzo `medium`. La Lambda lo pasa por `additionalParams.additionalModelRequestFields`, no configura `temperature` para este modelo y reserva al menos 4096 tokens totales para razonamiento y respuesta.
-- Las tools viven detrás de **Gateway**: un target Lambda de solo lectura para finanzas, un Gateway separado para mutaciones de tags y el [conector administrado Web Search Tool](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-connector-web-search-tool.html) para información pública con citas.
-- Harness, Memory y el Gateway de Web Search corren en `us-east-1`, requerido por el conector. El Gateway financiero existente, su Lambda y Aurora DSQL permanecen juntos en `us-east-2`; el Harness conecta ambos Gateways.
-- Code interpreter: **apagado**.
-- Memoria de conversación: AgentCore Memory conserva eventos crudos por conversación durante 365 días y hechos/preferencias durables por separado, todo aislado por Cognito `sub`. Reutilizar el mismo `sessionId` restaura el contexto del Harness. Las estrategias personalizadas de largo plazo rechazan inferencias del asistente, cálculos intermedios, saldos actuales, unidades no confirmadas y fechas inferidas; una corrección posterior del usuario reemplaza el valor anterior. Las conversaciones recientes y las memorias durables se pueden revisar y borrar por separado desde el sheet. Ninguna memoria escribe ni modifica el ledger, Resumen, proyecciones o Patrimonio.
-- CDK provisiona el Gateway de mutaciones, su target Lambda y su Policy Engine con recursos nativos de CloudFormation. El policy engine opera en `ENFORCE`, niega por defecto y sólo permite las ocho acciones al rol IAM del Harness. El custom resource `OlbiaAgentCore` reconcilia Harness, Memory, finanzas y Web Search, e incorpora el ARN del Gateway de mutaciones.
+Investment history excludes Cajita/Fondo/debts/Neto. Default period all; as-of uses latest evidence on/before date. Global series carries each account forward and exposes coverage, ages, partial/mixed dates. Variation includes FX and is not flow-adjusted return. Symbol ambiguity returns candidate holding IDs, never guesses. Unit-price extremes exclude pre-buy/post-sell days; extrema use daily evidence even if displayed monthly. Range change and first/last in-range change are distinct. Expected no_data/ambiguous/invalid states are data, technical failures are errors.
 
-## Prompt Management (runtime, sin deploy)
+## Mutations
 
-Prompt Management **no** se hornea en el Harness ni se guarda en este repositorio.
+An explicit chat instruction authorizes the bounded tags/category change. In the same turn:
 
-1. Única fuente de verdad: Bedrock Prompt Management.
-2. Puntero activo: SSM `/personal-finance-v1/agent/runtime-system-prompt-version-arn` → ARN versionado (`…:prompt/ID:N`).
-3. El provisioner lee esa versión para crear o reconciliar el Harness.
-4. En cada `InvokeHarness`, la Lambda de chat lee el puntero (caché ~30s), hace `GetPrompt`, y pasa prompt, modelo y configuración de inferencia como **override**.
+1. Resolve exact movement IDs or inclusive date range plus explicit selector. Tags accepts exact merchantRaw/sourceTags/onlyUntagged; categories merchantRaw/sourceCategoryId/onlyUncategorized. Dates alone are rejected. Only accepted movements are eligible.
+2. Preview returns every affected movement and freezes IDs, previous/next values, count and amount. Maximum 49 movements per operation; batch accepts 1–12 nonoverlapping operations under existing limits.
+3. Apply exactly those operation IDs atomically, creating a revision per movement. Changed preconditions/expired previews reject apply and require a fresh preview. Apply/undo are idempotent; undo restores frozen before-state under current preconditions.
+4. SSE mutation refreshes ledger and shows factual receipt per operation. No second UI confirmation; undo is requested by chat. Category edits never change merchant rules. Tags never change financial totals.
 
-El prompt, el modelo, `temperature` y `maxTokens` nunca tienen contenido, seeds, defaults ni fallbacks hardcodeados en código. CDK administra el recurso nativo `AWS::Bedrock::Prompt`; antes de desplegar, CI lee el DRAFT actual desde Prompt Management y lo pasa como parámetros `NoEcho`, por lo que CloudFormation lo preserva sin guardar contenido en Git. Las versiones inmutables y el puntero activo se administran en runtime. Véase también [`services/api/src/agent/README.md`](../services/api/src/agent/README.md).
+## Conversations and memory
 
-### Promote / rollback (sin redeploy)
+AgentCore Memory owns raw transcript/discovery and 365-day retention; durable facts/preferences are separate. SQL conversation_threads stores original title/first month/activity/expiry; assistant_thread_selection stores David's active choice with FK. Listing intersects metadata with provider HAS_EVENTS and can backfill visible older sessions. Eventless headers are not invented history or grounds for destructive cleanup.
 
-```bash
-# 1) Edita DRAFT en consola Bedrock Prompt Management (o UpdatePrompt)
-# 2) Crea versión inmutable
-aws bedrock-agent create-prompt-version \
-  --prompt-arn arn:aws:bedrock:REGION:ACCOUNT:prompt/PROMPT_ID \
-  --description "prod-$(date +%Y%m%d)"
+Closing sheet/reloading/changing month keeps session; month supplies next-turn context. New Conversation clears active choice without deleting old threads. GET /agent/threads lists recent conversations; detail restores visible provider events; PUT /agent/threads/active selects/clears; DELETE removes provider events before atomic metadata/selection cleanup. Provider failure preserves metadata; provider and SQL deletion are not one transaction. Scheduled metadata expiry is separate from provider retention.
 
-# 3) Apunta producción a esa versión (promote)
-aws ssm put-parameter \
-  --name /personal-finance-v1/agent/runtime-system-prompt-version-arn \
-  --type String \
-  --value 'arn:aws:bedrock:REGION:ACCOUNT:prompt/PROMPT_ID:N' \
-  --overwrite
+Memories never mutate ledger/totals. Long-term strategies reject assistant inference, intermediate calculations, current balances and unconfirmed units/dates; explicit user correction replaces prior fact. Keep conversations and durable memories independently visible/deletable. Private mode protects restored text/titles/receipts. Show citations and compact tool status/duration, never raw financial inputs, private reasoning text/signatures or restored activity as live. Failed tools remain visibly unavailable while other results may support a partial answer.
 
-# Rollback: vuelve el puntero a :N-1 (o cualquier versión anterior)
-```
+## Prompt Management
 
-Los deploys no modifican el prompt ni el puntero SSM.
+**Binding:** private prompt, profile and voice live exclusively in Bedrock Prompt Management. Never commit them or add application seeds/default/fallback prompts or model/inference defaults. Active pointer: SSM /personal-finance-v1/agent/runtime-system-prompt-version-arn → immutable version ARN. Runtime reads it with ~30-second cache, GetPrompt and Harness overrides. Required version: nonempty text/system prompt, modelId, temperature and maxTokens configuration. CDK owns retained AWS::Bedrock::Prompt; CI preserves current DRAFT through NoEcho parameters, without storing private content in Git. Deploys do not promote versions or change pointer.
 
-## Parámetro requerido
+Before creating/promoting a version, read active version and latest personal-profile baseline; merge new behavior without losing profile, voice or retained operational rules. Baseline v10 preserves v5's private profile plus continuity/investment/research behavior; only an explicitly approved successor replaces it. Verify all preserved sections before version creation and again by reading back immutable version; only then move SSM pointer. Never substitute generic v9/profile-less text. Rollback selects a verified prior immutable version. These are authorized runtime prompt operations, separate from code deployment; verify AWS identity as in [operations](operations.md).
 
-Al desplegar, pasa `AgentOwnerSub` = Cognito `sub` del dueño (single-user). Las tools del Gateway no ven el JWT del browser; usan ese owner.
-
-## Tools (primer ship)
-
-| Tool | Rol |
-|------|-----|
-| `month_snapshot` | Has gastado, Te quedan, proyección, MSI, incertidumbre, sin categoría |
-| `plan_month_scenario` | Presupuesto, compromisos con moneda explícita, días/noches y cierres what-if deterministas |
-| `spend_by_category` | Totales por categoría (cuota MSI del mes) |
-| `spend_by_merchant` | Top comercios (opcional filtro de categoría) |
-| `list_movements` | Total sin truncar + detalle acotado por hoy/ayer/semana/7 días/mes/año o rango explícito; conserva semántica de cuota MSI y declara cuando evidencia histórica solo permite precisión mensual |
-| `compare_months` | Mes vs anterior / deltas |
-| `wealth_snapshot` | Neto / activos / deudas (solo lectura) |
-| `investment_history` | Historial diario de inversiones de mercado ([lecturas DSQL protegidas](dsql-patrimonio.md)) (Bitso + IBKR), una cuenta o una posición por rango/all-time o fecha puntual as-of; incluye extremos de valor y, para símbolos, precio unitario implícito en MXN. La serie consolidada conserva el último valor conocido de cada cuenta hasta su siguiente sync |
-| `WebSearch` | Búsqueda web administrada por AWS; conserva citas y enlaces en la respuesta |
-| `preview_tag_edit` | Dry run que congela movimientos `accepted` por IDs exactos o por rango con filtro explícito, y devuelve la lista completa `affected`; debe preceder inmediatamente a apply |
-| `apply_tag_edit` | Aplica en el mismo turno el snapshot congelado; la instrucción explícita del chat ya es la autorización |
-| `undo_tag_edit` | Restaura el estado anterior cuando el usuario lo pide en el chat |
-| `apply_tag_edits` | Aplica atómicamente varios previews tags-only sin rondas separadas |
-| `preview_category_edit` | Dry run que congela movimientos `accepted` por IDs exactos o por rango con filtro explícito, y devuelve la lista completa `affected`; debe preceder inmediatamente a apply |
-| `apply_category_edit` | Aplica en el mismo turno el snapshot congelado; la instrucción explícita del chat ya es la autorización |
-| `undo_category_edit` | Restaura la categoría anterior cuando el usuario lo pide en el chat |
-| `apply_category_edits` | Aplica atómicamente varios previews category-only sin rondas separadas |
-
-### Contrato de `investment_history`
-
-- El scope global es `market_investments`: Bitso + IBKR. No incluye Cajita, Fondo, tarjetas ni Neto; esas preguntas usan `wealth_snapshot`.
-- Sin periodo, el default es `all`. `asOfDay` resuelve el último snapshot conocido en o antes de una fecha; `snapshotFromDay` / `snapshotToDay` exponen qué evidencia se usó realmente.
-- `summary` mide variación de valor observado en MXN. No es rendimiento ajustado por aportaciones, costo base, dividendos ni ganancias realizadas; `cashFlowAdjusted=false` e `includesFx=true` lo hacen explícito.
-- Para un símbolo se reporta además precio unitario implícito en MXN. Sus extremos excluyen días anteriores a comprarlo o posteriores a venderlo; `lifecycle` declara esos bordes.
-- Si un símbolo identifica más de una posición, el resultado `ambiguous` devuelve `candidateHoldingIds`; una llamada posterior con `holdingId` selecciona la posición exacta.
-- La consolidación global conserva el último valor conocido por cuenta. Cada punto declara sus componentes y `mixedAsOf`; `accountCoverage`, edades, cuentas incluidas/faltantes y `status=partial` hacen visible la cobertura incompleta.
-- `periodChange` compara la observación previa al inicio con el cierre del rango cuando existe. `summary` compara la primera y última observación dentro del rango. Los extremos siempre se calculan sobre observaciones diarias aunque la serie devuelta use cierres mensuales.
-- Estados esperados (`no_data`, `ambiguous`, `invalid`) regresan como datos con `ok=false`; sólo fallos técnicos deben aparecer como error del Gateway.
-
-## Categorías
-
-- `spend_categories` es el catálogo efectivo nativo SQL (incluye `Deportes`); `merchant_rules` guarda la regla por comercio con FK nullable al catálogo.
-- `ledger_movements.category_id` referencia ese catálogo; NULL = Sin categoría. Historial y afirmaciones previas conservan su valor original.
-- Bootstrap revisado incorpora defaults una sola vez. Las correcciones usan las operaciones de dominio autenticadas y auditables ya desplegadas, nunca escritura directa a SQL/DynamoDB. Los scripts anteriores de seed/backfill están retirados y fallan antes de cualquier operación.
-- Ver [categorías nativas](sql-native-categories.md) y [auditoría actual](sql-relational-table-audit.md).
-
-## Auth y chat
-
-- Ledger API: JWT Cognito vía authorizer de API Gateway HTTP API. Chat: authorizer Cognito de API Gateway REST.
-- `POST /agent/chat` body: `{ message, month, sessionId? }` → `text/event-stream`; cada evento `data:` usa los shapes `token`, `reasoning_start`, `reasoning_complete`, `tool_start`, `tool_complete`, `tool_failed`, `citation`, `proposal`, `mutation`, `done`, `error`.
-- El backend crea o actualiza metadata nativa en `conversation_threads` (session ID, título original, primer mes y timestamps); `assistant_thread_selection` guarda la selección con un FK real. El transcript, contexto y descubrimiento siguen siendo propiedad de AgentCore Memory. Las tablas SQL no duplican esos eventos.
-- `GET /agent/threads` lista hasta 20 conversaciones recientes y devuelve `activeThreadId`; también descubre y backfillea sesiones nativas aún vigentes que preceden al índice.
-- `GET /agent/threads/{threadId}` reconstruye mensajes visibles con `ListEvents`; `PUT /agent/threads/active` selecciona o limpia el hilo activo y `DELETE /agent/threads/{threadId}` elimina sus eventos crudos y su índice.
-- Cerrar el sheet, recargar o cambiar de mes no limpia el hilo. El mes seleccionado se manda como contexto del turno nuevo. La actividad de razonamiento y las duraciones de tools son sólo del stream en vivo y no se recrean como actividad actual al restaurar.
-- El cliente (`streamAgentChat`) aplica cada evento en orden y pinta tokens y actividad de tools conforme llegan.
-- La UI muestra un indicador compacto de razonamiento y su duración. El proxy nunca envía texto ni firmas privadas del bloque de razonamiento al browser.
-- La actividad se inserta dentro de la burbuja del asistente como una nota de trabajo compacta: cada llamada conserva nombre, estado, intento y duración. Al tocar una línea se abre su resumen legible; no se exponen inputs ni payloads crudos.
-- Un fallo de tool queda visible como dato no disponible. El agente puede seguir con una respuesta parcial. Cada preview de mutación persiste sólo una operación owner-scoped con TTL. Apply y undo de tags o categorías están aislados en otro Gateway/Lambda y protegidos por Cedar, IAM de mínimo privilegio, revisiones e idempotencia; no existen endpoints públicos `/bulk-edits`.
-
-## Tags, categorías y mutaciones desde chat
-
-- `tags` es una lista normalizada de contexto (`viaje:vegas`, `ciudad:cdmx`) independiente de `categoryId`.
-- El mismo movimiento puede tener varios tags; no afectan Resumen, proyecciones, MSI, conciliación ni Patrimonio.
-- Una petición explícita del usuario para agregar o quitar tags, o cambiar una categoría, es la autorización del lote. No se solicita una segunda confirmación en la UI.
-- `preview_tag_edit` y `preview_category_edit` exigen `eventId`/`eventIds` exactos —obtenidos con `list_movements`— o un rango inclusivo con selector explícito. Tags acepta `merchantRaw`, `sourceTags` u `onlyUntagged=true`; categorías acepta `merchantRaw`, `sourceCategoryId` u `onlyUncategorized=true`. Ambas rechazan fechas solas y sólo consideran movimientos `accepted`; rechazados quedan fuera.
-- Ambos previews son `dryRun` y entregan todos los movimientos `affected`, no una muestra limitada. El agente revisa ese alcance y llama `apply_tag_edit`/`apply_tag_edits` o `apply_category_edit`/`apply_category_edits` con los `operationId` correspondientes en el mismo turno.
-- El backend congela IDs, valores previos, conteo e importe antes de escribir. Cada evento recibe una revisión con el mismo `operationId`, `source=assistant_chat_tag_edit` o `source=assistant_chat_category_edit` y el dueño configurado como actor.
-- La UI recibe un evento SSE `mutation` por cada operación aplicada, refresca el ledger y muestra recibos factuales sin botones de confirmación. Undo se solicita por chat y usa la misma operación congelada.
-- Si el movimiento cambió después del preview, las precondiciones de la operación nativa SQL rechazan apply y exigen generar uno nuevo. La selección/cambio y los valores anteriores permanecen como afirmaciones auditables; la operación, sus miembros y revisiones se vinculan con relaciones reales.
-- El Gateway directo expone contracts separados para tags y categorías. La tool de categorías sólo acepta `categoryId` y selectores seguros, nunca tags ni reglas de comercio; ninguna edición crea ni actualiza reglas de comercio.
-- La Lambda de chat compara el Cognito `sub` con `AgentOwnerSub` antes de invocar el Harness. La Lambda de mutación usa ese mismo owner fijo y nunca acepta un owner del modelo.
-- Errores: 1–2 reintentos silenciosos en harness; luego mensaje corto + `requestId`.
-
-## Observabilidad y costo
-
-- Budget Bedrock ~$15/mes con aviso al 80%.
-- Sin Bedrock Guardrails en el MVP.
-
-## Fuera de este ship
-- IBKR en vivo desde el agente (sigue siendo sync → `wealth_snapshot`).
-- Code interpreter.
-- Subcategorías.
+Monthly-close analysis reads only private profile/voice from that same version, excluding chat tool rules and prompt text from persisted reports. [Agent runtime README](../services/api/src/agent/README.md) points here for enforcement and to deterministic scenario/golden tests for validation.
