@@ -50,6 +50,10 @@ const httpEvent = (method: string, path: string, query: Record<string, string> =
 });
 
 describe('ledger API Powertools router', () => {
+  it('rejects invalid commitment periods through the public route', async () => {
+    const result = await handler(httpEvent('GET', '/commitments', {startMonth:'2026-13'}), context);
+    expect(result.statusCode).toBe(400);
+  });
   it('returns 404 for unknown routes', async () => {
     const result = await handler(httpEvent('GET', '/unknown'), context);
     expect(result.statusCode).toBe(404);

@@ -52,6 +52,12 @@ Compensación = liquidez + aportaciones Fondo SAT 004, con fondo gemelo cuando a
 
 GET /months/{month} deriva nómina/liquidez y resuelve gastos fijos. PUT sólo guarda upcomingPayments. Mes sin configuración propia hereda lista completa del último anterior: lectura sin escritura. Primer alta/cambio/borrado materializa la lista completa del mes elegido; lista vacía explícita detiene herencia. No eliminar padres vacíos ni modificar meses previos. Reemplazo preserva IDs/orden y es atómico. Días 29–31 se ajustan al último día si el mes es corto. Gastos fijos, MSI y ciclos de tarjeta permanecen separados.
 
+### Compromisos futuros
+
+GET /commitments consulta directamente cuotas MSI committed en MXN de movimientos accepted/needs_review y gastos fijos de cada mes, con la misma herencia, overrides y lista vacía explícita. Excluir cuotas spent/cancelled, rechazados, deferred_msi y monedas extranjeras. Calendarios needs_schedule_completion no entran al total y se declaran como incompletos; needs_review sí entra y se desglosa como importe por confirmar. Los totales y el detalle nacen de la misma relación SQL, conservando centavos sin duplicar cuotas por joins con pagos fijos.
+
+El mes actual combina MSI aún pendiente y gastos fijos programados; estos últimos no tienen estado de conciliación, por lo que no afirmar que están pagados o pendientes. Comparar cambios sólo entre meses futuros completos. Los importes fijos heredados dependen de la configuración fuente y pueden cambiar; ausencia de configuración no prueba ausencia de gastos. No inferir ingresos futuros/disponibilidad ni sumar saldos de tarjeta, recordatorios de corte/pago o compras hipotéticas. El último mes de un plan considera cuotas no canceladas.
+
 ## Patrimonio
 
 **Neto = activos − saldos pendientes de tarjeta**, en MXN; separado de gasto/Te quedan. Activos: Cajita Nu, Fondo de ahorro, Bitso e Interactive Brokers. Holdings conservan moneda/valores/cantidades nativos y evidencia de FX; total de captura de activos deriva de holdings SQL.

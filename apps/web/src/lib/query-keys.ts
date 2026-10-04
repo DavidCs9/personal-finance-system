@@ -8,3 +8,5 @@ export const analyticsQueryKey = (month: string) => ["analytics", month] as cons
 export const analyticsQueryRoot = ["analytics"] as const;
 export const cardsQueryKey = ["cards"] as const;
 export const wealthQueryKey = ["wealth"] as const;
+export const commitmentsQueryRoot = ["commitments"] as const;
+export const commitmentsQueryKey = (startMonth?: string) => ["commitments", startMonth ?? "current"] as const;

@@ -32,6 +32,7 @@ export interface SummaryViewProps {
   readonly onAddPayment: () => void;
   readonly onEditPayment: (payment: PlannedPayment) => void;
   readonly onOpenMsiEvent: (eventId: string) => void;
+  readonly onOpenCommitments: () => void;
   readonly onReviewLargest: () => void;
   readonly analytics?: SpendingAnalytics;
   readonly analyticsLoading: boolean;
@@ -326,6 +327,15 @@ export function SummaryView(props: SummaryViewProps) {
             )}
           </section>
         )}
+
+        <section className="commitments-preview">
+          <button type="button" className="commitments-entry" onClick={props.onOpenCommitments}>
+            <span><span className="eyebrow">PRÓXIMOS COMPROMISOS</span>
+              <strong>Lo que ya tienes programado</strong>
+              <small>MSI y gastos fijos, mes a mes</small></span>
+            <span className="chevron" aria-hidden="true">→</span>
+          </button>
+        </section>
 
         {!props.loading && !props.loadError && (
           <CardCycleSection

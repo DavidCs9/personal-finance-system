@@ -17,6 +17,8 @@ Conservar tres tabs: **Resumen / Movimientos / Patrimonio**. Diseñar primero pa
 7. **Fechas de corte**, calendario de corte/pago de hasta tres tarjetas, antes de preferencias push.
 8. **En qué se fue**, entrada compacta al análisis y a su evidencia; sin cuarta tab.
 
+**Próximos compromisos** abre un sheet de Resumen después de gastos fijos, también sin nómina configurada. Presenta 12 meses desde el actual, continuación por periodos, total conocido en MXN y desglose separado de MSI/gastos fijos. Cada mes se expande para ver cuotas, fechas de fin, días programados y acceder a la compra/evidencia. Mostrar cambios entre meses futuros completos, importes por confirmar, calendarios incompletos excluidos y ausencia de configuración fija. No añadir una tab ni competir con el estado mensual dominante. Las cifras siguen las [reglas de compromisos futuros](financial-rules.md#compromisos-futuros).
+
 El chip **Liquidez** abre **Nómina del mes**: liquidez y compensación. Cada recibo presenta primero liquidez, fondo, ISR e IMSS; líneas SAT colapsadas. Estimados y cifras provisionales se etiquetan y piden el XML. Si falta liquidez válida, disponibilidad y proyección no se presentan como válidas.
 
 **Movimientos** es una lista simple ordenable, con categorías editables en el detalle y tags discretos con filtro exacto. MSI muestra badge i/N y cuota del mes; no duplica Planes con fin. Una autorización USD muestra el importe original y **Esperando cargo MXN**. Un cargo compartido muestra **Mi parte** primero y el bruto bancario como evidencia secundaria. Rechazados se ocultan del recorrido normal, conservando auditoría.

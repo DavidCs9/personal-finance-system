@@ -1248,3 +1248,34 @@ html.private-mode .hero-amount .amt {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; }
 }
+
+/* Future commitments retain the monthly hierarchy and fit narrow phone screens. */
+.commitments-preview { margin-top: 26px; }
+.commitments-entry { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 19px 17px; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); color: var(--ink); text-align: left; }
+.commitments-entry > span:first-child { display: grid; gap: 6px; }
+.commitments-entry strong { font: 600 21px/1.15 "Fraunces", serif; }
+.commitments-entry small { color: var(--muted); font-size: 12px; }
+.commitments-entry .eyebrow { margin: 0; }
+.commitments-range { color: var(--muted); font-size: 12px; }
+.commitments-months { border-top: 1px solid var(--line); }
+.commitment-month { border-bottom: 1px solid var(--line); }
+.commitment-month > summary { display: flex; justify-content: space-between; align-items: start; gap: 12px; padding: 18px 0; cursor: pointer; list-style: none; }
+.commitment-month > summary::-webkit-details-marker { display: none; }
+.commitment-month-copy { display: grid; gap: 5px; min-width: 0; }
+.commitment-month-copy > strong { text-transform: capitalize; font-size: 15px; }
+.commitment-month-copy small { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.commitment-month-amount { display: grid; justify-items: end; gap: 8px; font-size: 16px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.commitment-details { padding-bottom: 20px; }
+.commitment-details h3 { margin: 14px 0 8px; font-size: 13px; }
+.commitment-details p, .commitments-note p { font-size: 12px; line-height: 1.5; color: var(--muted); }
+.commitment-item { display: flex; align-items: start; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.commitment-item > div { min-width: 0; overflow-wrap: anywhere; }
+.commitment-item small { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.commitment-item > strong { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.commitment-item .text-button { padding: 0; min-height: 44px; text-align: left; overflow-wrap: anywhere; }
+.commitments-note { padding: 14px; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 12px; font-size: 12px; }
+.commitments-note .text-button { display: block; min-height: 44px; text-align: left; }
+.commitments-pagination { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
+.commitments-pagination button { padding: 12px 8px; min-height: 44px; font-size: 12px; }
+.commitments-entry:focus-visible, .commitment-month > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
+@media (min-width: 900px) { .commitments-preview { max-width: 760px; margin-right: auto; margin-left: auto; } }
