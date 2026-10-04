@@ -10,9 +10,9 @@ These rules apply when the user authorizes autonomous work or a long-running exe
 - Distinguish verified facts from assumptions. An assumption may support a decision, but must not be presented as a confirmed fact or an explicit user preference.
 - Autonomy does not override explicit instructions, expand the authorized scope, or replace required approvals. If the next action cannot proceed within those boundaries, record the specific blocker and continue independent work. Ask for the minimum missing input only when necessary.
 
-## Persist the run on disk
+## Persist the run locally
 
-At the start, create `docs/autonomous-runs/YYYY-MM-DD-<task-slug>.md` using the user's local date and a descriptive task slug. Use a distinct suffix if a different run already has that name. Keep this file with the work so it can be reviewed and resumed.
+At the start, create `work-notes/YYYY-MM-DD-<task-slug>.md` using the user's local date and a descriptive task slug. Use a distinct suffix if needed. This directory is Git-ignored and local only. Never stage, force-add, commit or push run notes or execution logs. Do not create run records under `docs/`, which contains only current product and operating guidance.
 
 Record the objective, completion criteria, relevant constraints, current progress, verification results, and next steps. Update it at meaningful checkpoints and before handing off or stopping. When resuming the same run, read and update its existing record rather than starting from scratch.
 
@@ -35,7 +35,9 @@ Preserve prior entries when a decision changes. Add the new evidence and replace
 
 Run checks appropriate to the actual changes. If a check fails, use the result to correct the work or reconsider a recorded decision. Avoid repeating the same failed approach without new evidence; investigate another viable path and record significant changes of direction.
 
-At completion or a genuine blocker, update the run record with what was achieved, checks performed and their results, remaining work, and any decisions needing user review. Include a link to the record in the final response. Claim completion only when the objective and required verification are satisfied.
+At a genuine blocker or handoff, update and retain the active record and link it in the response. Claim completion only when the objective and required verification are satisfied.
+
+At completion, extract lasting decisions into the existing canonical documents and summarize relevant verification in the PR description or commit message. Keep useful completed notes locally in the ignored directory; they never belong in the commit or PR. Do not copy execution logs into documentation or create a permanent page for each completed feature. The final response links the result; link a local note when it helps resume unfinished work. An unfinished run must retain its local resumable record.
 
 ## Run record template
 
