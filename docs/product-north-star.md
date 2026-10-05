@@ -27,3 +27,23 @@ Decisión explícita del 2026-10-04: **DSQL sin tablas ni copias de evidencia de
 Elegir la solución más simple que preserve integridad, evidencia, recuperación y acceso privado. Preferir capacidades nativas; justificar un hueco concreto antes de añadir código propio. Mantener pruebas útiles y el flujo PR/quality.
 
 Las reglas específicas viven en [finanzas](financial-rules.md), [UI](ui-design-brief.md), [arquitectura](architecture.md), [operación](operations.md) y [asistente](ai-assistant.md).
+
+## Norte del desarrollo autónomo
+
+Decisión confirmada por David, 2026-10-04: **Olbia se desarrolla principalmente con agentes de IA autónomos. El sistema de desarrollo debe dar feedback útil en segundos y una decisión completa de integración dentro de dos minutos.** Reducir la espera acumulada por cada ciclo de edición y validación es una prioridad de productividad. Conservar la corrección financiera, evidencia, recuperación y el flujo PR/quality/deploy-production.
+
+Objetivos iniciales confirmados; son presupuestos de latencia, no resultados ya alcanzados:
+
+| Ciclo de feedback | p50 | p90 |
+| --- | ---: | ---: |
+| Comprobación local relevante para la edición | ≤10 s | ≤30 s |
+| PR exclusivamente Markdown → quality completo | ≤20 s | ≤45 s |
+| Push de código → comprobaciones rápidas completas | ≤30 s | ≤60 s |
+| Push de código → todas las comprobaciones requeridas completas | ≤90 s | ≤2 min |
+| Commit en main → producción verificada | ≤8 min | ≤10 min |
+
+El feedback rápido permite corregir o continuar trabajo mientras terminan las comprobaciones completas; sólo el gate requerido completo autoriza integrar. Priorizar Markdown en segundos, validación completa de PR dentro de dos minutos y después producción por debajo de ocho minutos. Para producción, 5–6 minutos es una aspiración posterior, no el objetivo inicial.
+
+Medir los tiempos remotos desde el push que dispara la ejecución, incluyendo cola, preparación y el verdict final. Para producción usar el timestamp del commit en main hasta terminar despliegue y verificación. Separar Markdown, cambios ordinarios y cambios de esquema/recuperación; reportar fallos junto con latencia de ejecuciones exitosas. Calcular p50/p90 sobre ventanas de ejecuciones comparables; una ejecución rápida no demuestra un percentil.
+
+Medir también push → fallo accionable, fallos de infraestructura que pasan al reintentar sin cambiar código, y espera acumulada del agente por validación requerida por tarea completada. Investigar cada fallo de infraestructura reproducido por un reintento. Usar primero tiempos, resultados y logs nativos del proveedor; no añadir telemetría duplicada ni un servicio de métricas para este fin.

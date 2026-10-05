@@ -12,6 +12,10 @@ Before planning, implementing or reviewing any user-facing change, read [UI dire
 
 When autonomous or long-running work is authorized, read [autonomous run rules](AUTONOMOUS_RUN_RULES.md) completely and follow them throughout the run.
 
+## Autonomous development feedback
+
+David confirmed on 2026-10-04 that Olbia's development is primarily driven by autonomous AI agents. Follow the [development north star and confirmed latency targets](docs/product-north-star.md#norte-del-desarrollo-autónomo). Prioritize actionable feedback in seconds and complete required PR validation within two minutes; measure queue-inclusive timings and accumulated agent wait. Preserve all financial correctness, evidence, recovery and production release gates. A fast-check success does not replace the required quality verdict. Report measured results separately from targets and do not claim p50/p90 attainment from one run.
+
 ## Prefer native capabilities
 
 Before a manual infrastructure, observability, logging, authentication, caching, integration or platform solution, verify native provider/framework capabilities. Prefer a native solution meeting behavior, reliability, security and observability requirements. Custom code requires a documented gap and reason the native option is insufficient. Do not duplicate provider-managed telemetry/data capture with application logs for convenience.

@@ -15,12 +15,76 @@ permissions:
 
 concurrency:
   group: personal-finance-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  quality:
-    name: quality
+  scope:
+    name: change-scope
     runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+      test_matrix: ${{ steps.scope.outputs.test_matrix }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - name: Verify change classification and required gate
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+      - name: Classify the complete PR merge diff
+        id: scope
+        run: python3 .github/scripts/ci_scope.py
+
+  fast:
+    name: fast-checks
+    needs: scope
+    if: needs.scope.outputs.docs_only == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  tests:
+    name: tests (${{ matrix.suite }})
+    needs: scope
+    if: needs.scope.outputs.docs_only == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.scope.outputs.test_matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Run every workspace suite with native Vitest sharding
+        env:
+          TEST_WORKSPACES: ${{ toJSON(matrix.workspaces) }}
+          TEST_SHARD: ${{ matrix.shard }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t workspaces < <(jq -r '.[]' <<<"$TEST_WORKSPACES")
+          args=()
+          for workspace in "${workspaces[@]}"; do args+=(--workspace "$workspace"); done
+          if [[ -n "$TEST_SHARD" ]]; then args+=(-- "--shard=$TEST_SHARD"); fi
+          npm run test "${args[@]}"
+
+  build:
+    name: build-and-synth
+    needs: scope
+    if: needs.scope.outputs.docs_only == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -29,14 +93,27 @@ jobs:
           cache: npm
       - run: npm ci
       - run: python3 -m unittest discover -s infrastructure/scripts -p 'test_*.py'
-      - run: npm run test -- --runInBand
-      - run: npm run check --workspace @finance/ledger
-      - run: npm run check --workspace @finance/web
-      - run: npm run check --workspace @finance/infrastructure
       - run: npm run build --workspace @finance/web
       - run: npm run synth --workspace @finance/infrastructure
         env:
           CDK_DEFAULT_ACCOUNT: '225989371926'
+
+  quality:
+    name: quality
+    needs: [scope, fast, tests, build]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v5
+      - name: Require every validation result or the proved Markdown-only path
+        run: bash .github/scripts/quality_gate.sh
+        env:
+          DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          FAST_RESULT: ${{ needs.fast.result }}
+          TEST_RESULT: ${{ needs.tests.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
 
   deploy:
     name: deploy-production
@@ -90,14 +167,14 @@ jobs:
             echo "OLBIA_SYSTEM_PROMPT_MAX_TOKENS=$prompt_max_tokens"
           } >> "$GITHUB_ENV"
       - run: npm run build --workspace @finance/web
-      - name: Synthesize reviewed DSQL recovery definitions
+      - name: Synthesize the reviewed deployment assembly once
         run: npx cdk synth PersonalFinanceV1 --quiet --output cdk.out.recovery
         working-directory: infrastructure
       - name: Adopt DSQL resources retained by a failed rollout
         timeout-minutes: 20
         run: python3 infrastructure/scripts/recover-dsql-resources.py infrastructure/cdk.out.recovery/PersonalFinanceV1.template.json
       - run: >-
-          npx cdk diff PersonalFinanceV1
+          npx cdk diff PersonalFinanceV1 --app cdk.out.recovery
           --parameters PersonalFinanceV1:SesSenderEmail="$SES_SENDER_EMAIL"
           --parameters PersonalFinanceV1:AlertRecipientEmail="$ALERT_RECIPIENT_EMAIL"
           --parameters PersonalFinanceV1:AgentOwnerSub="$AGENT_OWNER_SUB"
@@ -106,10 +183,9 @@ jobs:
           --parameters PersonalFinanceV1:OlbiaSystemPromptModelId="$OLBIA_SYSTEM_PROMPT_MODEL_ID"
           --parameters PersonalFinanceV1:OlbiaSystemPromptTemperature="$OLBIA_SYSTEM_PROMPT_TEMPERATURE"
           --parameters PersonalFinanceV1:OlbiaSystemPromptMaxTokens="$OLBIA_SYSTEM_PROMPT_MAX_TOKENS"
-          --output cdk.out.github-diff
         working-directory: infrastructure
       - run: >-
-          npx cdk deploy PersonalFinanceV1
+          npx cdk deploy PersonalFinanceV1 --app cdk.out.recovery
           --parameters PersonalFinanceV1:SesSenderEmail="$SES_SENDER_EMAIL"
           --parameters PersonalFinanceV1:AlertRecipientEmail="$ALERT_RECIPIENT_EMAIL"
           --parameters PersonalFinanceV1:AgentOwnerSub="$AGENT_OWNER_SUB"
@@ -119,7 +195,6 @@ jobs:
           --parameters PersonalFinanceV1:OlbiaSystemPromptTemperature="$OLBIA_SYSTEM_PROMPT_TEMPERATURE"
           --parameters PersonalFinanceV1:OlbiaSystemPromptMaxTokens="$OLBIA_SYSTEM_PROMPT_MAX_TOKENS"
           --require-approval never
-          --output cdk.out.github-deploy
         working-directory: infrastructure
       - name: Refresh AWS session for DSQL verification
         uses: aws-actions/configure-aws-credentials@v6
