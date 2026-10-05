@@ -33,9 +33,15 @@ elif operation == ['lambda', 'invoke']:
     action = payload.get('action', 'read')
     response = {'mode': os.environ.get('AUTHORITY', 'sql')} if action == 'status' else {'verified': True, 'rolledBack': True, 'nativeLedger': True, 'nativeWealth': True, 'nativePush': True, 'nativeDeliveries': True, 'nativeThreads': True, 'nativeExceptions': True} if action == 'smoke' else {'verified': True, 'mode': 'native-sql', 'mismatches': 0, 'provenance': {'mismatches': 0}, 'evidence': {'mismatches': 0}}
     if action == 'retire-migration-evidence':
-        response = {'verified': True, 'mode': 'native-sql', 'remainingTables': 41, 'domainTables': 38, 'controlTables': 3, 'migrationEvidenceTables': 0}
+        response = {'verified': True, 'mode': 'native-sql', 'remainingTables': 41, 'domainTables': 38, 'controlTables': 3, 'migrationEvidenceTables': 0, 'removedTables': json.loads(os.environ.get('REMOVED_TABLES', '0'))}
+        if os.environ.get('OMIT_REMOVED_TABLES'):
+            response.pop('removedTables')
     if os.environ.get('FAIL_GATE') == action:
         response = {'verified': False, 'rolledBack': False, 'mismatches': 1}
+    if os.environ.get('FAIL_AFTER_CLEANUP') == action:
+        calls = [json.loads(line) for line in pathlib.Path(os.environ['AWS_CALLS']).read_text().splitlines()]
+        if any('--payload' in call and json.loads(call[call.index('--payload') + 1]).get('action') == 'retire-migration-evidence' for call in calls):
+            response = {'verified': False, 'rolledBack': False, 'mismatches': 1}
     if os.environ.get('LEGACY_PROBE') == action:
         response = {'verified': True, 'rolledBack': True, 'mismatches': 0}
     pathlib.Path(a[-1]).write_text(json.dumps(response))
@@ -62,15 +68,38 @@ class RoutineVerificationTests(unittest.TestCase):
             calls = [json.loads(line) for line in calls_file.read_text().splitlines()]
             return result, calls
 
-    def test_verified_native_deployment_retires_catalog_and_rechecks_finances_without_authority_or_backup_mutations(self):
+    def test_unchanged_catalog_runs_every_financial_evidence_and_rollback_gate_once(self):
         result, calls = self.run_gate()
         self.assertEqual(result.returncode, 0, result.stderr)
         executions = [call for call in calls if call[:2] == ['stepfunctions', 'start-execution']]
         self.assertEqual(len(executions), 1)
         self.assertEqual(executions[0][executions[0].index('--name') + 1], 'deploy-42-1-sql')
         payloads = [json.loads(call[call.index('--payload') + 1]) for call in calls if call[:2] == ['lambda', 'invoke']]
-        self.assertEqual(payloads, [{'action': 'status'}, {}, {'action': 'smoke'}, {'action': 'retire-migration-evidence'}, {}, {'action': 'smoke'}])
+        self.assertEqual(payloads, [{'action': 'status'}, {}, {'action': 'smoke'}, {'action': 'retire-migration-evidence'}])
+        self.assertIn('Native catalog unchanged', result.stdout)
         self.assertFalse(any(call[0] in ['dynamodb', 'backup'] for call in calls))
+
+    def test_catalog_retirement_still_requires_complete_post_cleanup_checks(self):
+        result, calls = self.run_gate(REMOVED_TABLES='26')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payloads = [json.loads(call[call.index('--payload') + 1]) for call in calls if call[:2] == ['lambda', 'invoke']]
+        self.assertEqual(payloads, [{'action': 'status'}, {}, {'action': 'smoke'}, {'action': 'retire-migration-evidence'}, {}, {'action': 'smoke'}])
+
+    def test_invalid_cleanup_proof_never_skips_the_post_cleanup_gates(self):
+        for settings in [{'OMIT_REMOVED_TABLES': '1'}, *[{'REMOVED_TABLES': value} for value in ['null', '"0"', '-1', '1.5', '27']]]:
+            with self.subTest(settings=settings):
+                result, calls = self.run_gate(**settings)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('SQL catalog cleanup failed', result.stderr)
+                self.assertEqual(sum(call[:2] == ['lambda', 'invoke'] for call in calls), 4)
+
+    def test_failure_after_catalog_change_cannot_pass_the_release(self):
+        for action in ['read', 'smoke']:
+            with self.subTest(action=action):
+                result, calls = self.run_gate(REMOVED_TABLES='1', FAIL_AFTER_CLEANUP=action)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Clean SQL', result.stderr)
+                self.assertEqual(sum(call[:2] == ['lambda', 'invoke'] for call in calls), 5 if action == 'read' else 6)
 
     def test_unexpected_authority_never_starts_reconciliation(self):
         for mode in ['dynamodb', 'paused']:
