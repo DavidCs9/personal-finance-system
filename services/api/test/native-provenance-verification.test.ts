@@ -48,8 +48,10 @@ describe('independent ledger provenance and immutable recovery assertions', () =
   it('verifies current provenance with every migration table removed and rejects a bank identity corruption', async () => {
     const id = await fixture.create();
     await bankRow('d'.repeat(64), 'bank-original');
-    await insertSourceClaim(fixture.pool, { captureSource: 'amex_statement', token: digest('bank-original'),
-      createdAt: at, movementId: id, rowIdentity: 'bank-original' });
+    // Historical claims can lack observation IDs; the current writer requires one.
+    await fixture.sql.query(`INSERT INTO olbia.source_claims
+      (capture_source,token,created_at,outcome,movement_id,row_identity)
+      VALUES ('amex_statement',$1,$2,'linked',$3,'bank-original')`, [digest('bank-original'),at,id]);
     const { verifyNativeLedgerProvenance } = await import('../src/events/provenance-verification.js');
     const { retireMigrationEvidence } = await import('../../ledger/src/dsql/catalog-retirement.js');
     // Roll back the catalog change so historical fixture cases remain independent.
