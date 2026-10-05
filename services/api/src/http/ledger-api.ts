@@ -43,6 +43,7 @@ import {
 import { InvalidMonthlyPlanError, isValidMonth, parseMonthlyPlan } from '../months/monthly-plan.js';
 import { getMonthlyPlan, saveMonthlyPlan } from '../months/service.js';
 import { getMonthSummary } from '../months/summary.js';
+import { getFutureCommitments } from '../months/commitments.js';
 import { InvalidWealthSnapshotError } from '../wealth/input.js';
 import {
   assertCajitaAccountParam,
@@ -282,6 +283,11 @@ app.get('/months/:month', async ({ event, params }) => {
     return json(HttpStatusCodes.BAD_REQUEST, { message: 'Month must use YYYY-MM format.' });
   }
   return json(HttpStatusCodes.OK, await getMonthlyPlan(ownerOf(asHttpEvent(event)), params.month));
+});
+
+app.get('/commitments', async ({ event }) => {
+  const gatewayEvent = asHttpEvent(event);
+  return json(HttpStatusCodes.OK, await getFutureCommitments(ownerOf(gatewayEvent), gatewayEvent.queryStringParameters?.startMonth));
 });
 
 app.get('/months/:month/summary', async ({ event, params }) => {

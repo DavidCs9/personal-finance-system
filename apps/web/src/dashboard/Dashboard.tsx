@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ledgerApi } from "../api/client";
-import { mockAnalyticsFor, mockExceptionRawEmail, mockExceptions, mockFeedForMonth, mockMonthSummaryFor } from "../api/mock-data";
+import { mockAnalyticsFor, mockExceptionRawEmail, mockExceptions, mockFeedForMonth, mockMonthSummaryFor, mockEvents } from "../api/mock-data";
 import { AppShell } from "../layout/AppShell";
 import { eventDate, monthKey } from "../lib/format";
 import { usePrivateMode } from "../lib/private-mode";
-import { analyticsQueryKey, analyticsQueryRoot, eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, monthlySummaryQueryKey, monthlySummaryQueryRoot, cardsQueryKey, wealthQueryKey } from "../lib/query-keys";
+import { analyticsQueryKey, analyticsQueryRoot, eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, monthlySummaryQueryKey, monthlySummaryQueryRoot, cardsQueryKey, wealthQueryKey, commitmentsQueryRoot } from "../lib/query-keys";
 import type { Tab } from "../lib/tabs";
 import {
   demoPlans,
@@ -15,6 +15,7 @@ import {
 } from "../monthly-plan";
 import { demoCards } from "../card-cycle-demo";
 import type { CardCycle } from "../card-cycle";
+import { CommitmentsSheet } from "../sheets/CommitmentsSheet";
 import { EventSheet } from "../sheets/EventSheet";
 import { AssistantSheet } from "../sheets/AssistantSheet";
 import { MonthIncomeSheet } from "../sheets/MonthIncomeSheet";
@@ -62,6 +63,7 @@ export function Dashboard({
   const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [movementSort, setMovementSort] = useState<"recent" | "largest">("recent");
+  const [commitmentsOpen, setCommitmentsOpen] = useState(false);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [movementEvidenceFilter, setMovementEvidenceFilter] = useState<{
     readonly label: string;
@@ -293,6 +295,7 @@ export function Dashboard({
     void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
     void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
     void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
+    void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
     void queryClient.invalidateQueries({ queryKey: cardsQueryKey });
     void queryClient.invalidateQueries({ queryKey: wealthQueryKey });
   };
@@ -376,6 +379,7 @@ export function Dashboard({
       : await ledgerApi.saveMonthlyPlan(selectedMonth, nextPlan, idToken);
     queryClient.setQueryData(monthlyPlanQueryKey(selectedMonth), saved);
     await queryClient.invalidateQueries({ queryKey: monthlySummaryQueryKey(selectedMonth) });
+    await queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
   };
 
   const reviewLargest = () => {
@@ -463,6 +467,7 @@ export function Dashboard({
             onAddPayment={() => setEditingPayment(null)}
             onEditPayment={(payment) => setEditingPayment(payment)}
             onOpenMsiEvent={openMsiEvent}
+            onOpenCommitments={() => setCommitmentsOpen(true)}
             onReviewLargest={reviewLargest}
             analytics={analyticsQuery.data}
             analyticsLoading={analyticsQuery.isPending}
@@ -651,6 +656,17 @@ export function Dashboard({
           }
         />
       )}
+      {commitmentsOpen && (
+        <CommitmentsSheet idToken={idToken} demoMode={demoMode} now={now}
+          onClose={() => setCommitmentsOpen(false)}
+          onOpenEvent={async (id) => {
+            const event = demoMode ? mockEvents.find(event => event.id===id) : await ledgerApi.event(id, idToken);
+            if (!event) throw new Error("Compra no disponible.");
+            setCommitmentsOpen(false);
+            setActiveEvent(event);
+          }}
+        />
+      )}
       {activeEvent && (
         <EventSheet
           key={activeEvent.id}
@@ -663,6 +679,7 @@ export function Dashboard({
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
           }}
         />
       )}
@@ -676,6 +693,7 @@ export function Dashboard({
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
           }}
         />
       )}
@@ -688,6 +706,7 @@ export function Dashboard({
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
           }}
         />
       )}
@@ -701,6 +720,7 @@ export function Dashboard({
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
           }}
         />
       )}
@@ -714,6 +734,7 @@ export function Dashboard({
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
           }}
         />
       )}
@@ -732,6 +753,7 @@ export function Dashboard({
             }));
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
             setActiveEvent(created);
             setTab("movements");
           }}

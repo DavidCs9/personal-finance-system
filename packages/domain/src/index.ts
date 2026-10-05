@@ -1,5 +1,7 @@
 import type { MsiPlan } from "./msi.js";
 
+export type { CommitmentItem, CommitmentMonth, FutureCommitments } from "./commitments.js";
+
 export const INSTITUTIONS = ["american_express_mx", "santander_mx", "nu_mx", "amazon_web_services"] as const;
 
 export type Institution = (typeof INSTITUTIONS)[number];

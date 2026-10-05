@@ -14,7 +14,7 @@ import type {
 import type { MonthlyPlan } from "../monthly-plan";
 import type { CardCycle } from "../card-cycle";
 import type { CardLiabilitySnapshot, WealthOverview } from "../wealth";
-import { CAJITA_ACCOUNT_ID, type MonthSummary, type SpendingAnalytics, type WealthSnapshot } from "@finance/domain";
+import { CAJITA_ACCOUNT_ID, type FutureCommitments, type MonthSummary, type SpendingAnalytics, type WealthSnapshot } from "@finance/domain";
 
 interface LedgerRuntimeConfig {
   readonly apiBaseUrl: string;
@@ -226,6 +226,12 @@ export const ledgerApi = {
   },
   async listEvents(idToken: string, month: string): Promise<EventFeed> {
     return request<EventFeed>(`/events?month=${encodeURIComponent(month)}`, idToken);
+  },
+  async event(eventId: string, idToken: string): Promise<PurchaseEvent> {
+    return request(`/events/${encodeURIComponent(eventId)}`, idToken);
+  },
+  async commitments(idToken: string, startMonth?: string): Promise<FutureCommitments> {
+    return request(`/commitments${startMonth ? `?startMonth=${encodeURIComponent(startMonth)}` : ""}`, idToken);
   },
   async listAssistantMemories(idToken: string): Promise<{ memories: readonly AssistantMemory[] }> {
     return request<{ memories: readonly AssistantMemory[] }>("/agent/memories", idToken);
