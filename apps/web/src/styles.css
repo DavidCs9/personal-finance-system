@@ -119,9 +119,24 @@ html.private-mode .hero-amount .amt {
 .income-button span { color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .income-button strong { font-size: 12px; }
 .hero-amount { display: block; margin: 25px 0 9px; font-size: clamp(50px, 16vw, 76px); line-height: .92; letter-spacing: -.075em; font-variant-numeric: tabular-nums; }
+.spend-caption { margin: 0; color: var(--ink-soft); font-size: 12px; line-height: 1.45; }
+.spend-commitments { margin-top: 23px; padding-top: 18px; border-top: 1px solid var(--line); }
+.spend-commitments h2 { margin: 0; font-size: 13px; font-weight: 600; }
+.spend-commitments-amount { display: block; margin: 9px 0 7px; font-size: clamp(28px, 8vw, 34px); line-height: 1.1; letter-spacing: -.045em; font-variant-numeric: tabular-nums; }
 .spend-meta { display: flex; align-items: baseline; gap: 7px; color: var(--ink-soft); }
+.spend-commitments .spend-meta { align-items: flex-start; }
 .spend-meta strong { color: var(--ink); font-size: 18px; font-variant-numeric: tabular-nums; }
 .spend-meta span { font-size: 12px; }
+.spend-commitments .spend-meta span { padding-top: 2px; line-height: 1.45; }
+.spend-breakdown { margin-top: 8px; font-size: 12px; }
+.spend-breakdown summary { display: flex; align-items: center; gap: 8px; min-height: 44px; width: fit-content; cursor: pointer; color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
+.spend-breakdown summary::after { content: "+"; text-decoration: none; }
+.spend-breakdown[open] summary::after { content: "−"; }
+.spend-breakdown dl { display: grid; gap: 12px; margin: 5px 0 14px; }
+.spend-breakdown dl > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 14px; }
+.spend-breakdown dt { color: var(--ink-soft); line-height: 1.45; }
+.spend-breakdown dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.spend-breakdown p { margin: 8px 0 0; color: var(--ink-soft); line-height: 1.5; }
 .uncertain-note {
   display: inline-flex;
   align-items: flex-start;
@@ -174,7 +189,7 @@ html.private-mode .hero-amount .amt {
 .number-card p, .projection-card p { margin: 0 0 17px; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
 .number-card strong { display: block; font-size: 31px; line-height: 1; letter-spacing: -.055em; font-variant-numeric: tabular-nums; }
 .number-card > span,
-.projection-card > span { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }
+.projection-card > span { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .projection-card { color: #f8f3ea; background: var(--ink); border: 1px solid #161412; box-shadow: 0 12px 28px #24211f25; }
 .projection-card p { color: #bcb4aa; }
 .projection-card strong { display: block; max-width: 280px; font: 600 24px/1.12 "Fraunces", serif; letter-spacing: -.03em; }

@@ -455,7 +455,6 @@ export function Dashboard({
             remainingMinor={remainingMinor}
             projectedSpendMinor={projectedSpendMinor}
             projectedRemainingMinor={projectedRemainingMinor}
-            spendPercent={spendPercent}
             isCurrentMonth={isCurrentMonth}
             risk={risk}
             monthMsiRows={monthMsiRows}

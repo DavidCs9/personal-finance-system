@@ -8,7 +8,7 @@ Conservar tres tabs: **Resumen / Movimientos / Patrimonio**. Diseñar primero pa
 
 **Resumen** responde cuánto has gastado y qué significa para el resto del mes. Orden:
 
-1. **Has gastado**, cifra dominante.
+1. **Has gastado**, cifra dominante. En el mismo bloque, **Con fijos y MSI pendientes** muestra el total de gasto y compromisos, con su porcentaje de liquidez y **Ver cómo se compone**: gasto registrado, fijos programados y MSI pendientes separados. Las cuotas MSI registradas ya forman parte de Has gastado. El detalle aclara que los fijos son programación sin verificación de cobro. El porcentaje acompaña al total combinado; no presentar dos porcentajes compitiendo.
 2. **A este ritmo**, proyección al cierre.
 3. **Te quedan**, después de compromisos.
 4. **Incluye por confirmar**, incertidumbre dentro del total.
@@ -16,6 +16,8 @@ Conservar tres tabs: **Resumen / Movimientos / Patrimonio**. Diseñar primero pa
 6. **Gastos fijos**, servicios y suscripciones indefinidos, separados de MSI.
 7. **Fechas de corte**, calendario de corte/pago de hasta tres tarjetas, antes de preferencias push.
 8. **En qué se fue**, entrada compacta al análisis y a su evidencia; sin cuarta tab.
+
+**Te quedan** indica «según tu gasto y compromisos del mes». **A este ritmo** declara que incluye fijos y MSI del mes. El total combinado no sustituye gasto observado, categorías ni cierre mensual; sigue las [reglas del resumen](financial-rules.md#resumen-del-mes). No mostrar porcentaje, disponibilidad o proyección válidos sin liquidez válida; mantener visibles provisionales e importes por confirmar. El desglose usa expansión nativa, conserva modo privado y se cierra al cambiar de mes.
 
 **Próximos compromisos** abre un sheet de Resumen después de gastos fijos, también sin nómina configurada. Presenta 12 meses desde el actual, continuación por periodos, total conocido en MXN y desglose separado de MSI/gastos fijos. Cada mes se expande para ver cuotas, fechas de fin, días programados y acceder a la compra/evidencia. Mostrar cambios entre meses futuros completos, importes por confirmar, calendarios incompletos excluidos y ausencia de configuración fija. No añadir una tab ni competir con el estado mensual dominante. Las cifras siguen las [reglas de compromisos futuros](financial-rules.md#compromisos-futuros).
 
