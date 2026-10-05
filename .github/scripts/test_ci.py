@@ -81,8 +81,9 @@ class ScopeTests(unittest.TestCase):
 
 
 class RequiredGateTests(unittest.TestCase):
-    def gate(self, docs='false', scope_result='success', results=('success', 'success', 'success')):
+    def gate(self, docs='false', scope_result='success', results=('success', 'success', 'success'), fast_docs=None):
         env = {**os.environ, 'DOCS_ONLY': docs, 'SCOPE_RESULT': scope_result,
+               'FAST_DOCS_ONLY': docs if fast_docs is None else fast_docs,
                **dict(zip(['FAST_RESULT', 'TEST_RESULT', 'BUILD_RESULT'], results))}
         return subprocess.run(['bash', str(HERE / 'quality_gate.sh')], env=env, capture_output=True).returncode
 
@@ -95,13 +96,20 @@ class RequiredGateTests(unittest.TestCase):
                 self.assertNotEqual(self.gate(results=results), 0)
 
     def test_scope_must_succeed_and_prove_the_selected_path(self):
-        self.assertEqual(self.gate(docs='true', results=('skipped',) * 3), 0)
+        self.assertEqual(self.gate(docs='true', results=('success', 'skipped', 'skipped')), 0)
         for result in ['failure', 'cancelled', 'skipped', '']:
             self.assertNotEqual(self.gate(scope_result=result), 0)
         for docs in ['', 'unknown']:
             self.assertNotEqual(self.gate(docs=docs), 0)
         self.assertNotEqual(self.gate(docs='true'), 0)
         self.assertNotEqual(self.gate(results=('skipped',) * 3), 0)
+
+    def test_independent_classifications_must_agree_even_for_markdown(self):
+        for docs, results in [('false', ('success',) * 3), ('true', ('success', 'skipped', 'skipped'))]:
+            for proof in ['', 'unknown', 'true' if docs == 'false' else 'false']:
+                self.assertNotEqual(self.gate(docs=docs, results=results, fast_docs=proof), 0)
+        for status in ['failure', 'cancelled', 'skipped', '']:
+            self.assertNotEqual(self.gate(docs='true', results=(status, 'skipped', 'skipped')), 0)
 
 
 class WorkspaceCheckTests(unittest.TestCase):
