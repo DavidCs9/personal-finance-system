@@ -48,6 +48,17 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --prefer-offline
+      - name: Restore native TypeScript build metadata
+        uses: actions/cache@v6
+        with:
+          path: |
+            apps/*/*.tsbuildinfo
+            packages/*/*.tsbuildinfo
+            services/*/*.tsbuildinfo
+            infrastructure/*.tsbuildinfo
+          key: typecheck-${{ runner.os }}-node24-${{ hashFiles('package-lock.json', 'tsconfig*.json', 'apps/*/tsconfig*.json', 'packages/*/tsconfig*.json', 'services/*/tsconfig*.json', 'infrastructure/tsconfig*.json') }}-${{ github.sha }}
+          restore-keys: |
+            typecheck-${{ runner.os }}-node24-${{ hashFiles('package-lock.json', 'tsconfig*.json', 'apps/*/tsconfig*.json', 'packages/*/tsconfig*.json', 'services/*/tsconfig*.json', 'infrastructure/tsconfig*.json') }}-
       - run: bash .github/scripts/check_workspaces.sh
 
   tests:

@@ -16,6 +16,8 @@ Measure feedback with native Actions run/job/step timestamps and the verifier's 
 
 Fast checks discover every workspace check through native npm queries and run independent configurations concurrently on the same runner, bounded to available CPUs and at most four processes. This avoids adding runner queues; query or check failures fail the job. Keep these checks free of shared mutable outputs. Installation prefers the native npm cache while retaining `npm ci` lockfile integrity and its existing audit/install policy.
 
+Typechecks always run, with TypeScript's native incremental metadata restored through GitHub's cache. Compatible cache keys include the runner OS, Node version, compiler dependency lock and TS configurations, with a distinct revision key for each saved snapshot. The compiler revalidates changed/new files and imports; a cache miss compiles fully. Cache only ignored `.tsbuildinfo` files, never prior check verdicts or runtime artifacts. PR caches remain scoped by GitHub's native branch restrictions.
+
 For each measurement, record the sample count and date window. Use the Actions run's `created_at` as the available trigger-time proxy and label it **trigger → feedback** when the actual push time is unavailable. Fast feedback ends when all fast checks finish; required validation ends when `quality` finishes. Production uses the main commit's committer timestamp through completion of `deploy-production`, including earlier CI and any queue. Measure accumulated agent wait as elapsed time blocked on validation; overlapping parallel jobs count once, not as summed job durations. Keep cancelled/superseded runs visible separately from successful-run percentiles.
 
 ## Diagnosis and recovery
