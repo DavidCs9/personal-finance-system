@@ -47,8 +47,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npm run check
+      - run: npm ci --prefer-offline
+      - run: bash .github/scripts/check_workspaces.sh
 
   tests:
     name: tests (${{ matrix.suite }})
@@ -65,7 +65,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline
       - name: Run every workspace suite with native Vitest sharding
         env:
           TEST_WORKSPACES: ${{ toJSON(matrix.workspaces) }}
@@ -91,7 +91,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline
       - run: python3 -m unittest discover -s infrastructure/scripts -p 'test_*.py'
       - run: npm run build --workspace @finance/web
       - run: npm run synth --workspace @finance/infrastructure
@@ -133,7 +133,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::225989371926:role/personal-finance-v1-github-deploy

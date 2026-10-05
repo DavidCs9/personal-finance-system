@@ -104,5 +104,45 @@ class RequiredGateTests(unittest.TestCase):
         self.assertNotEqual(self.gate(results=('skipped',) * 3), 0)
 
 
+class WorkspaceCheckTests(unittest.TestCase):
+    def run_checks(self, **settings):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            npm = root / 'npm'
+            npm.write_text('''#!/usr/bin/env python3
+import json, os, pathlib, sys
+if sys.argv[1:] == ['query', '.workspace']:
+    if os.environ.get('FAIL_QUERY'): sys.exit(1)
+    print(json.dumps([
+        {'name': '@finance/api', 'scripts': {'check': 'tsc'}},
+        {'name': '@finance/future', 'scripts': {'check': 'custom-check'}},
+        {'name': '@finance/without-check', 'scripts': {}},
+    ] if not os.environ.get('EMPTY_QUERY') else []))
+else:
+    with pathlib.Path(os.environ['CHECK_CALLS']).open('a') as output:
+        output.write(json.dumps(sys.argv[1:]) + '\\n')
+    if sys.argv[-1] == os.environ.get('FAIL_WORKSPACE'): sys.exit(1)
+''')
+            npm.chmod(0o755)
+            calls = root / 'calls.jsonl'
+            env = {**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}', 'CHECK_CALLS': str(calls), **settings}
+            result = subprocess.run(['bash', str(HERE / 'check_workspaces.sh')], env=env, capture_output=True)
+            return result.returncode, [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+
+    def test_discovers_current_and_future_checks_without_requiring_test_scripts(self):
+        result, calls = self.run_checks()
+        self.assertEqual(result, 0)
+        self.assertEqual(sorted(calls), sorted([
+            ['run', 'check', '--workspace', '@finance/api'],
+            ['run', 'check', '--workspace', '@finance/future'],
+        ]))
+
+    def test_failed_discovery_or_check_cannot_pass(self):
+        for settings in [{'FAIL_QUERY': '1'}, {'EMPTY_QUERY': '1'}, {'FAIL_WORKSPACE': '@finance/api'}]:
+            with self.subTest(settings=settings):
+                result, _ = self.run_checks(**settings)
+                self.assertNotEqual(result, 0)
+
+
 if __name__ == '__main__':
     unittest.main()
