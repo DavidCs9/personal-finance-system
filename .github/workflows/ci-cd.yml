@@ -37,18 +37,26 @@ jobs:
 
   fast:
     name: fast-checks
-    needs: scope
-    if: needs.scope.outputs.docs_only == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - name: Classify the complete PR merge diff independently
+        id: scope
+        run: python3 .github/scripts/ci_scope.py
       - uses: actions/setup-node@v5
+        if: steps.scope.outputs.docs_only == 'false'
         with:
           node-version: 24
           cache: npm
       - run: npm ci --prefer-offline
+        if: steps.scope.outputs.docs_only == 'false'
       - name: Restore native TypeScript build metadata
+        if: steps.scope.outputs.docs_only == 'false'
         uses: actions/cache@v6
         with:
           path: |
@@ -60,6 +68,7 @@ jobs:
           restore-keys: |
             typecheck-${{ runner.os }}-node24-${{ hashFiles('package-lock.json', 'tsconfig*.json', 'apps/*/tsconfig*.json', 'packages/*/tsconfig*.json', 'services/*/tsconfig*.json', 'infrastructure/tsconfig*.json') }}-
       - run: bash .github/scripts/check_workspaces.sh
+        if: steps.scope.outputs.docs_only == 'false'
 
   tests:
     name: tests (${{ matrix.suite }})
@@ -121,6 +130,7 @@ jobs:
         run: bash .github/scripts/quality_gate.sh
         env:
           DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
+          FAST_DOCS_ONLY: ${{ needs.fast.outputs.docs_only }}
           SCOPE_RESULT: ${{ needs.scope.result }}
           FAST_RESULT: ${{ needs.fast.result }}
           TEST_RESULT: ${{ needs.tests.result }}
