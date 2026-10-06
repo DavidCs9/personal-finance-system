@@ -18,6 +18,7 @@ const toMonthSpendEvent = (event: JsonObject): MonthSpendEvent => {
     occurredAt: typeof event.occurredAt === 'string' ? event.occurredAt : undefined,
     receivedAt: typeof event.receivedAt === 'string' ? event.receivedAt : new Date(0).toISOString(),
     merchantRaw: typeof event.merchantRaw === 'string' ? event.merchantRaw : undefined,
+    tags: Array.isArray(event.tags) ? event.tags.filter((tag): tag is string => typeof tag === 'string') : undefined,
     msi: event.msi as MonthSpendEvent['msi'],
   };
 };

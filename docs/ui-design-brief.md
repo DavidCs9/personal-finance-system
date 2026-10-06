@@ -12,7 +12,7 @@ Conservar tres tabs: **Resumen / Movimientos / Patrimonio**. Diseñar primero pa
 2. **A este ritmo**, proyección al cierre.
 3. **Te quedan**, después de compromisos.
 4. **Incluye por confirmar**, incertidumbre dentro del total.
-5. **Planes con fin**, cuotas MSI del mes con comercio, cuota i/N, total fijo e inicio–fin.
+5. **Planes con fin**, cuotas MSI del mes con comercio, tags de contexto cuando existan, cuota i/N, total fijo e inicio–fin.
 6. **Gastos fijos**, servicios y suscripciones indefinidos, separados de MSI.
 7. **Fechas de corte**, calendario de corte/pago de hasta tres tarjetas, antes de preferencias push.
 8. **En qué se fue**, entrada compacta al análisis y a su evidencia; sin cuarta tab.
