@@ -306,6 +306,8 @@ html.private-mode .hero-amount .amt {
 .payment-name { display: grid; min-width: 0; gap: 3px; }
 .payment-name strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .payment-name small { color: var(--muted); font-size: 10px; }
+.msi-tags { display: flex; flex-wrap: wrap; gap: 3px 8px; color: #74695f; font-size: 10px; font-weight: 650; }
+.msi-tags > span { min-width: 0; overflow-wrap: anywhere; }
 .payment-amount { font-size: 12px; font-variant-numeric: tabular-nums; }
 .chevron { color: #aaa198; font-size: 18px; }
 .payment-total { display: flex; justify-content: space-between; padding: 14px; color: var(--ink-soft); background: #f3eee6; font-size: 11px; }

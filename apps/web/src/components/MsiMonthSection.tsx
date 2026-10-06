@@ -49,6 +49,11 @@ export function MsiMonthSection({
             </span>
             <span className="payment-name">
               <strong>{row.merchantRaw}</strong>
+              {row.tags?.length ? (
+                <span className="msi-tags" aria-label={`Tags: ${row.tags.join(", ")}`}>
+                  {row.tags.map((tag) => <span key={tag}>{tag}</span>)}
+                </span>
+              ) : null}
               <small>
                 Cuota {row.installmentIndex}/{row.months} · Total{" "}
                 <Amt>{money(row.principalMinor)}</Amt> · {monthKeyLabel(row.startMonth)} –{" "}

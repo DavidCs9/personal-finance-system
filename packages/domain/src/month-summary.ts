@@ -16,6 +16,7 @@ export interface MonthSpendEvent {
   readonly occurredAt?: string;
   readonly receivedAt: string;
   readonly merchantRaw?: string;
+  readonly tags?: readonly string[];
   readonly msi?: Pick<
     MsiPlan,
     "months" | "installments" | "needsScheduleCompletion" | "principalMinor" | "cuotaMinor"
@@ -41,6 +42,7 @@ export interface CommittedMsiRow {
 }
 
 export interface MonthMsiRow extends CommittedMsiRow {
+  readonly tags?: readonly string[];
   readonly status: "spent" | "committed";
   /** First installment month of the finite plan. */
   readonly startMonth: string;
@@ -167,6 +169,7 @@ export const listMonthMsiRows = (
         installmentIndex: installment.index,
         months: event.msi.months,
         merchantRaw,
+        tags: event.tags,
         status: installment.status,
         startMonth,
         endMonth,
