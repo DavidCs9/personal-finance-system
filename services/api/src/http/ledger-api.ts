@@ -1,3 +1,4 @@
+import { createStatementUpload } from '../imports/statement-upload.js';
 import { listPublicPushSubscriptions } from '../push/subscription-reads.js';
 import {
   HttpStatusCodes,
@@ -367,6 +368,11 @@ app.post('/imports/santander/:importId/apply', async ({ event, params }) => {
   );
 });
 
+app.post('/imports/santander-statement/upload', async ({ event }) => {
+  const gatewayEvent = asHttpEvent(event);
+  return json(HttpStatusCodes.OK, await createStatementUpload('santander', ownerOf(gatewayEvent), requestBody(gatewayEvent)));
+});
+
 app.post('/imports/santander-statement/preview', async ({ event }) => {
   const gatewayEvent = asHttpEvent(event);
   return json(HttpStatusCodes.OK, await previewSantanderStatementImport(gatewayEvent, ownerOf(gatewayEvent)));
@@ -382,6 +388,11 @@ app.post('/imports/santander-statement/:importId/apply', async ({ event, params 
     HttpStatusCodes.OK,
     await applySantanderStatementImport(params.importId, ownerOf(gatewayEvent), requestBody(gatewayEvent)),
   );
+});
+
+app.post('/imports/amex/upload', async ({ event }) => {
+  const gatewayEvent = asHttpEvent(event);
+  return json(HttpStatusCodes.OK, await createStatementUpload('amex', ownerOf(gatewayEvent), requestBody(gatewayEvent)));
 });
 
 app.post('/imports/amex/preview', async ({ event }) => {

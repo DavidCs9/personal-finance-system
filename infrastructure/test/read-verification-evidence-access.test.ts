@@ -1,4 +1,6 @@
 import { App } from 'aws-cdk-lib';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Template } from 'aws-cdk-lib/assertions';
 import { Source } from 'aws-cdk-lib/aws-s3-deployment';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -11,9 +13,16 @@ it('gives the deployed verifier read-only access to every supported evidence fam
   const originalAsset=Source.asset.bind(Source);
   vi.spyOn(Source,'asset').mockImplementation((assetPath,options)=>assetPath.endsWith('/apps/web/dist')
     ? Source.data('index.html','Evidence policy test') : originalAsset(assetPath,options));
-  const template=Template.fromStack(new PersonalFinanceV1Stack(new App(),'EvidenceAccess',{
+  const app = new App();
+  const stack = new PersonalFinanceV1Stack(app,'EvidenceAccess',{
     env:{account:'225989371926',region:'us-east-2'},
-  }));
+  });
+  const template=Template.fromStack(stack);
+  const api = Object.values(template.findResources('AWS::Lambda::Function'))
+    .find(resource => resource.Properties.FunctionName === 'personal-finance-v1-api')!;
+  const assetHash = api.Properties.Code.S3Key.replace(/\.zip$/, '');
+  const apiMap = JSON.parse(readFileSync(join(app.synth().directory, `asset.${assetHash}`, 'index.js.map'), 'utf8'));
+  expect(apiMap.sources.some((source: string) => source.includes('@aws-sdk/s3-request-presigner/'))).toBe(true);
   const fn=Object.values(template.findResources('AWS::Lambda::Function')).find(
     resource=>resource.Properties.FunctionName==='personal-finance-v1-dsql-read-verification');
   expect(fn).toBeDefined();
@@ -24,6 +33,23 @@ it('gives the deployed verifier read-only access to every supported evidence fam
   const actions=(statement:{Action:string|string[]})=>Array.isArray(statement.Action)?statement.Action:[statement.Action];
   const reads=statements.filter(statement=>actions(statement).includes('s3:GetObject*'));
   const rawBucket=Object.keys(template.findResources('AWS::S3::Bucket')).find(id=>id.startsWith('RawEmailBucket'))!;
+  expect(template.findResources('AWS::S3::Bucket')[rawBucket].Properties).toMatchObject({
+    CorsConfiguration: { CorsRules: [{
+      AllowedOrigins: ['https://finance.castrodavid.dev'],
+      AllowedMethods: ['PUT'],
+      AllowedHeaders: ['content-type', 'x-amz-checksum-sha256', 'if-none-match'],
+      MaxAge: 600,
+    }] },
+    VersioningConfiguration: { Status: 'Enabled' },
+    PublicAccessBlockConfiguration: {
+      BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true,
+    },
+  });
+  for (const provider of ['amex', 'santander-statement']) {
+    const route = Object.values(template.findResources('AWS::ApiGatewayV2::Route'))
+      .find(resource => resource.Properties.RouteKey === `POST /imports/${provider}/upload`);
+    expect(route?.Properties).toMatchObject({ AuthorizationType: 'JWT', AuthorizerId: expect.anything() });
+  }
   const objectResources=reads.flatMap(statement=>Array.isArray(statement.Resource)?statement.Resource:[statement.Resource])
     .filter(resource=>resource['Fn::Join']!==undefined);
   const expected=['inbound/*','manual-entries/*','manual-imports/cfdi-nomina/*','manual-imports/amex/*','manual-imports/santander/*',

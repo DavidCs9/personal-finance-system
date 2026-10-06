@@ -133,6 +133,12 @@ export class PersonalFinanceV1Stack extends Stack {
     });
 
     const rawEmailBucket = new s3.Bucket(this, 'RawEmailBucket', {
+      cors: [{
+        allowedOrigins: [`https://${webDomainName}`],
+        allowedMethods: [s3.HttpMethods.PUT],
+        allowedHeaders: ['content-type', 'x-amz-checksum-sha256', 'if-none-match'],
+        maxAge: 600,
+      }],
       encryption: s3.BucketEncryption.KMS,
       encryptionKey,
       versioned: true,
@@ -438,6 +444,8 @@ export class PersonalFinanceV1Stack extends Stack {
 
     const apiFunction = new NodejsFunction(this, 'ApiFunction', {
       ...lambdaDefaults,
+      // Lambda provides service clients; package the presigner and its utility dependencies.
+      bundling: { ...lambdaDefaults.bundling, externalModules: ['@aws-sdk/client-*'] },
       functionName: 'personal-finance-v1-api',
       logGroup: this.createLogGroup('ApiLogGroup', 'personal-finance-v1-api'),
       entry: path.join(__dirname, '..', 'lambda', 'api.ts'),
@@ -1433,9 +1441,11 @@ export class PersonalFinanceV1Stack extends Stack {
       'POST /imports/nomina',
       'POST /imports/santander/preview',
       'POST /imports/santander/{importId}/apply',
+      'POST /imports/amex/upload',
       'POST /imports/amex/preview',
       'GET /imports/amex/{importId}',
       'POST /imports/amex/{importId}/apply',
+      'POST /imports/santander-statement/upload',
       'POST /imports/santander-statement/preview',
       'GET /imports/santander-statement/{importId}',
       'POST /imports/santander-statement/{importId}/apply',

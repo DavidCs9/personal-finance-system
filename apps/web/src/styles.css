@@ -1114,6 +1114,8 @@ html.private-mode .hero-amount .amt {
 .sheet > header h2 { margin: 0; font: 600 27px/1.05 "Fraunces", serif; letter-spacing: -.035em; }
 .close-button { width: 35px; height: 35px; border: 1px solid var(--line); border-radius: 50%; color: var(--ink); background: #f5f0e8; font-size: 22px; line-height: 1; }
 .sheet-form > p { margin: -5px 0 4px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.statement-upload-form { grid-template-columns: minmax(0, 1fr); }
+.statement-upload-form input[type="file"] { max-width: 100%; }
 .money-input {
   display: flex;
   align-items: center;

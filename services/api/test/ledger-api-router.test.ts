@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 process.env.METADATA_TABLE_NAME ??= 'test-metadata-table';
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-raw-bucket';
 
 const { handler } = await import('../src/http/ledger-api.js');
+const uploads = await import('../src/imports/statement-upload.js');
+afterEach(() => vi.restoreAllMocks());
 
 const context = {
   awsRequestId: 'req-1',
@@ -50,6 +52,20 @@ const httpEvent = (method: string, path: string, query: Record<string, string> =
 });
 
 describe('ledger API Powertools router', () => {
+  for (const provider of ['amex', 'santander-statement']) {
+    it(`${provider} signs an upload for the authenticated principal`, async () => {
+      const create = vi.spyOn(uploads, 'createStatementUpload').mockResolvedValue({ url: 'https://s3.test/upload', headers: {} });
+      const body = JSON.stringify({ sha256: 'a'.repeat(64), size: 5_584_168 });
+      const result = await handler({ ...httpEvent('POST', `/imports/${provider}/upload`), body }, context);
+      expect(result.statusCode).toBe(200);
+      expect(create).toHaveBeenCalledWith(provider === 'amex' ? 'amex' : 'santander', 'owner-1', body);
+    });
+    it(`${provider} refuses PDF bodies through the preview route`, async () => {
+      const result = await handler({ ...httpEvent('POST', `/imports/${provider}/preview`), body: '%PDF-', headers: { 'content-type': 'application/pdf' } }, context);
+      expect(result.statusCode).toBe(400);
+      expect(JSON.parse(String(result.body)).message).toContain('directamente');
+    });
+  }
   it('rejects invalid commitment periods through the public route', async () => {
     const result = await handler(httpEvent('GET', '/commitments', {startMonth:'2026-13'}), context);
     expect(result.statusCode).toBe(400);

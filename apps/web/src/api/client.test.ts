@@ -189,6 +189,59 @@ describe("spending analytics API", () => {
   });
 });
 
+describe("direct statement PDF uploads", () => {
+  const target = {
+    url: "https://test-evidence.s3.us-east-2.amazonaws.com/original.pdf?signature=test",
+    headers: { "Content-Type": "application/pdf", "If-None-Match": "*", "x-amz-checksum-sha256": "checksum" },
+  };
+  const pdf = () => new File(["%PDF-", new Uint8Array(5_584_168 - 5)], "statement.pdf", { type: "application/pdf" });
+  for (const [provider, preview] of [
+    ["amex", ledgerApi.previewAmexStatement],
+    ["santander-statement", ledgerApi.previewSantanderStatement],
+  ] as const) {
+    it(`${provider} sends a PDF matching David’s file size only to S3 and metadata to the API`, async () => {
+      const idToken = token(Date.now() + 10 * 60 * 1000, "user");
+      const file = pdf();
+      const result = { importId: "import", status: "processing" };
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(target))
+        .mockResolvedValueOnce(new Response(null, { status: 200 }))
+        .mockResolvedValueOnce(jsonResponse(result));
+      await expect(preview(file, idToken)).resolves.toEqual(result);
+      const calls = vi.mocked(fetch).mock.calls;
+      expect(calls[0][0]).toBe(`https://api.example.test/imports/${provider}/upload`);
+      const metadata = JSON.parse(calls[0][1]!.body as string);
+      expect(metadata).toEqual({ sha256: expect.stringMatching(/^[a-f0-9]{64}$/), size: 5_584_168 });
+      expect(calls[1]).toEqual([target.url, { method: "PUT", headers: target.headers, body: file }]);
+      expect(calls[2][0]).toBe(`https://api.example.test/imports/${provider}/preview`);
+      expect(calls[2][1]?.body).toBe(calls[0][1]?.body);
+      expect(calls[0][1]?.headers).toMatchObject({ Authorization: `Bearer ${idToken}` });
+    });
+  }
+
+  it("continues to verification when S3 already retains the original", async () => {
+    const idToken = token(Date.now() + 10 * 60 * 1000, "user");
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(target))
+      .mockResolvedValueOnce(new Response(null, { status: 412 }))
+      .mockResolvedValueOnce(jsonResponse({ status: "processing" }));
+    await expect(ledgerApi.previewAmexStatement(pdf(), idToken)).resolves.toMatchObject({ status: "processing" });
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([403, 409, 500])("does not start extraction after S3 upload fails with %s", async (status) => {
+    const idToken = token(Date.now() + 10 * 60 * 1000, "user");
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(target)).mockResolvedValueOnce(new Response(null, { status }));
+    await expect(ledgerApi.previewAmexStatement(pdf(), idToken)).rejects.toThrow("No se pudo subir");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects empty, invalid and oversized files before any network request", async () => {
+    for (const file of [new File([], "empty.pdf"), new File(["not a PDF"], "invalid.pdf"), { size: 50 * 1024 * 1024 + 1 } as File]) {
+      await expect(ledgerApi.previewAmexStatement(file, "token")).rejects.toThrow();
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
 describe("streamAgentChat REST SSE", () => {
   it("posts to the REST SSE endpoint and fans out chunks in order", async () => {
     const idToken = token(Date.now() + 10 * 60 * 1000, "user");

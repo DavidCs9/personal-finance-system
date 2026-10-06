@@ -1,6 +1,5 @@
+import { resolveStatementSource } from './statement-upload.js';
 import { readBankImport, startBankImport, saveStatementPreview, failBankImport, type BankImportRecord } from './import-sql.js';
-import { createHash } from 'node:crypto';
-import { PutObjectCommand } from '@aws-sdk/client-s3';
 import {
   InvalidSantanderStatementError,
   parseSantanderStatementExtraction,
@@ -20,20 +19,15 @@ import {
   applyStatementImport,
   claimedStatementIdentities,
   classifyMsiEvidenceRow,
-  headerValue,
   loadStatementTextractExtraction,
   persistTextractExtraction,
-  requestBinaryBody,
   statementImportResponse,
   type StatementImportEvent,
 } from './statement-shared.js';
-import { rawSourceBucketName, s3, textract } from '../http/clients.js';
+import { rawSourceBucketName, textract } from '../http/clients.js';
 import { type JsonObject } from '../http/response.js';
 import { localDate } from '../events/queries.js';
 import { bankLedgerEvents } from './bank-ledger.js';
-
-const santanderStatementSourceKey = (owner: string, sha256: string): string =>
-  `manual-imports/santander-statement/${owner}/${sha256}.pdf`;
 
 const buildSantanderStatementPreviewRows = async (
   document: SantanderStatementDocument,
@@ -68,29 +62,10 @@ export const previewSantanderStatementImport = async (
   event: StatementImportEvent,
   owner: string,
 ): Promise<JsonObject> => {
-  const contentType = (headerValue(event, 'content-type') ?? 'application/pdf').toLowerCase();
-  const bytes = requestBinaryBody(event);
-  if (!bytes || bytes.length === 0) {
-    throw new InvalidSantanderStatementError('El estado de cuenta Santander está vacío.');
-  }
-  if (!contentType.includes('pdf') && !contentType.includes('octet-stream')) {
-    throw new InvalidSantanderStatementError('Sube el PDF del estado de cuenta Santander.');
-  }
-  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const source = await resolveStatementSource('santander', owner, event);
+  const sha256 = source.sha256;
   const existing = await readBankImport('santander_statement', sha256, owner);
   if (existing?.status === 'applied' || existing?.status === 'processing') return statementImportResponse(existing);
-  const source = {
-    bucket: rawSourceBucketName,
-    key: santanderStatementSourceKey(owner, sha256),
-    sha256,
-    contentType: 'application/pdf' as const,
-  };
-  await s3.send(new PutObjectCommand({
-    Bucket: rawSourceBucketName,
-    Key: source.key,
-    Body: bytes,
-    ContentType: 'application/pdf',
-  }));
   const textractJobId = await startTextractDocumentAnalysis(
     textract,
     rawSourceBucketName,

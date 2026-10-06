@@ -1,3 +1,4 @@
+import { MAX_STATEMENT_PDF_BYTES, type StatementUploadTarget } from '@finance/domain';
 import type {
   AmexImportPreview,
   AmexImportResult,
@@ -183,6 +184,29 @@ const refreshSession = async (): Promise<string | undefined> => {
   } finally {
     if (refreshPromise === operation) refreshPromise = undefined;
   }
+};
+
+const previewStatement = async <T>(provider: "amex" | "santander-statement", file: File, idToken: string): Promise<T> => {
+  if (file.size === 0) throw new Error("El estado de cuenta está vacío.");
+  if (file.size > MAX_STATEMENT_PDF_BYTES) throw new Error("El PDF supera el máximo de 50 MB.");
+  const bytes = await file.arrayBuffer();
+  if (new TextDecoder().decode(bytes.slice(0, 5)) !== "%PDF-") {
+    throw new Error("Sube un PDF válido del estado de cuenta.");
+  }
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  const sha256 = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const body = JSON.stringify({ sha256, size: file.size });
+  const target = await request<StatementUploadTarget>(`/imports/${provider}/upload`, idToken, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body,
+  });
+  const uploaded = await fetch(target.url, { method: "PUT", headers: target.headers, body: file });
+  // A conditional-write conflict means this original is already retained. Preview verifies it.
+  if (!uploaded.ok && uploaded.status !== 412) {
+    throw new Error("No se pudo subir el PDF. Intenta de nuevo.");
+  }
+  return request<T>(`/imports/${provider}/preview`, idToken, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body,
+  });
 };
 
 export const ledgerApi = {
@@ -446,11 +470,7 @@ export const ledgerApi = {
     });
   },
   async previewAmexStatement(file: File, idToken: string): Promise<AmexImportPreview> {
-    return request<AmexImportPreview>("/imports/amex/preview", idToken, {
-      method: "POST",
-      headers: { "Content-Type": "application/pdf" },
-      body: await file.arrayBuffer(),
-    });
+    return previewStatement<AmexImportPreview>("amex", file, idToken);
   },
   async getAmexStatementImport(importId: string, idToken: string): Promise<AmexImportPreview> {
     return request<AmexImportPreview>(`/imports/amex/${encodeURIComponent(importId)}`, idToken);
@@ -467,11 +487,7 @@ export const ledgerApi = {
     });
   },
   async previewSantanderStatement(file: File, idToken: string): Promise<SantanderStatementImportPreview> {
-    return request<SantanderStatementImportPreview>("/imports/santander-statement/preview", idToken, {
-      method: "POST",
-      headers: { "Content-Type": "application/pdf" },
-      body: await file.arrayBuffer(),
-    });
+    return previewStatement<SantanderStatementImportPreview>("santander-statement", file, idToken);
   },
   async getSantanderStatementImport(
     importId: string,
