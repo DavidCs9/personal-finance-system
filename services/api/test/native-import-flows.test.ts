@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SCHEMA_STATEMENTS } from '../../ledger/test/helpers/migration-schema.js';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../../ledger/src/dsql/ledger-schema.js';
@@ -28,8 +28,9 @@ TASA DE INTERÉS ANUALIZADA: 56.46 %
 Detalle del 01/ago/2026 al 02/ago/2026,Total de movimientos: 1
 FECHA,CONSECUTIVO,CONCEPTO,IMPORTE
 01/Ago/2026,2621340486795734,ORIGINAL PURCHASE,$ 1.00`;
-const upload={body:Buffer.from('Original PDF').toString('base64'),isBase64Encoded:true,headers:{'content-type':'application/pdf'}};
-const id=createHash('sha256').update('Original PDF').digest('hex');
+const originalPdf=Buffer.from('%PDF-Original PDF');
+const id=createHash('sha256').update(originalPdf).digest('hex');
+const upload={body:JSON.stringify({sha256:id,size:originalPdf.length}),headers:{'content-type':'application/json'}};
 let sql:PGlite,objects:Map<string,Buffer>,jobCounter:number;
 beforeAll(async()=>{sql=new PGlite();for(const ddl of [...SCHEMA_STATEMENTS,...NATIVE_LEDGER_SCHEMA_STATEMENTS])await sql.query(ddl);
   await sql.query(`ALTER TABLE olbia.ledger_movements ADD CONSTRAINT ledger_movements_primary_observation_fk ${LEDGER_PRIMARY_OBSERVATION_CONSTRAINT}`);},30_000);
@@ -37,6 +38,7 @@ afterAll(()=>sql.close());
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllEnvs();});
 beforeEach(async()=>{
   objects=new Map();jobCounter=0;
+  for(const provider of ['amex','santander-statement'])objects.set(`manual-imports/${provider}/owner/${id}.pdf`,originalPdf);
   await sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES,'ingestion_retry_attempts'].map(t=>`olbia.${t}`).join(',')},olbia.projection_state,
     olbia.movements,olbia.movement_observations,olbia.movement_revisions,olbia.movement_tags,olbia.msi_plans,
     olbia.msi_installments,olbia.dedupe_claims,olbia.import_records,olbia.command_receipts,
@@ -58,6 +60,11 @@ beforeEach(async()=>{
       const key=command.input.Key!;
       if(command.input.IfNoneMatch==='*' && objects.has(key))throw Object.assign(new Error('Retained'),{name:'PreconditionFailed'});
       objects.set(key,Buffer.from(command.input.Body as Uint8Array|string));return {};
+    }
+    if(command instanceof HeadObjectCommand){
+      const body=objects.get(command.input.Key!);
+      if(!body)throw Object.assign(new Error('Missing'),{name:'NotFound'});
+      return {ContentLength:body.length,ContentType:'application/pdf',ChecksumSHA256:createHash('sha256').update(body).digest('base64')};
     }
     if(command instanceof GetObjectCommand){
       const body=objects.get(command.input.Key!);if(!body)throw new Error('Missing retained evidence');
@@ -112,7 +119,7 @@ describe('native bank import public flows',()=>{
       await expect(p.get(id,'owner')).rejects.toThrow('Native SQL unavailable');
       expect((await native.readBankImport(p.kind,id,'owner'))?.status).toBe('processing');
       expect(await p.get(id,'owner')).toMatchObject({status:'ready'});
-      expect(objects.size).toBe(2); // One original PDF and the retry job's immutable extraction.
+      expect(objects.size).toBe(3); // Two provider originals and the retry job's immutable extraction.
     });
     it(`${p.provider} expired provider jobs become retryable failed captures while transient errors stay processing`,async()=>{
       await p.preview(upload,'owner');

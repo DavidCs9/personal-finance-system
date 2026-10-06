@@ -178,13 +178,13 @@ export function StatementImportSheet({
       className={readyPreview ? "sheet-split" : undefined}
     >
       {!readyPreview ? (
-        <form className="sheet-form" onSubmit={(event) => void inspect(event)}>
+        <form className="sheet-form statement-upload-form" onSubmit={(event) => void inspect(event)}>
           <p>
             Sube el PDF del estado de cuenta. Conciliamos compras del periodo y confirmamos cuotas
             MSI existentes. Las cuotas sin plan requieren tu decisión.
           </p>
           <label className="file-field">
-            <span>Archivo PDF</span>
+            <span>Archivo PDF · máximo 50 MB</span>
             <input
               type="file"
               accept="application/pdf,.pdf"

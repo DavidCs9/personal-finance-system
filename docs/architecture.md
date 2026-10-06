@@ -35,6 +35,8 @@ flowchart LR
 
 Financial services, evidence and financial Gateway run in `us-east-2`. AgentCore Harness/Memory and managed Web Search run in `us-east-1`. Cognito protects David's private access; there is no public signup. Ledger uses API Gateway HTTP API; chat uses a dedicated REST API with native response streaming. The browser never calls AgentCore directly.
 
+Statement PDFs upload directly from the browser to the existing KMS-encrypted S3 evidence bucket through a ten-minute signed conditional PUT, bound to authenticated owner/provider/content hash, SHA-256 checksum, exact file size and PDF content type (maximum 50 MiB). Preview receives metadata only and verifies the retained original before Textract; retry never replaces evidence. The API rejects binary statement uploads.
+
 SES stores encrypted MIME before pointer-only SQS intake. Known deterministic parsers are the fast path; an isolated Bedrock fallback queue returns schema-constrained candidates only accepted after deterministic institution/type/money/status/time and literal-evidence validation. Retries preserve source identity; failed extraction does not permanently consume a financial claim. Lambdas have no reserved concurrency; public API throttling protects the account's shared concurrency.
 
 ## Where changes belong

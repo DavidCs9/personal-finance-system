@@ -24,6 +24,23 @@ it('gives the deployed verifier read-only access to every supported evidence fam
   const actions=(statement:{Action:string|string[]})=>Array.isArray(statement.Action)?statement.Action:[statement.Action];
   const reads=statements.filter(statement=>actions(statement).includes('s3:GetObject*'));
   const rawBucket=Object.keys(template.findResources('AWS::S3::Bucket')).find(id=>id.startsWith('RawEmailBucket'))!;
+  expect(template.findResources('AWS::S3::Bucket')[rawBucket].Properties).toMatchObject({
+    CorsConfiguration: { CorsRules: [{
+      AllowedOrigins: ['https://finance.castrodavid.dev'],
+      AllowedMethods: ['PUT'],
+      AllowedHeaders: ['content-type', 'x-amz-checksum-sha256', 'if-none-match'],
+      MaxAge: 600,
+    }] },
+    VersioningConfiguration: { Status: 'Enabled' },
+    PublicAccessBlockConfiguration: {
+      BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true,
+    },
+  });
+  for (const provider of ['amex', 'santander-statement']) {
+    const route = Object.values(template.findResources('AWS::ApiGatewayV2::Route'))
+      .find(resource => resource.Properties.RouteKey === `POST /imports/${provider}/upload`);
+    expect(route?.Properties).toMatchObject({ AuthorizationType: 'JWT', AuthorizerId: expect.anything() });
+  }
   const objectResources=reads.flatMap(statement=>Array.isArray(statement.Resource)?statement.Resource:[statement.Resource])
     .filter(resource=>resource['Fn::Join']!==undefined);
   const expected=['inbound/*','manual-entries/*','manual-imports/cfdi-nomina/*','manual-imports/amex/*','manual-imports/santander/*',

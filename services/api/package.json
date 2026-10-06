@@ -37,6 +37,7 @@
     "@aws-sdk/client-ses": "^3.1105.0",
     "@aws-sdk/client-ssm": "^3.883.0",
     "@aws-sdk/client-textract": "^3.1101.0",
+    "@aws-sdk/s3-request-presigner": "^3.1106.0",
     "@finance/domain": "*",
     "@finance/ledger": "*",
     "@finance/notify": "*",
