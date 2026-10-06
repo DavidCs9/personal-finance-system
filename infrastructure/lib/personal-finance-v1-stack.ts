@@ -444,6 +444,8 @@ export class PersonalFinanceV1Stack extends Stack {
 
     const apiFunction = new NodejsFunction(this, 'ApiFunction', {
       ...lambdaDefaults,
+      // Lambda provides service clients; package the presigner and its utility dependencies.
+      bundling: { ...lambdaDefaults.bundling, externalModules: ['@aws-sdk/client-*'] },
       functionName: 'personal-finance-v1-api',
       logGroup: this.createLogGroup('ApiLogGroup', 'personal-finance-v1-api'),
       entry: path.join(__dirname, '..', 'lambda', 'api.ts'),
