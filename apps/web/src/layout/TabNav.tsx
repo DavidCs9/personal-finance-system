@@ -26,6 +26,9 @@ export function TabNav({
       >
         Movimientos
       </TabButton>
+      <TabButton active={tab === "planning"} onClick={() => onTabChange("planning")} icon="planning">
+        Planificación
+      </TabButton>
       <TabButton active={tab === "wealth"} onClick={() => onTabChange("wealth")} icon="wealth">
         Patrimonio
       </TabButton>

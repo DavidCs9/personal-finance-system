@@ -1,10 +1,7 @@
-import type { MonthMsiRow, SpendingAnalytics } from "@finance/domain";
-import { money, monthDate } from "../lib/format";
-import { paymentDueDayForMonth, type MonthlyPlan, type Payslip, type PlannedPayment } from "../monthly-plan";
-import type { CardCycle } from "../card-cycle";
+import type { SpendingAnalytics } from "@finance/domain";
+import { money } from "../lib/format";
+import type { MonthlyPlan } from "../monthly-plan";
 import { Amt } from "../components/Amt";
-import { CardCycleSection } from "../components/CardCycleSection";
-import { MsiMonthSection } from "../components/MsiMonthSection";
 import { PushPreference } from "../components/PushPreference";
 import { AnalyticsPreview } from "../components/AnalyticsPreview";
 
@@ -22,16 +19,12 @@ export interface SummaryViewProps {
   readonly projectedRemainingMinor: number;
   readonly isCurrentMonth: boolean;
   readonly risk: "danger" | "watch" | "steady";
-  readonly monthMsiRows: readonly MonthMsiRow[];
   readonly msiSpentMinor: number;
   readonly msiCommittedMinor: number;
   readonly onUploadNomina: () => void;
   readonly onOpenIncome: () => void;
-  readonly onOpenPayslip: (payslip: Payslip) => void;
-  readonly onAddPayment: () => void;
-  readonly onEditPayment: (payment: PlannedPayment) => void;
-  readonly onOpenMsiEvent: (eventId: string) => void;
-  readonly onOpenCommitments: () => void;
+  readonly onOpenPlanning: () => void;
+  readonly onOpenStatements: () => void;
   readonly onReviewLargest: () => void;
   readonly analytics?: SpendingAnalytics;
   readonly analyticsLoading: boolean;
@@ -39,13 +32,6 @@ export interface SummaryViewProps {
   readonly onRetryAnalytics: () => void;
   readonly onOpenAnalytics: () => void;
   readonly onOpenAnalyticsMovements: (label: string, eventIds: readonly string[]) => void;
-  readonly cards: readonly CardCycle[];
-  readonly cardsLoading: boolean;
-  readonly cardsLoadError?: string;
-  readonly onRetryCards: () => void;
-  readonly onAddCard: () => void;
-  readonly onEditCard: (card: CardCycle) => void;
-  readonly now: Date;
   readonly idToken: string;
   readonly demoMode: boolean;
 }
@@ -58,10 +44,6 @@ export function SummaryView(props: SummaryViewProps) {
     : 0;
   const payslips = props.plan.payslips ?? [];
   const provisionalActive = Boolean(props.plan.provisionalActive);
-  const paymentMonth = new Intl.DateTimeFormat("es-MX", { month: "short", timeZone: "UTC" })
-    .format(monthDate(props.month))
-    .replace(".", "")
-    .toUpperCase();
 
   return (
     <section className={`summary-view risk-${props.risk}`}>
@@ -225,172 +207,25 @@ export function SummaryView(props: SummaryViewProps) {
                 ) : null}
               </section>
             </div>
-
-            {payslips.length > 0 ? (
-              <section className="payslip-month-section">
-                <div className="section-heading">
-                  <div>
-                    <p className="eyebrow">NÓMINAS DEL MES</p>
-                    <h2>Liquidez y retenciones</h2>
-                    <p className="section-lede">Toca una nómina para ver el desglose completo.</p>
-                  </div>
-                  <button className="add-button" aria-label="Subir nómina" onClick={props.onUploadNomina}>
-                    +
-                  </button>
-                </div>
-                <div className="payment-list payslip-list">
-                  {payslips.map((payslip) => {
-                    const day = payslip.fechaPago.slice(8, 10);
-                    const monthLabel = new Intl.DateTimeFormat("es-MX", {
-                      month: "short",
-                      timeZone: "UTC",
-                    })
-                      .format(new Date(`${payslip.fechaPago}T12:00:00Z`))
-                      .replace(".", "")
-                      .toUpperCase();
-                    return (
-                      <button
-                        key={payslip.uuid}
-                        className="payment-row"
-                        onClick={() => props.onOpenPayslip(payslip)}
-                      >
-                        <span className="date-block">
-                          <small>{monthLabel}</small>
-                          <strong>{day}</strong>
-                        </span>
-                        <span className="payment-name">
-                          <strong>
-                            {payslip.tipoNomina === "O" ? "Nómina ordinaria" : "Nómina extraordinaria"}
-                          </strong>
-                          <small>{payslip.employerName ?? "CFDI nómina"}</small>
-                        </span>
-                        <strong className="payment-amount">
-                          <Amt>{money(payslip.totalMinor)}</Amt>
-                        </strong>
-                        <span className="chevron">›</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-            ) : provisionalActive ? (
-              <section className="payslip-month-section">
-                <div className="section-heading">
-                  <div>
-                    <p className="eyebrow">NÓMINAS DEL MES</p>
-                    <h2>Pendiente de XML</h2>
-                    <p className="section-lede">
-                      Usamos el patrón de nóminas ordinarias anteriores hasta que subas la de este mes.
-                    </p>
-                  </div>
-                  <button className="add-button" aria-label="Subir nómina" onClick={props.onUploadNomina}>
-                    +
-                  </button>
-                </div>
-                <button className="empty-action" onClick={props.onUploadNomina}>
-                  <span>+</span>
-                  <div>
-                    <strong>Subir nómina XML</strong>
-                    <small>Confirma liquidez real y retenciones de este mes.</small>
-                  </div>
-                </button>
-              </section>
-            ) : null}
           </>
         )}
 
-        {!props.loading && !props.loadError && hasIncome && (
-          <MsiMonthSection
-            rows={props.monthMsiRows}
-            msiSpentMinor={props.msiSpentMinor}
-            msiCommittedMinor={props.msiCommittedMinor}
-            showTotals
-            onOpen={props.onOpenMsiEvent}
-          />
-        )}
-
-        {!props.loading && !props.loadError && hasIncome && (
-          <section className="payments-section">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">GASTOS FIJOS</p>
-                <h2>Servicios y suscripciones</h2>
-                <p className="section-lede">
-                  Cargos que se repiten cada mes, sin fecha de fin.
-                </p>
-              </div>
-              <button
-                className="add-button"
-                aria-label="Agregar gasto fijo"
-                onClick={props.onAddPayment}
-              >
-                +
-              </button>
-            </div>
-            {props.plan.upcomingPayments.length > 0 ? (
-              <div className="payment-list">
-                {props.plan.upcomingPayments.map((payment) => (
-                  <button
-                    key={payment.id}
-                    className="payment-row"
-                    onClick={() => props.onEditPayment(payment)}
-                  >
-                    <span className="date-block">
-                      <small>{paymentMonth}</small>
-                      <strong>
-                        {String(paymentDueDayForMonth(props.month, payment.dueDay)).padStart(2, "0")}
-                      </strong>
-                    </span>
-                    <span className="payment-name">
-                      <strong>{payment.name}</strong>
-                      <small>Cada mes · sin fecha de fin</small>
-                    </span>
-                    <strong className="payment-amount">
-                      <Amt>{money(payment.amountMinor)}</Amt>
-                    </strong>
-                    <span className="chevron">›</span>
-                  </button>
-                ))}
-                <div className="payment-total">
-                  <span>Total de gastos fijos</span>
-                  <strong>
-                    <Amt>{money(props.billUpcomingMinor)}</Amt>
-                  </strong>
-                </div>
-              </div>
-            ) : (
-              <button className="empty-action" onClick={props.onAddPayment}>
-                <span>+</span>
-                <div>
-                  <strong>Agrega tus gastos fijos</strong>
-                  <small>Renta, iCloud, OpenAI, celular y otros cargos indefinidos.</small>
-                </div>
-              </button>
-            )}
-          </section>
-        )}
-
-        <section className="commitments-preview">
-          <button type="button" className="commitments-entry" onClick={props.onOpenCommitments}>
-            <span><span className="eyebrow">PRÓXIMOS COMPROMISOS</span>
-              <strong>Lo que ya tienes programado</strong>
-              <small>MSI y gastos fijos, mes a mes</small></span>
+        <section className="summary-shortcuts" aria-label="Explora tu mes">
+          <button type="button" className="summary-shortcut" onClick={props.onOpenPlanning}>
+            <span>
+              <strong>Planificación</strong>
+              <small>MSI, gastos fijos y fechas de tarjetas</small>
+            </span>
+            <span className="chevron" aria-hidden="true">→</span>
+          </button>
+          <button type="button" className="summary-shortcut" onClick={props.onOpenStatements}>
+            <span>
+              <strong>Estados de cuenta</strong>
+              <small>PDF registrados y cortes faltantes · todas las fechas</small>
+            </span>
             <span className="chevron" aria-hidden="true">→</span>
           </button>
         </section>
-
-        {!props.loading && !props.loadError && (
-          <CardCycleSection
-            month={props.month}
-            now={props.now}
-            cards={props.cards}
-            loading={props.cardsLoading}
-            loadError={props.cardsLoadError}
-            onRetry={props.onRetryCards}
-            onAdd={props.onAddCard}
-            onEdit={props.onEditCard}
-          />
-        )}
 
         {!props.loading && !props.loadError && hasIncome && (
           <AnalyticsPreview

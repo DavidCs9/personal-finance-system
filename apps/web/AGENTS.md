@@ -6,7 +6,7 @@ Before planning, implementing or reviewing a UI change, read these binding guide
 - [UI direction](../../docs/ui-design-brief.md), the canonical hierarchy, voice, visual and interaction rules.
 - [Financial rules](../../docs/financial-rules.md), the canonical calculation and financial-state contracts.
 
-Design for David alone and his real data. Preserve Resumen / Movimientos / Patrimonio; assistant stays a global sheet. Net worth and monthly spending remain separate. Follow the guides for MSI, liquidity/estimates, Mi parte, rejected/foreign/deferred states, category/tag semantics, capture freshness and monthly total versus daily account history. Do not reproduce those contracts here or infer new product decisions from implementation details. An explicit personality change updates this file and UI direction together.
+Design for David alone and his real data. Follow the navigation, screen responsibilities and hierarchy in the UI guide, including David's October 25, 2026 organization decision. Follow the guides for MSI, liquidity/estimates, Mi parte, rejected/foreign/deferred states, category/tag semantics, capture freshness and monthly total versus daily account history. Do not reproduce those contracts here or infer new product decisions from implementation details. An explicit personality change updates this file and UI direction together.
 
 ## Implement and review
 

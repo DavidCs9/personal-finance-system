@@ -42,7 +42,9 @@ export function AppShell({
       ? "summary-active"
       : tab === "movements"
         ? "movements-active"
-        : "wealth-active";
+        : tab === "planning"
+          ? "planning-active"
+          : "wealth-active";
 
   return (
     <main className="app-shell">

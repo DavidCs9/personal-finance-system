@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
+import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { buildMsiSchedule, computeMonthSummary, markInstallmentSpent, type MonthSpendEvent } from "@finance/domain";
 import { SummaryView, type SummaryViewProps } from "./SummaryView";
@@ -31,12 +32,11 @@ const propsFor = (sourceEvents = events): SummaryViewProps => ({
     month: "2026-08", configured: true, currency: "MXN", incomeMinor: 10_000_00,
     upcomingPayments: [{ id: "rent", name: "Renta", amountMinor: 2_000_00, dueDay: 15 }],
   },
-  loading: false, risk: "steady", analyticsLoading: false, cardsLoading: false,
-  cards: [], now, idToken: "demo", demoMode: true,
-  onRetry() {}, onUploadNomina() {}, onOpenIncome() {}, onOpenPayslip() {},
-  onAddPayment() {}, onEditPayment() {}, onOpenMsiEvent() {}, onOpenCommitments() {},
+  loading: false, risk: "steady", analyticsLoading: false,
+  idToken: "demo", demoMode: true,
+  onRetry() {}, onUploadNomina() {}, onOpenIncome() {},
+  onOpenPlanning() {}, onOpenStatements() {},
   onReviewLargest() {}, onRetryAnalytics() {}, onOpenAnalytics() {}, onOpenAnalyticsMovements() {},
-  onRetryCards() {}, onAddCard() {}, onEditCard() {},
 });
 
 describe("Resumen's recorded spend and commitments", () => {
@@ -59,16 +59,95 @@ describe("Resumen's recorded spend and commitments", () => {
     }
   });
 
-  it("does not present the combined percentage or availability as valid without loaded, valid liquidity", () => {
-    const props = propsFor();
-    for (const overrides of [
-      { loading: true },
-      { loadError: "No disponible" },
-      { plan: { ...props.plan, configured: false, incomeMinor: 0 } },
-    ]) {
-      const html = renderToStaticMarkup(<SummaryView {...props} {...overrides} />);
-      expect(html).not.toContain('class="spend-commitments-amount"');
-      expect(html).not.toContain("Te quedan");
+  it("places compact navigation after the financial core and before analysis", () => {
+    const html = renderToStaticMarkup(<SummaryView {...propsFor()} />);
+    const numbers = html.indexOf('class="number-grid"');
+    const planning = html.indexOf('<strong>Planificación</strong>');
+    const statements = html.indexOf('<strong>Estados de cuenta</strong>');
+    const analytics = html.indexOf('class="analytics-preview"');
+
+    expect(numbers).toBeGreaterThan(-1);
+    expect(planning).toBeGreaterThan(numbers);
+    expect(statements).toBeGreaterThan(planning);
+    expect(analytics).toBeGreaterThan(statements);
+    expect(html).toContain("PDF registrados y cortes faltantes · todas las fechas");
+    for (const removedClass of ["payslip-month-section", "msi-section", "payments-section", "card-cycle-section"]) {
+      expect(html).not.toContain(`class="${removedClass}`);
     }
   });
+
+  it.each(["loaded", "loading", "error", "missing-income"] as const)(
+    "keeps planning and all-date statements reachable when %s",
+    (state) => {
+      const props = propsFor();
+      const onOpenPlanning = vi.fn();
+      const onOpenStatements = vi.fn();
+      const overrides: Partial<SummaryViewProps> = state === "loading"
+        ? { loading: true }
+        : state === "error"
+          ? { loadError: "No disponible" }
+          : state === "missing-income"
+            ? { plan: { ...props.plan, configured: false, incomeMinor: 0 } }
+            : {};
+      const current = { ...props, ...overrides, onOpenPlanning, onOpenStatements };
+      const html = renderToStaticMarkup(<SummaryView {...current} />);
+      const view = SummaryView(current);
+
+      expect(html).toContain('<strong>Planificación</strong>');
+      expect(html).toContain('<strong>Estados de cuenta</strong>');
+      expect(html).toContain("PDF registrados y cortes faltantes · todas las fechas");
+      buttonFor(view, onOpenPlanning).props.onClick?.();
+      buttonFor(view, onOpenStatements).props.onClick?.();
+      expect(onOpenPlanning).toHaveBeenCalledOnce();
+      expect(onOpenStatements).toHaveBeenCalledOnce();
+      if (state !== "loaded") {
+        expect(html).not.toContain('class="spend-commitments-amount"');
+        expect(html).not.toContain("Te quedan");
+        expect(html).not.toContain("Gastarás");
+      }
+    },
+  );
+
+  it("preserves provisional and estimated liquidity notices and its income action", () => {
+    const props = propsFor();
+    const onOpenIncome = vi.fn();
+    const provisional = {
+      ...props,
+      onOpenIncome,
+      plan: { ...props.plan, provisionalActive: true, provisionalMinor: props.plan.incomeMinor },
+    };
+    const html = renderToStaticMarkup(<SummaryView {...provisional} />);
+    expect(html).toContain("Liquidez provisional · pendiente nómina de este mes");
+    // The liquidity chip retains its existing route into Nómina del mes.
+    const chip = findElement(SummaryView(provisional), (element) => element.props.className === "income-button");
+    expect(chip).toBeDefined();
+    chip!.props.onClick?.();
+    expect(onOpenIncome).toHaveBeenCalledOnce();
+
+    const estimate = renderToStaticMarkup(<SummaryView {...props} plan={{
+      ...props.plan, estimateActive: true, estimatedMinor: 5_000_00,
+    }} />);
+    expect(estimate).toContain('Incluye <span class="amt">$5,000</span> estimado de la 2ª quincena');
+  });
 });
+
+type ElementProps = { readonly children?: ReactNode; readonly onClick?: () => void; readonly className?: string };
+
+const findElement = (
+  node: ReactNode,
+  predicate: (element: ReactElement<ElementProps>) => boolean,
+): ReactElement<ElementProps> | undefined => {
+  for (const child of Children.toArray(node)) {
+    if (!isValidElement<ElementProps>(child)) continue;
+    if (predicate(child)) return child;
+    const nested = findElement(child.props.children, predicate);
+    if (nested) return nested;
+  }
+  return undefined;
+};
+
+const buttonFor = (view: ReactNode, onClick: () => void): ReactElement<ElementProps> => {
+  const button = findElement(view, (element) => element.type === "button" && element.props.onClick === onClick);
+  expect(button).toBeDefined();
+  return button!;
+};

@@ -1,6 +1,6 @@
 # Web UI
 
-SPA de Olbia: Resumen (gasto del mes), Movimientos y Patrimonio (neto). En desarrollo puede usar la API real (Cognito) o un **modo mock** con datos locales.
+SPA de Olbia: Resumen (gasto del mes), Movimientos, Planificación (programación y próximas fechas) y Patrimonio (neto). La [dirección de UI](../../docs/ui-design-brief.md) define la organización de las pantallas. En desarrollo puede usar la API real (Cognito) o un **modo mock** con datos locales.
 
 ## Ejecutar
 
@@ -15,7 +15,7 @@ Abre la URL que imprima Vite, normalmente `http://localhost:5173`.
 
 ## Modo mock (solo DEV)
 
-Para revisar Resumen, Movimientos y Patrimonio sin autenticarte ni llamar a la API:
+Para revisar Resumen, Movimientos, Planificación y Patrimonio sin autenticarte ni llamar a la API:
 
 1. En la pantalla de login, pulsa **Usar datos de ejemplo**, o
 2. Abre `http://localhost:5173/?demo=1`

@@ -8,7 +8,7 @@ Before persistence work, read [architecture](docs/architecture.md) and [financia
 
 David's explicit decision of 2026-10-04: DSQL contains no migration evidence tables/copies, including in an archive schema. Bootstrap/verifiers must not recreate or depend on them. Preserve native financial history, the three operational controls, S3 originals and native backups; retained DynamoDB is pre-cutover recovery. The [architecture guide](docs/architecture.md#recovery-boundary-and-schema-changes) owns the current retention boundary.
 
-Before planning, implementing or reviewing any user-facing change, read [UI direction](docs/ui-design-brief.md), [web instructions](apps/web/AGENTS.md) and [financial rules](docs/financial-rules.md) completely, including changes outside apps/web that affect visible behavior. Preserve Resumen / Movimientos / Patrimonio. Do not infer a conflicting style, interaction or tone. An explicit personality decision must update the UI guide and web instructions together.
+Before planning, implementing or reviewing any user-facing change, read [UI direction](docs/ui-design-brief.md), [web instructions](apps/web/AGENTS.md) and [financial rules](docs/financial-rules.md) completely, including changes outside apps/web that affect visible behavior. Follow the navigation, screen responsibilities and hierarchy in the UI guide. Do not infer a conflicting style, interaction or tone. An explicit personality decision must update the UI guide and web instructions together.
 
 When autonomous or long-running work is authorized, read [autonomous run rules](AUTONOMOUS_RUN_RULES.md) completely and follow them throughout the run.
 
