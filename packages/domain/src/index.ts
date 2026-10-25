@@ -262,3 +262,12 @@ export {
   type SpendingAnalytics,
 } from "./spend-aggregates.js";
 export { MAX_STATEMENT_PDF_BYTES, type StatementUploadInput, type StatementUploadTarget } from './statement-upload.js';
+export {
+  buildStatementCatalog,
+  type StatementProvider,
+  type StatementDocumentStatus,
+  type StatementDocument,
+  type StatementCycle,
+  type StatementAccountCoverage,
+  type StatementCatalog,
+} from './statement-catalog.js';

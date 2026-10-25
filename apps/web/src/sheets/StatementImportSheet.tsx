@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ledgerApi } from "../api/client";
 import { Amt } from "../components/Amt";
 import { Sheet } from "../components/Sheet";
@@ -33,11 +33,13 @@ const decisionResolved = (decision: StatementImportDecision | undefined): boolea
 export function StatementImportSheet({
   provider,
   idToken,
+  initialImportId,
   onClose,
   onApplied,
 }: {
   provider: Provider;
   idToken: string;
+  initialImportId?: string;
   onClose(): void;
   onApplied(result: AmexImportResult): void;
 }) {
@@ -48,7 +50,7 @@ export function StatementImportSheet({
     Readonly<Record<string, { months: string; cuota: string }>>
   >({});
   const [result, setResult] = useState<AmexImportResult>();
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(Boolean(initialImportId));
   const [error, setError] = useState<string>();
   const cancelledRef = useRef(false);
   const ambiguous = preview?.rows?.filter((row) => row.status === "ambiguous") ?? [];
@@ -67,9 +69,9 @@ export function StatementImportSheet({
     };
   }, []);
 
-  const waitUntilReady = async (importId: string): Promise<AmexImportPreview> => {
+  const waitUntilReady = useCallback(async (importId: string, isCancelled = () => cancelledRef.current): Promise<AmexImportPreview> => {
     for (let attempt = 0; attempt < 45; attempt += 1) {
-      if (cancelledRef.current) throw new Error("Importación cancelada.");
+      if (isCancelled()) throw new Error("Importación cancelada.");
       const status =
         provider === "amex"
           ? await ledgerApi.getAmexStatementImport(importId, idToken)
@@ -78,7 +80,19 @@ export function StatementImportSheet({
       await sleep(2_000);
     }
     throw new Error("Textract tardó demasiado. Intenta de nuevo en un momento.");
-  };
+  }, [provider, idToken]);
+
+  useEffect(() => {
+    if (!initialImportId) return;
+    let active = true;
+    setBusy(true);
+    void waitUntilReady(initialImportId, () => !active).then(ready => {
+      if (active) setPreview(ready);
+    }).catch(reason => {
+      if (active) setError(reason instanceof Error ? reason.message : "No pudimos recuperar la conciliación.");
+    }).finally(() => { if (active) setBusy(false); });
+    return () => { active = false; };
+  }, [initialImportId, waitUntilReady]);
 
   const inspect = async (event: FormEvent) => {
     event.preventDefault();
@@ -177,7 +191,7 @@ export function StatementImportSheet({
       onClose={onClose}
       className={readyPreview ? "sheet-split" : undefined}
     >
-      {!readyPreview ? (
+      {initialImportId && busy && !readyPreview ? <p role="status">Recuperando la conciliación del PDF registrado…</p> : !readyPreview ? (
         <form className="sheet-form statement-upload-form" onSubmit={(event) => void inspect(event)}>
           <p>
             Sube el PDF del estado de cuenta. Conciliamos compras del periodo y confirmamos cuotas

@@ -1,4 +1,4 @@
-import { MAX_STATEMENT_PDF_BYTES, type StatementUploadTarget } from '@finance/domain';
+import { MAX_STATEMENT_PDF_BYTES, type StatementUploadTarget, type StatementCatalog, type StatementProvider } from '@finance/domain';
 import type {
   AmexImportPreview,
   AmexImportResult,
@@ -393,6 +393,12 @@ export const ledgerApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ documents }),
     });
+  },
+  async statements(idToken: string): Promise<StatementCatalog> {
+    return request<StatementCatalog>("/statements", idToken, { cache: "no-store" });
+  },
+  async statementSource(provider: StatementProvider, importId: string, idToken: string): Promise<{ url: string }> {
+    return request(`/statements/${encodeURIComponent(provider)}/${encodeURIComponent(importId)}/source`, idToken, { cache: "no-store" });
   },
   async listCards(idToken: string): Promise<{ cards: readonly CardCycle[] }> {
     return request<{ cards: readonly CardCycle[] }>("/cards", idToken);

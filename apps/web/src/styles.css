@@ -1298,3 +1298,37 @@ html.private-mode .hero-amount .amt {
 .commitments-pagination button { padding: 12px 8px; min-height: 44px; font-size: 12px; }
 .commitments-entry:focus-visible, .commitment-month > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
 @media (min-width: 900px) { .commitments-preview { max-width: 760px; margin-right: auto; margin-left: auto; } }
+
+/* Statement inventory follows the same contained movement/detail flow. */
+.statements-entry { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 18px 0; margin: 0 0 16px; border: 0; border-block: 1px solid var(--line); background: transparent; text-align: left; color: inherit; cursor: pointer; }
+.statements-entry strong, .statements-entry small { display: block; }
+.statements-entry small { margin-top: 5px; color: var(--muted); }
+.statement-overview { display: grid; gap: 7px; margin-block: 20px; }
+.statement-overview > strong { font-size: 1.35rem; }
+.statement-overview small, .statement-coverage-note, .statement-file small, .statement-cycle small { color: var(--muted); font-size: .8rem; line-height: 1.5; }
+.statement-upload-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-block: 20px; }
+.statement-upload-actions > button { flex: 1; }
+.statement-account, .statement-unidentified { margin-top: 28px; }
+.statement-account > header h3 { margin-bottom: 6px; }
+.statement-account > header p { margin-top: 0; overflow-wrap: anywhere; }
+.statement-cycle { border-top: 1px solid var(--line); }
+.statement-cycle:last-child { border-bottom: 1px solid var(--line); }
+.statement-cycle > summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; list-style: none; padding-block: 16px; cursor: pointer; }
+.statement-cycle > summary::-webkit-details-marker { display: none; }
+.statement-cycle > summary > span:first-child { min-width: 0; }
+.statement-cycle small, .statement-file small { display: block; margin-top: 5px; }
+.statement-cycle-status { display: flex; align-items: center; gap: 9px; font-size: .8rem; flex-shrink: 0; }
+.statement-cycle.missing .statement-cycle-status { font-weight: 700; }
+.statement-cycle-detail { padding: 0 0 16px; }
+.statement-cycle-detail p { font-size: .88rem; line-height: 1.5; }
+.statement-file { display: grid; gap: 10px; padding-block: 12px; }
+.statement-file + .statement-file { border-top: 1px solid var(--line); }
+.statement-file > div:first-child { min-width: 0; }
+.statement-file-actions { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.statement-file-actions button { min-height: 44px; text-align: left; }
+.statements-sheet .statement-coverage-note { margin-block: 12px 18px; }
+.statement-upload-actions > button { min-height: 44px; }
+.statement-unidentified { border-block: 1px solid var(--line); }
+.statement-unidentified > summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-block: 16px; cursor: pointer; }
+.statement-unidentified > summary small { display: block; margin-top: 6px; font-size: .8rem; color: var(--muted); }
+.statement-unidentified > p { font-size: .88rem; line-height: 1.5; }
