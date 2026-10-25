@@ -4,6 +4,7 @@ process.env.METADATA_TABLE_NAME ??= 'test-metadata-table';
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-raw-bucket';
 
 const { handler } = await import('../src/http/ledger-api.js');
+const statements = await import('../src/imports/statement-catalog.js');
 const uploads = await import('../src/imports/statement-upload.js');
 afterEach(() => vi.restoreAllMocks());
 
@@ -52,6 +53,18 @@ const httpEvent = (method: string, path: string, query: Record<string, string> =
 });
 
 describe('ledger API Powertools router', () => {
+  it('scopes the statement catalog and original PDF routes to the authenticated principal', async () => {
+    const catalog = { asOfDay: '2026-10-24', accounts: [], unidentifiedDocuments: [] };
+    const read = vi.spyOn(statements, 'getStatementCatalog').mockResolvedValue(catalog);
+    const result = await handler(httpEvent('GET', '/statements', { owner: 'forged' }), context);
+    expect(result.statusCode).toBe(200);
+    expect(result.headers).toMatchObject({ 'cache-control': 'no-store' });
+    expect(JSON.parse(String(result.body))).toEqual(catalog);
+    expect(read).toHaveBeenCalledWith('owner-1');
+    const source = vi.spyOn(statements, 'getStatementSource').mockResolvedValue(undefined);
+    expect((await handler(httpEvent('GET', `/statements/amex/${'a'.repeat(64)}/source`), context)).statusCode).toBe(404);
+    expect(source).toHaveBeenCalledWith('amex', 'a'.repeat(64), 'owner-1');
+  });
   for (const provider of ['amex', 'santander-statement']) {
     it(`${provider} signs an upload for the authenticated principal`, async () => {
       const create = vi.spyOn(uploads, 'createStatementUpload').mockResolvedValue({ url: 'https://s3.test/upload', headers: {} });

@@ -37,6 +37,7 @@ export function MovementsView({
   onImportAmex,
   onImportSantanderStatement,
   onRegisterCharge,
+  onOpenStatements,
   evidenceFilter,
   onClearEvidenceFilter,
 }: {
@@ -57,6 +58,7 @@ export function MovementsView({
   onImportAmex(): void;
   onImportSantanderStatement(): void;
   onRegisterCharge(): void;
+  onOpenStatements(): void;
   evidenceFilter?: { readonly label: string; readonly eventIds: readonly string[] };
   onClearEvidenceFilter(): void;
 }) {
@@ -152,6 +154,10 @@ export function MovementsView({
           </div>
         ) : null}
       </header>
+      <button type="button" className="statements-entry" onClick={onOpenStatements}>
+        <span><strong>Estados de cuenta</strong><small>Revisa tus PDF y los cortes que faltan</small></span>
+        <span aria-hidden="true">→</span>
+      </button>
       {captureOpen && (
         <CaptureActionsSheet
           onClose={() => setCaptureOpen(false)}

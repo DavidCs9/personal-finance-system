@@ -10,3 +10,4 @@ export const cardsQueryKey = ["cards"] as const;
 export const wealthQueryKey = ["wealth"] as const;
 export const commitmentsQueryRoot = ["commitments"] as const;
 export const commitmentsQueryKey = (startMonth?: string) => ["commitments", startMonth ?? "current"] as const;
+export const statementsQueryKey = ["statements"] as const;

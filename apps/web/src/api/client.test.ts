@@ -313,3 +313,17 @@ describe("streamAgentChat REST SSE", () => {
     });
   });
 });
+
+describe('registered statement API', () => {
+  it('uses authenticated network-only reads for coverage and owner-bound original access', async () => {
+    const idToken = token(Date.now() + 60 * 60 * 1000, 'statement-owner');
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ asOfDay: '2026-10-24', accounts: [], unidentifiedDocuments: [] }))
+      .mockResolvedValueOnce(jsonResponse({ url: 'https://s3.test/original.pdf' }));
+    await ledgerApi.statements(idToken);
+    await expect(ledgerApi.statementSource('amex', 'a'.repeat(64), idToken)).resolves.toEqual({ url: 'https://s3.test/original.pdf' });
+    const calls = vi.mocked(fetch).mock.calls;
+    expect(calls[0]?.[0]).toBe('https://api.example.test/statements');
+    expect(calls[1]?.[0]).toBe(`https://api.example.test/statements/amex/${'a'.repeat(64)}/source`);
+    for (const [, options] of calls) expect(options).toMatchObject({ cache: 'no-store', headers: { Authorization: `Bearer ${idToken}` } });
+  });
+});

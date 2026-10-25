@@ -5,7 +5,7 @@ import { mockAnalyticsFor, mockExceptionRawEmail, mockExceptions, mockFeedForMon
 import { AppShell } from "../layout/AppShell";
 import { eventDate, monthKey } from "../lib/format";
 import { usePrivateMode } from "../lib/private-mode";
-import { analyticsQueryKey, analyticsQueryRoot, eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, monthlySummaryQueryKey, monthlySummaryQueryRoot, cardsQueryKey, wealthQueryKey, commitmentsQueryRoot } from "../lib/query-keys";
+import { analyticsQueryKey, analyticsQueryRoot, eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, monthlySummaryQueryKey, monthlySummaryQueryRoot, cardsQueryKey, wealthQueryKey, commitmentsQueryRoot, statementsQueryKey } from "../lib/query-keys";
 import type { Tab } from "../lib/tabs";
 import {
   demoPlans,
@@ -28,6 +28,7 @@ import { ManualEntrySheet } from "../sheets/ManualEntrySheet";
 import { PaymentSheet } from "../sheets/PaymentSheet";
 import { CardSheet } from "../sheets/CardSheet";
 import { SantanderImportSheet } from "../sheets/SantanderImportSheet";
+import { StatementsSheet } from "../sheets/StatementsSheet";
 import { StatementImportSheet } from "../sheets/StatementImportSheet";
 import type { EventFeed, PurchaseEvent } from "../types";
 import { MovementsView } from "../views/MovementsView";
@@ -69,6 +70,9 @@ export function Dashboard({
     readonly label: string;
     readonly eventIds: readonly string[];
   }>();
+  const [statementsOpen, setStatementsOpen] = useState(false);
+  const [resumeStatementId, setResumeStatementId] = useState<string>();
+  const [returnToStatements, setReturnToStatements] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [amexImportOpen, setAmexImportOpen] = useState(false);
   const [santanderStatementOpen, setSantanderStatementOpen] = useState(false);
@@ -298,6 +302,15 @@ export function Dashboard({
     void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
     void queryClient.invalidateQueries({ queryKey: cardsQueryKey });
     void queryClient.invalidateQueries({ queryKey: wealthQueryKey });
+    void queryClient.invalidateQueries({ queryKey: statementsQueryKey });
+  };
+  const closeStatementImport = () => {
+    setAmexImportOpen(false);
+    setSantanderStatementOpen(false);
+    setResumeStatementId(undefined);
+    setStatementsOpen(returnToStatements);
+    setReturnToStatements(false);
+    void queryClient.invalidateQueries({ queryKey: statementsQueryKey });
   };
 
   const retryExceptionMutation = useMutation({
@@ -564,6 +577,7 @@ export function Dashboard({
             onImport={() => setImportOpen(true)}
             onImportAmex={() => setAmexImportOpen(true)}
             onImportSantanderStatement={() => setSantanderStatementOpen(true)}
+            onOpenStatements={() => setStatementsOpen(true)}
             onRegisterCharge={() => setManualOpen(true)}
             evidenceFilter={movementEvidenceFilter}
             onClearEvidenceFilter={() => setMovementEvidenceFilter(undefined)}
@@ -709,13 +723,24 @@ export function Dashboard({
           }}
         />
       )}
+      {statementsOpen && (
+        <StatementsSheet idToken={idToken} demoMode={demoMode} now={now} onClose={() => setStatementsOpen(false)}
+          onImport={(provider, importId) => {
+            setStatementsOpen(false);
+            setReturnToStatements(true);
+            setResumeStatementId(importId);
+            if (provider === "amex") setAmexImportOpen(true);
+            else setSantanderStatementOpen(true);
+          }} />
+      )}
       {amexImportOpen && (
         <StatementImportSheet
           provider="amex"
           idToken={idToken}
-          onClose={() => setAmexImportOpen(false)}
+          initialImportId={resumeStatementId}
+          onClose={closeStatementImport}
           onApplied={() => {
-            setAmexImportOpen(false);
+            closeStatementImport();
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
@@ -727,9 +752,10 @@ export function Dashboard({
         <StatementImportSheet
           provider="santander"
           idToken={idToken}
-          onClose={() => setSantanderStatementOpen(false)}
+          initialImportId={resumeStatementId}
+          onClose={closeStatementImport}
           onApplied={() => {
-            setSantanderStatementOpen(false);
+            closeStatementImport();
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });

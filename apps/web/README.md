@@ -22,6 +22,8 @@ Para revisar Resumen, Movimientos y Patrimonio sin autenticarte ni llamar a la A
 
 El tablero queda fijado en julio 2026 con movimientos, MSI, gastos fijos, tarjetas, patrimonio de ejemplo (Cajita, Fondo, Bitso, IBKR, pasivos) y un correo por revisar. El topbar muestra el badge **Mock**; **Salir del mock** vuelve al login real.
 
+Estados de cuenta incluye cobertura, huecos, versiones y conciliaciones pendientes de ejemplo en [`src/api/statements-demo.ts`](src/api/statements-demo.ts). Los originales de ejemplo no se descargan.
+
 Los fixtures viven en [`src/api/mock-data.ts`](src/api/mock-data.ts), [`src/monthly-plan.ts`](src/monthly-plan.ts), [`src/card-cycle-demo.ts`](src/card-cycle-demo.ts) y [`src/wealth-demo.ts`](src/wealth-demo.ts). El mock no está disponible en builds de producción.
 
 Los imports CSV / estado de cuenta siguen yendo a la API si los abres en mock; no están simulados de punta a punta.
