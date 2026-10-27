@@ -11,6 +11,7 @@ Design for David alone and his real data. Follow the navigation, screen responsi
 ## Implement and review
 
 - Verify a narrow mobile viewport first, safe areas, readable primary state without horizontal scroll, comfortable touch targets and reachable actions. Desktop adapts the same contained experience.
+- Review list disclosures, keyboard operation and return from detail against the UI guide.
 - Preserve numeric hierarchy, aligned/tabular money, ivory/charcoal palette and meaningful red. Copy stays direct, precise and useful without shame or celebration.
 - Verify honest loading, missing income, uncertainty, empty, failure, stale manual balances and negative projection states against persisted facts. Evidence remains reachable.
 - Use the [API client](src/api/client.ts) boundary instead of direct component fetch calls; refresh affected queries after a mutation. Preserve resume/session renewal and network-only financial reads.

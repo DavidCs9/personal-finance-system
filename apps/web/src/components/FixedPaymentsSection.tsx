@@ -20,26 +20,29 @@ export function FixedPaymentsSection(props: FixedPaymentsSectionProps) {
     .format(monthDate(props.month)).replace(".", "").toUpperCase();
 
   return (
-    <section className="payments-section fixed-payments-section">
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">GASTOS FIJOS</p>
-          <h2>Servicios y suscripciones</h2>
-          <p className="section-lede">Cargos programados cada mes, sin fecha de fin.</p>
-        </div>
-        {!props.loading && !props.loadError && (
-          <button className="add-button" aria-label="Agregar gasto fijo" onClick={props.onAdd}>+</button>
-        )}
-      </div>
-      {props.loading ? (
-        <p role="status">Consultando tus gastos fijos…</p>
-      ) : props.loadError ? (
-        <div role="alert">
-          <p>{props.loadError}</p>
-          <button type="button" className="text-button" onClick={props.onRetry}>Reintentar gastos fijos</button>
-        </div>
-      ) : (
-        <>
+    <section className="planning-section fixed-payments-section">
+      <details key={props.month} className="planning-disclosure">
+        <summary className="planning-section-summary">
+          <span className="planning-section-copy">
+            <span className="eyebrow">SERVICIOS Y SUSCRIPCIONES</span>
+            <strong role="heading" aria-level={2}>Gastos fijos</strong>
+            {props.loading ? <span role="status">Consultando tus gastos fijos…</span>
+              : props.loadError ? <small>Programación no disponible</small> : <>
+                <small><Amt>{props.payments.length}</Amt> {props.payments.length === 1 ? "servicio programado" : "servicios programados"}</small>
+                {props.inheritedFromMonth ? <small>Heredados de {monthKeyLabel(props.inheritedFromMonth)}</small> : null}
+                <small>Programación; no confirma cobro.</small>
+              </>}
+          </span>
+          <span className="planning-section-value">
+            {!props.loading && !props.loadError && props.totalMinor !== undefined
+              ? <strong><Amt>{money(props.totalMinor)}</Amt></strong> : null}
+            <span className="planning-chevron" aria-hidden="true">⌄</span>
+          </span>
+        </summary>
+        {!props.loading && !props.loadError ? <div className="planning-section-content">
+          {props.payments.length > 0 ? <div className="planning-section-actions">
+            <button type="button" className="text-button" onClick={props.onAdd}>Agregar gasto fijo</button>
+          </div> : null}
           <p className="section-lede">
             {props.inheritedFromMonth
               ? `Según tus gastos fijos de ${monthKeyLabel(props.inheritedFromMonth)}; se repiten mientras no los cambies.`
@@ -49,7 +52,7 @@ export function FixedPaymentsSection(props: FixedPaymentsSectionProps) {
           {props.payments.length > 0 ? (
             <div className="payment-list">
               {props.payments.map((payment) => (
-                <button key={payment.id} className="payment-row" onClick={() => props.onEdit(payment)}>
+                <button key={payment.id} type="button" className="payment-row" onClick={() => props.onEdit(payment)}>
                   <span className="date-block">
                     <small>{paymentMonth}</small>
                     <strong>{String(paymentDueDayForMonth(props.month, payment.dueDay)).padStart(2, "0")}</strong>
@@ -70,7 +73,7 @@ export function FixedPaymentsSection(props: FixedPaymentsSectionProps) {
               )}
             </div>
           ) : (
-            <button className="empty-action" onClick={props.onAdd}>
+            <button type="button" className="empty-action" onClick={props.onAdd}>
               <span>+</span>
               <div>
                 <strong>Agrega tus gastos fijos</strong>
@@ -78,8 +81,12 @@ export function FixedPaymentsSection(props: FixedPaymentsSectionProps) {
               </div>
             </button>
           )}
-        </>
-      )}
+        </div> : null}
+      </details>
+      {props.loadError && !props.loading ? <div role="alert" className="planning-section-error">
+        <p>{props.loadError}</p>
+        <button type="button" className="text-button" onClick={props.onRetry}>Reintentar gastos fijos</button>
+      </div> : null}
     </section>
   );
 }

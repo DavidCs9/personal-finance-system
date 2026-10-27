@@ -31,6 +31,60 @@ const propsFor = (overrides: Partial<PlanningViewProps> = {}): PlanningViewProps
 });
 
 describe("Planificación's independent data sources", () => {
+  it("starts with three closed native sections whose summaries expose context without nested actions", () => {
+    const html = renderToStaticMarkup(<PlanningView {...propsFor()} />);
+    expect(html.match(/<details class="planning-disclosure">/g)).toHaveLength(3);
+    expect(html).not.toMatch(/<details[^>]*\bopen(?:=|\s|>)/);
+    const summaries = html.match(/<summary class="planning-section-summary">[\s\S]*?<\/summary>/g) ?? [];
+    expect(summaries).toHaveLength(3);
+    expect(summaries[0]).toContain("Planes con fin");
+    expect(summaries[0]).toContain("Registradas");
+    expect(summaries[0]).toContain("Comprometidas");
+    expect(summaries[1]).toContain("Heredados de sep 2026");
+    expect(summaries[1]).toContain("Programación; no confirma cobro.");
+    expect(summaries[2]).toContain("Fechas; no importes ni saldos.");
+    for (const header of summaries) expect(header).not.toContain("<button");
+  });
+
+  it("exposes loading in closed summaries without stale counts, totals or rows", () => {
+    const html = renderToStaticMarkup(<PlanningView {...propsFor({
+      msiLoading: true, fixedPaymentsLoading: true, cardsLoading: true,
+    })} />);
+    const summaries = html.match(/<summary class="planning-section-summary">[\s\S]*?<\/summary>/g) ?? [];
+    expect(summaries[0]).toContain('role="status">Consultando tus cuotas MSI');
+    expect(summaries[1]).toContain('role="status">Consultando tus gastos fijos');
+    expect(summaries[2]).toContain('role="status">Cargando tus tarjetas');
+    expect(html).not.toContain("Vuelo");
+    expect(html).not.toContain("OpenAI");
+    expect(html).not.toContain("Registradas");
+    expect(html).not.toContain("servicio programado");
+    expect(html).not.toContain('class="amt"');
+    expect(html).toContain("PRÓXIMOS COMPROMISOS");
+  });
+
+  it("keeps errors and retry buttons outside each closed section", () => {
+    const html = renderToStaticMarkup(<PlanningView {...propsFor({
+      msiLoadError: "Fallo MSI", fixedPaymentsLoadError: "Fallo fijos", cardsLoadError: "Fallo tarjetas",
+    })} />);
+    expect(html.match(/<\/details><div role="alert" class="planning-section-error">/g)).toHaveLength(3);
+    expect(html).toContain("Reintentar MSI");
+    expect(html).toContain("Reintentar gastos fijos");
+    expect(html).toContain("Reintentar tarjetas");
+    expect(html).not.toContain('class="amt"');
+    expect(html).not.toContain("No hay cuotas MSI");
+    expect(html).not.toContain("No hay gastos fijos programados");
+  });
+
+  it("presents editable card rows before a separately collapsed calendar", () => {
+    const html = renderToStaticMarkup(<PlanningView {...propsFor()} />);
+    expect(html.indexOf('class="payment-list card-cycle-list"')).toBeLessThan(html.indexOf('class="card-calendar-disclosure"'));
+    expect(html).toContain('<details class="card-calendar-disclosure"><summary>Ver calendario de oct 2026');
+    expect(html).toContain("Agregar tarjeta");
+    expect(html).toContain("Agregar gasto fijo");
+    expect(html.match(/Planes con fin/g)).toHaveLength(1);
+    expect(html.match(/Fechas de corte/g)).toHaveLength(1);
+  });
+
   it("shows MSI, programmed inherited payments and dates without payroll or valid liquidity", () => {
     expect(noIncomePlan.configured).toBe(false);
     expect(summary.incomeConfigured).toBe(false);
