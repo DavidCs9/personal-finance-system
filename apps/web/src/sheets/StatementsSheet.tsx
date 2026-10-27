@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { dayKeyInZone } from '@finance/domain';
-import type { StatementCatalog, StatementDocument, StatementProvider } from '@finance/domain';
+import type { StatementAccountCoverage, StatementCatalog, StatementCycle, StatementDocument, StatementProvider } from '@finance/domain';
 import { ledgerApi } from '../api/client';
 import { mockStatementCatalog } from '../api/statements-demo';
 import { Sheet } from '../components/Sheet';
@@ -23,6 +23,15 @@ export function StatementCatalogContent({ data, onImport, onSource, openingSourc
   const cycles = data.accounts.flatMap(account => account.cycles);
   const missingCount = cycles.filter(cycle => cycle.status === 'missing').length;
   const files = cycles.reduce((sum, cycle) => sum + cycle.documents.length, data.unidentifiedDocuments.length);
+  const byMonth = new Map<string, { account: StatementAccountCoverage; cycle: StatementCycle }[]>();
+  for (const account of data.accounts) {
+    for (const cycle of account.cycles) {
+      const rows = byMonth.get(cycle.month) ?? [];
+      rows.push({ account, cycle });
+      byMonth.set(cycle.month, rows);
+    }
+  }
+  const months = [...byMonth.entries()].sort(([a], [b]) => b.localeCompare(a));
   const fileRow = (document: StatementDocument, index: number) => <div className="statement-file" key={`${document.provider}-${document.importId}`}>
     <div>
       <strong>{statusLabel[document.status]}{index > 0 ? ' · archivo adicional' : ''}</strong>
@@ -59,24 +68,36 @@ export function StatementCatalogContent({ data, onImport, onSource, openingSourc
         {fileRow(document, 0)}
       </div>)}
     </details> : null}
-    {data.accounts.map(account => <section className="statement-account" key={`${account.provider}:${account.accountLastFour}`}>
-      <header><h3>{providerLabel(account.provider)} · {account.accountLastFour}</h3>
-        {account.product ? <p>{account.product}</p> : null}
-      </header>
-      <p className="statement-coverage-note">Desde el corte del {dayLabel(account.firstCut)}. Cortes faltantes estimados con el día {account.expectedCutDay}, según el último PDF; pueden cambiar. No se evalúan fechas anteriores ni cortes de hoy o futuros.</p>
-      {account.cycles.map(cycle => <details className={`statement-cycle ${cycle.status}`} key={cycle.month} open={cycle.status === 'missing'}>
-        <summary>
-          <span><strong>{monthKeyLabel(cycle.month)}</strong>
-            <small>{cycle.documents.length ? `${cycle.documents.length} ${cycle.documents.length === 1 ? 'archivo' : 'archivos'}${cycle.documents.length > 1 ? ' · cobertura de un solo mes' : ''}` : `Corte esperado ${dayLabel(cycle.expectedCut)}`}</small>
-          </span>
-          <span className="statement-cycle-status">{cycle.status === 'missing' ? 'Falta' : cycle.status === 'applied' ? 'Aplicado' : 'Por conciliar'}<span aria-hidden="true">⌄</span></span>
-        </summary>
-        <div className="statement-cycle-detail">{cycle.documents.length ? cycle.documents.map(fileRow) : <>
-          <p>No hay un PDF identificado para este corte.</p>
-          <button type="button" className="text-button" onClick={() => onImport(account.provider)}>Subir {providerLabel(account.provider)}</button>
-        </>}</div>
-      </details>)}
-    </section>)}
+    {months.map(([month, rows]) => {
+      const missing = rows.filter(({ cycle }) => cycle.status === 'missing').length;
+      const registered = rows.length - missing;
+      return <section className="statement-month" key={month}>
+        <header><h3>{monthKeyLabel(month)}</h3>
+          <p>{registered} {registered === 1 ? 'corte con PDF' : 'cortes con PDF'} · {missing ? `${missing} ${missing === 1 ? 'faltante' : 'faltantes'}` : 'Sin cortes faltantes estimados'}</p>
+        </header>
+        {rows.map(({ account, cycle }) => <details className={`statement-cycle ${cycle.status}`} key={`${account.provider}:${account.accountLastFour}`} open={cycle.status === 'missing'}>
+          <summary>
+            <span><strong>{providerLabel(account.provider)} · {account.accountLastFour}</strong>
+              {account.product ? <small>{account.product}</small> : null}
+              <small>{cycle.documents.length ? `${cycle.documents.length} ${cycle.documents.length === 1 ? 'archivo' : 'archivos'}${cycle.documents.length > 1 ? ' · cobertura de un solo mes' : ''}` : `Corte esperado ${dayLabel(cycle.expectedCut)}`}</small>
+            </span>
+            <span className="statement-cycle-status">{cycle.status === 'missing' ? 'Falta' : cycle.status === 'applied' ? 'Aplicado' : 'Por conciliar'}<span aria-hidden="true">⌄</span></span>
+          </summary>
+          <div className="statement-cycle-detail">{cycle.documents.length ? cycle.documents.map(fileRow) : <>
+            <p>No hay un PDF identificado para este corte.</p>
+            <button type="button" className="text-button" onClick={() => onImport(account.provider)}>Subir {providerLabel(account.provider)}</button>
+          </>}</div>
+        </details>)}
+      </section>;
+    })}
+    {data.accounts.length ? <details className="statement-coverage">
+      <summary>Cómo se estiman los cortes faltantes</summary>
+      <p className="statement-coverage-note">Sólo se evalúan cortes anteriores a hoy, desde el primer PDF de cada tarjeta. Los archivos por identificar podrían cubrir huecos.</p>
+      {data.accounts.map(account => <div key={`${account.provider}:${account.accountLastFour}`}>
+        <strong>{providerLabel(account.provider)} · {account.accountLastFour}</strong>
+        <p className="statement-coverage-note">Desde el corte del {dayLabel(account.firstCut)}. Cortes faltantes estimados con el día {account.expectedCutDay}, según el último PDF; pueden cambiar. No se evalúan fechas anteriores ni cortes de hoy o futuros.</p>
+      </div>)}
+    </details> : null}
     <p className="statement-coverage-note">Sólo estados de cuenta PDF registrados en Olbia. Un CSV o un aviso de compra no cubre un corte. Subir distintas versiones del mismo mes no amplía la cobertura.</p>
   </>;
 }

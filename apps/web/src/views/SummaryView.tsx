@@ -24,7 +24,6 @@ export interface SummaryViewProps {
   readonly onUploadNomina: () => void;
   readonly onOpenIncome: () => void;
   readonly onOpenPlanning: () => void;
-  readonly onOpenStatements: () => void;
   readonly onReviewLargest: () => void;
   readonly analytics?: SpendingAnalytics;
   readonly analyticsLoading: boolean;
@@ -215,13 +214,6 @@ export function SummaryView(props: SummaryViewProps) {
             <span>
               <strong>Planificación</strong>
               <small>MSI, gastos fijos y fechas de tarjetas</small>
-            </span>
-            <span className="chevron" aria-hidden="true">→</span>
-          </button>
-          <button type="button" className="summary-shortcut" onClick={props.onOpenStatements}>
-            <span>
-              <strong>Estados de cuenta</strong>
-              <small>PDF registrados y cortes faltantes · todas las fechas</small>
             </span>
             <span className="chevron" aria-hidden="true">→</span>
           </button>
