@@ -4,7 +4,7 @@
 
 Debe permitirle entender ingresos, gasto, liquidez, compromisos, activos, inversiones, deudas y patrimonio; revisar y corregir movimientos con su evidencia; detectar qué necesita atención y decidir con cifras confiables y menos captura manual.
 
-Resumen, Movimientos y Patrimonio son vistas complementarias. Asistente, reportes y automatizaciones sirven al mismo propósito.
+Resumen, Movimientos, Planificación y Patrimonio son vistas complementarias; su organización se define en la [dirección de UI](ui-design-brief.md#navegación-y-jerarquía). Asistente, reportes y automatizaciones sirven al mismo propósito.
 
 ## Restricciones de producto
 

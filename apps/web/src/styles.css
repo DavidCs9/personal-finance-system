@@ -843,7 +843,7 @@ html.private-mode .hero-amount .amt {
   width: calc(100% - max(20px, env(safe-area-inset-left) + env(safe-area-inset-right)));
   max-width: 420px;
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 2px;
   padding: 4px;
   border: 1px solid #3f3934;
@@ -1300,9 +1300,6 @@ html.private-mode .hero-amount .amt {
 @media (min-width: 900px) { .commitments-preview { max-width: 760px; margin-right: auto; margin-left: auto; } }
 
 /* Statement inventory follows the same contained movement/detail flow. */
-.statements-entry { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 18px 0; margin: 0 0 16px; border: 0; border-block: 1px solid var(--line); background: transparent; text-align: left; color: inherit; cursor: pointer; }
-.statements-entry strong, .statements-entry small { display: block; }
-.statements-entry small { margin-top: 5px; color: var(--muted); }
 .statement-overview { display: grid; gap: 7px; margin-block: 20px; }
 .statement-overview > strong { font-size: 1.35rem; }
 .statement-overview small, .statement-coverage-note, .statement-file small, .statement-cycle small { color: var(--muted); font-size: .8rem; line-height: 1.5; }
@@ -1332,3 +1329,31 @@ html.private-mode .hero-amount .amt {
 .statement-unidentified > summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-block: 16px; cursor: pointer; }
 .statement-unidentified > summary small { display: block; margin-top: 6px; font-size: .8rem; color: var(--muted); }
 .statement-unidentified > p { font-size: .88rem; line-height: 1.5; }
+
+
+/* Summary links stay compact; full operational lists live in Planning. */
+.summary-shortcuts { display: grid; gap: 10px; margin: 24px 0 28px; }
+.summary-shortcut { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 70px; width: 100%; border: 1px solid var(--line); border-radius: 13px; background: var(--paper); color: var(--ink); padding: 15px 16px; text-align: left; }
+.summary-shortcut > span:first-child { display: grid; gap: 5px; min-width: 0; }
+.summary-shortcut strong { font-size: 14px; }
+.summary-shortcut small { color: var(--ink-soft); font-size: 11px; line-height: 1.45; }
+.app-content.planning-active { display: flex; flex-direction: column; overflow: hidden; }
+.planning-active .planning-view { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; width: 100%; }
+.planning-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding-bottom: 20px; }
+.planning-heading { padding: 28px 0 20px; }
+.planning-heading h1 { margin: 0; font: 600 32px/1.1 "Fraunces", serif; letter-spacing: -.035em; }
+.planning-heading p:last-child { color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
+.planning-status { padding: 16px; margin-block: 12px; border: 1px solid var(--line); border-radius: 12px; color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
+.planning-status .secondary-button, .planning-status .text-button { min-height: 44px; }
+.planning-event-error { padding: 12px 16px; border: 1px solid var(--line); border-radius: 12px; font-size: 13px; }
+.planning-event-error .text-button { min-height: 44px; }
+.planning-view .payments-section, .planning-view .card-cycle-section { margin-block: 20px 28px; }
+.planning-view .commitments-preview { margin-bottom: 28px; }
+.planning-view .card-cycle-section { padding-top: 8px; }
+.planning-view .section-lede { max-width: 60ch; }
+.mobile-tabs button { min-width: 0; }
+.mobile-tabs button span { white-space: nowrap; }
+@media (min-width: 700px) {
+  .summary-shortcuts { max-width: 760px; margin-inline: auto; }
+  .planning-view { max-width: 820px; margin: 0 auto; }
+}

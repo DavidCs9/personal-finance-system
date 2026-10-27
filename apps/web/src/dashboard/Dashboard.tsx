@@ -33,6 +33,7 @@ import { StatementImportSheet } from "../sheets/StatementImportSheet";
 import type { EventFeed, PurchaseEvent } from "../types";
 import { MovementsView } from "../views/MovementsView";
 import { SummaryView } from "../views/SummaryView";
+import { PlanningView } from "../views/PlanningView";
 import { WealthView } from "../views/WealthView";
 import { AnalyticsView } from "../views/AnalyticsView";
 import { demoWealthOverview } from "../wealth-demo";
@@ -374,9 +375,13 @@ export function Dashboard({
   const msiCommittedMinor = summary?.msiCommittedMinor ?? 0;
   const monthMsiRows = summary?.monthMsiRows ?? [];
 
-  const openMsiEvent = (eventId: string) => {
-    const found = summaryEvents.find((event) => event.id === eventId);
-    if (found) setActiveEvent(found);
+  const openMsiEvent = async (eventId: string, signal: AbortSignal) => {
+    if (signal.aborted) return;
+    const found = summaryEvents.find((event) => event.id === eventId)
+      ?? (demoMode ? mockEvents.find((event) => event.id === eventId) : await ledgerApi.event(eventId, idToken));
+    if (signal.aborted) return;
+    if (!found) throw new Error("No pudimos encontrar esta compra.");
+    setActiveEvent(found);
   };
   const spendPercent = plan.incomeMinor > 0 ? Math.round((spentMinor / plan.incomeMinor) * 100) : 0;
   const risk =
@@ -410,6 +415,14 @@ export function Dashboard({
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const activeQueryFetching = tab === "wealth" ? wealthQuery.isFetching
+    : tab === "planning" ? monthlyPlanQuery.isFetching || monthlySummaryQuery.isFetching || cardsQuery.isFetching
+    : tab === "movements" ? eventsQuery.isFetching || exceptionsQuery.isFetching
+    : monthlyPlanQuery.isFetching || monthlySummaryQuery.isFetching || analyticsQuery.isFetching;
+  const summaryLoadError = monthlySummaryQuery.error instanceof Error
+    ? monthlySummaryQuery.error.message
+    : monthlySummaryQuery.error ? "No se pudo cargar el resumen del mes." : undefined;
+
   return (
     <>
       <AppShell
@@ -420,10 +433,8 @@ export function Dashboard({
           setSelectedMonth(month);
           setMovementEvidenceFilter(undefined);
         }}
-        syncing={tab === "wealth" ? wealthQuery.isFetching : eventsQuery.isFetching}
-        refreshing={tab === "wealth"
-          ? wealthQuery.isFetching
-          : eventsQuery.isFetching || monthlyPlanQuery.isFetching || monthlySummaryQuery.isFetching || analyticsQuery.isFetching || cardsQuery.isFetching}
+        syncing={activeQueryFetching}
+        refreshing={activeQueryFetching}
         onRefresh={refresh}
         privateMode={privateMode}
         onTogglePrivateMode={togglePrivateMode}
@@ -437,7 +448,7 @@ export function Dashboard({
               }
             : onSignOut
         }
-        error={tab === "wealth" ? undefined : error}
+        error={tab === "movements" ? error : undefined}
       >
         {tab === "summary" && analyticsOpen ? (
           <AnalyticsView
@@ -457,7 +468,7 @@ export function Dashboard({
             month={selectedMonth}
             plan={plan}
             loading={planLoading || monthlySummaryQuery.isPending}
-            loadError={planLoadError ?? (monthlySummaryQuery.error instanceof Error ? monthlySummaryQuery.error.message : monthlySummaryQuery.error ? "No se pudo cargar el resumen del mes." : undefined)}
+            loadError={planLoadError ?? summaryLoadError}
             onRetry={() => {
               void monthlyPlanQuery.refetch();
               void monthlySummaryQuery.refetch();
@@ -470,16 +481,12 @@ export function Dashboard({
             projectedRemainingMinor={projectedRemainingMinor}
             isCurrentMonth={isCurrentMonth}
             risk={risk}
-            monthMsiRows={monthMsiRows}
             msiSpentMinor={msiSpentMinor}
             msiCommittedMinor={msiCommittedMinor}
             onUploadNomina={() => setUploadingNomina(true)}
             onOpenIncome={() => setIncomeSheetOpen(true)}
-            onOpenPayslip={setActivePayslip}
-            onAddPayment={() => setEditingPayment(null)}
-            onEditPayment={(payment) => setEditingPayment(payment)}
-            onOpenMsiEvent={openMsiEvent}
-            onOpenCommitments={() => setCommitmentsOpen(true)}
+            onOpenPlanning={() => setTab("planning")}
+            onOpenStatements={() => setStatementsOpen(true)}
             onReviewLargest={reviewLargest}
             analytics={analyticsQuery.data}
             analyticsLoading={analyticsQuery.isPending}
@@ -494,17 +501,35 @@ export function Dashboard({
               window.scrollTo({ top: 0, behavior: "smooth" });
             }}
             onOpenAnalyticsMovements={openAnalyticsMovements}
+            idToken={idToken}
+            demoMode={demoMode}
+          />
+        ) : tab === "planning" ? (
+          <PlanningView
+            month={selectedMonth}
+            now={now}
+            monthMsiRows={monthMsiRows}
+            msiSpentMinor={msiSpentMinor}
+            msiCommittedMinor={msiCommittedMinor}
+            msiLoading={monthlySummaryQuery.isPending}
+            msiLoadError={summaryLoadError}
+            onRetryMsi={() => { void monthlySummaryQuery.refetch(); }}
+            onOpenMsiEvent={openMsiEvent}
+            fixedPayments={plan.upcomingPayments}
+            inheritedFromMonth={plan.inheritedFromMonth}
+            fixedPaymentsLoading={planLoading}
+            fixedPaymentsLoadError={planLoadError}
+            onRetryFixedPayments={() => { void monthlyPlanQuery.refetch(); }}
+            billUpcomingMinor={summary && !summaryLoadError ? billUpcomingMinor : undefined}
+            onAddPayment={() => setEditingPayment(null)}
+            onEditPayment={setEditingPayment}
             cards={cards}
             cardsLoading={cardsLoading}
             cardsLoadError={cardsLoadError}
-            onRetryCards={() => {
-              void cardsQuery.refetch();
-            }}
+            onRetryCards={() => { void cardsQuery.refetch(); }}
             onAddCard={() => setEditingCard(null)}
-            onEditCard={(card) => setEditingCard(card)}
-            now={now}
-            idToken={idToken}
-            demoMode={demoMode}
+            onEditCard={setEditingCard}
+            onOpenCommitments={() => setCommitmentsOpen(true)}
           />
         ) : tab === "wealth" ? (
           <WealthView
@@ -577,7 +602,6 @@ export function Dashboard({
             onImport={() => setImportOpen(true)}
             onImportAmex={() => setAmexImportOpen(true)}
             onImportSantanderStatement={() => setSantanderStatementOpen(true)}
-            onOpenStatements={() => setStatementsOpen(true)}
             onRegisterCharge={() => setManualOpen(true)}
             evidenceFilter={movementEvidenceFilter}
             onClearEvidenceFilter={() => setMovementEvidenceFilter(undefined)}

@@ -163,11 +163,9 @@ export function MonthIncomeSheet({
         </p>
       )}
 
-      {(provisionalActive || payslips.length === 0) && (
-        <button type="button" className="primary-button month-income-upload" onClick={onUploadNomina}>
-          Subir nómina XML
-        </button>
-      )}
+      <button type="button" className="primary-button month-income-upload" onClick={onUploadNomina}>
+        Subir nómina XML
+      </button>
     </Sheet>
   );
 }

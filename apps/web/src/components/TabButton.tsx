@@ -22,6 +22,10 @@ export function TabButton({
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M5 7h14M5 12h14M5 17h9" />
         </svg>
+      ) : icon === "planning" ? (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7 3v4m10-4v4M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Zm3 8h3m-3 4h7" />
+        </svg>
       ) : (
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M4 10h16M7 10V8.5A2.5 2.5 0 0 1 9.5 6h5A2.5 2.5 0 0 1 17 8.5V10M6 10v8h12v-8" />
