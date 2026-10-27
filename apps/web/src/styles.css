@@ -1400,8 +1400,8 @@ button.msi-purchase-row { cursor: pointer; }
 .planning-section-content .msi-section-embedded { margin: 0; }
 .planning-section-content .payment-name strong { white-space: normal; overflow-wrap: anywhere; }
 .planning-section-content .payment-name small { line-height: 1.5; }
-.planning-view .planning-section.card-cycle-section { margin: 0 0 12px; padding: 0; }
-.planning-view .commitments-preview { margin: 0 0 12px; }
+.planning-view .planning-section.card-cycle-section { max-width: none; margin: 0 0 12px; padding: 0; }
+.planning-view .commitments-preview { max-width: none; margin: 0 0 12px; }
 .planning-view .commitments-entry { min-height: 100px; }
 .card-calendar-disclosure { margin-top: 14px; }
 .card-calendar-disclosure > summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 48px; padding: 12px 0; cursor: pointer; list-style: none; color: var(--ink-soft); font-size: 13px; }
