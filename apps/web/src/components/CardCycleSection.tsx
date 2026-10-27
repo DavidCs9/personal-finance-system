@@ -1,5 +1,7 @@
 import { clampDayInMonth, dayInZone, daysInCalendarMonth, monthKeyInZone } from "@finance/domain";
 import type { CardCycle } from "../card-cycle";
+import { monthKeyLabel } from "../lib/format";
+import { Amt } from "./Amt";
 
 const WEEKDAYS = ["L", "M", "X", "J", "V", "S", "D"] as const;
 const CARD_TONES = ["tone-a", "tone-b", "tone-c"] as const;
@@ -24,81 +26,84 @@ export function CardCycleSection(props: CardCycleSectionProps) {
   const canAdd = props.cards.length < 3;
   const cells = monthCells(props.month);
   const marksByDay = marksForMonth(props.month, props.cards);
-  const todayDay =
-    monthKeyInZone(props.now) === props.month ? dayInZone(props.now) : undefined;
+  const todayDay = monthKeyInZone(props.now) === props.month ? dayInZone(props.now) : undefined;
 
   return (
-    <section className="card-cycle-section">
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">CICLOS DE TARJETA</p>
-          <h2>Fechas de corte</h2>
-          <p className="section-lede">Corte y pago este mes. No afectan cuánto te queda.</p>
-        </div>
-        {canAdd && (
-          <button className="add-button" aria-label="Agregar tarjeta" onClick={props.onAdd}>
-            +
-          </button>
-        )}
-      </div>
-
-      {props.loading ? (
-        <p className="card-cycle-status">Cargando tus tarjetas…</p>
-      ) : props.loadError ? (
-        <div className="card-cycle-error">
-          <p>{props.loadError}</p>
-          <button type="button" className="text-button" onClick={props.onRetry}>
-            Reintentar
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="card-calendar" role="grid" aria-label="Calendario de corte y pago">
-            <div className="card-calendar-weekdays">
-              {WEEKDAYS.map((label) => (
-                <span key={label}>{label}</span>
-              ))}
+    <section className="planning-section card-cycle-section">
+      <details key={props.month} className="planning-disclosure">
+        <summary className="planning-section-summary">
+          <span className="planning-section-copy">
+            <span className="eyebrow">CICLOS DE TARJETA</span>
+            <strong role="heading" aria-level={2}>Fechas de corte</strong>
+            {props.loading ? <span role="status">Cargando tus tarjetas…</span>
+              : props.loadError ? <small>Fechas no disponibles</small>
+                : <small><Amt>{props.cards.length}</Amt> {props.cards.length === 1 ? "tarjeta" : "tarjetas"} · corte y pago del mes elegido</small>}
+            <small>Fechas; no importes ni saldos.</small>
+          </span>
+          <span className="planning-chevron" aria-hidden="true">⌄</span>
+        </summary>
+        {!props.loading && !props.loadError ? <div className="planning-section-content">
+          {canAdd && props.cards.length > 0 ? <div className="planning-section-actions">
+            <button type="button" className="text-button" onClick={props.onAdd}>Agregar tarjeta</button>
+          </div> : null}
+          {props.cards.length > 0 ? <>
+            <div className="payment-list card-cycle-list">
+              {props.cards.map((card, index) => <button key={card.id} type="button" className="payment-row" onClick={() => props.onEdit(card)}>
+                <span className={`card-list-swatch ${CARD_TONES[index] ?? "tone-a"}`} />
+                <span className="payment-name">
+                  <strong>{card.name}</strong>
+                  <small>Corte {String(clampDayInMonth(card.cutOffDay, props.month)).padStart(2, "0")}
+                    {" · "}Pago {String(clampDayInMonth(card.paymentDueDay, props.month)).padStart(2, "0")}</small>
+                </span>
+                <span className="chevron">›</span>
+              </button>)}
             </div>
-            <div className="card-calendar-days">
-              {cells.map((day, index) => {
-                if (day === null) {
-                  return <div key={`pad-${index}`} className="card-calendar-cell is-empty" />;
-                }
-                const marks = marksByDay.get(day) ?? [];
-                const isToday = todayDay === day;
-                return (
-                  <div
-                    key={day}
-                    className={[
-                      "card-calendar-cell",
-                      marks.length ? "has-marks" : "",
-                      isToday ? "is-today" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                    aria-current={isToday ? "date" : undefined}
-                  >
-                    <strong>{day}</strong>
-                    {isToday && <span className="card-calendar-today">Hoy</span>}
-                    {marks.length > 0 && (
-                      <span className="card-calendar-marks">
-                        {marks.map((mark) => (
-                          <i
-                            key={`${mark.cardIndex}-${mark.kind}`}
-                            className={`card-mark ${CARD_TONES[mark.cardIndex] ?? "tone-a"} ${mark.kind}`}
-                            title={mark.kind === "cutoff" ? "Corte" : "Pago"}
-                          />
-                        ))}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+            <details className="card-calendar-disclosure">
+              <summary>Ver calendario de {monthKeyLabel(props.month)}<span className="planning-chevron" aria-hidden="true">⌄</span></summary>
+              <div className="card-calendar" role="grid" aria-label="Calendario de corte y pago">
+                <div className="card-calendar-weekdays">
+                  {WEEKDAYS.map((label) => (
+                    <span key={label}>{label}</span>
+                  ))}
+                </div>
+                <div className="card-calendar-days">
+                  {cells.map((day, index) => {
+                    if (day === null) {
+                      return <div key={`pad-${index}`} className="card-calendar-cell is-empty" />;
+                    }
+                    const marks = marksByDay.get(day) ?? [];
+                    const isToday = todayDay === day;
+                    return (
+                      <div
+                        key={day}
+                        className={[
+                          "card-calendar-cell",
+                          marks.length ? "has-marks" : "",
+                          isToday ? "is-today" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                        aria-current={isToday ? "date" : undefined}
+                      >
+                        <strong>{day}</strong>
+                        {isToday && <span className="card-calendar-today">Hoy</span>}
+                        {marks.length > 0 && (
+                          <span className="card-calendar-marks">
+                            {marks.map((mark) => (
+                              <i
+                                key={`${mark.cardIndex}-${mark.kind}`}
+                                className={`card-mark ${CARD_TONES[mark.cardIndex] ?? "tone-a"} ${mark.kind}`}
+                                title={mark.kind === "cutoff" ? "Corte" : "Pago"}
+                              />
+                            ))}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
 
-          {props.cards.length > 0 ? (
-            <>
               <ul className="card-cycle-legend">
                 {props.cards.map((card, index) => (
                   <li key={card.id}>
@@ -115,40 +120,17 @@ export function CardCycleSection(props: CardCycleSectionProps) {
                   </span>
                 </li>
               </ul>
-              <div className="payment-list card-cycle-list">
-                {props.cards.map((card, index) => (
-                  <button
-                    key={card.id}
-                    type="button"
-                    className="payment-row"
-                    onClick={() => props.onEdit(card)}
-                  >
-                    <span className={`card-list-swatch ${CARD_TONES[index] ?? "tone-a"}`} />
-                    <span className="payment-name">
-                      <strong>{card.name}</strong>
-                      <small>
-                        Corte {String(clampDayInMonth(card.cutOffDay, props.month)).padStart(2, "0")}
-                        {" · "}
-                        Pago{" "}
-                        {String(clampDayInMonth(card.paymentDueDay, props.month)).padStart(2, "0")}
-                      </small>
-                    </span>
-                    <span className="chevron">›</span>
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : (
-            <button className="empty-action" type="button" onClick={props.onAdd}>
-              <span>+</span>
-              <div>
-                <strong>Agrega tus tarjetas</strong>
-                <small>Hasta tres: día de corte y día de pago en el calendario.</small>
-              </div>
-            </button>
-          )}
-        </>
-      )}
+            </details>
+          </> : <button type="button" className="empty-action" onClick={props.onAdd}>
+            <span>+</span>
+            <div><strong>Agrega tus tarjetas</strong><small>Hasta tres: día de corte y día de pago en el calendario.</small></div>
+          </button>}
+        </div> : null}
+      </details>
+      {props.loadError && !props.loading ? <div role="alert" className="planning-section-error">
+        <p>{props.loadError}</p>
+        <button type="button" className="text-button" onClick={props.onRetry}>Reintentar tarjetas</button>
+      </div> : null}
     </section>
   );
 }

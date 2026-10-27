@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { MonthMsiRow } from "@finance/domain";
 import type { CardCycle } from "../card-cycle";
 import type { PlannedPayment } from "../monthly-plan";
-import { monthKey, monthKeyLabel } from "../lib/format";
+import { money, monthKey, monthKeyLabel } from "../lib/format";
+import { Amt } from "../components/Amt";
 import { CardCycleSection } from "../components/CardCycleSection";
 import { FixedPaymentsSection } from "../components/FixedPaymentsSection";
 import { MsiMonthSection } from "../components/MsiMonthSection";
@@ -84,20 +85,38 @@ export function PlanningView(props: PlanningViewProps) {
           </div>
         ) : null}
 
-        {props.msiLoading || props.msiLoadError || props.monthMsiRows.length === 0 ? (
-          <section className="payments-section msi-section">
-            <div className="section-heading"><div><p className="eyebrow">MESES SIN INTERESES</p><h2>Planes con fin</h2></div></div>
-            {props.msiLoading ? <p role="status">Consultando tus cuotas MSI…</p>
-              : props.msiLoadError ? (
-                <div role="alert"><p>{props.msiLoadError}</p>
-                  <button type="button" className="text-button" onClick={props.onRetryMsi}>Reintentar MSI</button>
-                </div>
-              ) : <p>No hay cuotas MSI registradas para este mes.</p>}
-          </section>
-        ) : (
-          <MsiMonthSection rows={props.monthMsiRows} msiSpentMinor={props.msiSpentMinor}
-            msiCommittedMinor={props.msiCommittedMinor} showTotals onOpen={id => void openMsiEvent(id)} />
-        )}
+        <section className="planning-section planning-msi-section">
+          <details key={props.month} className="planning-disclosure">
+            <summary className="planning-section-summary">
+              <span className="planning-section-copy">
+                <span className="eyebrow">MESES SIN INTERESES</span>
+                <strong role="heading" aria-level={2}>Planes con fin</strong>
+                {props.msiLoading ? <span role="status">Consultando tus cuotas MSI…</span>
+                  : props.msiLoadError ? <small>Cuotas no disponibles</small>
+                    : <small><Amt>{props.monthMsiRows.length}</Amt> {props.monthMsiRows.length === 1 ? "cuota del mes" : "cuotas del mes"}</small>}
+              </span>
+              <span className="planning-section-value">
+                {!props.msiLoading && !props.msiLoadError ? <span className="planning-msi-amounts">
+                  <small>Registradas <Amt>{money(props.msiSpentMinor)}</Amt></small>
+                  <small>Comprometidas <Amt>{money(props.msiCommittedMinor)}</Amt></small>
+                </span> : null}
+                <span className="planning-chevron" aria-hidden="true">⌄</span>
+              </span>
+            </summary>
+            {!props.msiLoading && !props.msiLoadError ? (
+              <div className="planning-section-content">
+                {props.monthMsiRows.length ? <MsiMonthSection rows={props.monthMsiRows}
+                  msiSpentMinor={props.msiSpentMinor} msiCommittedMinor={props.msiCommittedMinor}
+                  showTotals embedded onOpen={id => void openMsiEvent(id)} />
+                  : <p>No hay cuotas MSI registradas para este mes.</p>}
+              </div>
+            ) : null}
+          </details>
+          {props.msiLoadError && !props.msiLoading ? <div role="alert" className="planning-section-error">
+            <p>{props.msiLoadError}</p>
+            <button type="button" className="text-button" onClick={props.onRetryMsi}>Reintentar MSI</button>
+          </div> : null}
+        </section>
 
         <FixedPaymentsSection month={props.month} payments={props.fixedPayments}
           inheritedFromMonth={props.inheritedFromMonth} totalMinor={props.billUpcomingMinor}

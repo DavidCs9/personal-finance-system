@@ -1357,3 +1357,59 @@ html.private-mode .hero-amount .amt {
   .summary-shortcuts { max-width: 760px; margin-inline: auto; }
   .planning-view { max-width: 820px; margin: 0 auto; }
 }
+
+/* Each MSI purchase keeps its own amounts and calendar visible, even at phone width. */
+.msi-purchase-row { display: grid; gap: 12px; width: 100%; padding: 16px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); text-align: left; }
+.msi-purchase-row:last-child { border-bottom: 0; }
+button.msi-purchase-row { cursor: pointer; }
+.msi-purchase-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.msi-purchase-merchant { min-width: 0; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.msi-purchase-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--ink-soft); font-size: 11px; line-height: 1.5; }
+.msi-purchase-status { color: var(--muted); }
+.msi-purchase-amounts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.msi-purchase-amount, .msi-purchase-principal { display: grid; gap: 4px; min-width: 0; }
+.msi-purchase-amounts small { color: var(--muted); font-size: 10px; }
+.msi-purchase-amounts strong { font-size: 17px; font-variant-numeric: tabular-nums; }
+.msi-purchase-principal strong { font-size: 15px; font-weight: 600; }
+.msi-purchase-dates { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--ink-soft); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.msi-purchase-row .msi-tags { line-height: 1.5; }
+.msi-purchase-row:focus-visible { outline: 2px solid var(--ink); outline-offset: -3px; }
+
+/* Planning starts with an overview; each native disclosure owns one full list. */
+.planning-section { margin: 0 0 12px; border: 1px solid var(--line); border-radius: 15px; background: var(--paper); overflow: hidden; }
+.planning-section-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 100px; padding: 18px 16px; cursor: pointer; list-style: none; }
+.planning-section-summary::-webkit-details-marker, .card-calendar-disclosure > summary::-webkit-details-marker { display: none; }
+.planning-section-copy { display: grid; gap: 5px; min-width: 0; }
+.planning-section-copy .eyebrow { margin: 0 0 2px; font-size: 9px; }
+.planning-section-copy > strong { font: 600 22px/1.15 "Fraunces", serif; letter-spacing: -.025em; }
+.planning-section-copy > small, .planning-section-copy > [role="status"] { color: var(--ink-soft); font-size: 11px; line-height: 1.5; }
+.planning-section-value { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.planning-section-value > strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.planning-msi-amounts { display: grid; gap: 7px; text-align: right; }
+.planning-msi-amounts small { color: var(--ink-soft); font-size: 10px; }
+.planning-msi-amounts .amt { display: block; margin-top: 2px; color: var(--ink); font-size: 15px; font-weight: 700; }
+.planning-chevron { color: var(--muted); font-size: 18px; transition: transform .15s; }
+.planning-disclosure[open] > summary .planning-chevron, .card-calendar-disclosure[open] > summary .planning-chevron { transform: rotate(180deg); }
+.planning-disclosure[open] > summary { border-bottom: 1px solid var(--line); }
+.planning-section-content { padding: 14px; }
+.planning-section-content > p { color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
+.planning-section-actions { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.planning-section-actions .text-button { min-height: 44px; font-size: 12px; }
+.planning-section-error { padding: 0 16px 14px; font-size: 12px; line-height: 1.5; }
+.planning-section-error .text-button { min-height: 44px; }
+.planning-section-content .msi-section-embedded { margin: 0; }
+.planning-section-content .payment-name strong { white-space: normal; overflow-wrap: anywhere; }
+.planning-section-content .payment-name small { line-height: 1.5; }
+.planning-view .planning-section.card-cycle-section { max-width: none; margin: 0 0 12px; padding: 0; }
+.planning-view .commitments-preview { max-width: none; margin: 0 0 12px; }
+.planning-view .commitments-entry { min-height: 100px; }
+.card-calendar-disclosure { margin-top: 14px; }
+.card-calendar-disclosure > summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 48px; padding: 12px 0; cursor: pointer; list-style: none; color: var(--ink-soft); font-size: 13px; }
+.planning-section-summary:focus-visible, .card-calendar-disclosure > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: -4px; }
+@media (max-width: 359px) {
+  .planning-section-summary { padding: 16px 12px; gap: 8px; }
+  .planning-section-copy > strong { font-size: 20px; }
+  .planning-section-value { gap: 8px; }
+  .planning-section-value > strong { font-size: 16px; }
+  .planning-section-content { padding: 10px; }
+}
