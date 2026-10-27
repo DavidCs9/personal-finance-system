@@ -35,7 +35,7 @@ const propsFor = (sourceEvents = events): SummaryViewProps => ({
   loading: false, risk: "steady", analyticsLoading: false,
   idToken: "demo", demoMode: true,
   onRetry() {}, onUploadNomina() {}, onOpenIncome() {},
-  onOpenPlanning() {}, onOpenStatements() {},
+  onOpenPlanning() {},
   onReviewLargest() {}, onRetryAnalytics() {}, onOpenAnalytics() {}, onOpenAnalyticsMovements() {},
 });
 
@@ -63,25 +63,22 @@ describe("Resumen's recorded spend and commitments", () => {
     const html = renderToStaticMarkup(<SummaryView {...propsFor()} />);
     const numbers = html.indexOf('class="number-grid"');
     const planning = html.indexOf('<strong>Planificación</strong>');
-    const statements = html.indexOf('<strong>Estados de cuenta</strong>');
     const analytics = html.indexOf('class="analytics-preview"');
 
     expect(numbers).toBeGreaterThan(-1);
     expect(planning).toBeGreaterThan(numbers);
-    expect(statements).toBeGreaterThan(planning);
-    expect(analytics).toBeGreaterThan(statements);
-    expect(html).toContain("PDF registrados y cortes faltantes · todas las fechas");
+    expect(analytics).toBeGreaterThan(planning);
+    expect(html).not.toContain("Estados de cuenta");
     for (const removedClass of ["payslip-month-section", "msi-section", "payments-section", "card-cycle-section"]) {
       expect(html).not.toContain(`class="${removedClass}`);
     }
   });
 
   it.each(["loaded", "loading", "error", "missing-income"] as const)(
-    "keeps planning and all-date statements reachable when %s",
+    "keeps planning reachable when %s",
     (state) => {
       const props = propsFor();
       const onOpenPlanning = vi.fn();
-      const onOpenStatements = vi.fn();
       const overrides: Partial<SummaryViewProps> = state === "loading"
         ? { loading: true }
         : state === "error"
@@ -89,17 +86,14 @@ describe("Resumen's recorded spend and commitments", () => {
           : state === "missing-income"
             ? { plan: { ...props.plan, configured: false, incomeMinor: 0 } }
             : {};
-      const current = { ...props, ...overrides, onOpenPlanning, onOpenStatements };
+      const current = { ...props, ...overrides, onOpenPlanning };
       const html = renderToStaticMarkup(<SummaryView {...current} />);
       const view = SummaryView(current);
 
       expect(html).toContain('<strong>Planificación</strong>');
-      expect(html).toContain('<strong>Estados de cuenta</strong>');
-      expect(html).toContain("PDF registrados y cortes faltantes · todas las fechas");
+      expect(html).not.toContain("Estados de cuenta");
       buttonFor(view, onOpenPlanning).props.onClick?.();
-      buttonFor(view, onOpenStatements).props.onClick?.();
       expect(onOpenPlanning).toHaveBeenCalledOnce();
-      expect(onOpenStatements).toHaveBeenCalledOnce();
       if (state !== "loaded") {
         expect(html).not.toContain('class="spend-commitments-amount"');
         expect(html).not.toContain("Te quedan");

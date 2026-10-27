@@ -33,6 +33,7 @@ export interface PlanningViewProps {
   readonly onAddCard: () => void;
   readonly onEditCard: (card: CardCycle) => void;
   readonly onOpenCommitments: () => void;
+  readonly onOpenStatements: () => void;
 }
 
 type EventOpening = {
@@ -137,6 +138,16 @@ export function PlanningView(props: PlanningViewProps) {
         <CardCycleSection month={props.month} now={props.now} cards={props.cards}
           loading={props.cardsLoading} loadError={props.cardsLoadError} onRetry={props.onRetryCards}
           onAdd={props.onAddCard} onEdit={props.onEditCard} />
+
+        <section className="planning-statements">
+          <button type="button" className="summary-shortcut" onClick={props.onOpenStatements}>
+            <span>
+              <strong>Estados de cuenta</strong>
+              <small>PDF y cortes faltantes por mes · todas las fechas</small>
+            </span>
+            <span className="chevron" aria-hidden="true">→</span>
+          </button>
+        </section>
       </div>
     </section>
   );

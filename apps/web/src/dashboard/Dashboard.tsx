@@ -486,7 +486,6 @@ export function Dashboard({
             onUploadNomina={() => setUploadingNomina(true)}
             onOpenIncome={() => setIncomeSheetOpen(true)}
             onOpenPlanning={() => setTab("planning")}
-            onOpenStatements={() => setStatementsOpen(true)}
             onReviewLargest={reviewLargest}
             analytics={analyticsQuery.data}
             analyticsLoading={analyticsQuery.isPending}
@@ -530,6 +529,7 @@ export function Dashboard({
             onAddCard={() => setEditingCard(null)}
             onEditCard={setEditingCard}
             onOpenCommitments={() => setCommitmentsOpen(true)}
+            onOpenStatements={() => setStatementsOpen(true)}
           />
         ) : tab === "wealth" ? (
           <WealthView

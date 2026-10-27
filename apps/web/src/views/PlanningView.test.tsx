@@ -26,7 +26,7 @@ const propsFor = (overrides: Partial<PlanningViewProps> = {}): PlanningViewProps
   billUpcomingMinor: summary.billUpcomingMinor, fixedPaymentsLoading: false,
   cards: [{ id: "santander", name: "Santander", cutOffDay: 4, paymentDueDay: 24 }], cardsLoading: false,
   onRetryMsi() {}, async onOpenMsiEvent() {}, onRetryFixedPayments() {}, onAddPayment() {},
-  onEditPayment() {}, onRetryCards() {}, onAddCard() {}, onEditCard() {}, onOpenCommitments() {},
+  onEditPayment() {}, onRetryCards() {}, onAddCard() {}, onEditCard() {}, onOpenCommitments() {}, onOpenStatements() {},
   ...overrides,
 });
 
@@ -60,6 +60,7 @@ describe("Planificación's independent data sources", () => {
     expect(html).not.toContain("servicio programado");
     expect(html).not.toContain('class="amt"');
     expect(html).toContain("PRÓXIMOS COMPROMISOS");
+    expect(html).toContain("PDF y cortes faltantes por mes · todas las fechas");
   });
 
   it("keeps errors and retry buttons outside each closed section", () => {
@@ -134,6 +135,7 @@ describe("Planificación's independent data sources", () => {
     expect(html).toContain("Vuelo");
     expect(html).toContain("OpenAI");
     expect(html).toContain("PRÓXIMOS COMPROMISOS");
+    expect(html).toContain("PDF y cortes faltantes por mes · todas las fechas");
     expect(html).not.toContain('aria-label="Calendario de corte y pago"');
   });
 

@@ -15,9 +15,8 @@ Cada lista completa tiene una ubicación principal. Resumen conserva cifras, ale
 3. **Te quedan**, después de compromisos.
 4. **Incluye por confirmar**, incertidumbre dentro del total.
 5. Acceso compacto a **Planificación**: MSI, gastos fijos y próximas fechas.
-6. Acceso compacto a **Estados de cuenta**: PDF registrados y cortes faltantes, con alcance explícito de todas las fechas.
-7. **En qué se fue**, entrada compacta al análisis y a su evidencia.
-8. Preferencias de avisos, con prioridad visual secundaria.
+6. **En qué se fue**, entrada compacta al análisis y a su evidencia.
+7. Preferencias de avisos, con prioridad visual secundaria.
 
 **Te quedan** indica «según tu gasto y compromisos del mes». **A este ritmo** declara que incluye fijos y MSI del mes. El total combinado no sustituye gasto observado, categorías ni cierre mensual; sigue las [reglas del resumen](financial-rules.md#resumen-del-mes). No mostrar porcentaje, disponibilidad o proyección válidos sin liquidez válida; mantener visibles provisionales e importes por confirmar. El desglose usa expansión nativa, conserva modo privado y se cierra al cambiar de mes.
 
@@ -29,6 +28,7 @@ El chip **Liquidez** concentra el acceso a **Nómina del mes**, sus recibos y la
 2. **Gastos fijos**, servicios y suscripciones con nombre, importe y día programado, separados de MSI. Conservar sus acciones de alta/edición y mostrar el mes fuente cuando la lista sea heredada. La programación no acredita cobro ni conciliación; su significado sigue las [reglas financieras](financial-rules.md#nómina-y-gastos-fijos).
 3. **Próximos compromisos**, acceso al detalle de próximos meses.
 4. **Fechas de corte**, calendario de corte/pago de hasta tres tarjetas y edición de perfiles. Fechas y recordatorios se mantienen separados de los importes programados y saldos de Patrimonio.
+5. **Estados de cuenta**, acceso al catálogo de PDF y cortes faltantes por mes, con alcance explícito de todas las fechas, independiente del mes elegido. Decisión explícita de David del **2026-10-26**.
 
 Las listas de MSI, gastos fijos y fechas usan secciones desplegables nativas, inicialmente cerradas. Sus cabeceras muestran el nombre, una síntesis y la cantidad o estado de consulta disponible; carga, error y vacío se distinguen sin presentar datos ausentes como cero. Al expandir se accede a las filas y sus acciones; el calendario permanece dentro de **Fechas de corte**. Conservar el recorrido con teclado, targets móviles y el contexto al volver del detalle. Próximos compromisos mantiene su acceso al sheet, sin una segunda navegación interna por tabs.
 
@@ -36,7 +36,7 @@ Las listas de MSI, gastos fijos y fechas usan secciones desplegables nativas, in
 
 **Movimientos** es una lista simple ordenable, con categorías editables en el detalle y tags discretos con filtro exacto. MSI muestra badge i/N y cuota del mes; no duplica Planes con fin. Una autorización USD muestra el importe original y **Esperando cargo MXN**. Un cargo compartido muestra **Mi parte** primero y el bruto bancario como evidencia secundaria. Rechazados se ocultan del recorrido normal, conservando auditoría.
 
-**Estados de cuenta** es un único catálogo en un sheet desde Resumen, independiente del mes elegido y con alcance de todas las fechas visible en su entrada. Agrupa los PDF registrados por banco y últimos cuatro observados; muestra periodo, estado de lectura/conciliación, originales y cortes sin archivo identificado. Permite subir el PDF faltante o retomar una lectura/conciliación. Mantener visibles archivos sin tarjeta/periodo y errores; no presentar cobertura completa cuando falta identificar archivos. Los huecos son estimaciones según las [reglas de cobertura](financial-rules.md#cobertura-de-estados-de-cuenta). Un estado aplicado no certifica la exactitud o cobertura completa del gasto. Movimientos conserva la captura PDF desde Añadir, sin otro acceso al catálogo.
+**Estados de cuenta** es un único catálogo en un sheet desde Planificación, independiente del mes elegido y con alcance de todas las fechas visible en su entrada. Agrupa por mes de corte, del más reciente al más antiguo, con una síntesis de cortes con PDF y faltantes. Dentro de cada mes muestra las tarjetas por banco y últimos cuatro observados, con su estado visible para identificar cuál falta sin abrir cada fila; el detalle conserva periodo, estado de lectura/conciliación y originales. Permite subir el PDF faltante o retomar una lectura/conciliación. Mantener visibles archivos sin tarjeta/periodo y errores; no presentar cobertura completa cuando falta identificar archivos. Los huecos son estimaciones según las [reglas de cobertura](financial-rules.md#cobertura-de-estados-de-cuenta). Un estado aplicado no certifica la exactitud o cobertura completa del gasto. Movimientos conserva la captura PDF desde Añadir, sin otro acceso al catálogo.
 
 **Añadir** abre **Sumar un movimiento**: Registrar cobro, Conciliar CSV Santander, Estado de cuenta Santander y Estado de cuenta Amex. Ordenar queda fuera. El cobro manual pide institución, comercio, cantidad, fecha y tarjeta/nota opcionales; **Sumar al mes** es el CTA. Su detalle identifica **Registro manual** y permite rechazo.
 
