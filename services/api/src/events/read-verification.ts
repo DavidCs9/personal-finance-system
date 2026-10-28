@@ -47,7 +47,7 @@ export const verifyNativeFinancialReads = (owner: string, now: Date) => withLedg
     const plan = await getMonthlyPlan(owner, month);
     const summary = summarizeMonthFeed(month, plan, sqlFeed, now);
     mismatches += Number(!samePublicResult(summarizeMonthFeed(month, plan, sourceFeed, now), summary));
-    mismatches += (await verifyNativeMonthSummary(pool, month, sqlFeed, summary)).mismatches;
+    mismatches += (await verifyNativeMonthSummary(pool, month, sqlFeed, summary, owner)).mismatches;
     summaries++;
   }
   // Each adjacent pair verifies range ordering and MSI deduplication, beyond single-month membership.

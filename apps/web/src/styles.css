@@ -1415,3 +1415,28 @@ button.msi-purchase-row { cursor: pointer; }
   .planning-section-value > strong { font-size: 16px; }
   .planning-section-content { padding: 10px; }
 }
+
+/* Reconciliation keeps the programmed obligation and its observed charge distinct. */
+.payment-reconciliation { margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--line); }
+.payment-reconciliation h3 { margin: 0 0 10px; font: 600 23px/1.2 "Fraunces", serif; }
+.payment-reconciliation p { color: var(--ink-soft); font-size: 12px; line-height: 1.6; }
+.payment-reconciliation-current, .payment-reconciliation-confirmation { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-block: 16px; background: var(--paper); overflow-wrap: anywhere; }
+.payment-reconciliation-current > strong { font-size: 14px; }
+.payment-reconciliation-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
+.payment-reconciliation-actions button { min-height: 44px; }
+.payment-reconciliation-warning { color: var(--ink-soft); font-size: 12px; line-height: 1.6; padding: 10px 12px; border-left: 3px solid var(--line); background: var(--paper); }
+.payment-reconciliation-search { display: grid; gap: 7px; margin-top: 18px; font-size: 12px; }
+.payment-reconciliation-search input { width: 100%; min-height: 44px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); color: var(--ink); }
+.payment-reconciliation-candidates { display: grid; gap: 0; margin: 18px 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; max-height: 360px; overflow-y: auto; }
+.payment-reconciliation-candidates legend { padding: 0 8px; color: var(--muted); font-size: 11px; }
+.payment-reconciliation-candidate { padding: 12px; border-bottom: 1px solid var(--line); }
+.payment-reconciliation-candidate:last-child { border-bottom: 0; }
+.payment-reconciliation-candidate label { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 10px; min-height: 44px; cursor: pointer; }
+.payment-reconciliation-candidate input { margin: 4px 0 0; width: 18px; height: 18px; accent-color: var(--ink); }
+.payment-reconciliation-candidate label > span { display: grid; gap: 6px; overflow-wrap: anywhere; }
+.payment-reconciliation-candidate strong { font-size: 13px; line-height: 1.4; }
+.payment-reconciliation-candidate small { color: var(--ink-soft); font-size: 11px; line-height: 1.5; }
+.payment-reconciliation-candidate .text-button { min-height: 44px; margin-left: 30px; font-size: 11px; }
+.payment-reconciliation-picker > .secondary-button { min-height: 44px; }
+.fixed-payment-reconciliation { font-size: 10px; color: var(--ink-soft); }
+.fixed-payment-reconciliation.is-invalid { font-weight: 700; }

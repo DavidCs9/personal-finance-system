@@ -118,13 +118,13 @@ export const verifyNativeLedgerState = async (client: ReadSqlClient, movements: 
 };
 
 /** Financial sums use SQL facts directly, including incomplete schedules and personal zero. */
-export const verifyNativeMonthSummary = async (client: ReadSqlClient, month: string, feed: EventFeed, summary: MonthSummary) => {
+export const verifyNativeMonthSummary = async (client: ReadSqlClient, month: string, feed: EventFeed, summary: MonthSummary, owner: string) => {
   const row = (await client.query(`WITH active AS (
     SELECT m.*,p.movement_id AS plan_id,p.needs_schedule_completion,
       to_char(COALESCE(m.occurred_at,m.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM') AS financial_month
     FROM olbia.ledger_movements m LEFT JOIN olbia.installment_plans p ON p.movement_id=m.id
     WHERE m.status NOT IN ('rejected','deferred_msi','pending_foreign')
-  ), discretionary AS (
+  ), non_msi AS (
     SELECT COALESCE(sum(COALESCE(personal_amount_minor,amount_minor)),0) AS spent,
       COALESCE(sum(CASE WHEN status='needs_review' THEN COALESCE(personal_amount_minor,amount_minor) ELSE 0 END),0) AS uncertain
     FROM active WHERE plan_id IS NULL AND financial_month=$1
@@ -133,12 +133,32 @@ export const verifyNativeMonthSummary = async (client: ReadSqlClient, month: str
       COALESCE(sum(CASE WHEN i.status='committed' AND a.needs_schedule_completion IS NOT TRUE THEN i.amount_minor ELSE 0 END),0) AS committed,
       COALESCE(sum(CASE WHEN i.status='spent' AND a.status='needs_review' THEN i.amount_minor ELSE 0 END),0) AS uncertain
     FROM active a JOIN olbia.installment_entries i ON i.movement_id=a.id WHERE i.month=$1
-  ) SELECT discretionary.spent AS discretionary, installments.spent AS msi_spent,
-    installments.committed AS msi_committed, discretionary.uncertain+installments.uncertain AS uncertain
-    FROM discretionary CROSS JOIN installments`, [month])).rows[0];
+  ), effective_plan AS (
+    SELECT month FROM olbia.month_plans WHERE owner=$2 AND month<=$1 ORDER BY month DESC LIMIT 1
+  ), fixed_entries AS (
+    SELECT payment.amount_mxn_minor,
+      (charge.status IN ('accepted','needs_review') AND charge.currency='MXN' AND charge.amount_minor>0 AND charge_plan.movement_id IS NULL
+        AND to_char(COALESCE(charge.occurred_at,charge.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM')=$1) IS TRUE AS covered,
+      COALESCE(charge.personal_amount_minor,charge.amount_minor,0) AS personal_minor
+    FROM effective_plan plan JOIN olbia.planned_payments payment ON payment.month=plan.month
+    LEFT JOIN olbia.planned_payment_charges linked ON linked.month=$1 AND linked.payment_id=payment.id
+    LEFT JOIN olbia.ledger_movements charge ON charge.id=linked.movement_id
+    LEFT JOIN olbia.installment_plans charge_plan ON charge_plan.movement_id=charge.id
+  ), fixed_totals AS (
+    SELECT COALESCE(SUM(amount_mxn_minor),0) AS scheduled,
+      COALESCE(SUM(CASE WHEN covered THEN 0 ELSE amount_mxn_minor END),0) AS upcoming,
+      COALESCE(SUM(CASE WHEN covered THEN personal_minor ELSE 0 END),0) AS spent
+    FROM fixed_entries
+  ) SELECT non_msi.spent AS non_msi,non_msi.spent-fixed_totals.spent AS discretionary,
+    fixed_totals.spent AS fixed_spent,fixed_totals.scheduled AS fixed_scheduled,fixed_totals.upcoming AS fixed_upcoming,
+    installments.spent AS msi_spent,installments.committed AS msi_committed,
+    non_msi.uncertain+installments.uncertain AS uncertain
+    FROM non_msi CROSS JOIN installments CROSS JOIN fixed_totals`, [month,owner])).rows[0];
   const expected = { discretionarySpentMinor: Number(row.discretionary), msiSpentMinor: Number(row.msi_spent),
     msiCommittedMinor: Number(row.msi_committed), uncertainMinor: Number(row.uncertain),
-    spentMinor: Number(row.discretionary) + Number(row.msi_spent) };
+    fixedSpentMinor: Number(row.fixed_spent), billScheduledMinor: Number(row.fixed_scheduled),
+    billUpcomingMinor: Number(row.fixed_upcoming), upcomingMinor: Number(row.fixed_upcoming) + Number(row.msi_committed),
+    spentMinor: Number(row.non_msi) + Number(row.msi_spent) };
   const membership = (await client.query(`SELECT m.id,
       to_char(COALESCE(m.occurred_at,m.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM') AS financial_month
     FROM olbia.ledger_movements m WHERE

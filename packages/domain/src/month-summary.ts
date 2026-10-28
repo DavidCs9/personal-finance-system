@@ -10,6 +10,7 @@ export const countsTowardMonthSpend = (status: string): boolean =>
 export interface MonthSpendEvent {
   readonly id?: string;
   readonly amountMinor: number;
+  readonly currency?: string;
   /** Owner-attributed spend for shared, non-MSI purchases. Absent means the full amount. */
   readonly personalAmountMinor?: number;
   readonly status: string;
@@ -23,12 +24,24 @@ export interface MonthSpendEvent {
   >;
 }
 
+/** An explicit relationship to one existing charge; never a merchant/amount match. */
+export interface MonthFixedPayment {
+  readonly id: string;
+  readonly amountMinor: number;
+  readonly reconciliation?: {
+    readonly eventId: string;
+    readonly valid: boolean;
+  };
+}
+
 export interface MonthSummaryInput {
   readonly events: readonly MonthSpendEvent[];
   readonly month: string;
   readonly incomeMinor: number;
   readonly incomeConfigured: boolean;
   readonly upcomingPaymentsMinor: number;
+  /** Effective monthly programming; an explicit empty list overrides the legacy total. */
+  readonly fixedPayments?: readonly MonthFixedPayment[];
   readonly now: Date;
 }
 
@@ -60,6 +73,10 @@ export interface MonthSummary {
   readonly uncertainMinor: number;
   readonly upcomingMinor: number;
   readonly billUpcomingMinor: number;
+  /** All programmed fixed payments, including occurrences with a linked charge. */
+  readonly billScheduledMinor: number;
+  /** Personal spend of effective linked fixed charges, already included in spentMinor. */
+  readonly fixedSpentMinor: number;
   readonly msiCommittedMinor: number;
   readonly remainingMinor: number;
   readonly projectedSpendMinor: number;
@@ -67,6 +84,7 @@ export interface MonthSummary {
   readonly incomeConfigured: boolean;
   readonly incomeMinor: number;
   readonly isCurrentMonth: boolean;
+  readonly isFutureMonth: boolean;
   readonly daysInMonth: number;
   readonly elapsedDays: number;
   readonly committedMsiRows: readonly CommittedMsiRow[];
@@ -203,7 +221,7 @@ export const listCommittedMsiRows = (
 
 export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
   const activeEvents = input.events.filter((event) => countsTowardMonthSpend(event.status));
-  let discretionarySpentMinor = 0;
+  let nonMsiSpentMinor = 0;
   let uncertainMinor = 0;
 
   for (const event of activeEvents) {
@@ -217,23 +235,46 @@ export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
     }
     if (eventMonthKey(event) !== input.month) continue;
     const amountMinor = personalSpendAmountMinor(event);
-    discretionarySpentMinor += amountMinor;
+    nonMsiSpentMinor += amountMinor;
     if (event.status === "needs_review") uncertainMinor += amountMinor;
   }
 
   const msiSpentMinor = installmentAmountFor(activeEvents, input.month, "spent");
   const msiCommittedMinor = installmentAmountFor(activeEvents, input.month, "committed");
-  const spentMinor = discretionarySpentMinor + msiSpentMinor;
-  const billUpcomingMinor = input.upcomingPaymentsMinor;
+  const spentMinor = nonMsiSpentMinor + msiSpentMinor;
+  const billScheduledMinor = input.fixedPayments === undefined
+    ? input.upcomingPaymentsMinor
+    : input.fixedPayments.reduce((sum, payment) => sum + payment.amountMinor, 0);
+  let billUpcomingMinor = billScheduledMinor;
+  let fixedSpentMinor = 0;
+  const eventsById = new Map(activeEvents.filter(event => event.id).map(event => [event.id!, event]));
+  const linkedEvents = new Set<string>();
+  for (const payment of input.fixedPayments ?? []) {
+    if (!payment.reconciliation?.valid) continue;
+    const event = eventsById.get(payment.reconciliation.eventId);
+    // A relationship may outlive rejection or conversion to MSI. It only covers
+    // programming while the same charge is present in this month's observed spend.
+    if (!event || !['accepted', 'needs_review'].includes(event.status) || event.msi || event.amountMinor <= 0
+      || event.currency !== 'MXN' || eventMonthKey(event) !== input.month) continue;
+    if (linkedEvents.has(event.id!)) throw new Error('A charge cannot cover more than one fixed payment.');
+    linkedEvents.add(event.id!);
+    billUpcomingMinor -= payment.amountMinor;
+    fixedSpentMinor += personalSpendAmountMinor(event);
+  }
+  const discretionarySpentMinor = nonMsiSpentMinor - fixedSpentMinor;
   const upcomingMinor = billUpcomingMinor + msiCommittedMinor;
   const remainingMinor = input.incomeMinor - spentMinor - upcomingMinor;
-  const isCurrentMonth = input.month === monthKeyInZone(input.now);
+  const currentMonth = monthKeyInZone(input.now);
+  const isCurrentMonth = input.month === currentMonth;
+  const isFutureMonth = input.month > currentMonth;
   const daysInMonth = daysInCalendarMonth(input.month);
   const elapsedDays = isCurrentMonth ? dayInZone(input.now) : daysInMonth;
   const pacedDiscretionaryMinor = Math.round(
     (discretionarySpentMinor / Math.max(elapsedDays, 1)) * daysInMonth,
   );
-  const projectedSpendMinor = pacedDiscretionaryMinor + msiSpentMinor + upcomingMinor;
+  const projectedSpendMinor = isCurrentMonth
+    ? pacedDiscretionaryMinor + fixedSpentMinor + msiSpentMinor + upcomingMinor
+    : isFutureMonth ? spentMinor + upcomingMinor : spentMinor;
   const projectedRemainingMinor = input.incomeMinor - projectedSpendMinor;
 
   return {
@@ -244,6 +285,8 @@ export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
     uncertainMinor,
     upcomingMinor,
     billUpcomingMinor,
+    billScheduledMinor,
+    fixedSpentMinor,
     msiCommittedMinor,
     remainingMinor,
     projectedSpendMinor,
@@ -251,6 +294,7 @@ export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
     incomeConfigured: input.incomeConfigured,
     incomeMinor: input.incomeMinor,
     isCurrentMonth,
+    isFutureMonth,
     daysInMonth,
     elapsedDays,
     committedMsiRows: listCommittedMsiRows(activeEvents, input.month),
@@ -290,7 +334,7 @@ export const dailyBalancePushMessage = (
     `Te quedan ${remaining} después de compromisos.`,
   ];
 
-  if (summary.projectedRemainingMinor < 0) {
+  if (summary.isCurrentMonth && summary.projectedRemainingMinor < 0) {
     parts.push(`A este ritmo gastarás ${formatMxnWhole(summary.projectedSpendMinor)}.`);
   } else if (summary.uncertainMinor > 0) {
     parts.push(`Incluye ${formatMxnWhole(summary.uncertainMinor)} por confirmar.`);

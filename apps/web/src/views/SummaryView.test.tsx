@@ -55,8 +55,33 @@ describe("Resumen's recorded spend and commitments", () => {
       expect(html).toContain('<span class="amt">36%</span>');
       expect(html).toContain('<span class="amt">$6,400</span>');
       expect(html).toContain('Incluye <span class="amt">$100</span> por confirmar');
-      expect(html).toContain("Los fijos muestran lo programado para el mes; aún no verificamos si ya se cobraron.");
+      expect(html).toContain("Los fijos sin cobro vinculado muestran programación; no confirma si ya se cobraron.");
     }
+  });
+
+  it("shows recorded spend in a past close and never forecasts a future month", () => {
+    const props = propsFor();
+    const past = findElement(SummaryView({ ...props, isCurrentMonth: false, isFutureMonth: false,
+      projectedSpendMinor: 5_000_00, projectedRemainingMinor: -1 }),
+    element => element.props.className?.startsWith("projection-card") === true);
+    const pastHtml = renderToStaticMarkup(past!);
+    expect(pastHtml).toContain('Gastaste <span class="amt">$850</span>');
+    expect(pastHtml).not.toContain("$5,000");
+    expect(pastHtml).not.toContain("Revisar gastos grandes");
+    expect(pastHtml).toContain("según tus movimientos y cuotas MSI registrados");
+
+    const future = findElement(SummaryView({ ...props, isCurrentMonth: false, isFutureMonth: true,
+      projectedSpendMinor: 5_000_00 }), element => element.props.className?.startsWith("projection-card") === true);
+    const futureHtml = renderToStaticMarkup(future!);
+    expect(futureHtml).toContain('Programado <span class="amt">$2,750</span>');
+    expect(futureHtml).not.toMatch(/Gastaste|Gastarás|A este ritmo/);
+  });
+
+  it("explains that linked fixed spend is already included without claiming unlinked programming is unpaid", () => {
+    const html = renderToStaticMarkup(<SummaryView {...propsFor()} fixedSpentMinor={200_00} />);
+    expect(html).toContain('Los cobros vinculados de fijos (<span class="amt">$200</span>) ya están');
+    expect(html).toContain("Fijos sin cobro vinculado");
+    expect(html).not.toContain("Fijos pendientes de pago");
   });
 
   it("places compact navigation after the financial core and before analysis", () => {

@@ -1439,6 +1439,7 @@ export class PersonalFinanceV1Stack extends Stack {
       'GET /statements',
       'GET /statements/{provider}/{importId}/source',
       'PUT /months/{month}',
+      'PUT /months/{month}/payments/{paymentId}/reconciliation',
       'GET /months/{month}/payslips/{uuid}',
       'POST /imports/nomina',
       'POST /imports/santander/preview',

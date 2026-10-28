@@ -30,7 +30,7 @@ export function FixedPaymentsSection(props: FixedPaymentsSectionProps) {
               : props.loadError ? <small>Programación no disponible</small> : <>
                 <small><Amt>{props.payments.length}</Amt> {props.payments.length === 1 ? "servicio programado" : "servicios programados"}</small>
                 {props.inheritedFromMonth ? <small>Heredados de {monthKeyLabel(props.inheritedFromMonth)}</small> : null}
-                <small>Programación; no confirma cobro.</small>
+                <small>Programación total; revisa el vínculo de cada cobro.</small>
               </>}
           </span>
           <span className="planning-section-value">
@@ -47,7 +47,7 @@ export function FixedPaymentsSection(props: FixedPaymentsSectionProps) {
             {props.inheritedFromMonth
               ? `Según tus gastos fijos de ${monthKeyLabel(props.inheritedFromMonth)}; se repiten mientras no los cambies.`
               : `Programación de ${monthKeyLabel(props.month)}.`}
-            {" "}No confirma si ya se cobraron.
+            {" "}Los vínculos se confirman por separado para cada fijo de este mes.
           </p>
           {props.payments.length > 0 ? (
             <div className="payment-list">
@@ -60,6 +60,9 @@ export function FixedPaymentsSection(props: FixedPaymentsSectionProps) {
                   <span className="payment-name">
                     <strong>{payment.name}</strong>
                     <small>Programado · cada mes · sin fecha de fin</small>
+                    <small className={`fixed-payment-reconciliation${payment.reconciliation && !payment.reconciliation.valid ? " is-invalid" : ""}`}>
+                      {payment.reconciliation ? payment.reconciliation.valid ? "Cobro vinculado" : "Revisar vínculo" : "Por conciliar"}
+                    </small>
                   </span>
                   <strong className="payment-amount"><Amt>{money(payment.amountMinor)}</Amt></strong>
                   <span className="chevron">›</span>

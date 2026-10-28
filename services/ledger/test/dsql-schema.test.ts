@@ -160,5 +160,8 @@ it('keeps current ownership, scoped writes and metadata-only push access without
   expect(statements).toContain('GRANT UPDATE (capture_id) ON olbia.asset_daily_captures TO olbia_application');
   expect(statements).toContain('GRANT SELECT (subscription_id,owner,content_mode,active,created_at,updated_at) ON olbia.web_push_subscriptions TO olbia_reader');
   expect(statements).toContain('GRANT UPDATE (status,applied_at,undone_at) ON olbia.ledger_bulk_operations TO olbia_application');
-  expect(statements.at(-1)).toBe('INSERT INTO olbia.schema_migrations VALUES (20,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
+  expect(statements).toContain('GRANT INSERT,DELETE ON olbia.planned_payment_charges TO olbia_application');
+  expect(statements).toContain('GRANT INSERT ON olbia.planned_payment_charge_revisions TO olbia_application');
+  expect(statements.filter(s=>s.includes('planned_payment_charge_revisions') && s.startsWith('GRANT')).join()).not.toMatch(/GRANT (?:UPDATE|DELETE)/);
+  expect(statements.at(-1)).toBe('INSERT INTO olbia.schema_migrations VALUES (22,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 });

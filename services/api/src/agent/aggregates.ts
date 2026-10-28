@@ -1,7 +1,6 @@
 import {
   aggregateSpendByCategory,
   aggregateSpendByMerchant,
-  computeMonthSummary,
   previousCalendarMonth,
   type CategorizedSpendEvent,
   type MonthSummary,
@@ -9,7 +8,8 @@ import {
   type WealthAccountId,
   wealthSnapshotAgeDays,
 } from '@finance/domain';
-import { getMonthlyPlan } from '../months/service.js';
+import { getMonthSummary } from '../months/summary.js';
+import { withLedgerReadSnapshot } from '../events/sql-reads.js';
 import { getWealthOverview, listWealthSnapshots } from '../wealth/service.js';
 import { listCategories } from '../categories/service.js';
 import { loadCategorizedMonthEvents, loadCategorizedMonthsEvents, loadCategorizedComparisonEvents } from '../analytics/events.js';
@@ -79,28 +79,20 @@ export const monthSnapshot = async (
   readonly uncategorizedMinor: number;
   readonly uncategorizedEventCount: number;
 }> => {
-  const [plan, events, names] = await Promise.all([
-    getMonthlyPlan(owner, month),
-    loadMonthEvents(month),
-    categoryNameMap(),
-  ]);
-  const upcomingPaymentsMinor = (plan.upcomingPayments as readonly { amountMinor: number }[])
-    .reduce((sum, payment) => sum + payment.amountMinor, 0);
-  const summary = computeMonthSummary({
-    events,
-    month,
-    incomeMinor: Number(plan.incomeMinor ?? 0),
-    incomeConfigured: Boolean(plan.configured),
-    upcomingPaymentsMinor,
-    now,
+  return withLedgerReadSnapshot(async () => {
+    const [summary, events, names] = await Promise.all([
+      getMonthSummary(owner, month, now),
+      loadMonthEvents(month),
+      categoryNameMap(),
+    ]);
+    const byCategory = aggregateSpendByCategory(events, month, names);
+    return {
+      month,
+      summary,
+      uncategorizedMinor: byCategory.uncategorizedMinor,
+      uncategorizedEventCount: byCategory.uncategorizedEventCount,
+    };
   });
-  const byCategory = aggregateSpendByCategory(events, month, names);
-  return {
-    month,
-    summary,
-    uncategorizedMinor: byCategory.uncategorizedMinor,
-    uncategorizedEventCount: byCategory.uncategorizedEventCount,
-  };
 };
 
 export const planMonthScenario = async (

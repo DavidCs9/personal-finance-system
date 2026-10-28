@@ -41,7 +41,7 @@ describe("Planificación's independent data sources", () => {
     expect(summaries[0]).toContain("Registradas");
     expect(summaries[0]).toContain("Comprometidas");
     expect(summaries[1]).toContain("Heredados de sep 2026");
-    expect(summaries[1]).toContain("Programación; no confirma cobro.");
+    expect(summaries[1]).toContain("Programación total; revisa el vínculo de cada cobro.");
     expect(summaries[2]).toContain("Fechas; no importes ni saldos.");
     for (const header of summaries) expect(header).not.toContain("<button");
   });
@@ -95,7 +95,7 @@ describe("Planificación's independent data sources", () => {
     expect(html).toContain("Cuota 2/3");
     expect(html).toContain("OpenAI");
     expect(html).toContain("Según tus gastos fijos de sep 2026");
-    expect(html).toContain("No confirma si ya se cobraron.");
+    expect(html).toContain("Los vínculos se confirman por separado para cada fijo de este mes.");
     expect(html).toContain("Programado · cada mes");
     expect(html).toContain('aria-label="Calendario de corte y pago"');
     expect(html).not.toContain("Te quedan");

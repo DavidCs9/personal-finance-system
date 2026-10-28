@@ -321,6 +321,7 @@ export function mockMonthSummaryFor(month: string, plan: MonthlyPlan, now: Date)
     events: [...feed.events, ...feed.msiRelated].map((event) => ({
       id: event.id,
       amountMinor: event.amount.amountMinor,
+      currency: event.amount.currency,
       personalAmountMinor: event.personalAmountMinor,
       status: event.status,
       occurredAt: event.occurredAt,
@@ -331,6 +332,7 @@ export function mockMonthSummaryFor(month: string, plan: MonthlyPlan, now: Date)
     month,
     incomeMinor: plan.incomeMinor,
     incomeConfigured: plan.configured,
+    fixedPayments: plan.upcomingPayments,
     upcomingPaymentsMinor: plan.upcomingPayments.reduce((sum, payment) => sum + payment.amountMinor, 0),
     now,
   });

@@ -6,6 +6,7 @@ process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-raw-bucket';
 const { handler } = await import('../src/http/ledger-api.js');
 const statements = await import('../src/imports/statement-catalog.js');
 const uploads = await import('../src/imports/statement-upload.js');
+const reconciliations = await import('../src/months/reconciliation.js');
 afterEach(() => vi.restoreAllMocks());
 
 const context = {
@@ -53,6 +54,29 @@ const httpEvent = (method: string, path: string, query: Record<string, string> =
 });
 
 describe('ledger API Powertools router', () => {
+  it('binds explicit fixed payment reconciliation to the authenticated owner and returns its refreshed plan', async () => {
+    const saved = { month: '2026-10', upcomingPayments: [] };
+    const write = vi.spyOn(reconciliations, 'savePaymentReconciliation').mockResolvedValue(saved);
+    const input = { eventId: 'c0000000-0000-4000-8000-000000000001', expectedEventId: null };
+    const result = await handler({ ...httpEvent('PUT', '/months/2026-10/payments/openai/reconciliation', { owner: 'forged' }),
+      body: JSON.stringify({ ...input, owner: 'forged' }) }, context);
+    expect(result.statusCode).toBe(200);
+    expect(write).toHaveBeenCalledWith('owner-1', '2026-10', 'openai', input);
+    expect(JSON.parse(String(result.body))).toEqual(saved);
+  });
+
+  it('rejects malformed reconciliation bodies and reports concurrent changes as conflicts', async () => {
+    const write = vi.spyOn(reconciliations, 'savePaymentReconciliation');
+    const malformed = await handler({ ...httpEvent('PUT', '/months/2026-10/payments/openai/reconciliation'), body: '{}' }, context);
+    expect(malformed.statusCode).toBe(400);
+    expect(write).not.toHaveBeenCalled();
+    write.mockRejectedValue(new reconciliations.PaymentReconciliationConflictError('El vínculo cambió.'));
+    const conflict = await handler({ ...httpEvent('PUT', '/months/2026-10/payments/openai/reconciliation'),
+      body: JSON.stringify({ eventId: null, expectedEventId: 'c0000000-0000-4000-8000-000000000001' }) }, context);
+    expect(conflict.statusCode).toBe(409);
+    expect(JSON.parse(String(conflict.body)).message).toBe('El vínculo cambió.');
+  });
+
   it('scopes the statement catalog and original PDF routes to the authenticated principal', async () => {
     const catalog = { asOfDay: '2026-10-24', accounts: [], unidentifiedDocuments: [] };
     const read = vi.spyOn(statements, 'getStatementCatalog').mockResolvedValue(catalog);

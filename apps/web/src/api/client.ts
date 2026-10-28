@@ -374,8 +374,16 @@ export const ledgerApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         currency: plan.currency,
-        upcomingPayments: plan.upcomingPayments,
+        upcomingPayments: plan.upcomingPayments.map(({ id, name, amountMinor, dueDay }) => ({ id, name, amountMinor, dueDay })),
       }),
+    });
+  },
+  async reconcilePayment(month: string, paymentId: string, eventId: string | null,
+    expectedEventId: string | null, idToken: string): Promise<MonthlyPlan> {
+    return request<MonthlyPlan>(`/months/${encodeURIComponent(month)}/payments/${encodeURIComponent(paymentId)}/reconciliation`, idToken, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eventId, expectedEventId }),
     });
   },
   async uploadNominas(

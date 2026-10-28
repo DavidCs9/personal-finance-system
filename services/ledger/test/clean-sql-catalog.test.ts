@@ -5,11 +5,13 @@ import { bootstrapSchema, SCHEMA_STATEMENTS } from '../src/dsql/schema.js';
 import { CURRENT_SQL_TABLES, MIGRATION_EVIDENCE_TABLES } from '../src/dsql/catalog.js';
 import { inspectNativeCatalog, retireMigrationEvidence } from '../src/dsql/catalog-retirement.js';
 import type { SqlClient } from '../src/dsql/projection.js';
+import { NATIVE_PLANNING_SCHEMA_STATEMENTS } from '../src/dsql/planning-schema.js';
 
 let sql: PGlite;
 beforeEach(async () => {
   sql = new PGlite();
   for (const statement of historicalSchema) await sql.query(statement);
+  for (const statement of NATIVE_PLANNING_SCHEMA_STATEMENTS) await sql.query(statement);
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
   await sql.query('INSERT INTO olbia.schema_migrations VALUES (20,CURRENT_TIMESTAMP)');
   await sql.query("INSERT INTO olbia.cards (source_pk,source_sk,row_id,payload) VALUES ('old','old','old','{}')");
@@ -23,11 +25,11 @@ it('removes exactly the 26 explicit migration tables, keeps every native row, an
   const before = await snapshot(), recovery = vi.fn(async () => {});
   expect((await inspectNativeCatalog(sql)).frozen).toHaveLength(26);
   expect(await retireMigrationEvidence(sql, recovery)).toMatchObject({ verified: true, removedTables: 26,
-    remainingTables: 41, domainTables: 38, controlTables: 3, migrationEvidenceTables: 0 });
+    remainingTables: 43, domainTables: 40, controlTables: 3, migrationEvidenceTables: 0 });
   expect(await snapshot()).toEqual(before);
   expect(recovery).toHaveBeenCalledOnce();
   expect((await sql.query('SELECT version FROM olbia.schema_migrations WHERE version=21')).rows).toEqual([{ version: 21 }]);
-  expect(await retireMigrationEvidence(sql, recovery)).toMatchObject({ removedTables: 0, remainingTables: 41 });
+  expect(await retireMigrationEvidence(sql, recovery)).toMatchObject({ removedTables: 0, remainingTables: 43 });
   expect(recovery).toHaveBeenCalledOnce();
   const client: SqlClient = { query: async (s, v) => {
     if (s.startsWith('AWS IAM GRANT')) return { rows: [] };
@@ -76,7 +78,7 @@ it('orders retired child tables before parents and resumes an interrupted sequen
   await expect(retireMigrationEvidence(client, async () => {})).rejects.toThrow('Interrupted DDL');
   expect(drops.join()).not.toContain('CASCADE');
   expect((await sql.query('SELECT version FROM olbia.schema_migrations WHERE version=21')).rows).toEqual([]);
-  expect(await retireMigrationEvidence(sql, async () => {})).toMatchObject({ verified: true, remainingTables: 41 });
+  expect(await retireMigrationEvidence(sql, async () => {})).toMatchObject({ verified: true, remainingTables: 43 });
   expect(await snapshot()).toEqual(before);
   const names = drops.map(s => s.match(/olbia\.(\w+)/)![1]);
   expect(names).toContain('cards'); expect(names).not.toContain('movements');

@@ -1,10 +1,12 @@
 import { NATIVE_LEDGER_TABLES } from './ledger-schema.js';
 import { NATIVE_WEALTH_TABLES } from './wealth-schema.js';
 import { NATIVE_THREAD_TABLES } from './thread-schema.js';
+import { NATIVE_PLANNING_TABLES } from './planning-schema.js';
 
 /** Current personal-finance model. Controls are operational facts, not migration copies. */
 export const NATIVE_DOMAIN_TABLES = [
   ...NATIVE_LEDGER_TABLES, ...NATIVE_WEALTH_TABLES, ...NATIVE_THREAD_TABLES,
+  ...NATIVE_PLANNING_TABLES,
   'spend_categories', 'merchant_rules', 'card_profiles', 'month_plans', 'planned_payments',
   'payslips', 'payslip_lines', 'bank_imports', 'bank_import_rows', 'bank_import_candidates',
   'web_push_subscriptions', 'monthly_email_preparations', 'monthly_email_receipts',
