@@ -19,7 +19,8 @@ const rowColumns=(r:BankImportRecord)=>r.rows.map((l,position)=>({kind:r.kind,co
   occurred_on:l.occurredOn,merchant_raw:l.merchantRaw,amount_mxn_minor:String(l.amountMinor),status:l.status,row_kind:l.kind??null,
   is_credit:l.credit??null,installment_index:l.installmentIndex??null,installment_months:l.installmentMonths??null,
   original_amount_mxn_minor:l.originalAmountMinor==null?null:String(l.originalAmountMinor),row_number:l.rowNumber??null,
-  occurrence:l.occurrence??null,bank_transaction_id:l.transactionId??null,selected_movement_id:l.eventId??null}));
+  occurrence:l.occurrence??null,bank_transaction_id:l.transactionId??null,purchase_on:l.purchaseOn??null,
+  merchant_reference:l.merchantReference??null,selected_movement_id:l.eventId??null}));
 const candidateColumns=(r:BankImportRecord)=>r.rows.flatMap((l,row_position)=>l.candidateEventIds.map((id,position)=>{
   const label=l.candidates.find(c=>c.id===id);
   return {kind:r.kind,content_sha256:r.importId,row_position,position,movement_id:id,merchant_raw:label?.merchantRaw??null,
@@ -40,7 +41,7 @@ export const verifyNativeImports=async(owner:string,frozen:readonly JsonObject[]
     if(!r){mismatches++;continue;}records.push(r);
     const normalized={...h,created_at:iso(h.created_at),previewed_at:h.previewed_at==null?null:iso(h.previewed_at),applied_at:h.applied_at==null?null:iso(h.applied_at)};
     check(normalized,headerColumns(r));
-    const rows=(await client.query(`SELECT *,occurred_on::text AS occurred_on FROM olbia.bank_import_rows
+    const rows=(await client.query(`SELECT *,occurred_on::text AS occurred_on,purchase_on::text AS purchase_on FROM olbia.bank_import_rows
       WHERE kind=$1 AND content_sha256=$2 ORDER BY position`,[r.kind,r.importId])).rows;
     check(rows.map(l=>({...l,amount_mxn_minor:String(l.amount_mxn_minor),original_amount_mxn_minor:l.original_amount_mxn_minor==null?null:String(l.original_amount_mxn_minor)})),rowColumns(r));
     const candidates=(await client.query(`SELECT * FROM olbia.bank_import_candidates WHERE kind=$1 AND content_sha256=$2 ORDER BY row_position,position`,[r.kind,r.importId])).rows;

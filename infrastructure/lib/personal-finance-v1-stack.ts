@@ -473,6 +473,7 @@ export class PersonalFinanceV1Stack extends Stack {
     rawEmailBucket.grantRead(readVerificationFunction, 'manual-entries/*');
     rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/cfdi-nomina/*');
     rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/amex/*');
+    rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/amex-activity/*');
     rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/santander/*');
     rawEmailBucket.grantRead(readVerificationFunction, 'manual-imports/santander-statement/*');
     rawEmailBucket.grantRead(readVerificationFunction, 'wealth-manual/*');
@@ -1445,6 +1446,10 @@ export class PersonalFinanceV1Stack extends Stack {
       'POST /imports/santander/preview',
       'POST /imports/santander/{importId}/apply',
       'POST /imports/amex/upload',
+      'POST /imports/amex-activity/upload',
+      'POST /imports/amex-activity/preview',
+      'POST /imports/amex-activity/{importId}/apply',
+      'GET /imports/amex-activity/{importId}/source',
       'POST /imports/amex/preview',
       'GET /imports/amex/{importId}',
       'POST /imports/amex/{importId}/apply',

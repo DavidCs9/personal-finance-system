@@ -25,13 +25,13 @@ interface Candidate {readonly movement:Row;readonly matchKind:'exact'|'foreign'}
 const exactCandidates=async(client:SqlClient,input:NativeCaptureInput):Promise<Candidate[]>=>{
   const center=Date.parse(input.reconciliationAt);
   if(!Number.isFinite(center))throw new Error('Invalid reconciliation timestamp');
-  const dayLevelInput=['santander_csv','santander_statement','manual','email','apple_pay_shortcut'].includes(input.captureSource);
+  const dayLevelInput=['santander_csv','santander_statement','amex_activity','amex_statement','manual','email','apple_pay_shortcut'].includes(input.captureSource);
   const [from,to]=boundary(center,dayLevelInput?18:0.5);
   const rows=(await client.query(`${candidateSelection} WHERE institution=$1 AND event_type=$2 AND currency=$3
     AND amount_minor=$4 AND reconciliation_at BETWEEN $5 AND $6 ORDER BY reconciliation_at,id`,[
     input.event.institution,input.event.eventType,input.event.amount.currency,input.event.amount.amountMinor,from,to])).rows;
   return rows.flatMap(row=>{
-    const sources=captures(row),dayLevel=['santander_csv','santander_statement','manual'].some(source=>
+    const sources=captures(row),dayLevel=['santander_csv','santander_statement','amex_activity','amex_statement','manual'].some(source=>
       input.captureSource===source||sources.includes(source as CaptureSource));
     if(!merchantsMatch(input.event.merchantRaw,String(row.merchant_raw),dayLevel))return [];
     if(!dayLevel && Math.abs(millis(row.reconciliation_at)-center)>30*60*1000)return [];

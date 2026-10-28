@@ -33,6 +33,7 @@ export function EventSheet({
 }) {
   const queryClient = useQueryClient();
   const [rawEmail, setRawEmail] = useState<string>();
+  const [activityOriginals, setActivityOriginals] = useState<readonly string[]>([]);
   const [error, setError] = useState<string>();
   const [msiEnabled, setMsiEnabled] = useState(Boolean(event.msi));
   const [msiMonths, setMsiMonths] = useState(String(event.msi?.months ?? 3));
@@ -45,6 +46,25 @@ export function EventSheet({
     event.personalAmountMinor === undefined ? "" : (event.personalAmountMinor / 100).toFixed(2),
   );
   const [categories, setCategories] = useState<readonly { id: string; name: string }[]>([]);
+
+  useEffect(() => {
+    setActivityOriginals([]);
+    if (demoMode || !event.captureSources?.includes("amex_activity") && event.captureSource !== "amex_activity") return;
+    let active = true;
+    void ledgerApi.event(event.id, idToken).then(detail => {
+      if (!active) return;
+      setActivityOriginals([...new Set((detail.observations ?? []).filter(o => o.captureSource === "amex_activity")
+        .flatMap(o => "sha256" in o.source ? [o.source.sha256] : []))]);
+    }).catch(() => { if (active) setError("No se pudo consultar el Excel original."); });
+    return () => { active = false; };
+  }, [event.id, event.captureSource, event.captureSources, idToken, demoMode]);
+
+  const downloadActivity = async (importId: string) => {
+    try {
+      const { url } = await ledgerApi.amexActivitySource(importId, idToken);
+      const link = document.createElement("a"); link.href = url; link.download = "actividad-amex.xlsx"; link.click();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "No se pudo abrir el Excel original."); }
+  };
 
   useEffect(() => {
     setRawEmail(undefined);
@@ -290,6 +310,7 @@ export function EventSheet({
   const isManualCapture = event.source.kind === "manual_entry" || event.captureSource === "manual";
   const isCsvCapture = !isApplePayCapture && !isManualCapture && event.source.contentType === "text/csv";
   const isAmexStatement = event.captureSource === "amex_statement";
+  const isAmexActivity = event.captureSource === "amex_activity";
   const isSantanderStatement = event.captureSource === "santander_statement";
   const hasRawSource =
     isManualCapture
@@ -310,6 +331,8 @@ export function EventSheet({
         ? "CSV de Santander"
         : isAmexStatement
           ? "Estado de cuenta Amex"
+          : isAmexActivity
+            ? "Actividad Amex · Excel"
           : isSantanderStatement
             ? "Estado de cuenta Santander"
             : "Correo original";
@@ -319,6 +342,8 @@ export function EventSheet({
       ? "Observación automática conservada"
       : isCsvCapture
         ? "CSV original conservado"
+        : isAmexActivity
+          ? "Excel original conservado"
         : isAmexStatement || isSantanderStatement
           ? "Estado de cuenta conservado"
           : "Mensaje original conservado";
@@ -589,12 +614,14 @@ export function EventSheet({
             <p className="eyebrow">EVIDENCIA</p>
             <h3>{evidenceTitle}</h3>
           </div>
-          {hasRawSource && (
+          {hasRawSource && !isAmexActivity && (
             <button className="secondary-button" onClick={toggleRaw}>
               {rawEmail ? "Ocultar" : isApplePayCapture ? "Ver correo" : "Ver fuente"}
             </button>
           )}
         </div>
+        {activityOriginals.map((hash, index) => <button type="button" className="secondary-button" key={hash}
+          onClick={() => void downloadActivity(hash)}>Descargar Excel Amex{activityOriginals.length > 1 ? ` ${index + 1}` : ""}</button>)}
         {rawEmail ? (
           <pre className="raw-source">{rawEmail}</pre>
         ) : (

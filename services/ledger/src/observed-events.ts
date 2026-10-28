@@ -5,6 +5,7 @@ export type CaptureSource =
   | 'apple_pay_shortcut'
   | 'santander_csv'
   | 'manual'
+  | 'amex_activity'
   | 'amex_statement'
   | 'santander_statement';
 

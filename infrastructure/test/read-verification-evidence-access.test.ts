@@ -45,14 +45,18 @@ it('gives the deployed verifier read-only access to every supported evidence fam
       BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true,
     },
   });
-  for (const provider of ['amex', 'santander-statement']) {
+  for (const provider of ['amex', 'amex-activity', 'santander-statement']) {
     const route = Object.values(template.findResources('AWS::ApiGatewayV2::Route'))
       .find(resource => resource.Properties.RouteKey === `POST /imports/${provider}/upload`);
     expect(route?.Properties).toMatchObject({ AuthorizationType: 'JWT', AuthorizerId: expect.anything() });
   }
+  for (const routeKey of ['POST /imports/amex-activity/preview', 'POST /imports/amex-activity/{importId}/apply', 'GET /imports/amex-activity/{importId}/source']) {
+    const route = Object.values(template.findResources('AWS::ApiGatewayV2::Route')).find(resource => resource.Properties.RouteKey === routeKey);
+    expect(route?.Properties).toMatchObject({ AuthorizationType: 'JWT', AuthorizerId: expect.anything() });
+  }
   const objectResources=reads.flatMap(statement=>Array.isArray(statement.Resource)?statement.Resource:[statement.Resource])
     .filter(resource=>resource['Fn::Join']!==undefined);
-  const expected=['inbound/*','manual-entries/*','manual-imports/cfdi-nomina/*','manual-imports/amex/*','manual-imports/santander/*',
+  const expected=['inbound/*','manual-entries/*','manual-imports/cfdi-nomina/*','manual-imports/amex/*','manual-imports/amex-activity/*','manual-imports/santander/*',
     'manual-imports/santander-statement/*','wealth-manual/*','wealth-api/*'];
   expect(objectResources).toHaveLength(expected.length);
   for(const prefix of expected)expect(objectResources).toContainEqual({
@@ -71,7 +75,7 @@ it('gives the deployed verifier read-only access to every supported evidence fam
   expect(schema.Properties.Environment.Variables.RAW_EMAIL_BUCKET_NAME).toEqual({Ref:rawBucket});
   expect(schemaStatements.flatMap(actions).some(a=>/^s3:(?:Put|Delete|\*)/.test(a))).toBe(false);
   expect(schemaStatements.flatMap(actions)).toContain('kms:Decrypt');
-  const bootstrap=Object.values(template.findResources('AWS::CloudFormation::CustomResource')).find(r=>r.Properties.Version===25)!;
+  const bootstrap=Object.values(template.findResources('AWS::CloudFormation::CustomResource')).find(r=>r.Properties.Version===26)!;
   const schemaPolicy=Object.keys(template.findResources('AWS::IAM::Policy')).find(id=>id.startsWith('DsqlProjectionSchemaServiceRoleDefaultPolicy'))!;
   expect(bootstrap.DependsOn).toContain(schemaPolicy);
   const functions=template.findResources('AWS::Lambda::Function');

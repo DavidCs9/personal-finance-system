@@ -8,7 +8,6 @@ import {
   type AmexStatementDocument,
 } from './amex-statement.js';
 import {
-  classifyPurchaseCharge,
   type StatementPreviewRow,
 } from './statement-reconciliation.js';
 import {
@@ -19,8 +18,6 @@ import {
 } from './textract-document.js';
 import {
   applyStatementImport,
-  claimedStatementIdentities,
-  classifyMsiEvidenceRow,
   loadStatementTextractExtraction,
   persistTextractExtraction,
   statementImportResponse,
@@ -31,28 +28,19 @@ import { type JsonObject } from '../http/response.js';
 import { localDate } from '../events/queries.js';
 import { bankLedgerEvents } from './bank-ledger.js';
 import { markDeferredMsi } from '../events/mutations.js';
+import { classifyAmexRows, readAmexRetainedRows } from './amex-reconciliation.js';
+import { claimedBankRows } from './bank-ledger.js';
 
-const buildAmexPreviewRows = async (
+export const buildAmexPreviewRows = async (
   document: AmexStatementDocument,
+  owner: string,
 ): Promise<readonly StatementPreviewRow[]> => {
-  const events = await bankLedgerEvents();
-  const purchaseCharges = document.charges.filter((charge) => !charge.msi);
-  const claimed = await claimedStatementIdentities(
-    'amex',
-    purchaseCharges.map((charge) => charge.identity),
-  );
-  const purchaseRows = purchaseCharges.map((charge) => classifyPurchaseCharge({
-    provider: 'amex',
-    accountLastFour: document.accountLastFour,
-    institution: 'american_express_mx',
-    charge,
-    events,
-    claimed,
-    localDate,
-  }));
-
-  const msiRows = amexMsiEvidenceLines(document).map((line) => classifyMsiEvidenceRow(line, events));
-  return [...purchaseRows, ...msiRows];
+  const rows = [...document.charges.filter(charge => !charge.msi).map(charge => ({ ...charge, kind: 'purchase' as const })),
+    ...amexMsiEvidenceLines(document).map(line => ({ ...line, kind: 'msi' as const, msi: true }))];
+  const [events, retained, claimed] = await Promise.all([bankLedgerEvents(), readAmexRetainedRows(owner),
+    claimedBankRows('amex_statement', rows.map(row => row.identity))]);
+  return classifyAmexRows({ sourceKind: 'amex_statement', accountLastFour: document.accountLastFour,
+    rows, events, retained, claimed }) as readonly StatementPreviewRow[];
 };
 
 export const previewAmexImport = async (
@@ -109,7 +97,7 @@ export const getAmexImport = async (importId: string, owner: string): Promise<Js
     const retained = await loadStatementTextractExtraction({source: stored.source, extractionKey});
     answers = retained.answers;
     const document = parseAmexStatementExtraction(retained);
-    const rows = await buildAmexPreviewRows(document);
+    const rows = await buildAmexPreviewRows(document, owner);
     preview = { accountLastFour: document.accountLastFour, product: document.product,
       period: document.period, rows, extractionKey, textractAnswers: answers };
   } catch (error) {
@@ -126,9 +114,10 @@ export const getAmexImport = async (importId: string, owner: string): Promise<Js
 
 export const applyAmexImport = async (importId: string, owner: string, decisionBody: string | undefined): Promise<JsonObject> =>
   applyStatementImport({ provider: 'amex', importId, owner, decisionBody,
+    conservativeAmex: true,
     prepareRows: async (stored) => {
       const document = parseAmexStatementExtraction(await loadStatementTextractExtraction(stored));
-      return { rebuildRows: () => buildAmexPreviewRows(document), afterRows: async () => ({
+      return { rebuildRows: () => buildAmexPreviewRows(document, owner), afterRows: async () => ({
         deferredMsi: await applyAmexDeferralCredits({ owner, accountLastFour: document.accountLastFour, deferralCredits: document.deferralCredits }),
       }) };
     },

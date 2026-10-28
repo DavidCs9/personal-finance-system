@@ -7,6 +7,9 @@ const { handler } = await import('../src/http/ledger-api.js');
 const statements = await import('../src/imports/statement-catalog.js');
 const uploads = await import('../src/imports/statement-upload.js');
 const reconciliations = await import('../src/months/reconciliation.js');
+const activity = await import('../src/imports/amex-activity-flow.js');
+const activitySources = await import('../src/imports/amex-activity-source.js');
+const { statementPreviewSummary } = await import('../src/imports/statement-reconciliation.js');
 afterEach(() => vi.restoreAllMocks());
 
 const context = {
@@ -79,6 +82,22 @@ describe('ledger API Powertools router', () => {
     expect(JSON.parse(String(conflict.body)).message).toBe('El vínculo cambió.');
   });
 
+  it('binds every activity operation to JWT owner and returns the public financial result', async () => {
+    const hash = 'a'.repeat(64), body = JSON.stringify({ sha256: hash, size: 123, owner: 'forged' });
+    const upload = vi.spyOn(activitySources, 'createAmexActivityUpload').mockResolvedValue({ url: 'https://evidence.test',
+      headers: { 'Content-Type': 'application/xlsx', 'x-amz-checksum-sha256': 'checksum', 'If-None-Match': '*' } });
+    const preview = vi.spyOn(activity, 'previewAmexActivity').mockResolvedValue({ importId: hash, status: 'ready',
+      accountLastFour: '3456', product: 'Gold', period: undefined, rows: [], summary: statementPreviewSummary([]), alreadyApplied: false });
+    const apply = vi.spyOn(activity, 'applyAmexActivity').mockResolvedValue({ importId: hash, created: [], alreadyApplied: true });
+    const source = vi.spyOn(activitySources, 'getAmexActivitySource').mockResolvedValue({ url: 'https://evidence.test/original' });
+    for (const path of ['/imports/amex-activity/upload', '/imports/amex-activity/preview', `/imports/amex-activity/${hash}/apply`])
+      expect((await handler({ ...httpEvent('POST', path), body }, context)).statusCode).toBe(200);
+    expect(upload).toHaveBeenCalledWith(body, 'owner-1'); expect(preview).toHaveBeenCalledWith(body, 'owner-1');
+    expect(apply).toHaveBeenCalledWith(hash, 'owner-1', body);
+    const original = await handler(httpEvent('GET', `/imports/amex-activity/${hash}/source`, { owner: 'forged' }), context);
+    expect(original.statusCode).toBe(200); expect(original.headers).toMatchObject({ 'cache-control': 'no-store' });
+    expect(source).toHaveBeenCalledWith(hash, 'owner-1');
+  });
   it('scopes the statement catalog and original PDF routes to the authenticated principal', async () => {
     const catalog = { asOfDay: '2026-10-24', accounts: [], unidentifiedDocuments: [] };
     const read = vi.spyOn(statements, 'getStatementCatalog').mockResolvedValue(catalog);

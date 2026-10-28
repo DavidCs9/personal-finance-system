@@ -346,3 +346,31 @@ describe("fixed payment reconciliation boundary", () => {
       expect.objectContaining({ body: JSON.stringify({ eventId: null, expectedEventId: "charge", expectedPayment }) }));
   });
 });
+
+describe('Amex activity source transport', () => {
+  it.each([200, 412])('uploads immutable original and previews its checksum after S3 status %s', async status => {
+    const idToken = token(Date.now() + 600000, 'owner');
+    const bytes = new Uint8Array([0x50, 0x4b, 1, 2]);
+    const file = new File([bytes], 'actividad.xlsx');
+    const mock = vi.mocked(fetch);
+    mock.mockResolvedValueOnce(jsonResponse({ url: 'https://evidence.test/original', headers: { 'If-None-Match': '*' } }))
+      .mockResolvedValueOnce(new Response(null, { status })).mockResolvedValueOnce(jsonResponse({ importId: 'original', status: 'ready' }));
+    expect(await ledgerApi.previewAmexActivity(file, idToken)).toMatchObject({ importId: 'original' });
+    expect(mock).toHaveBeenCalledTimes(3);
+    const first = mock.mock.calls[0], last = mock.mock.calls[2];
+    expect(String(first[0])).toContain('/imports/amex-activity/upload');
+    expect(mock.mock.calls[1]).toEqual(['https://evidence.test/original', { method: 'PUT', headers: { 'If-None-Match': '*' }, body: file }]);
+    expect(String(last[0])).toContain('/imports/amex-activity/preview');
+    expect(first[1]?.body).toBe(last[1]?.body);
+    expect(JSON.parse(String(first[1]?.body))).toMatchObject({ size: 4, sha256: expect.stringMatching(/^[a-f0-9]{64}$/) });
+  });
+  it('stops before preview on failed upload or malformed workbook', async () => {
+    const idToken = token(Date.now() + 600000, 'owner');
+    await expect(ledgerApi.previewAmexActivity(new File(['bad'], 'actividad.xlsx'), idToken)).rejects.toThrow('original');
+    expect(fetch).not.toHaveBeenCalled();
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ url: 'https://evidence.test/original', headers: {} }))
+      .mockResolvedValueOnce(new Response(null, { status: 500 }));
+    await expect(ledgerApi.previewAmexActivity(new File([new Uint8Array([0x50, 0x4b])], 'actividad.xlsx'), idToken)).rejects.toThrow('subir');
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});

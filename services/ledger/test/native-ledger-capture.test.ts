@@ -35,7 +35,7 @@ beforeEach(async()=>{
 });
 
 describe('native observed capture and reconciliation',()=>{
-  it.each(['email','apple_pay_shortcut','manual','santander_csv','amex_statement','santander_statement'] as const)(
+  it.each(['email','apple_pay_shortcut','manual','santander_csv','amex_statement','amex_activity','santander_statement'] as const)(
     'creates %s financial facts, primary evidence and source claim without adapter records',async source=>{
       const value=input(source),saved=await save(value);
       expect(saved).toMatchObject({eventId:value.event.id,created:true,reconciled:false,duplicate:false});
@@ -45,6 +45,17 @@ describe('native observed capture and reconciliation',()=>{
       expect((await sql.query('SELECT source_pk FROM olbia.projection_state')).rows).toEqual([]);
       expect((await sql.query('SELECT token FROM olbia.command_receipts')).rows).toEqual([]);
     });
+  it('links later timed Amex evidence to a unique day-level activity capture', async () => {
+    const activity = input('amex_activity');
+    const account = { institution: 'american_express_mx' as const, lastFour: '3456' };
+    const first = await save({ ...activity, event: { ...activity.event, institution: 'american_express_mx', account } });
+    const email = input('email');
+    const later = await save({ ...email, reconciliationAt: '2026-10-02T23:00:00Z', event: { ...email.event,
+      institution: 'american_express_mx', account, occurredAt: '2026-10-02T23:00:00Z' } });
+    expect(later).toMatchObject({ eventId: first.eventId, created: false, reconciled: true });
+    expect((await sql.query('SELECT id FROM olbia.ledger_movements')).rows).toHaveLength(1);
+    expect((await sql.query('SELECT id FROM olbia.ledger_observations')).rows).toHaveLength(2);
+  });
   it('returns the same idempotent result and attaches a defensive retry token without duplicating evidence',async()=>{
     const value=input(),first=await save(value),before=await snapshot();
     expect(await save({...value,event:{...value.event,id:randomUUID(),amount:{amountMinor:20000,currency:'MXN'}}}))

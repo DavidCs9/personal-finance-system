@@ -26,7 +26,7 @@ export interface NativeObservationInput {
   readonly bankTransactionId?:string;readonly rowNumber?:number;readonly note?:string;
 }
 export interface BankRowEvidence {
-  readonly installmentIndex:number;readonly kind:'amex_statement'|'santander_statement'|'santander_csv';
+  readonly installmentIndex:number;readonly kind:'amex_statement'|'amex_activity'|'santander_statement'|'santander_csv';
   readonly contentSha256:string;readonly rowPosition:number;
 }
 export interface NativeClaimInput {

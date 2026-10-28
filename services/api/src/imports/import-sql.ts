@@ -3,10 +3,10 @@ import { reserveLedgerMutations } from '@finance/ledger/native-ledger';
 import { readerPool,type ReadSqlClient } from '../events/sql-reads.js';
 import type { StatementCandidate,StatementPreviewRow,StatementRowStatus,StatementProvider } from './statement-reconciliation.js';
 
-export type BankImportKind='amex_statement'|'santander_statement'|'santander_csv';
+export type BankImportKind='amex_statement'|'amex_activity'|'santander_statement'|'santander_csv';
 export const statementImportKind=(provider:StatementProvider):BankImportKind=>provider==='amex'?'amex_statement':'santander_statement';
 export type BankImportRow=Omit<StatementPreviewRow,'kind'> & {
-  readonly kind?:'purchase'|'msi';readonly rowNumber?:number;readonly occurrence?:number;readonly transactionId?:string;
+  readonly kind?:'purchase'|'msi';readonly rowNumber?:number;readonly occurrence?:number;readonly transactionId?:string;readonly purchaseOn?:string;readonly merchantReference?:string;
 };
 export type BankImportResult={readonly created:number;readonly linked:number;readonly skipped:number;
   readonly msiConfirmed?:number;readonly createdUnplanned?:number};
@@ -28,7 +28,7 @@ export const readBankImport=async(kind:BankImportKind,importId:string,owner:stri
   const result=await client.query(`SELECT parent.*,parent.period_start::text AS period_start,parent.period_end::text AS period_end,
     line.position AS row_position,line.identity,line.occurred_on::text AS occurred_on,line.merchant_raw,line.amount_mxn_minor,
     line.status AS row_status,line.row_kind,line.is_credit,line.installment_index,line.installment_months,line.original_amount_mxn_minor,
-    line.row_number,line.occurrence,line.bank_transaction_id,line.selected_movement_id,
+    line.row_number,line.occurrence,line.bank_transaction_id,line.purchase_on::text AS purchase_on,line.merchant_reference,line.selected_movement_id,
     candidate.position AS candidate_position,candidate.movement_id AS candidate_id,candidate.merchant_raw AS candidate_merchant,
     candidate.occurred_at AS candidate_occurred_at
     FROM olbia.bank_imports parent LEFT JOIN olbia.bank_import_rows line ON line.kind=parent.kind AND line.content_sha256=parent.content_sha256
@@ -49,6 +49,8 @@ export const readBankImport=async(kind:BankImportKind,importId:string,owner:stri
         ...(raw.installment_months!=null?{installmentMonths:Number(raw.installment_months)}:{}),
         ...(raw.original_amount_mxn_minor!=null?{originalAmountMinor:Number(raw.original_amount_mxn_minor)}:{}),
         ...(raw.row_number!=null?{rowNumber:Number(raw.row_number)}:{}),...(raw.occurrence!=null?{occurrence:Number(raw.occurrence)}:{}),
+        ...(raw.purchase_on!=null?{purchaseOn:String(raw.purchase_on)}:{}),
+        ...(raw.merchant_reference!=null?{merchantReference:String(raw.merchant_reference)}:{}),
         ...(raw.bank_transaction_id!=null?{transactionId:String(raw.bank_transaction_id)}:{}),
         ...(raw.selected_movement_id!=null?{eventId:String(raw.selected_movement_id)}:{})};
       rows.set(position,line);
@@ -114,11 +116,11 @@ const replaceRows=async(client:ReadSqlClient,record:BankImportRecord,candidates:
   await client.query('DELETE FROM olbia.bank_import_rows WHERE kind=$1 AND content_sha256=$2',[record.kind,record.importId]);
   // JSON is transient parameter transport for one native INSERT, never persisted.
   await client.query(`INSERT INTO olbia.bank_import_rows (kind,content_sha256,position,identity,occurred_on,merchant_raw,amount_mxn_minor,status,
-    row_kind,is_credit,installment_index,installment_months,original_amount_mxn_minor,row_number,occurrence,bank_transaction_id,selected_movement_id)
+    row_kind,is_credit,installment_index,installment_months,original_amount_mxn_minor,row_number,occurrence,bank_transaction_id,purchase_on,merchant_reference,selected_movement_id)
     SELECT $1,$2,(row.position-1)::integer,row.item->>'identity',(row.item->>'occurredOn')::date,row.item->>'merchantRaw',
       (row.item->>'amountMinor')::bigint,row.item->>'status',row.item->>'kind',(row.item->>'credit')::boolean,
       (row.item->>'installmentIndex')::integer,(row.item->>'installmentMonths')::integer,(row.item->>'originalAmountMinor')::bigint,
-      (row.item->>'rowNumber')::integer,(row.item->>'occurrence')::integer,row.item->>'transactionId',row.item->>'eventId'
+      (row.item->>'rowNumber')::integer,(row.item->>'occurrence')::integer,row.item->>'transactionId',(row.item->>'purchaseOn')::date,row.item->>'merchantReference',row.item->>'eventId'
     FROM jsonb_array_elements($3::jsonb) WITH ORDINALITY AS row(item,position)`,[record.kind,record.importId,JSON.stringify(record.rows)]);
   await client.query(`INSERT INTO olbia.bank_import_candidates (kind,content_sha256,row_position,position,movement_id,merchant_raw,occurred_at)
     SELECT $1,$2,(candidate.item->>'rowPosition')::integer,(candidate.item->>'position')::integer,candidate.item->>'id',

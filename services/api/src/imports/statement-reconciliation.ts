@@ -1,3 +1,5 @@
+import { matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
+import type { JsonObject } from '../http/response.js';
 import { merchantsMatch as santanderMerchantsMatch } from "./santander-csv.js";
 import { amexMerchantsMatch, canCreateMsiPlanFromEvidence } from "./msi-reconciliation.js";
 import type { StatementProvider } from "./textract-document.js";
@@ -23,6 +25,7 @@ export interface StatementCandidate {
 }
 
 export interface StatementPreviewRow {
+  readonly merchantReference?: string;
   readonly identity: string;
   readonly kind: StatementRowKind;
   readonly merchantRaw: string;
@@ -233,5 +236,63 @@ export const statementPreviewSummary = (rows: readonly StatementPreviewRow[]) =>
     skipped: count("skipped"),
     purchases: rows.filter((row) => row.kind === "purchase").length,
     msi: rows.filter((row) => row.kind === "msi").length,
+  };
+};
+
+export const classifyMsiEvidenceRow = (
+  line: EvidenceLine,
+  events: readonly JsonObject[],
+): StatementPreviewRow => {
+  const match = matchEvidenceLine(line, events);
+  if (match.kind === 'confirm') {
+    return {
+      identity: line.identity,
+      kind: 'msi',
+      merchantRaw: line.merchantRaw,
+      amountMinor: line.amountMinor,
+      occurredOn: line.occurredOn,
+      msi: true,
+      installmentIndex: line.installmentIndex,
+      installmentMonths: line.installmentMonths,
+      originalAmountMinor: line.originalAmountMinor,
+      status: 'matched',
+      eventId: match.eventId,
+      candidateEventIds: [match.eventId],
+      candidates: [],
+    };
+  }
+  if (match.kind === 'needs_decision') {
+    const candidates = match.candidates.map((candidate) => ({
+      id: candidate.eventId,
+      merchantRaw: candidate.merchantRaw,
+    }));
+    return {
+      identity: line.identity,
+      kind: 'msi',
+      merchantRaw: line.merchantRaw,
+      amountMinor: line.amountMinor,
+      occurredOn: line.occurredOn,
+      msi: true,
+      installmentIndex: line.installmentIndex,
+      installmentMonths: line.installmentMonths,
+      originalAmountMinor: line.originalAmountMinor,
+      status: 'needs_decision',
+      candidateEventIds: candidates.map((candidate) => candidate.id),
+      candidates,
+    };
+  }
+  return {
+    identity: line.identity,
+    kind: 'msi',
+    merchantRaw: line.merchantRaw,
+    amountMinor: line.amountMinor,
+    occurredOn: line.occurredOn,
+    msi: true,
+    installmentIndex: line.installmentIndex,
+    installmentMonths: line.installmentMonths,
+    originalAmountMinor: line.originalAmountMinor,
+    status: 'skipped',
+    candidateEventIds: [],
+    candidates: [],
   };
 };

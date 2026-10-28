@@ -39,6 +39,8 @@ The statement catalog reads owner-scoped native import headers without polling e
 
 Statement PDFs upload directly from the browser to the existing KMS-encrypted S3 evidence bucket through a ten-minute signed conditional PUT, bound to authenticated owner/provider/content hash, SHA-256 checksum, exact file size and PDF content type (maximum 50 MiB). Preview receives metadata only and verifies the retained original before Textract; retry never replaces evidence. The API rejects binary statement uploads.
 
+Amex activity XLSX uses the same private conditional-upload boundary with a 2 MB limit, its own `amex_activity` source kind and deterministic workbook parsing in the API, without Textract or a banking intermediary. Schema version 23 expands native source-kind checks and retains both bank dates and the merchant reference in typed import-row columns; source claims bind the account-scoped bank reference independently of file hash/order. Preview and transactional apply reconcile the entire batch against retained Amex activity/PDF evidence. Original bytes are verified and read once outside SQL retry callbacks. The XLSX is evidence, not PDF coverage.
+
 SES stores encrypted MIME before pointer-only SQS intake. Known deterministic parsers are the fast path; an isolated Bedrock fallback queue returns schema-constrained candidates only accepted after deterministic institution/type/money/status/time and literal-evidence validation. Retries preserve source identity; failed extraction does not permanently consume a financial claim. Lambdas have no reserved concurrency; public API throttling protects the account's shared concurrency.
 
 ## Where changes belong

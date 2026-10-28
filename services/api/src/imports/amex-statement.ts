@@ -7,7 +7,10 @@ import type { TextractStatementExtraction, TextractTable } from "./textract-docu
 
 export class InvalidAmexStatementError extends Error {}
 
+const merchantReferenceFrom = (value: string): string | undefined => /\/\s*REF\s*([A-Za-z0-9_#-]+)/i.exec(value)?.[1];
+
 export interface AmexStatementCharge {
+  readonly merchantReference?: string;
   readonly occurredOn: string;
   readonly merchantRaw: string;
   readonly amountMinor: number;
@@ -272,6 +275,7 @@ const chargesFromTables = (
       if (msi && !installment) continue;
 
       charges.push({
+        ...(merchantReferenceFrom(joined) ? { merchantReference: merchantReferenceFrom(joined) } : {}),
         occurredOn,
         merchantRaw,
         amountMinor: parsedAmount.amountMinor,
@@ -320,10 +324,13 @@ const parseChargesAndPlansFromLines = (
     merchantRaw = cleanMerchant(inline.merchantRaw);
     let amountMinor = inline.amountMinor;
     let credit = false;
+    let merchantReference = merchantReferenceFrom(line);
 
     for (let look = 1; look <= 6 && index + look < scanEnd; look += 1) {
       const next = lines[index + look];
       if (!next) continue;
+      if (/^\d{1,2}\s+de\s+/i.test(next)) break;
+      merchantReference ??= merchantReferenceFrom(next);
       if (/^CR$/i.test(next)) {
         credit = true;
         continue;
@@ -357,6 +364,7 @@ const parseChargesAndPlansFromLines = (
     const msi = !isDeferral && (Boolean(installment) || /MESES EN AUTOM[AÁ]TICO/i.test(merchantRaw));
     if (msi && !installment) continue;
     charges.push({
+      ...(merchantReference ? { merchantReference } : {}),
       occurredOn,
       merchantRaw,
       amountMinor,
@@ -653,6 +661,7 @@ export const parseAmexStatementExtraction = (
 };
 
 export interface AmexMsiEvidenceLine {
+  readonly merchantReference?: string;
   readonly merchantRaw: string;
   readonly amountMinor: number;
   readonly occurredOn: string;
@@ -684,6 +693,7 @@ export const amexMsiEvidenceLines = (
     });
     if (plan) usedPlans.add(`${plan.installmentIndex}/${plan.installmentMonths}:${plan.cuotaMinor}`);
     return {
+      ...(charge.merchantReference ? { merchantReference: charge.merchantReference } : {}),
       merchantRaw: charge.merchantRaw,
       amountMinor: charge.amountMinor,
       occurredOn: charge.occurredOn,

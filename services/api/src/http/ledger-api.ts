@@ -1,5 +1,9 @@
 import { getStatementCatalog, getStatementSource } from '../imports/statement-catalog.js';
 import { createStatementUpload } from '../imports/statement-upload.js';
+import { createAmexActivityUpload } from '../imports/amex-activity-source.js';
+import { previewAmexActivity, applyAmexActivity } from '../imports/amex-activity-flow.js';
+import { InvalidAmexActivityError } from '../imports/amex-activity.js';
+import { getAmexActivitySource } from '../imports/amex-activity-source.js';
 import { listPublicPushSubscriptions } from '../push/subscription-reads.js';
 import {
   HttpStatusCodes,
@@ -109,6 +113,7 @@ const clientErrors = [
   BankImportError,
   InvalidSantanderStatementError,
   InvalidAmexStatementError,
+  InvalidAmexActivityError,
   InvalidCfdiNominaError,
   TextractDocumentError,
   InvalidPushSubscriptionError,
@@ -415,6 +420,21 @@ app.post('/imports/santander-statement/:importId/apply', async ({ event, params 
     await applySantanderStatementImport(params.importId, ownerOf(gatewayEvent), requestBody(gatewayEvent)),
   );
 });
+
+app.post('/imports/amex-activity/upload', async ({ event }) => {
+  const gatewayEvent = asHttpEvent(event);
+  return json(HttpStatusCodes.OK, await createAmexActivityUpload(requestBody(gatewayEvent), ownerOf(gatewayEvent)));
+});
+app.post('/imports/amex-activity/preview', async ({ event }) => {
+  const gatewayEvent = asHttpEvent(event);
+  return json(HttpStatusCodes.OK, await previewAmexActivity(requestBody(gatewayEvent), ownerOf(gatewayEvent)));
+});
+app.post('/imports/amex-activity/:importId/apply', async ({ event, params }) => {
+  const gatewayEvent = asHttpEvent(event);
+  return json(HttpStatusCodes.OK, await applyAmexActivity(params.importId, ownerOf(gatewayEvent), requestBody(gatewayEvent)));
+});
+app.get('/imports/amex-activity/:importId/source', async ({ event, params }) =>
+  statementResponse(HttpStatusCodes.OK, await getAmexActivitySource(params.importId, ownerOf(asHttpEvent(event)))));
 
 app.post('/imports/amex/upload', async ({ event }) => {
   const gatewayEvent = asHttpEvent(event);
