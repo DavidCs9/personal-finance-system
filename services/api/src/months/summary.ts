@@ -1,6 +1,7 @@
-import { computeMonthSummary, type MonthSpendEvent, type MonthSummary } from '@finance/domain';
+import { computeMonthSummary, type MonthFixedPayment, type MonthSpendEvent, type MonthSummary } from '@finance/domain';
 import { listEventsForMonth } from '../events/queries.js';
 import { getMonthlyPlan } from './service.js';
+import { withLedgerReadSnapshot } from '../events/sql-reads.js';
 import type { JsonObject } from '../http/response.js';
 
 type MonthEventFeed = {
@@ -9,10 +10,11 @@ type MonthEventFeed = {
 };
 
 const toMonthSpendEvent = (event: JsonObject): MonthSpendEvent => {
-  const amount = event.amount as { readonly amountMinor?: unknown } | undefined;
+  const amount = event.amount as { readonly amountMinor?: unknown; readonly currency?: unknown } | undefined;
   return {
     id: typeof event.id === 'string' ? event.id : undefined,
     amountMinor: typeof amount?.amountMinor === 'number' ? amount.amountMinor : 0,
+    currency: typeof amount?.currency === 'string' ? amount.currency : undefined,
     personalAmountMinor: typeof event.personalAmountMinor === 'number' ? event.personalAmountMinor : undefined,
     status: typeof event.status === 'string' ? event.status : 'accepted',
     occurredAt: typeof event.occurredAt === 'string' ? event.occurredAt : undefined,
@@ -52,6 +54,7 @@ export const summarizeMonthFeed = (
     incomeMinor: typeof plan.incomeMinor === 'number' ? plan.incomeMinor : 0,
     incomeConfigured: plan.configured === true,
     upcomingPaymentsMinor,
+    fixedPayments: upcomingPayments as readonly MonthFixedPayment[],
     now,
   });
 };
@@ -62,6 +65,8 @@ export const getMonthSummary = async (
   month: string,
   now: Date = new Date(),
 ): Promise<MonthSummary> => {
-  const [plan, feed] = await Promise.all([getMonthlyPlan(owner, month), listEventsForMonth(month)]);
-  return summarizeMonthFeed(month, plan, feed, now);
+  return withLedgerReadSnapshot(async () => {
+    const [plan, feed] = await Promise.all([getMonthlyPlan(owner, month), listEventsForMonth(month)]);
+    return summarizeMonthFeed(month, plan, feed, now);
+  });
 };

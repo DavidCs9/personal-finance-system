@@ -7,7 +7,7 @@ import { claimIgnoredEmail, insertLedgerRevision, replaceInstallmentPlan, replac
   setMovementCategory, setMovementPersonalAmount, setMovementStatus } from './ledger-writes.js';
 
 /** Caller guarantees rollback. Exercise runtime privileges and deferred integrity on the real engine. */
-export const smokeNativeLedger = async (client: SqlClient, owner: string, categoryId: string): Promise<void> => {
+export const smokeNativeLedger = async (client: SqlClient, owner: string, categoryId: string): Promise<string> => {
   if ((await client.query('SELECT version FROM olbia.schema_migrations WHERE version=14')).rows.length !== 1)
     throw new Error('Native ledger is not active');
   const at = new Date().toISOString(), token = randomUUID(), id = randomUUID();
@@ -60,4 +60,5 @@ export const smokeNativeLedger = async (client: SqlClient, owner: string, catego
     throw new Error('Native suppression replay failed');
   // Rollback alone never checks initially deferred FKs. Explicitly check them before declaring the smoke valid.
   await client.query('SET CONSTRAINTS ALL IMMEDIATE');
+  return id;
 };

@@ -12,7 +12,7 @@ import type {
   SantanderStatementImportResult,
   StatementImportDecision,
 } from "../types";
-import type { MonthlyPlan } from "../monthly-plan";
+import type { MonthlyPlan, PlannedPayment } from "../monthly-plan";
 import type { CardCycle } from "../card-cycle";
 import type { CardLiabilitySnapshot, WealthOverview } from "../wealth";
 import { CAJITA_ACCOUNT_ID, type FutureCommitments, type MonthSummary, type SpendingAnalytics, type WealthSnapshot } from "@finance/domain";
@@ -374,8 +374,18 @@ export const ledgerApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         currency: plan.currency,
-        upcomingPayments: plan.upcomingPayments,
+        upcomingPayments: plan.upcomingPayments.map(({ id, name, amountMinor, dueDay }) => ({ id, name, amountMinor, dueDay })),
       }),
+    });
+  },
+  async reconcilePayment(month: string, paymentId: string, eventId: string | null,
+    expectedEventId: string | null, expectedPayment: Pick<PlannedPayment, "name" | "amountMinor" | "dueDay">,
+    idToken: string): Promise<MonthlyPlan> {
+    return request<MonthlyPlan>(`/months/${encodeURIComponent(month)}/payments/${encodeURIComponent(paymentId)}/reconciliation`, idToken, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eventId, expectedEventId,
+        expectedPayment:{name:expectedPayment.name,amountMinor:expectedPayment.amountMinor,dueDay:expectedPayment.dueDay} }),
     });
   },
   async uploadNominas(

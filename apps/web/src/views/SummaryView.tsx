@@ -18,6 +18,8 @@ export interface SummaryViewProps {
   readonly projectedSpendMinor: number;
   readonly projectedRemainingMinor: number;
   readonly isCurrentMonth: boolean;
+  readonly isFutureMonth?: boolean;
+  readonly fixedSpentMinor?: number;
   readonly risk: "danger" | "watch" | "steady";
   readonly msiSpentMinor: number;
   readonly msiCommittedMinor: number;
@@ -119,7 +121,7 @@ export function SummaryView(props: SummaryViewProps) {
                       <dd><Amt>{money(props.spentMinor)}</Amt></dd>
                     </div>
                     <div>
-                      <dt>Gastos fijos programados</dt>
+                      <dt>Fijos sin cobro vinculado</dt>
                       <dd><Amt>{money(props.billUpcomingMinor)}</Amt></dd>
                     </div>
                     <div>
@@ -133,9 +135,15 @@ export function SummaryView(props: SummaryViewProps) {
                       en Has gastado.
                     </p>
                   )}
+                  {(props.fixedSpentMinor ?? 0) > 0 && (
+                    <p>
+                      Los cobros vinculados de fijos (<Amt>{money(props.fixedSpentMinor ?? 0)}</Amt>) ya están
+                      en Has gastado y no se repiten.
+                    </p>
+                  )}
                   <p>
                     {props.plan.upcomingPayments.length > 0
-                      ? "Los fijos muestran lo programado para el mes; aún no verificamos si ya se cobraron."
+                      ? "Los fijos sin cobro vinculado muestran programación; no confirma si ya se cobraron."
                       : "No hay gastos fijos programados para este mes."}
                   </p>
                 </details>
@@ -189,17 +197,20 @@ export function SummaryView(props: SummaryViewProps) {
                 <span>según tu gasto y compromisos del mes</span>
               </section>
               <section className={`projection-card ${props.risk}`}>
-                <p>{props.isCurrentMonth ? "A este ritmo" : "Cierre del mes"}</p>
+                <p>{props.isCurrentMonth ? "A este ritmo" : props.isFutureMonth ? "Compromisos del mes" : "Cierre del mes"}</p>
                 <strong>
-                  {props.isCurrentMonth ? "Gastarás" : "Gastaste"}{" "}
-                  <Amt>{money(props.projectedSpendMinor)}</Amt>
+                  {props.isCurrentMonth ? "Gastarás" : props.isFutureMonth ? "Programado" : "Gastaste"}{" "}
+                  <Amt>{money(props.isCurrentMonth ? props.projectedSpendMinor
+                    : props.isFutureMonth ? props.billUpcomingMinor + props.msiCommittedMinor : props.spentMinor)}</Amt>
                 </strong>
                 <span>
                   {props.isCurrentMonth
                     ? "si mantienes este paso · incluye fijos y MSI del mes"
-                    : "según tus registros y compromisos del mes"}
+                    : props.isFutureMonth
+                      ? "fijos sin cobro vinculado y cuotas MSI comprometidas"
+                      : "según tus movimientos y cuotas MSI registrados"}
                 </span>
-                {props.projectedRemainingMinor < 0 ? (
+                {props.isCurrentMonth && props.projectedRemainingMinor < 0 ? (
                   <button onClick={props.onReviewLargest}>
                     Revisar gastos grandes <span>→</span>
                   </button>

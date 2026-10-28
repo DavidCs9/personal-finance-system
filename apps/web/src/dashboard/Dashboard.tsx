@@ -1,11 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ledgerApi } from "../api/client";
 import { mockAnalyticsFor, mockExceptionRawEmail, mockExceptions, mockFeedForMonth, mockMonthSummaryFor, mockEvents } from "../api/mock-data";
 import { AppShell } from "../layout/AppShell";
 import { eventDate, monthKey } from "../lib/format";
 import { usePrivateMode } from "../lib/private-mode";
-import { analyticsQueryKey, analyticsQueryRoot, eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, monthlySummaryQueryKey, monthlySummaryQueryRoot, cardsQueryKey, wealthQueryKey, commitmentsQueryRoot, statementsQueryKey } from "../lib/query-keys";
+import { analyticsQueryKey, analyticsQueryRoot, eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, monthlyPlanQueryRoot, monthlySummaryQueryKey, monthlySummaryQueryRoot, cardsQueryKey, wealthQueryKey, commitmentsQueryRoot, statementsQueryKey } from "../lib/query-keys";
 import type { Tab } from "../lib/tabs";
 import {
   demoPlans,
@@ -41,6 +41,31 @@ import type { WealthOverview, WealthAccountView, WealthHistoryPoint, WealthLiabi
 import { withWealthTotals } from "../wealth";
 import { CAJITA_ACCOUNT_ID, BITSO_ACCOUNT_ID, IBKR_ACCOUNT_ID, WEALTH_ACCOUNTS, dayKeyInZone, type WealthAccountId, type WealthSnapshot } from "@finance/domain";
 
+const reconcileDemoPayment = (plan: MonthlyPlan, paymentId: string, eventId: string | null,
+  expectedEventId: string | null, expectedPayment: Pick<PlannedPayment, "name" | "amountMinor" | "dueDay">,
+  events: readonly PurchaseEvent[], month: string): MonthlyPlan => {
+  const payment = plan.upcomingPayments.find(item => item.id === paymentId);
+  if (!payment || (payment.reconciliation?.eventId ?? null) !== expectedEventId
+    || payment.name !== expectedPayment.name || payment.amountMinor !== expectedPayment.amountMinor || payment.dueDay !== expectedPayment.dueDay) {
+    throw new Error("El vínculo cambió. Cierra este detalle y vuelve a abrirlo.");
+  }
+  const event = eventId ? events.find(item => item.id === eventId) : undefined;
+  if (eventId && (!event || event.msi || event.amount.currency !== "MXN" || event.amount.amountMinor <= 0
+    || !["accepted", "needs_review"].includes(event.status) || monthKey(new Date(event.occurredAt ?? event.receivedAt)) !== month)) {
+    throw new Error("Elige un cargo válido de este mes.");
+  }
+  if (eventId && plan.upcomingPayments.some(item => item.id !== paymentId && item.reconciliation?.eventId === eventId)) {
+    throw new Error("Ese cargo ya está vinculado a otro gasto fijo.");
+  }
+  return { ...plan, upcomingPayments: plan.upcomingPayments.map(item => {
+    if (item.id !== paymentId) return item;
+    const { reconciliation: _previous, ...value } = item;
+    return event ? { ...value, reconciliation: { eventId: event.id, merchantRaw: event.merchantRaw,
+      amountMinor: event.personalAmountMinor ?? event.amount.amountMinor, grossAmountMinor: event.amount.amountMinor,
+      occurredAt: new Date(event.occurredAt ?? event.receivedAt).toISOString(), valid: true } } : value;
+  }) };
+};
+
 export function Dashboard({
   idToken,
   demoMode,
@@ -61,6 +86,7 @@ export function Dashboard({
   const [activePayslip, setActivePayslip] = useState<Payslip>();
   const [uploadingNomina, setUploadingNomina] = useState(false);
   const [editingPayment, setEditingPayment] = useState<PlannedPayment | null | undefined>();
+  useEffect(() => { setEditingPayment(undefined); }, [selectedMonth]);
   const [editingCard, setEditingCard] = useState<CardCycle | null | undefined>();
   const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -99,14 +125,14 @@ export function Dashboard({
     queryKey: monthlyPlanQueryKey(selectedMonth),
     queryFn: () =>
       demoMode
-        ? Promise.resolve(planFor(demoPlans, selectedMonth))
+        ? Promise.resolve(queryClient.getQueryData<MonthlyPlan>(monthlyPlanQueryKey(selectedMonth)) ?? planFor(demoPlans, selectedMonth))
         : ledgerApi.monthlyPlan(selectedMonth, idToken),
   });
   const monthlySummaryQuery = useQuery({
     queryKey: monthlySummaryQueryKey(selectedMonth),
     queryFn: () =>
       demoMode
-        ? Promise.resolve(mockMonthSummaryFor(selectedMonth, planFor(demoPlans, selectedMonth), now))
+        ? Promise.resolve(mockMonthSummaryFor(selectedMonth, queryClient.getQueryData<MonthlyPlan>(monthlyPlanQueryKey(selectedMonth)) ?? planFor(demoPlans, selectedMonth), now))
         : ledgerApi.monthlySummary(selectedMonth, idToken),
   });
   const analyticsQuery = useQuery({
@@ -396,7 +422,8 @@ export function Dashboard({
       ? nextPlan
       : await ledgerApi.saveMonthlyPlan(selectedMonth, nextPlan, idToken);
     queryClient.setQueryData(monthlyPlanQueryKey(selectedMonth), saved);
-    await queryClient.invalidateQueries({ queryKey: monthlySummaryQueryKey(selectedMonth) });
+    await queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+    if (!demoMode) await queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot });
     await queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
   };
 
@@ -480,6 +507,8 @@ export function Dashboard({
             projectedSpendMinor={projectedSpendMinor}
             projectedRemainingMinor={projectedRemainingMinor}
             isCurrentMonth={isCurrentMonth}
+            isFutureMonth={summary?.isFutureMonth ?? false}
+            fixedSpentMinor={summary?.fixedSpentMinor ?? 0}
             risk={risk}
             msiSpentMinor={msiSpentMinor}
             msiCommittedMinor={msiCommittedMinor}
@@ -519,7 +548,7 @@ export function Dashboard({
             fixedPaymentsLoading={planLoading}
             fixedPaymentsLoadError={planLoadError}
             onRetryFixedPayments={() => { void monthlyPlanQuery.refetch(); }}
-            billUpcomingMinor={summary && !summaryLoadError ? billUpcomingMinor : undefined}
+            billUpcomingMinor={summary && !summaryLoadError ? summary.billScheduledMinor : undefined}
             onAddPayment={() => setEditingPayment(null)}
             onEditPayment={setEditingPayment}
             cards={cards}
@@ -638,6 +667,24 @@ export function Dashboard({
       )}
       {editingPayment !== undefined && (
         <PaymentSheet
+          key={`${selectedMonth}/${editingPayment?.id ?? "new"}`}
+          month={selectedMonth}
+          candidates={events}
+          candidatesLoading={loading}
+          candidatesError={error}
+          onRetryCandidates={() => { void eventsQuery.refetch(); }}
+          onOpenEvent={openMsiEvent}
+          onReconcile={editingPayment ? async (eventId) => {
+            const paymentContext = editingPayment;
+            const expectedEventId = paymentContext.reconciliation?.eventId ?? null;
+            const saved = demoMode
+              ? reconcileDemoPayment(plan, paymentContext.id, eventId, expectedEventId, paymentContext, events, selectedMonth)
+              : await ledgerApi.reconcilePayment(selectedMonth, paymentContext.id, eventId, expectedEventId, paymentContext, idToken);
+            queryClient.setQueryData(monthlyPlanQueryKey(selectedMonth), saved);
+            await queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            await queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
+            setEditingPayment(current => current === paymentContext ? saved.upcomingPayments.find(p => p.id === paymentContext.id) : current);
+          } : undefined}
           payment={editingPayment ?? undefined}
           onClose={() => setEditingPayment(undefined)}
           onSave={async (payment) => {
@@ -715,6 +762,11 @@ export function Dashboard({
             setActiveEvent(event);
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot }).then(() => {
+              const refreshed = queryClient.getQueryData<MonthlyPlan>(monthlyPlanQueryKey(selectedMonth));
+              if (refreshed) setEditingPayment(current => current
+                ? refreshed.upcomingPayments.find(payment => payment.id === current.id) : current);
+            });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
           }}
@@ -729,6 +781,7 @@ export function Dashboard({
           onMutated={() => {
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
           }}
@@ -742,6 +795,7 @@ export function Dashboard({
             setImportOpen(false);
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
           }}
@@ -767,6 +821,7 @@ export function Dashboard({
             closeStatementImport();
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
           }}
@@ -782,6 +837,7 @@ export function Dashboard({
             closeStatementImport();
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
           }}
@@ -801,6 +857,7 @@ export function Dashboard({
               msiRelated: current?.msiRelated ?? [],
             }));
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
             setActiveEvent(created);

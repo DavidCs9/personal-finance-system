@@ -47,3 +47,24 @@ describe('summarizeMonthFeed', () => {
     expect(summary.spentMinor).toBe(700_00);
   });
 });
+
+describe('summary fixed-charge read model', () => {
+  const now = new Date('2026-08-24T18:00:00Z');
+  const plan = { configured: true, incomeMinor: 10_000_00, upcomingPayments: [
+    { id: 'service', amountMinor: 399_00, reconciliation: { eventId: 'charge', valid: true,
+      amountMinor: 200_00, grossAmountMinor: 450_00, merchantRaw: 'Service' } },
+  ] };
+  const charge = { id: 'charge', amount: { amountMinor: 450_00, currency: 'MXN' }, personalAmountMinor: 200_00,
+    status: 'accepted', receivedAt: '2026-08-18T12:00:00Z' };
+
+  it('uses the same existing charge once in the deduplicated feed and full fixed coverage', () => {
+    const summary = summarizeMonthFeed('2026-08', plan, { events: [charge], msiRelated: [charge] }, now);
+    expect(summary).toMatchObject({ spentMinor: 200_00, fixedSpentMinor: 200_00, discretionarySpentMinor: 0,
+      billScheduledMinor: 399_00, billUpcomingMinor: 0, remainingMinor: 9800_00, projectedSpendMinor: 200_00 });
+  });
+
+  it('keeps programming when the linked charge is absent from the selected feed', () => {
+    expect(summarizeMonthFeed('2026-08', plan, { events: [], msiRelated: [] }, now))
+      .toMatchObject({ spentMinor: 0, fixedSpentMinor: 0, billScheduledMinor: 399_00, billUpcomingMinor: 399_00 });
+  });
+});

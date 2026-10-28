@@ -6,6 +6,7 @@ import type { SqlClient, TransactionPool } from './projection.js';
 import { isOCCError } from '@aws/aurora-dsql-node-postgres-connector';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from './ledger-schema.js';
 import { NATIVE_WEALTH_SCHEMA_STATEMENTS, nativeWealthReadGrant, nativeWealthWriteGrants } from './wealth-schema.js';
+import { NATIVE_PLANNING_SCHEMA_STATEMENTS, NATIVE_PLANNING_TABLES } from './planning-schema.js';
 
 import { MIGRATION_EVIDENCE_TABLES } from './catalog.js';
 export class BootstrapFailure extends Error {
@@ -119,6 +120,7 @@ export const SCHEMA_STATEMENTS = [
     CONSTRAINT bank_import_candidates_row_fk FOREIGN KEY (kind,content_sha256,row_position) REFERENCES olbia.bank_import_rows(kind,content_sha256,position),
     CHECK (merchant_raw IS NOT NULL OR occurred_at IS NULL))`,
   ...NATIVE_LEDGER_SCHEMA_STATEMENTS,
+  ...NATIVE_PLANNING_SCHEMA_STATEMENTS,
   `CREATE OR REPLACE VIEW olbia.movement_months AS
     SELECT id::text AS movement_id,
       to_char(COALESCE(occurred_at,received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM') AS month
@@ -175,6 +177,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('read-grant', 'GRANT SELECT ON olbia.schema_migrations,olbia.movement_months,olbia.runtime_state TO olbia_projector');
   await query('catalog-projector-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_projector');
   await query('plans-projector-read', 'GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO olbia_projector');
+  await query('planning-links-projector-read', `GRANT SELECT ON ${NATIVE_PLANNING_TABLES.map(t => `olbia.${t}`).join(',')} TO olbia_projector`);
   await query('payroll-projector-read', 'GRANT SELECT ON olbia.payslips,olbia.payslip_lines TO olbia_projector');
   await query('imports-projector-read', 'GRANT SELECT ON olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates TO olbia_projector');
   await query('cards-projector-read', 'GRANT SELECT ON olbia.card_profiles TO olbia_projector');
@@ -204,6 +207,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query('reader-migration-read', 'GRANT SELECT ON olbia.schema_migrations TO olbia_reader');
     await query('catalog-reader-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_reader');
     await query('plans-reader-read', 'GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO olbia_reader');
+    await query('planning-links-reader-read', `GRANT SELECT ON ${NATIVE_PLANNING_TABLES.map(t => `olbia.${t}`).join(',')} TO olbia_reader`);
     await query('payroll-reader-read', 'GRANT SELECT ON olbia.payslips,olbia.payslip_lines TO olbia_reader');
     await query('imports-reader-read', 'GRANT SELECT ON olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates TO olbia_reader');
     await query('cards-reader-read', 'GRANT SELECT ON olbia.card_profiles TO olbia_reader');
@@ -227,6 +231,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query('verification-snapshot-read', `GRANT SELECT ON ${['runtime_state','schema_migrations',
       'spend_categories','merchant_rules','card_profiles','month_plans','planned_payments','payslips','payslip_lines'].map(table => `olbia.${table}`).join(',')} TO ${role}`);
     await query('imports-verifier-select', `GRANT SELECT ON olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates,olbia.schema_migrations TO ${role}`);
+    await query('planning-links-verifier-read', `GRANT SELECT ON ${NATIVE_PLANNING_TABLES.map(t => `olbia.${t}`).join(',')} TO ${role}`);
     for (const arn of options.operationalVerifierRoleArns) {
       if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid verifier role ARN');
       await query('operational-verifier-iam', `AWS IAM GRANT ${role} TO '${arn}'`);
@@ -261,6 +266,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (writer) await query(`view-${role}`,`GRANT SELECT ON olbia.movement_months TO ${role}`);
     await query(`catalog-read-${role}`, `GRANT SELECT ON olbia.spend_categories TO ${role}`);
     await query(`plans-read-${role}`, `GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO ${role}`);
+    await query(`planning-links-read-${role}`, `GRANT SELECT ON ${NATIVE_PLANNING_TABLES.map(t => `olbia.${t}`).join(',')} TO ${role}`);
     await query(`payroll-read-${role}`, `GRANT SELECT ON olbia.payslips,olbia.payslip_lines TO ${role}`);
     await query(`imports-read-${role}`, `GRANT SELECT ON olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates TO ${role}`);
     if (writer) {
@@ -271,6 +277,8 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (writer) {
       await query(`plans-write-${role}`, `GRANT INSERT,UPDATE ON olbia.month_plans TO ${role}`);
       await query(`payments-write-${role}`, `GRANT INSERT,DELETE ON olbia.planned_payments TO ${role}`);
+      await query(`planning-links-write-${role}`, `GRANT INSERT,DELETE ON olbia.planned_payment_charges TO ${role}`);
+      await query(`planning-revisions-append-${role}`, `GRANT INSERT ON olbia.planned_payment_charge_revisions TO ${role}`);
     }
     await query(`cards-read-${role}`, `GRANT SELECT ON olbia.card_profiles TO ${role}`);
     if (writer) await query(`cards-write-${role}`, `GRANT INSERT,UPDATE ON olbia.card_profiles TO ${role}`);
@@ -297,6 +305,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
       await query(`migration-evidence-revoke-${role}`, `REVOKE ALL PRIVILEGES ON ${frozen.map(table => `olbia.${table}`).join(',')} FROM ${role}`);
   }
   await query('native-control-complete','INSERT INTO olbia.schema_migrations VALUES (20,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
+  await query('native-payment-reconciliation-complete','INSERT INTO olbia.schema_migrations VALUES (22,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 };
 
 export const nativeLedgerReadGrant = (role: string): string =>

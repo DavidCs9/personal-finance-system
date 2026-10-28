@@ -5,6 +5,7 @@ import type { SqlClient } from '../../ledger/src/dsql/projection.js';
 import * as connection from '../../ledger/src/dsql/connection.js';
 import { withSqlClient, currentSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
 import * as readers from '../src/events/sql-reads.js';
+import { prepareNativeLedgerFixture } from './fixtures/native-ledger.js';
 
 process.env.METADATA_TABLE_NAME ??= 'test-metadata';
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-evidence';
@@ -19,12 +20,13 @@ const seedPlan = async (owner: string, month: string, payments: readonly ReturnT
 };
 beforeAll(async () => {
   sql = new PGlite(); for (const statement of SCHEMA_STATEMENTS) await sql.query(statement);
+  await prepareNativeLedgerFixture(sql);
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
 }, 30_000);
 afterAll(() => sql.close());
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 beforeEach(async () => {
-  await sql.exec('TRUNCATE olbia.month_plans,olbia.planned_payments');
+  await sql.exec('TRUNCATE olbia.month_plans,olbia.planned_payments,olbia.planned_payment_charges,olbia.planned_payment_charge_revisions');
   vi.stubEnv('OLBIA_SQL_STORE_ENABLED','true'); vi.stubEnv('DSQL_PLANNING_READ_MODE','dynamodb');
   vi.spyOn(connection,'createPool').mockReturnValue({ query: (s: string,v?: unknown[]) => sql.query(s,v),
     transaction: (fn: (client: SqlClient) => Promise<unknown>) => sql.transaction(client => fn(client as unknown as SqlClient)),

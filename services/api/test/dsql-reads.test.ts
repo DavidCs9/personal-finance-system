@@ -63,7 +63,7 @@ describe('native SQL financial reads', () => {
     expect(await queries.listEventsForMonth('2030-01')).toEqual({ events: [], msiRelated: [] });
     const summary = summarize('2026-09', plan, feed, now);
     expect(summary).toMatchObject({ discretionarySpentMinor: 0, msiSpentMinor: 90000, spentMinor: 90000, uncertainMinor: 0 });
-    expect(await verification.verifyNativeMonthSummary(fixture.pool, '2026-09', feed, summary)).toEqual({ mismatches: 0 });
+    expect(await verification.verifyNativeMonthSummary(fixture.pool, '2026-09', feed, summary, 'owner')).toEqual({ mismatches: 0 });
     expect(await checkState()).toMatchObject({ movements: 8, observations: 8, plans: 3, mismatches: 0, unsupportedActiveCurrencies: 0 });
     expect(DynamoDBDocumentClient.prototype.send).not.toHaveBeenCalled();
   });
@@ -138,8 +138,8 @@ describe('native SQL financial reads', () => {
     expect((await verification.verifyNativeLedgerState(fixture.pool, movements, async () => ({ ...actual, amount: { amountMinor: 1, currency: 'MXN' } }))).mismatches).toBeGreaterThan(0);
     const feed = await readers.readSqlFeed(['2026-09'], fixture.pool);
     const summary = summarize('2026-09', plan, feed, now);
-    expect((await verification.verifyNativeMonthSummary(fixture.pool, '2026-09', feed, { ...summary, spentMinor: 0 })).mismatches).toBeGreaterThan(0);
-    expect((await verification.verifyNativeMonthSummary(fixture.pool, '2026-09', { events: [], msiRelated: [] }, summary)).mismatches).toBeGreaterThan(0);
+    expect((await verification.verifyNativeMonthSummary(fixture.pool, '2026-09', feed, { ...summary, spentMinor: 0 }, 'owner')).mismatches).toBeGreaterThan(0);
+    expect((await verification.verifyNativeMonthSummary(fixture.pool, '2026-09', { events: [], msiRelated: [] }, summary, 'owner')).mismatches).toBeGreaterThan(0);
     await fixture.sql.query('ALTER TABLE olbia.installment_entries DROP CONSTRAINT installment_entries_evidence_fk');
     try { expect((await checkState()).mismatches).toBeGreaterThan(0); }
     finally { await fixture.sql.query(`ALTER TABLE olbia.installment_entries ADD CONSTRAINT installment_entries_evidence_fk
@@ -159,11 +159,11 @@ describe('native SQL financial reads', () => {
     const september = await queries.listEventsForMonth('2026-09');
     const summary = summarize('2026-09', plan, september, now);
     expect(summary).toMatchObject({ spentMinor: 61000, uncertainMinor: 31000 });
-    expect(await verification.verifyNativeMonthSummary(fixture.pool, '2026-09', september, summary)).toEqual({ mismatches: 0 });
+    expect(await verification.verifyNativeMonthSummary(fixture.pool, '2026-09', september, summary, 'owner')).toEqual({ mismatches: 0 });
     const october = await queries.listEventsForMonth('2026-10');
     const later = summarize('2026-10', plan, october, now);
     expect(later.msiCommittedMinor).toBe(0);
-    expect(await verification.verifyNativeMonthSummary(fixture.pool, '2026-10', october, later)).toEqual({ mismatches: 0 });
+    expect(await verification.verifyNativeMonthSummary(fixture.pool, '2026-10', october, later, 'owner')).toEqual({ mismatches: 0 });
     expect(await checkState()).toMatchObject({ mismatches: 0 });
   });
 

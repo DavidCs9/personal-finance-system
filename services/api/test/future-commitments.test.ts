@@ -9,7 +9,7 @@ beforeAll(async () => { fixture = await nativeFixture(); }, 30_000);
 afterAll(async () => { await fixture.sql.close(); });
 beforeEach(async () => {
   await fixture.reset();
-  await fixture.sql.exec('TRUNCATE olbia.month_plans,olbia.planned_payments');
+  await fixture.sql.exec('TRUNCATE olbia.month_plans,olbia.planned_payments,olbia.planned_payment_charges,olbia.planned_payment_charge_revisions');
 });
 const plan = async (month: string, amount?: number, owner='owner', day=31) => {
   await fixture.sql.query('INSERT INTO olbia.month_plans VALUES ($1,$2,$3)',[month,owner,now.toISOString()]);
@@ -79,6 +79,52 @@ describe('SQL future commitments', () => {
     expect(result.currentMonth).toBe('2026-10');
     expect(result.months).toHaveLength(12);
     expect(result.months.every(month=>month.totalMinor===0 && month.fixedSourceMonth===null && month.items.length===0)).toBe(true);
+  });
+
+  it('excludes an explicitly covered monthly fixed occurrence without inheriting its charge or reducing it by Mi parte', async () => {
+    await plan('2026-09',399_00);
+    await plan('2026-10',399_00);
+    await fixture.sql.query("INSERT INTO olbia.planned_payments VALUES ('2026-10','internet','Internet',10000,18,1)");
+    const id = await fixture.create({ amount: { amountMinor: 450_00, currency: 'MXN' }, personalAmountMinor: 200_00,
+      occurredAt: '2026-10-18T12:00:00Z' });
+    await fixture.sql.query(`INSERT INTO olbia.planned_payment_charges
+      (month,payment_id,movement_id,linked_at,linked_by) VALUES ($1,$2,$3,$4,$5)`,
+    ['2026-10','rent',id,now.toISOString(),'owner']);
+    const read = () => readFutureCommitments('owner',undefined,now,fixture.pool);
+    const linked = await read();
+    expect(linked.months[0]).toMatchObject({ fixedMinor: 100_00, totalMinor: 100_00,
+      items: [{ kind: 'fixed', id: 'internet', amountMinor: 100_00 }] });
+    expect(linked.months[1]).toMatchObject({ fixedMinor: 499_00, totalMinor: 499_00, fixedSourceMonth: '2026-10' });
+    for (const month of linked.months) expect(month.items.reduce((sum,item) => sum + item.amountMinor,0)).toBe(month.totalMinor);
+
+    await fixture.sql.query('UPDATE olbia.ledger_movements SET personal_amount_minor=0,status=$2 WHERE id=$1',[id,'needs_review']);
+    expect((await read()).months[0]).toMatchObject({ fixedMinor: 100_00, totalMinor: 100_00 });
+    await fixture.sql.query('UPDATE olbia.ledger_movements SET status=$2 WHERE id=$1',[id,'rejected']);
+    expect((await read()).months[0]).toMatchObject({ fixedMinor: 499_00, totalMinor: 499_00 });
+    expect((await fixture.sql.query('SELECT movement_id FROM olbia.planned_payment_charges')).rows).toHaveLength(1);
+    await fixture.sql.query('UPDATE olbia.ledger_movements SET status=$2 WHERE id=$1',[id,'accepted']);
+    expect((await read()).months[0]).toMatchObject({ fixedMinor: 100_00, totalMinor: 100_00 });
+  });
+
+  it('only applies active MXN non-MSI charges in the relationship month using Chihuahua boundaries', async () => {
+    await plan('2026-10',399_00);
+    const id = await fixture.create({ occurredAt: '2026-11-01T02:00:00Z' });
+    await fixture.sql.query(`INSERT INTO olbia.planned_payment_charges
+      (month,payment_id,movement_id,linked_at,linked_by) VALUES ($1,$2,$3,$4,$5)`,
+    ['2026-10','rent',id,now.toISOString(),'owner']);
+    const currentFixed = async () => (await readFutureCommitments('owner',undefined,now,fixture.pool)).months[0]!.fixedMinor;
+    expect(await currentFixed()).toBe(0);
+    await fixture.sql.query("UPDATE olbia.ledger_movements SET occurred_at='2026-11-01T07:00:00Z' WHERE id=$1",[id]);
+    expect(await currentFixed()).toBe(399_00);
+    await fixture.sql.query("UPDATE olbia.ledger_movements SET occurred_at='2026-10-18T12:00:00Z',currency='USD' WHERE id=$1",[id]);
+    expect(await currentFixed()).toBe(399_00);
+    await fixture.sql.query("UPDATE olbia.ledger_movements SET currency='MXN',status='deferred_msi' WHERE id=$1",[id]);
+    expect(await currentFixed()).toBe(399_00);
+    await fixture.sql.query("UPDATE olbia.ledger_movements SET status='accepted',amount_minor=0 WHERE id=$1",[id]);
+    expect(await currentFixed()).toBe(399_00);
+    await fixture.sql.query("UPDATE olbia.ledger_movements SET amount_minor=10000 WHERE id=$1",[id]);
+    await fixture.sql.query('INSERT INTO olbia.installment_plans VALUES ($1,3,30000,10000,$2,$3,false)',[id,'manual','active']);
+    expect(await currentFixed()).toBe(399_00);
   });
 
   it('rejects malformed, past and unbounded requests before querying SQL', async () => {

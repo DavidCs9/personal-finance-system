@@ -6,6 +6,7 @@ import { createPool } from './connection.js';
 import { readStorageAuthority } from './sql-runtime.js';
 import { smokeNativeLedger } from './ledger-smoke.js';
 import { smokeNativeWealth } from './wealth-smoke.js';
+import { smokeNativePlanning } from './planning-smoke.js';
 import { createHash, randomUUID } from 'node:crypto';
 
 // Internal IAM-only deployed operator. Product identities cannot update authority.
@@ -45,18 +46,6 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
         const stillRetained = (await client.query(`SELECT count(*) AS count FROM olbia.liability_captures WHERE card_id=$1`, [card.id])).rows[0]?.count;
         if (String(retained) !== String(stillRetained)) throw new Error('Profile removal changed liability history');
         await client.query('UPDATE olbia.card_profiles SET deleted_at=NULL WHERE id=$1', [card.id]);
-        const plan = (await client.query('SELECT month,owner FROM olbia.month_plans ORDER BY month LIMIT 1')).rows[0];
-        if (!plan) throw new Error('No native month plan for smoke');
-        const upserted = (await client.query(`INSERT INTO olbia.month_plans (month,owner,updated_at) VALUES ($1,$2,CURRENT_TIMESTAMP)
-          ON CONFLICT (month) DO UPDATE SET updated_at=EXCLUDED.updated_at RETURNING month`, [plan.month,plan.owner])).rows[0];
-        if (upserted?.month !== plan.month) throw new Error('Native plan upsert failed');
-        await client.query('DELETE FROM olbia.planned_payments WHERE month=$1', [plan.month]);
-        await client.query(`INSERT INTO olbia.planned_payments (month,id,name,amount_mxn_minor,due_day,sort_order)
-          VALUES ($1,'sql-verification','SQL verification',1,31,0)`, [plan.month]);
-        const child = (await client.query('SELECT id,amount_mxn_minor FROM olbia.planned_payments WHERE month=$1', [plan.month])).rows[0];
-        if (child?.id !== 'sql-verification' || Number(child.amount_mxn_minor) !== 1) throw new Error('Native payment replacement failed');
-        await client.query('DELETE FROM olbia.planned_payments WHERE month=$1', [plan.month]);
-        if (!(await client.query('SELECT month FROM olbia.month_plans WHERE month=$1', [plan.month])).rows.length) throw new Error('Empty plan parent lost');
         const receipt = (await client.query('SELECT uuid FROM olbia.payslips ORDER BY uuid LIMIT 1')).rows[0];
         if (!receipt) throw new Error('No native payslip for smoke');
         const smokeUuid = randomUUID();
@@ -98,7 +87,8 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
         const finishedImport = (await client.query(`UPDATE olbia.bank_imports SET status='applied',applied_at=CURRENT_TIMESTAMP,
           result_created=0,result_linked=0,result_skipped=2 WHERE kind='santander_csv' AND content_sha256=$1 RETURNING status,result_skipped`,[smokeHash])).rows[0];
         if (finishedImport?.status !== 'applied' || finishedImport.result_skipped !== 2) throw new Error('Native import completion failed');
-        await smokeNativeLedger(client, String(importSource.owner), String(category.id));
+        const verificationMovement=await smokeNativeLedger(client, String(importSource.owner), String(category.id));
+        await smokeNativePlanning(client,String(importSource.owner),verificationMovement);
         await smokeNativeWealth(client, String(importSource.owner), String(card.id));
         await smokeNativePush(client, String(importSource.owner));
         await smokeNativeDeliveries(client, String(importSource.owner));

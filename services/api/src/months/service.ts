@@ -3,6 +3,7 @@ import type { JsonObject } from '../http/response.js';
 import { incomeFieldsForMonth } from '../imports/cfdi-nomina-flow.js';
 import { isValidMonth, InvalidMonthlyPlanError, parseMonthlyPlan, type MonthlyPlanInput, type MonthlyPlanRecord } from './monthly-plan.js';
 import { readSqlPlanRecord } from './sql-reads.js';
+import { assertPaymentChargeMembership, readPaymentCharges, replaceMonthlyPaymentRows } from './reconciliation-storage.js';
 
 export const getMonthlyPlanFromReads = async (owner: string, month: string,
   readRecord: (owner: string, month: string) => Promise<MonthlyPlanRecord | undefined>,
@@ -47,14 +48,14 @@ export const saveMonthlyPlan = async (owner: string, month: string, input: Month
   if (!isValidMonth(month)) throw new InvalidMonthlyPlanError('month is invalid.');
   const validated = parseMonthlyPlan(JSON.stringify(input));
   return withSqlTransaction(async client => {
+    const links = await readPaymentCharges(client,month);
+    assertPaymentChargeMembership(links,validated.upcomingPayments);
+    const at = new Date().toISOString();
     const parent = (await client.query(`INSERT INTO olbia.month_plans (month,owner,updated_at) VALUES ($1,$2,$3)
       ON CONFLICT (month) DO UPDATE SET updated_at=EXCLUDED.updated_at
-      WHERE olbia.month_plans.owner=EXCLUDED.owner RETURNING month`, [month, owner, new Date().toISOString()])).rows[0];
+      WHERE olbia.month_plans.owner=EXCLUDED.owner RETURNING month`, [month, owner, at])).rows[0];
     if (!parent) throw new InvalidMonthlyPlanError('month is invalid.');
-    await client.query('DELETE FROM olbia.planned_payments WHERE month=$1', [month]);
-    for (const [order, payment] of validated.upcomingPayments.entries()) await client.query(`INSERT INTO olbia.planned_payments
-      (month,id,name,amount_mxn_minor,due_day,sort_order) VALUES ($1,$2,$3,$4,$5,$6)`,
-    [month,payment.id,payment.name,payment.amountMinor,payment.dueDay,order]);
+    await replaceMonthlyPaymentRows(client,owner,month,validated.upcomingPayments,at,links);
     return getMonthlyPlan(owner, month);
   });
 };

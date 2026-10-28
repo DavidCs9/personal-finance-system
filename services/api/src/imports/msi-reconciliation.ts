@@ -1,5 +1,6 @@
 import {
   amountsWithinTolerance,
+  addCalendarMonths,
   buildMsiSchedule,
   isMsiLikeMerchant,
   markInstallmentSpent,
@@ -295,9 +296,7 @@ export const buildPlanFromCreateDecision = (
   let startMonth = input.startMonth;
   if (!startMonth) {
     const index = line.installmentIndex ?? 1;
-    const startDate = new Date(`${line.occurredOn}T12:00:00Z`);
-    startDate.setUTCMonth(startDate.getUTCMonth() - (index - 1));
-    startMonth = monthKeyInZone(startDate);
+    startMonth = addCalendarMonths(line.occurredOn.slice(0, 7), -(index - 1));
   }
   const principalMinor = line.originalAmountMinor ?? cuotaMinor * months;
   const indexForSpent = line.installmentIndex ?? 1;

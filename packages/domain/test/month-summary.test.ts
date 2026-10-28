@@ -224,3 +224,95 @@ describe('calendar helpers', () => {
     expect(dayKeyInZone(lateNightUtc)).toBe('2026-08-01');
   });
 });
+
+describe('explicit monthly fixed-charge reconciliation', () => {
+  const now = new Date('2026-08-24T18:00:00Z');
+  const other = { id: 'other', amountMinor: 1_000_00, currency: 'MXN', status: 'accepted', receivedAt: '2026-08-10T12:00:00Z' };
+  const charge = { id: 'charge', amountMinor: 450_00, personalAmountMinor: 200_00,
+    currency: 'MXN', status: 'accepted', receivedAt: '2026-08-18T12:00:00Z' };
+  const payment = { id: 'service', amountMinor: 399_00, reconciliation: { eventId: 'charge', valid: true } };
+  const input = { events: [other, charge], month: '2026-08', incomeMinor: 10_000_00,
+    incomeConfigured: true, upcomingPaymentsMinor: 999_00, fixedPayments: [payment], now };
+
+  it('replaces full programming coverage and removes the personal fixed charge from pace, without changing observed spend', () => {
+    const linked = computeMonthSummary(input);
+    const unlinked = computeMonthSummary({ ...input, fixedPayments: [{ id: payment.id, amountMinor: payment.amountMinor }] });
+    expect(linked).toMatchObject({ spentMinor: 1_200_00, fixedSpentMinor: 200_00, discretionarySpentMinor: 1_000_00,
+      billScheduledMinor: 399_00, billUpcomingMinor: 0, remainingMinor: 8_800_00, projectedSpendMinor: 1491_67 });
+    expect(unlinked).toMatchObject({ spentMinor: linked.spentMinor, fixedSpentMinor: 0, billUpcomingMinor: 399_00,
+      remainingMinor: 8401_00, projectedSpendMinor: 1949_00 });
+    expect(unlinked.projectedSpendMinor - linked.projectedSpendMinor).toBe(457_33);
+    expect(dailyBalancePushMessage(linked, 'amounts', '/', '2026-08-24').body).toContain('Te quedan $8,800');
+  });
+
+  it.each([
+    { mine: 0, fixedSpent: 0, spent: 1000_00, projection: 1291_67 },
+    { mine: 100_00, fixedSpent: 100_00, spent: 1100_00, projection: 1391_67 },
+    { mine: undefined, fixedSpent: 450_00, spent: 1450_00, projection: 1741_67 },
+  ])('uses current Mi parte $mine, including zero and absence, without inventing a partial balance', ({ mine, fixedSpent, spent, projection }) => {
+    expect(computeMonthSummary({ ...input, events: [other, { ...charge, personalAmountMinor: mine }] }))
+      .toMatchObject({ spentMinor: spent, fixedSpentMinor: fixedSpent, billUpcomingMinor: 0, projectedSpendMinor: projection });
+  });
+
+  it('keeps uncertain linked spend included and restores programming after rejection, then restores the relationship effect', () => {
+    expect(computeMonthSummary({ ...input, events: [other, { ...charge, status: 'needs_review' }] }))
+      .toMatchObject({ spentMinor: 1200_00, uncertainMinor: 200_00, fixedSpentMinor: 200_00, billUpcomingMinor: 0 });
+    expect(computeMonthSummary({ ...input, events: [other, { ...charge, status: 'rejected' }] }))
+      .toMatchObject({ spentMinor: 1000_00, fixedSpentMinor: 0, billUpcomingMinor: 399_00, remainingMinor: 8601_00 });
+    expect(computeMonthSummary(input)).toMatchObject({ spentMinor: 1200_00, fixedSpentMinor: 200_00, billUpcomingMinor: 0 });
+  });
+
+  it('does not remove programming for absent, invalid, foreign, deferred, other-month or MSI charges', () => {
+    const ineligible = [
+      { ...input, events: [other] },
+      { ...input, fixedPayments: [{ ...payment, reconciliation: { ...payment.reconciliation, valid: false } }] },
+      { ...input, events: [other, { ...charge, currency: 'USD' }] },
+      { ...input, events: [other, { ...charge, amountMinor: 0, personalAmountMinor: undefined }] },
+      { ...input, events: [other, { ...charge, status: 'pending_foreign', currency: 'USD' }] },
+      { ...input, events: [other, { ...charge, status: 'deferred_msi' }] },
+      { ...input, events: [other, { ...charge, receivedAt: '2026-07-18T12:00:00Z' }] },
+      { ...input, events: [other, { ...charge, msi: { months: 3, principalMinor: 450_00, cuotaMinor: 150_00,
+        installments: [{ index: 1, month: '2026-08', amountMinor: 150_00, status: 'spent' as const }] } }] },
+    ];
+    for (const candidate of ineligible) expect(computeMonthSummary(candidate))
+      .toMatchObject({ fixedSpentMinor: 0, billUpcomingMinor: 399_00 });
+  });
+
+  it('uses a newly confirmed full-coverage relationship and never borrows a prior-month relationship through inheritance', () => {
+    // A new explicit confirmation may cover a different programmed amount; material edits invalidate it in storage.
+    expect(computeMonthSummary({ ...input, fixedPayments: [{ ...payment, amountMinor: 500_00 }] }))
+      .toMatchObject({ billScheduledMinor: 500_00, billUpcomingMinor: 0, fixedSpentMinor: 200_00, projectedSpendMinor: 1491_67 });
+    expect(computeMonthSummary({ ...input, fixedPayments: [{ ...payment, amountMinor: 500_00,
+      reconciliation: { ...payment.reconciliation, valid: false } }] }))
+      .toMatchObject({ billScheduledMinor: 500_00, billUpcomingMinor: 500_00, fixedSpentMinor: 0, spentMinor: 1200_00 });
+    expect(computeMonthSummary({ ...input, fixedPayments: [] }))
+      .toMatchObject({ billScheduledMinor: 0, billUpcomingMinor: 0, fixedSpentMinor: 0, spentMinor: 1200_00 });
+    expect(computeMonthSummary({ ...input, month: '2026-09' }))
+      .toMatchObject({ billScheduledMinor: 399_00, billUpcomingMinor: 399_00, fixedSpentMinor: 0 });
+    expect(computeMonthSummary(input)).toEqual(computeMonthSummary({ ...input, fixedPayments: [{ ...payment }] }));
+  });
+
+  it('keeps fixed and MSI components separate when a cuota moves from committed to spent', () => {
+    const installments = [{ index: 1, month: '2026-08', amountMinor: 100_00, status: 'committed' as const }];
+    const msi = { id: 'msi', amountMinor: 300_00, status: 'accepted', currency: 'MXN', receivedAt: charge.receivedAt,
+      msi: { months: 3, principalMinor: 300_00, cuotaMinor: 100_00, installments } };
+    const before = computeMonthSummary({ ...input, events: [...input.events, msi] });
+    const after = computeMonthSummary({ ...input, events: [...input.events,
+      { ...msi, msi: { ...msi.msi, installments: [{ ...installments[0]!, status: 'spent' }] } }] });
+    expect(before).toMatchObject({ fixedSpentMinor: 200_00, billUpcomingMinor: 0, msiCommittedMinor: 100_00, remainingMinor: 8700_00 });
+    expect(after).toMatchObject({ fixedSpentMinor: 200_00, billUpcomingMinor: 0, msiSpentMinor: 100_00, msiCommittedMinor: 0,
+      remainingMinor: before.remainingMinor, projectedSpendMinor: before.projectedSpendMinor });
+  });
+
+  it('rejects a duplicate explicit relationship instead of subtracting the same observed charge twice', () => {
+    expect(() => computeMonthSummary({ ...input, fixedPayments: [payment, { ...payment, id: 'second-service' }] }))
+      .toThrow('A charge cannot cover more than one fixed payment');
+  });
+
+  it('does not pace past or future months and keeps historical Gastaste equal to recorded spend', () => {
+    expect(computeMonthSummary({ ...input, now: new Date('2026-09-05T18:00:00Z') }))
+      .toMatchObject({ isCurrentMonth: false, isFutureMonth: false, projectedSpendMinor: 1200_00 });
+    expect(computeMonthSummary({ ...input, now: new Date('2026-07-05T18:00:00Z') }))
+      .toMatchObject({ isCurrentMonth: false, isFutureMonth: true, projectedSpendMinor: 1200_00 });
+  });
+});

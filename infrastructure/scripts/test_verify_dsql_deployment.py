@@ -33,7 +33,7 @@ elif operation == ['lambda', 'invoke']:
     action = payload.get('action', 'read')
     response = {'mode': os.environ.get('AUTHORITY', 'sql')} if action == 'status' else {'verified': True, 'rolledBack': True, 'nativeLedger': True, 'nativeWealth': True, 'nativePush': True, 'nativeDeliveries': True, 'nativeThreads': True, 'nativeExceptions': True} if action == 'smoke' else {'verified': True, 'mode': 'native-sql', 'mismatches': 0, 'provenance': {'mismatches': 0}, 'evidence': {'mismatches': 0}}
     if action == 'retire-migration-evidence':
-        response = {'verified': True, 'mode': 'native-sql', 'remainingTables': 41, 'domainTables': 38, 'controlTables': 3, 'migrationEvidenceTables': 0, 'removedTables': json.loads(os.environ.get('REMOVED_TABLES', '0'))}
+        response = {'verified': True, 'mode': 'native-sql', 'remainingTables': json.loads(os.environ.get('REMAINING_TABLES', '43')), 'domainTables': json.loads(os.environ.get('DOMAIN_TABLES', '40')), 'controlTables': 3, 'migrationEvidenceTables': 0, 'removedTables': json.loads(os.environ.get('REMOVED_TABLES', '0'))}
         if os.environ.get('OMIT_REMOVED_TABLES'):
             response.pop('removedTables')
     if os.environ.get('FAIL_GATE') == action:
@@ -87,6 +87,18 @@ class RoutineVerificationTests(unittest.TestCase):
 
     def test_invalid_cleanup_proof_never_skips_the_post_cleanup_gates(self):
         for settings in [{'OMIT_REMOVED_TABLES': '1'}, *[{'REMOVED_TABLES': value} for value in ['null', '"0"', '-1', '1.5', '27']]]:
+            with self.subTest(settings=settings):
+                result, calls = self.run_gate(**settings)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('SQL catalog cleanup failed', result.stderr)
+                self.assertEqual(sum(call[:2] == ['lambda', 'invoke'] for call in calls), 4)
+
+    def test_catalog_without_fixed_payment_relationships_cannot_pass_the_release(self):
+        for settings in [
+            {'REMAINING_TABLES': '41', 'DOMAIN_TABLES': '38'},
+            {'REMAINING_TABLES': '43', 'DOMAIN_TABLES': '38'},
+            {'REMAINING_TABLES': '41', 'DOMAIN_TABLES': '40'},
+        ]:
             with self.subTest(settings=settings):
                 result, calls = self.run_gate(**settings)
                 self.assertNotEqual(result.returncode, 0)

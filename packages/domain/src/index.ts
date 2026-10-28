@@ -136,6 +136,7 @@ export {
   type CommittedMsiRow,
   type DailyBalancePushMessage,
   type MonthMsiRow,
+  type MonthFixedPayment,
   type MonthSpendEvent,
   type MonthSummary,
   type MonthSummaryInput,

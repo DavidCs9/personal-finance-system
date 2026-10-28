@@ -5,6 +5,7 @@ import * as connection from '../../ledger/src/dsql/connection.js';
 import { readLedgerMovements } from '../../ledger/src/dsql/ledger-reads.js';
 import { prepareNativeLedgerFixture, seedNativeMovement } from './fixtures/native-ledger.js';
 import { NATIVE_LEDGER_TABLES } from '../../ledger/src/dsql/ledger-schema.js';
+import { NATIVE_PLANNING_TABLES } from '../../ledger/src/dsql/planning-schema.js';
 import { PGlite } from '@electric-sql/pglite';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -66,7 +67,7 @@ beforeAll(async () => { sql = new PGlite(); for (const statement of SCHEMA_STATE
 afterAll(async () => sql.close());
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 beforeEach(async () => {
-  records = new Map(); await sql.exec(`TRUNCATE olbia.projection_state,olbia.merchant_rules,olbia.card_profiles,${[...TABLE_NAMES,...NATIVE_LEDGER_TABLES,'ingestion_retry_attempts',...NATIVE_WEALTH_TABLES,'bank_imports','bank_import_rows','bank_import_candidates'].map(t => `olbia.${t}`).join(',')}`);
+  records = new Map(); await sql.exec(`TRUNCATE olbia.projection_state,olbia.merchant_rules,olbia.card_profiles,${[...TABLE_NAMES,...NATIVE_LEDGER_TABLES,...NATIVE_PLANNING_TABLES,'ingestion_retry_attempts',...NATIVE_WEALTH_TABLES,'bank_imports','bank_import_rows','bank_import_candidates'].map(t => `olbia.${t}`).join(',')}`);
   await prepareNativeWealthFixture(sql);
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
   await sql.query('DELETE FROM olbia.schema_migrations WHERE version=9');

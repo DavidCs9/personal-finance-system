@@ -44,6 +44,7 @@ import {
 } from '../imports/cfdi-nomina-flow.js';
 import { InvalidMonthlyPlanError, isValidMonth, parseMonthlyPlan } from '../months/monthly-plan.js';
 import { getMonthlyPlan, saveMonthlyPlan } from '../months/service.js';
+import { parsePaymentReconciliationInput, PaymentReconciliationConflictError, savePaymentReconciliation } from '../months/reconciliation.js';
 import { getMonthSummary } from '../months/summary.js';
 import { getFutureCommitments } from '../months/commitments.js';
 import { InvalidWealthSnapshotError } from '../wealth/input.js';
@@ -123,6 +124,10 @@ const clientErrors = [
 
 app.errorHandler([...clientErrors], async (error) =>
   json(HttpStatusCodes.BAD_REQUEST, { message: error.message }),
+);
+
+app.errorHandler(PaymentReconciliationConflictError, async (error) =>
+  json(HttpStatusCodes.CONFLICT, { message: error.message }),
 );
 
 app.notFound(async () =>
@@ -317,6 +322,15 @@ app.put('/months/:month', async ({ event, params }) => {
   const gatewayEvent = asHttpEvent(event);
   const input = parseMonthlyPlan(requestBody(gatewayEvent));
   return json(HttpStatusCodes.OK, await saveMonthlyPlan(ownerOf(gatewayEvent), params.month, input));
+});
+
+app.put('/months/:month/payments/:paymentId/reconciliation', async ({ event, params }) => {
+  if (!isValidMonth(params.month)) {
+    return json(HttpStatusCodes.BAD_REQUEST, { message: 'Month must use YYYY-MM format.' });
+  }
+  const gatewayEvent = asHttpEvent(event);
+  const input = parsePaymentReconciliationInput(requestBody(gatewayEvent));
+  return json(HttpStatusCodes.OK, await savePaymentReconciliation(ownerOf(gatewayEvent), params.month, params.paymentId, input));
 });
 
 app.post('/imports/nomina', async ({ event }) => {

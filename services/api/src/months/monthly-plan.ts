@@ -7,6 +7,17 @@ export interface PlannedPaymentRecord {
   readonly name: string;
   readonly amountMinor: number;
   readonly dueDay: number;
+  readonly reconciliation?: PaymentReconciliationRecord;
+}
+
+export interface PaymentReconciliationRecord {
+  readonly eventId: string;
+  readonly merchantRaw: string;
+  readonly amountMinor: number;
+  readonly grossAmountMinor: number;
+  readonly occurredAt: string;
+  readonly valid: boolean;
+  readonly invalidReason?: string;
 }
 
 export interface MonthlyPlanInput {

@@ -1,8 +1,19 @@
+export interface PaymentReconciliation {
+  readonly eventId: string;
+  readonly merchantRaw: string;
+  readonly amountMinor: number;
+  readonly grossAmountMinor: number;
+  readonly occurredAt: string;
+  readonly valid: boolean;
+  readonly invalidReason?: string;
+}
+
 export interface PlannedPayment {
   readonly id: string;
   readonly name: string;
   readonly amountMinor: number;
   readonly dueDay: number;
+  readonly reconciliation?: PaymentReconciliation;
 }
 
 export interface PayslipLine {

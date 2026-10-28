@@ -25,6 +25,14 @@ export const commitmentsReadStatement = `WITH requested AS (
   SELECT e.month,'fixed',p.id,p.name,p.amount_mxn_minor,false,p.due_day,
     NULL::integer,NULL::integer,NULL::text,p.sort_order
   FROM effective_plans e JOIN olbia.planned_payments p ON p.month=e.source_month
+  WHERE NOT EXISTS (
+    SELECT 1 FROM olbia.planned_payment_charges linked
+    JOIN olbia.ledger_movements charge ON charge.id=linked.movement_id
+    WHERE linked.month=e.month AND linked.payment_id=p.id
+      AND charge.status IN ('accepted','needs_review') AND charge.currency='MXN' AND charge.amount_minor>0
+      AND to_char(COALESCE(charge.occurred_at,charge.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM')=e.month
+      AND NOT EXISTS (SELECT 1 FROM olbia.installment_plans charge_plan WHERE charge_plan.movement_id=charge.id)
+  )
 ), totals AS (
   SELECT r.month,COALESCE(SUM(e.amount_minor),0) AS total_minor,
     COALESCE(SUM(CASE WHEN e.kind='msi' THEN e.amount_minor ELSE 0 END),0) AS msi_minor,

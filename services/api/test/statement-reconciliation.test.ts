@@ -258,3 +258,27 @@ describe('buildPlanFromCreateDecision', () => {
     expect(plan.installments[2]?.month).toBe('2026-08');
   });
 });
+
+describe('MSI calendar-month backtracking', () => {
+  it.each([
+    ['2026-03-31', '2026-02', '2026-03', '2026-04'],
+    ['2024-03-31', '2024-02', '2024-03', '2024-04'],
+    ['2026-05-31', '2026-04', '2026-05', '2026-06'],
+    ['2026-01-31', '2025-12', '2026-01', '2026-02'],
+  ])('places cuota 2 evidence from %s in its own calendar month', (occurredOn, first, second, third) => {
+    const plan = buildPlanFromCreateDecision({ merchantRaw: 'Compra', amountMinor: 100_00, occurredOn,
+      installmentIndex: 2, installmentMonths: 3, originalAmountMinor: 300_00, identity: 'month-end' },
+    { months: 3, cuotaMinor: 100_00 });
+    expect(plan.installments.map(entry => entry.month)).toEqual([first, second, third]);
+    expect(plan.installments.map(entry => entry.status)).toEqual(['spent', 'spent', 'committed']);
+    expect(plan.installments[1]).toMatchObject({ occurredOn, evidenceObservationId: 'month-end', amountMinor: 100_00 });
+  });
+
+  it('retains an explicitly chosen start month and the original financial evidence', () => {
+    const plan = buildPlanFromCreateDecision({ merchantRaw: 'Compra', amountMinor: 100_00, occurredOn: '2026-03-31',
+      installmentIndex: 2, installmentMonths: 3, identity: 'chosen-start' },
+    { months: 3, cuotaMinor: 100_00, startMonth: '2026-01' });
+    expect(plan.installments[0]?.month).toBe('2026-01');
+    expect(plan.installments[1]).toMatchObject({ occurredOn: '2026-03-31', evidenceObservationId: 'chosen-start' });
+  });
+});
