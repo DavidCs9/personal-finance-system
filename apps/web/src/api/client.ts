@@ -210,6 +210,31 @@ const previewStatement = async <T>(provider: "amex" | "santander-statement", fil
 };
 
 export const ledgerApi = {
+  async previewAmexActivity(file: File, idToken: string): Promise<AmexImportPreview> {
+    if (!/\.xlsx$/i.test(file.name) || file.size <= 0 || file.size > 2_000_000)
+      throw new Error("Selecciona un Excel Amex de hasta 2 MB.");
+    const bytes = await file.arrayBuffer();
+    if (new Uint8Array(bytes)[0] !== 0x50 || new Uint8Array(bytes)[1] !== 0x4b)
+      throw new Error("Selecciona el .xlsx original descargado de Amex.");
+    const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), b => b.toString(16).padStart(2, "0")).join("");
+    const body = JSON.stringify({ sha256, size: file.size });
+    const target = await request<StatementUploadTarget>("/imports/amex-activity/upload", idToken, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body,
+    });
+    const uploaded = await fetch(target.url, { method: "PUT", headers: target.headers, body: file });
+    if (!uploaded.ok && uploaded.status !== 412) throw new Error("No se pudo subir el Excel. Intenta de nuevo.");
+    return request<AmexImportPreview>("/imports/amex-activity/preview", idToken, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body,
+    });
+  },
+  applyAmexActivity(importId: string, decisions: Readonly<Record<string, StatementImportDecision>>, idToken: string) {
+    return request<AmexImportResult>(`/imports/amex-activity/${encodeURIComponent(importId)}/apply`, idToken, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decisions }),
+    });
+  },
+  amexActivitySource(importId: string, idToken: string) {
+    return request<{ url: string }>(`/imports/amex-activity/${encodeURIComponent(importId)}/source`, idToken);
+  },
   saveSession: ({ idToken, refreshToken }: LedgerSession) => {
     localStorage.setItem(idTokenKey, idToken);
     localStorage.setItem(refreshTokenKey, refreshToken);

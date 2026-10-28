@@ -5,12 +5,14 @@ export function CaptureActionsSheet({
   onRegisterCharge,
   onImport,
   onImportAmex,
+  onImportAmexActivity,
   onImportSantanderStatement,
 }: {
   onClose(): void;
   onRegisterCharge(): void;
   onImport(): void;
   onImportAmex(): void;
+  onImportAmexActivity(): void;
   onImportSantanderStatement(): void;
 }) {
   return (
@@ -48,6 +50,10 @@ export function CaptureActionsSheet({
             <strong>Estado de cuenta Santander</strong>
             <small>PDF del periodo · conciliar compras y A MESES</small>
           </span>
+          <span aria-hidden="true">›</span>
+        </button>
+        <button type="button" className="capture-action" role="menuitem" onClick={onImportAmexActivity}>
+          <span><strong>Importar Excel Amex</strong><small>Actividad semanal · compras y cuotas MSI</small></span>
           <span aria-hidden="true">›</span>
         </button>
         <button type="button" className="capture-action" role="menuitem" onClick={onImportAmex}>

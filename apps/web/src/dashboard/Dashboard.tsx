@@ -30,6 +30,7 @@ import { CardSheet } from "../sheets/CardSheet";
 import { SantanderImportSheet } from "../sheets/SantanderImportSheet";
 import { StatementsSheet } from "../sheets/StatementsSheet";
 import { StatementImportSheet } from "../sheets/StatementImportSheet";
+import { AmexActivitySheet } from "../sheets/AmexActivitySheet";
 import type { EventFeed, PurchaseEvent } from "../types";
 import { MovementsView } from "../views/MovementsView";
 import { SummaryView } from "../views/SummaryView";
@@ -102,6 +103,7 @@ export function Dashboard({
   const [returnToStatements, setReturnToStatements] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [amexImportOpen, setAmexImportOpen] = useState(false);
+  const [amexActivityOpen, setAmexActivityOpen] = useState(false);
   const [santanderStatementOpen, setSantanderStatementOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [cajitaOpen, setCajitaOpen] = useState(false);
@@ -630,6 +632,7 @@ export function Dashboard({
             onReadExceptionRaw={readExceptionRaw}
             onImport={() => setImportOpen(true)}
             onImportAmex={() => setAmexImportOpen(true)}
+            onImportAmexActivity={() => setAmexActivityOpen(true)}
             onImportSantanderStatement={() => setSantanderStatementOpen(true)}
             onRegisterCharge={() => setManualOpen(true)}
             evidenceFilter={movementEvidenceFilter}
@@ -811,6 +814,13 @@ export function Dashboard({
             else setSantanderStatementOpen(true);
           }} />
       )}
+      {amexActivityOpen && <AmexActivitySheet idToken={idToken} onClose={() => setAmexActivityOpen(false)} onApplied={() => {
+        setAmexActivityOpen(false);
+        void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
+        void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+        void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
+        void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
+      }} />}
       {amexImportOpen && (
         <StatementImportSheet
           provider="amex"

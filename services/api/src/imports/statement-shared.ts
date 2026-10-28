@@ -21,6 +21,7 @@ import { toPublicEvent } from '../events/public-event.js';
 import { assertPreparedImport, bankLedgerEvents, bankPlanEvidence, bankRowPosition, claimedBankRows, createBankMovement, linkBankEvidence, withBankApplyTransaction } from './bank-ledger.js';
 import { persistEventMsi } from '../events/mutations.js';
 import { readBankImport,completeBankImport,statementImportKind, type BankImportRecord } from './import-sql.js';
+import { selectedAmexMsi } from './amex-reconciliation.js';
 
 export type StatementImportEvent = {
   readonly body?: string | null;
@@ -61,63 +62,7 @@ export const claimedStatementIdentities = async (
   return claimedBankRows(statementImportKind(provider), identities);
 };
 
-export const classifyMsiEvidenceRow = (
-  line: EvidenceLine,
-  events: readonly JsonObject[],
-): StatementPreviewRow => {
-  const match = matchEvidenceLine(line, events);
-  if (match.kind === 'confirm') {
-    return {
-      identity: line.identity,
-      kind: 'msi',
-      merchantRaw: line.merchantRaw,
-      amountMinor: line.amountMinor,
-      occurredOn: line.occurredOn,
-      msi: true,
-      installmentIndex: line.installmentIndex,
-      installmentMonths: line.installmentMonths,
-      originalAmountMinor: line.originalAmountMinor,
-      status: 'matched',
-      eventId: match.eventId,
-      candidateEventIds: [match.eventId],
-      candidates: [],
-    };
-  }
-  if (match.kind === 'needs_decision') {
-    const candidates = match.candidates.map((candidate) => ({
-      id: candidate.eventId,
-      merchantRaw: candidate.merchantRaw,
-    }));
-    return {
-      identity: line.identity,
-      kind: 'msi',
-      merchantRaw: line.merchantRaw,
-      amountMinor: line.amountMinor,
-      occurredOn: line.occurredOn,
-      msi: true,
-      installmentIndex: line.installmentIndex,
-      installmentMonths: line.installmentMonths,
-      originalAmountMinor: line.originalAmountMinor,
-      status: 'needs_decision',
-      candidateEventIds: candidates.map((candidate) => candidate.id),
-      candidates,
-    };
-  }
-  return {
-    identity: line.identity,
-    kind: 'msi',
-    merchantRaw: line.merchantRaw,
-    amountMinor: line.amountMinor,
-    occurredOn: line.occurredOn,
-    msi: true,
-    installmentIndex: line.installmentIndex,
-    installmentMonths: line.installmentMonths,
-    originalAmountMinor: line.originalAmountMinor,
-    status: 'skipped',
-    candidateEventIds: [],
-    candidates: [],
-  };
-};
+export { classifyMsiEvidenceRow } from './statement-reconciliation.js';
 
 export const statementPreviewResponse = (
   importId: string,
@@ -180,7 +125,7 @@ export const loadStatementTextractExtraction = async (item: Pick<BankImportRecor
   return parsed;
 };
 
-const parseStatementDecisions = (body: string | undefined): Readonly<Record<string, StatementDecision>> => {
+export const parseStatementDecisions = (body: string | undefined): Readonly<Record<string, StatementDecision>> => {
   if (!body) return {};
   try {
     const parsed = JSON.parse(body) as { decisions?: unknown };
@@ -261,6 +206,7 @@ const claimAndCreateStatementEvent = async (input: {
 };
 
 export type StatementApplyInput = {
+  readonly conservativeAmex?: boolean;
   readonly provider: StatementProvider; readonly importId: string; readonly owner: string;
   readonly decisionBody: string | undefined;
   readonly prepareRows: (record: BankImportRecord) => Promise<{
@@ -309,6 +255,14 @@ const applyStatementImportInternal = async (input: StatementApplyInput,
   const currentRows = await work.rebuildRows();
   const appliedAt = new Date().toISOString();
   let eventsSnapshot = await bankLedgerEvents();
+  if (input.conservativeAmex) eventsSnapshot = eventsSnapshot.filter(event => event.institution === 'american_express_mx'
+    && (event.account as JsonObject | undefined)?.lastFour === stored.accountLastFour);
+  const createdPlanIds = new Set<string>(), usedTargets = new Set<string>();
+  const retainMsiCapture = async (row: StatementPreviewRow, eventId: string) => {
+    if (input.conservativeAmex && !await linkBankEvidence({ record: stored, row, eventId, appliedAt,
+      parserVersion: 'amex-mx-statement-textract-v1', reason: 'Cuota vinculada al estado de cuenta Amex.' }))
+      throw new InvalidAmexStatementError('La cuota cambió. Vuelve a revisar el PDF.');
+  };
   let createdCount = 0;
   let linked = 0;
   let skipped = 0;
@@ -319,6 +273,9 @@ const applyStatementImportInternal = async (input: StatementApplyInput,
   for (const row of currentRows) {
     bankRowPosition(stored, row);
     const preview = previewByIdentity.get(row.identity);
+    if (input.conservativeAmex && row.status !== 'duplicate' && row.status !== 'excluded'
+      && (!preview || preview.status !== row.status || preview.candidateEventIds.join() !== row.candidateEventIds.join()))
+      throw new InvalidAmexStatementError('Los movimientos cambiaron. Vuelve a revisar el PDF; no se guardó el lote.');
     if (row.kind === 'msi') {
       const evidence: EvidenceLine = {
         merchantRaw: row.merchantRaw,
@@ -329,16 +286,22 @@ const applyStatementImportInternal = async (input: StatementApplyInput,
         installmentMonths: row.installmentMonths,
         originalAmountMinor: row.originalAmountMinor,
       };
-      const action = statementMsiApplyAction(row, preview, decisions[row.identity]);
+      const action = input.conservativeAmex && row.candidateEventIds.length && decisions[row.identity]?.action === 'skip'
+        ? { kind: 'skip' as const } : statementMsiApplyAction(row, preview, decisions[row.identity]);
       const msiNote = input.provider === 'amex'
         ? 'Cuota MSI confirmada con estado de cuenta Amex.'
         : 'Cuota MSI confirmada con estado de cuenta Santander.';
       if (action.kind === 'confirm_msi') {
-        const match = matchEvidenceLine(
+        if (input.conservativeAmex && usedTargets.has(`${action.eventId}:${row.installmentIndex}`))
+          throw new InvalidAmexStatementError('Dos filas apuntan a la misma cuota. Revisa la conciliación.');
+        const selectedEvent = eventsSnapshot.find(event => event.id === action.eventId);
+        const match = input.conservativeAmex && selectedEvent ? selectedAmexMsi(evidence, selectedEvent) : matchEvidenceLine(
           evidence,
           eventsSnapshot.filter((event) => event.id === action.eventId),
         );
         if (match.kind !== 'confirm') {
+          if (input.conservativeAmex)
+            throw new InvalidAmexStatementError('El plan elegido ya no es compatible. Vuelve a revisar el PDF; no se guardó el lote.');
           // Fall back to full snapshot if scoped miss (e.g. plan updated mid-apply).
           const fallback = matchEvidenceLine(evidence, eventsSnapshot);
           if (fallback.kind !== 'confirm' || fallback.eventId !== action.eventId) {
@@ -347,6 +310,8 @@ const applyStatementImportInternal = async (input: StatementApplyInput,
           }
           const updated = await persistEventMsi(fallback.eventId, input.owner, fallback.previous, fallback.next, msiNote, bankPlanEvidence(stored, row, fallback.next));
           if (updated) {
+            await retainMsiCapture(row, fallback.eventId);
+            usedTargets.add(`${fallback.eventId}:${row.installmentIndex}`);
             msiConfirmed += 1;
             linked += 1;
             eventsSnapshot = eventsSnapshot.map((event) => (
@@ -357,20 +322,26 @@ const applyStatementImportInternal = async (input: StatementApplyInput,
         }
         const updated = await persistEventMsi(match.eventId, input.owner, match.previous, match.next, msiNote, bankPlanEvidence(stored, row, match.next));
         if (updated) {
+          await retainMsiCapture(row, match.eventId);
+          usedTargets.add(`${match.eventId}:${row.installmentIndex}`);
           msiConfirmed += 1;
           linked += 1;
           eventsSnapshot = eventsSnapshot.map((event) => (
             event.id === match.eventId ? { ...event, msi: match.next } : event
           ));
-        } else skipped += 1;
+        } else if (input.conservativeAmex) throw new InvalidAmexStatementError('La cuota cambió. Vuelve a revisar el PDF; no se guardó el lote.');
+        else skipped += 1;
         continue;
       }
       if (action.kind === 'create_plan') {
+        if (input.conservativeAmex && row.candidateEventIds.length)
+          throw new InvalidAmexStatementError('La cuota tiene posibles planes existentes. Elige uno u omite la fila.');
         // Prefer confirming an existing plan (merchant+principal) over opening a duplicate.
-        const existing = matchEvidenceLine(evidence, eventsSnapshot);
+        const existing = matchEvidenceLine(evidence, eventsSnapshot.filter(e => !input.conservativeAmex || !createdPlanIds.has(String(e.id))));
         if (existing.kind === 'confirm') {
           const updated = await persistEventMsi(existing.eventId, input.owner, existing.previous, existing.next, msiNote, bankPlanEvidence(stored, row, existing.next));
           if (updated) {
+            await retainMsiCapture(row, existing.eventId);
             msiConfirmed += 1;
             linked += 1;
             eventsSnapshot = eventsSnapshot.map((event) => (
@@ -383,6 +354,8 @@ const applyStatementImportInternal = async (input: StatementApplyInput,
           skipped += 1;
           continue;
         }
+        if (input.conservativeAmex && existing.kind === 'needs_decision' && existing.candidates.length)
+          throw new InvalidAmexStatementError('Hay posibles planes existentes. Revisa la cuota antes de crear otro.');
         const plan = buildPlanFromCreateDecision(evidence, {
           months: action.months,
           cuotaMinor: action.cuotaMinor,
@@ -396,6 +369,7 @@ const applyStatementImportInternal = async (input: StatementApplyInput,
           msi: plan,
         });
         if (purchase) {
+          createdPlanIds.add(String(purchase.id));
           created.push(toPublicEvent(purchase));
           createdCount += 1;
           eventsSnapshot = [...eventsSnapshot, purchase];
@@ -420,10 +394,12 @@ const applyStatementImportInternal = async (input: StatementApplyInput,
         eventsSnapshot = [...eventsSnapshot, purchase];
       } else skipped += 1;
     } else if (action.kind === 'link') {
+      if (input.conservativeAmex && usedTargets.has(action.eventId))
+        throw new InvalidAmexStatementError('Dos filas apuntan a la misma compra. Revisa la conciliación.');
       if (await linkBankEvidence({ record: stored, row, eventId: action.eventId, appliedAt,
         parserVersion: input.provider === 'amex' ? 'amex-mx-statement-textract-v1' : 'santander-mx-statement-textract-v1',
         reason: input.provider === 'amex' ? 'Conciliado con estado de cuenta Amex.' : 'Conciliado con estado de cuenta Santander.',
-      })) linked += 1;
+      })) { linked += 1; usedTargets.add(action.eventId); }
       else skipped += 1;
     } else {
       skipped += 1;

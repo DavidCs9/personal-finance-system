@@ -7,7 +7,7 @@ export const NATIVE_LEDGER_TABLES = [
 
 const safeMoney = 'BETWEEN 0 AND 9007199254740991';
 const positiveMoney = 'BETWEEN 1 AND 9007199254740991';
-const captureKinds = "('email','apple_pay_shortcut','manual','santander_csv','amex_statement','santander_statement')";
+const captureKinds = "('email','apple_pay_shortcut','manual','santander_csv','amex_statement','amex_activity','santander_statement')";
 const accountColumns = `account_present boolean NOT NULL,
   account_id text, account_name text, account_institution text, account_last_four text,
   CHECK (account_present OR (account_id IS NULL AND account_name IS NULL AND

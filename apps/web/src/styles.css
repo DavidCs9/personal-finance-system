@@ -1440,3 +1440,13 @@ button.msi-purchase-row { cursor: pointer; }
 .payment-reconciliation-picker > .secondary-button { min-height: 44px; }
 .fixed-payment-reconciliation { font-size: 10px; color: var(--ink-soft); }
 .fixed-payment-reconciliation.is-invalid { font-weight: 700; }
+/* Activity imports keep each amount beside its source row on mobile. */
+.amex-activity-rows { display: grid; gap: 0; }
+.amex-activity-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .65rem;
+  padding: 1rem 0; border-bottom: 1px solid var(--line, #d8d3cb); }
+.amex-activity-row > div { min-width: 0; }
+.amex-activity-row > div > strong { display: block; overflow-wrap: anywhere; }
+.amex-activity-row small { display: block; margin-top: .3rem; }
+.amex-activity-row > strong { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.amex-activity-decision { grid-column: 1 / -1; display: grid; gap: .5rem; min-width: 0; }
+.amex-activity-decision select { width: 100%; min-width: 0; min-height: 44px; }

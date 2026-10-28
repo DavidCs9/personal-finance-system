@@ -32,6 +32,7 @@ export interface PurchaseEvent {
   readonly hasRawEmail?: boolean;
   readonly parseWarnings: readonly string[];
   readonly rawEmail?: string;
+  readonly observations?: readonly { readonly captureSource?: CaptureSource; readonly source: ObservedSourcePointer }[];
   readonly revisions: readonly EventRevision[];
   readonly msi?: MsiPlan;
 }
@@ -142,6 +143,8 @@ export interface StatementImportCandidate {
 }
 
 export interface StatementImportRow {
+  readonly purchaseOn?: string;
+  readonly transactionId?: string;
   readonly identity: string;
   readonly kind: StatementRowKind;
   readonly merchantRaw: string;
@@ -172,6 +175,7 @@ export interface StatementImportSummary {
 }
 
 export interface AmexImportPreview {
+  readonly alreadyApplied?: boolean;
   readonly importId: string;
   readonly status: StatementImportStatus;
   readonly message?: string;

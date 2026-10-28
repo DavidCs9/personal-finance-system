@@ -33,7 +33,7 @@ export const bankRowPosition = (record: BankImportRecord, row: BankImportRow): n
   if (matches.length !== 1) throw new BankImportError('La evidencia de la fila cambió. Vuelve a revisar el archivo.');
   const { retained, position } = matches[0];
   for (const field of ['merchantRaw', 'amountMinor', 'occurredOn', 'rowNumber', 'transactionId',
-    'installmentIndex', 'installmentMonths', 'originalAmountMinor', 'occurrence', 'kind', 'credit'] as const)
+    'installmentIndex', 'installmentMonths', 'originalAmountMinor', 'occurrence', 'kind', 'credit', 'purchaseOn', 'merchantReference'] as const)
     if (retained[field] !== row[field]) throw new BankImportError('La evidencia de la fila cambió. Vuelve a revisar el archivo.');
   return position;
 };
@@ -82,10 +82,11 @@ export const linkBankEvidence = (input: {
   if (!await readLedgerDetail(client, eventId)) return false;
   const observationId = randomUUID(), at = `${row.occurredOn}T12:00:00.000Z`;
   await appendLedgerObservation(client, { id: observationId, movementId: eventId, captureSource: record.kind,
-    observedAt: appliedAt, reconciliationAt: at, institution: record.kind === 'amex_statement' ? 'american_express_mx' : 'santander_mx',
+    observedAt: appliedAt, reconciliationAt: at, institution: record.kind.startsWith('amex_') ? 'american_express_mx' : 'santander_mx',
     eventType: 'card_purchase', amount: { amountMinor: row.amountMinor, currency: 'MXN' }, merchantRaw: row.merchantRaw,
     occurredAt: at, source: record.source, parserVersion: input.parserVersion, parseWarnings: [],
-    rowNumber: row.rowNumber, bankTransactionId: row.transactionId });
+    rowNumber: row.rowNumber, bankTransactionId: row.transactionId,
+    ...(record.kind === 'amex_activity' ? { account: { institution: 'american_express_mx', lastFour: record.accountLastFour } } : {}) });
   await markMovementReconciled(client, eventId, appliedAt);
   if (record.kind === 'santander_csv') {
     reserveLedgerMutations(1);

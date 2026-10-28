@@ -71,7 +71,7 @@ export const SCHEMA_STATEMENTS = [
     amount_mxn_minor bigint NOT NULL CHECK (amount_mxn_minor BETWEEN 0 AND 9007199254740991),
     PRIMARY KEY (payslip_uuid,position))`,
   `CREATE TABLE IF NOT EXISTS olbia.bank_imports (
-    kind text NOT NULL CHECK (kind IN ('amex_statement','santander_statement','santander_csv')),
+    kind text NOT NULL CHECK (kind IN ('amex_statement','amex_activity','santander_statement','santander_csv')),
     content_sha256 text NOT NULL CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
     owner text NOT NULL CHECK (length(owner)>0),
     status text NOT NULL CHECK (status IN ('processing','previewed','applied','failed')),
@@ -104,6 +104,7 @@ export const SCHEMA_STATEMENTS = [
     installment_months integer CHECK (installment_months BETWEEN 1 AND 48),
     original_amount_mxn_minor bigint CHECK (original_amount_mxn_minor BETWEEN 1 AND 9007199254740991),
     row_number integer CHECK (row_number>0), occurrence integer CHECK (occurrence>0), bank_transaction_id text,
+    purchase_on date, merchant_reference text,
     selected_movement_id text CHECK (length(selected_movement_id)>0),
     PRIMARY KEY (kind,content_sha256,position),
     CONSTRAINT bank_import_rows_identity_key UNIQUE (kind,content_sha256,identity),
@@ -150,6 +151,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   };
   if (!(await query('native-baseline', 'SELECT version FROM olbia.schema_migrations WHERE version=20')).rows.length) throw new BootstrapFailure('native-baseline');
   for (const [index, statement] of SCHEMA_STATEMENTS.entries()) await query(`schema-statement-${index + 1}`, statement);
+  await ensureAmexActivitySchema({ query: (statement, params) => query('amex-activity-schema', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   await ensureNativeControlConstraints({ query: (statement, params) => query('native-control', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   await ensureLedgerPrimaryObservation({ query: (statement, params) => query('ledger-primary', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   for (const [name, table, columns] of [
@@ -348,6 +350,25 @@ const ensureValidatedConstraint = async (client: SqlClient, table: string, name:
     if (error instanceof BootstrapFailure) throw error;
     throw new BootstrapFailure(stage, error);
   }
+};
+
+/** Resumable expansion of existing native checks; never changes historical financial assertions. */
+export const ensureAmexActivitySchema = async (client: SqlClient, options: {
+  now?: () => number; pause?: (ms: number) => Promise<void>; waitMs?: number;
+} = {}): Promise<void> => {
+  await client.query('ALTER TABLE olbia.bank_import_rows ADD COLUMN IF NOT EXISTS purchase_on date');
+  await client.query('ALTER TABLE olbia.bank_import_rows ADD COLUMN IF NOT EXISTS merchant_reference text');
+  for (const [table, oldName, column, allowed] of [
+    ['bank_imports', 'bank_imports_kind_check', 'kind', "'amex_statement','amex_activity','santander_statement','santander_csv'"],
+    ['ledger_observations', 'ledger_observations_capture_source_check', 'capture_source', "'email','apple_pay_shortcut','manual','santander_csv','amex_statement','amex_activity','santander_statement'"],
+    ['source_claims', 'source_claims_capture_source_check', 'capture_source', "'email','apple_pay_shortcut','manual','santander_csv','amex_statement','amex_activity','santander_statement'"],
+  ]) {
+    const name = `${table}_amex_activity_kind_check`;
+    // Validate the broader replacement before removing the former check. Interrupted runs resume safely.
+    await ensureValidatedConstraint(client, table, name, `CHECK (${column} IN (${allowed}))`, 'amex-activity-constraint', options);
+    await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${oldName}`);
+  }
+  await client.query('INSERT INTO olbia.schema_migrations VALUES (23,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 };
 
 /** Fixed native authority identities and finite states, validated against real rows. */

@@ -6,7 +6,7 @@ import { readBulkOperation } from './bulk-storage.js';
 
 const iso = (value: unknown) => value == null ? undefined : new Date(value as string | Date).toISOString();
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-const bankKinds = ['amex_statement', 'santander_statement', 'santander_csv'];
+const bankKinds = ['amex_activity', 'amex_statement', 'santander_statement', 'santander_csv'];
 const memberAssertion = (row: JsonObject) => ({ id: row.movement_id, merchantRaw: row.merchant_assertion,
   occurredAt: iso(row.occurred_at_assertion), status: row.status_assertion, amountMinor: Number(row.amount_minor_assertion),
   previousTags: row.previous_tags, nextTags: row.next_tags,

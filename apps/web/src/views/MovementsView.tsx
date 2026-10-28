@@ -35,6 +35,7 @@ export function MovementsView({
   onReadExceptionRaw,
   onImport,
   onImportAmex,
+  onImportAmexActivity,
   onImportSantanderStatement,
   onRegisterCharge,
   evidenceFilter,
@@ -55,6 +56,7 @@ export function MovementsView({
   onReadExceptionRaw(id: string): Promise<string>;
   onImport(): void;
   onImportAmex(): void;
+  onImportAmexActivity(): void;
   onImportSantanderStatement(): void;
   onRegisterCharge(): void;
   evidenceFilter?: { readonly label: string; readonly eventIds: readonly string[] };
@@ -167,6 +169,7 @@ export function MovementsView({
             setCaptureOpen(false);
             onImportAmex();
           }}
+          onImportAmexActivity={() => { setCaptureOpen(false); onImportAmexActivity(); }}
           onImportSantanderStatement={() => {
             setCaptureOpen(false);
             onImportSantanderStatement();

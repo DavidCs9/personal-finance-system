@@ -25,7 +25,8 @@ export interface RawSourcePointer {
   readonly bucket: string;
   readonly key: string;
   readonly sha256: string;
-  readonly contentType: "message/rfc822" | "text/csv" | "application/json" | "text/plain";
+  readonly contentType: "message/rfc822" | "text/csv" | "application/json" | "text/plain" | "application/pdf"
+    | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 }
 
 export interface ApplePayShortcutSourcePointer {
@@ -51,6 +52,7 @@ export type CaptureSource =
   | "apple_pay_shortcut"
   | "santander_csv"
   | "manual"
+  | "amex_activity"
   | "amex_statement"
   | "santander_statement";
 

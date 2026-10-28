@@ -118,7 +118,7 @@ export const SCHEMA_STATEMENTS = [
     amount_mxn_minor bigint NOT NULL CHECK (amount_mxn_minor BETWEEN 0 AND 9007199254740991),
     PRIMARY KEY (payslip_uuid,position))`,
   `CREATE TABLE IF NOT EXISTS olbia.bank_imports (
-    kind text NOT NULL CHECK (kind IN ('amex_statement','santander_statement','santander_csv')),
+    kind text NOT NULL CHECK (kind IN ('amex_statement','amex_activity','santander_statement','santander_csv')),
     content_sha256 text NOT NULL CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
     owner text NOT NULL CHECK (length(owner)>0),
     status text NOT NULL CHECK (status IN ('processing','previewed','applied','failed')),
@@ -150,7 +150,7 @@ export const SCHEMA_STATEMENTS = [
     installment_index integer CHECK (installment_index BETWEEN 1 AND 48),
     installment_months integer CHECK (installment_months BETWEEN 1 AND 48),
     original_amount_mxn_minor bigint CHECK (original_amount_mxn_minor BETWEEN 1 AND 9007199254740991),
-    row_number integer CHECK (row_number>0), occurrence integer CHECK (occurrence>0), bank_transaction_id text,
+    row_number integer CHECK (row_number>0), occurrence integer CHECK (occurrence>0), bank_transaction_id text, purchase_on date, merchant_reference text,
     selected_movement_id text CHECK (length(selected_movement_id)>0),
     PRIMARY KEY (kind,content_sha256,position),
     CONSTRAINT bank_import_rows_identity_key UNIQUE (kind,content_sha256,identity),
