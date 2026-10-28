@@ -24,7 +24,7 @@ export function PaymentSheet({
   candidatesError?: string;
   onRetryCandidates?: () => void;
   onReconcile?: (eventId: string | null) => Promise<void>;
-  onOpenEvent?: (eventId: string) => void;
+  onOpenEvent?: (eventId: string, signal: AbortSignal) => Promise<void>;
   onClose(): void;
   onSave(value: PlannedPayment): Promise<void>;
   onDelete?: () => Promise<void>;

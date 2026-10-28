@@ -17,8 +17,9 @@ const month='2026-10';
 const openai={id:'openai',name:'OpenAI',amountMinor:39900,dueDay:18};
 const cloud={id:'cloud',name:'iCloud',amountMinor:1700,dueDay:17};
 const plan = async (target=month,payments=[openai,cloud]) => fixture.run(() => saveMonthlyPlan('owner',target,{currency:'MXN',upcomingPayments:payments}));
-const link = (paymentId:string,eventId:string|null,expectedEventId:string|null,target=month,owner='owner') =>
-  fixture.run(() => savePaymentReconciliation(owner,target,paymentId,{eventId,expectedEventId}));
+const link = (paymentId:string,eventId:string|null,expectedEventId:string|null,target=month,owner='owner',
+  expectedPayment=paymentId===cloud.id ? cloud : openai) =>
+  fixture.run(() => savePaymentReconciliation(owner,target,paymentId,{eventId,expectedEventId,expectedPayment}));
 const journal = async () => (await fixture.sql.query<Record<string,unknown>>('SELECT * FROM olbia.planned_payment_charge_revisions ORDER BY created_at,id')).rows;
 beforeAll(async () => { fixture=await nativeFixture(); },30000);
 afterAll(async () => fixture.sql.close());
@@ -32,9 +33,14 @@ beforeEach(async () => {
 describe('explicit monthly fixed-charge relationships', () => {
   it('requires explicit nullable current and desired identities', () => {
     const eventId=randomUUID();
-    expect(parsePaymentReconciliationInput(JSON.stringify({eventId,expectedEventId:null}))).toEqual({eventId,expectedEventId:null});
+    const expectedPayment={name:openai.name,amountMinor:openai.amountMinor,dueDay:openai.dueDay};
+    expect(parsePaymentReconciliationInput(JSON.stringify({eventId,expectedEventId:null,expectedPayment})))
+      .toEqual({eventId,expectedEventId:null,expectedPayment});
     for (const value of [undefined,'not-json','[]','null','{}',JSON.stringify({eventId}),
-      JSON.stringify({eventId:'not-an-id',expectedEventId:null}),JSON.stringify({eventId:null,expectedEventId:7})])
+      JSON.stringify({eventId:'not-an-id',expectedEventId:null,expectedPayment}),JSON.stringify({eventId:null,expectedEventId:7,expectedPayment}),
+      ...[undefined,null,[],{}, {...expectedPayment,name:''}, {...expectedPayment,amountMinor:0},
+        {...expectedPayment,amountMinor:1.5}, {...expectedPayment,dueDay:32}]
+        .map(expectedPayment => JSON.stringify({eventId,expectedEventId:null,expectedPayment}))])
       expect(() => parsePaymentReconciliationInput(value)).toThrow(InvalidMonthlyPlanError);
   });
 
@@ -68,6 +74,39 @@ describe('explicit monthly fixed-charge relationships', () => {
     expect(await journal()).toHaveLength(1);
     await link(openai.id,second,first);
     expect((await fixture.sql.query('SELECT movement_id FROM olbia.planned_payment_charges')).rows).toEqual([{movement_id:second}]);
+  });
+
+  it('rejects stale confirmations of changed name, amount or day without changing links or history', async () => {
+    const id=await fixture.create();
+    for (const changed of [{...openai,name:'Otra suscripción'}, {...openai,amountMinor:45000}, {...openai,dueDay:19}]) {
+      await plan(month,[changed,cloud]);
+      const before=await getMonthlyPlan('owner',month), history=await journal();
+      await expect(link(openai.id,id,null)).rejects.toThrow('La programación de este fijo cambió');
+      expect(await getMonthlyPlan('owner',month)).toEqual(before);
+      expect(await journal()).toEqual(history);
+      expect((await fixture.sql.query('SELECT * FROM olbia.planned_payment_charges')).rows).toEqual([]);
+    }
+    await plan(); await link(openai.id,id,null);
+    await plan(month,[{...openai,amountMinor:45000},cloud]); // Material change clears the relationship.
+    const history=await journal();
+    await expect(link(openai.id,id,null)).rejects.toBeInstanceOf(PaymentReconciliationConflictError);
+    expect(await journal()).toEqual(history);
+    const expectedPayment={...openai,amountMinor:45000};
+    await link(openai.id,id,null,month,'owner',expectedPayment);
+    await link(openai.id,id,null,month,'owner',expectedPayment); // Exact replay still succeeds.
+    expect(await journal()).toHaveLength(history.length+1);
+  });
+
+  it('rejects a changed inherited occurrence before materializing its target month', async () => {
+    await plan('2026-09');
+    const id=await fixture.create();
+    await plan('2026-09',[{...openai,amountMinor:45000},cloud]);
+    await expect(link(openai.id,id,null)).rejects.toBeInstanceOf(PaymentReconciliationConflictError);
+    expect((await fixture.sql.query('SELECT month FROM olbia.month_plans')).rows).toEqual([{month:'2026-09'}]);
+    expect(await journal()).toEqual([]);
+    await link(openai.id,id,null,month,'owner',{...openai,amountMinor:45000});
+    expect((await fixture.sql.query('SELECT id FROM olbia.planned_payments WHERE month=$1 ORDER BY sort_order',[month])).rows)
+      .toEqual([{id:openai.id},{id:cloud.id}]);
   });
 
   it('materializes the full inherited list only on a real link and never carries its relationship forward', async () => {
@@ -141,7 +180,7 @@ describe('explicit monthly fixed-charge relationships', () => {
     await plan('2026-09'); const id=await fixture.create();
     const before=await fixture.snapshot();
     await expect(fixture.sql.transaction(client => withSqlClient(client as unknown as SqlClient,async () => {
-      await savePaymentReconciliation('owner',month,openai.id,{eventId:id,expectedEventId:null});
+      await savePaymentReconciliation('owner',month,openai.id,{eventId:id,expectedEventId:null,expectedPayment:openai});
       throw new Error('Interrupted');
     }))).rejects.toThrow('Interrupted');
     expect(await fixture.snapshot()).toEqual(before);

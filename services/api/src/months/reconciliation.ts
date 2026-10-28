@@ -1,7 +1,7 @@
 import { withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { isLedgerMovementId } from '@finance/ledger/native-ledger';
 import { getMonthlyPlan, saveMonthlyPlan } from './service.js';
-import { isValidMonth, InvalidMonthlyPlanError } from './monthly-plan.js';
+import { isValidMonth, InvalidMonthlyPlanError, type PlannedPaymentRecord } from './monthly-plan.js';
 import { readSqlPlanRecord, reconciliationFromRow, reconciliationMovementColumns } from './sql-reads.js';
 import { appendPaymentChargeRevision, readPaymentCharges } from './reconciliation-storage.js';
 import type { JsonObject } from '../http/response.js';
@@ -10,6 +10,7 @@ export class PaymentReconciliationConflictError extends Error {}
 export interface PaymentReconciliationInput {
   readonly eventId: string | null;
   readonly expectedEventId: string | null;
+  readonly expectedPayment: Pick<PlannedPaymentRecord, 'name' | 'amountMinor' | 'dueDay'>;
 }
 
 export const parsePaymentReconciliationInput = (body: string | undefined): PaymentReconciliationInput => {
@@ -19,7 +20,15 @@ export const parsePaymentReconciliationInput = (body: string | undefined): Payme
   const input=value as Record<string,unknown>;
   for (const key of ['eventId','expectedEventId']) if (input[key]!==null && (typeof input[key]!=='string' || !isLedgerMovementId(input[key])))
     throw new InvalidMonthlyPlanError('Elige un movimiento y vuelve a consultar el vínculo actual.');
-  return { eventId:input.eventId as string|null, expectedEventId:input.expectedEventId as string|null };
+  if (!input.expectedPayment || typeof input.expectedPayment!=='object' || Array.isArray(input.expectedPayment))
+    throw new InvalidMonthlyPlanError('Vuelve a consultar la programación del gasto fijo antes de conciliar.');
+  const expected=input.expectedPayment as Record<string,unknown>;
+  if (typeof expected.name!=='string' || !expected.name.trim() || expected.name.trim().length>100
+    || !Number.isSafeInteger(expected.amountMinor) || Number(expected.amountMinor)<=0
+    || !Number.isInteger(expected.dueDay) || Number(expected.dueDay)<1 || Number(expected.dueDay)>31)
+    throw new InvalidMonthlyPlanError('La programación esperada del gasto fijo no es válida.');
+  return { eventId:input.eventId as string|null, expectedEventId:input.expectedEventId as string|null,
+    expectedPayment:{name:expected.name.trim(),amountMinor:Number(expected.amountMinor),dueDay:Number(expected.dueDay)} };
 };
 
 export const savePaymentReconciliation = async (owner: string, month: string, paymentId: string,
@@ -33,6 +42,9 @@ export const savePaymentReconciliation = async (owner: string, month: string, pa
     const plan=await readSqlPlanRecord(owner,month,client);
     const payment=plan?.upcomingPayments.find(item => item.id===paymentId);
     if (!plan || !payment) throw new InvalidMonthlyPlanError('El gasto fijo ya no está disponible en este mes.');
+    const expected=validated.expectedPayment;
+    if (payment.name!==expected.name || payment.amountMinor!==expected.amountMinor || payment.dueDay!==expected.dueDay)
+      throw new PaymentReconciliationConflictError('La programación de este fijo cambió. Actualiza este mes antes de conciliar de nuevo.');
     const current=(await readPaymentCharges(client,month)).find(link => link.payment_id===paymentId);
     const previous=current?.movement_id ?? null;
     if (previous!==validated.expectedEventId && previous!==validated.eventId)

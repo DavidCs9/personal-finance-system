@@ -57,7 +57,8 @@ describe('ledger API Powertools router', () => {
   it('binds explicit fixed payment reconciliation to the authenticated owner and returns its refreshed plan', async () => {
     const saved = { month: '2026-10', upcomingPayments: [] };
     const write = vi.spyOn(reconciliations, 'savePaymentReconciliation').mockResolvedValue(saved);
-    const input = { eventId: 'c0000000-0000-4000-8000-000000000001', expectedEventId: null };
+    const input = { eventId: 'c0000000-0000-4000-8000-000000000001', expectedEventId: null,
+      expectedPayment:{name:'OpenAI',amountMinor:39900,dueDay:18} };
     const result = await handler({ ...httpEvent('PUT', '/months/2026-10/payments/openai/reconciliation', { owner: 'forged' }),
       body: JSON.stringify({ ...input, owner: 'forged' }) }, context);
     expect(result.statusCode).toBe(200);
@@ -72,7 +73,8 @@ describe('ledger API Powertools router', () => {
     expect(write).not.toHaveBeenCalled();
     write.mockRejectedValue(new reconciliations.PaymentReconciliationConflictError('El vínculo cambió.'));
     const conflict = await handler({ ...httpEvent('PUT', '/months/2026-10/payments/openai/reconciliation'),
-      body: JSON.stringify({ eventId: null, expectedEventId: 'c0000000-0000-4000-8000-000000000001' }) }, context);
+      body: JSON.stringify({ eventId: null, expectedEventId: 'c0000000-0000-4000-8000-000000000001',
+        expectedPayment:{name:'OpenAI',amountMinor:39900,dueDay:18} }) }, context);
     expect(conflict.statusCode).toBe(409);
     expect(JSON.parse(String(conflict.body)).message).toBe('El vínculo cambió.');
   });

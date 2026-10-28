@@ -66,7 +66,7 @@ Cada ocurrencia mensual puede vincularse explícitamente a un único cargo obser
 
 Un vínculo efectivo requiere movimiento MXN accepted/needs_review, bruto positivo, sin MSI y del mismo mes financiero Chihuahua. Una relación conservada cuyo cargo se rechaza, cambia de mes, pasa a MSI o deja de ser MXN queda visible para revisión y no reduce programación ni excluye gasto del ritmo variable. Needs_review conserva su incertidumbre; vincular no cambia el estado del cargo. La confirmación expone el importe programado, bruto y Mi parte; cubre la ocurrencia completa, sin deducir pagos parciales por diferencia de importes.
 
-La primera conciliación de un mes heredado materializa su lista completa sin cambiar meses previos; los vínculos nunca se heredan. Reordenar conserva relaciones. Cambiar nombre, importe o día desvincula con historia; antes de eliminar un fijo vinculado debe desvincularse expresamente. Desvincular conserva el cobro y el fijo, y restaura su tratamiento sin relación. Las operaciones comprueban la relación previa esperada y se confirman atómicamente; repetir la misma operación no duplica historia.
+La primera conciliación de un mes heredado materializa su lista completa sin cambiar meses previos; los vínculos nunca se heredan. Reordenar conserva relaciones. Cambiar nombre, importe o día desvincula con historia; antes de eliminar un fijo vinculado debe desvincularse expresamente. Desvincular conserva el cobro y el fijo, y restaura su tratamiento sin relación. Las operaciones comprueban la relación previa esperada y el nombre, importe y día de la programación revisada; un cambio concurrente exige volver a consultarla. Se confirman atómicamente; repetir la misma operación no duplica historia.
 
 ### Compromisos futuros
 

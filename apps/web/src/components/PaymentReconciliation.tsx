@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PlannedPayment } from "../monthly-plan";
 import type { PurchaseEvent } from "../types";
 import { monthKey, monthKeyLabel, timeZone } from "../lib/format";
@@ -66,7 +66,7 @@ export function PaymentReconciliation({ payment, month, candidates, candidatesLo
   readonly candidatesError?: string;
   readonly onRetryCandidates?: () => void;
   readonly onReconcile?: (eventId: string | null) => Promise<void>;
-  readonly onOpenEvent?: (eventId: string) => void;
+  readonly onOpenEvent?: (eventId: string, signal: AbortSignal) => Promise<void>;
   readonly disabled?: boolean;
   readonly onBusyChange?: (busy: boolean) => void;
 }) {
@@ -76,6 +76,23 @@ export function PaymentReconciliation({ payment, month, candidates, candidatesLo
   const [confirmation, setConfirmation] = useState<"link" | "unlink">();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [opening, setOpening] = useState<{ id: string; status: "opening" | "failed" }>();
+  const openingController = useRef<AbortController | undefined>(undefined);
+  useEffect(() => () => { openingController.current?.abort(); }, [month, payment.id]);
+  const openEvidence = async (eventId: string) => {
+    if (disabled || busy || !onOpenEvent) return;
+    openingController.current?.abort();
+    const controller = new AbortController();
+    openingController.current = controller;
+    const isCurrent = () => !controller.signal.aborted && openingController.current === controller;
+    setOpening({ id: eventId, status: "opening" });
+    try {
+      await onOpenEvent(eventId, controller.signal);
+      if (isCurrent()) setOpening(undefined);
+    } catch {
+      if (isCurrent()) setOpening({ id: eventId, status: "failed" });
+    }
+  };
   const eligible = eligibleReconciliationEvents(candidates, month);
   const selected = eligible.find(event => event.id === selectedId);
   const filtered = eligible.filter(event => event.merchantRaw.toLocaleLowerCase("es").includes(query.trim().toLocaleLowerCase("es")));
@@ -100,13 +117,18 @@ export function PaymentReconciliation({ payment, month, candidates, candidatesLo
       <p>{dayLabel(link.occurredAt)} · Mi parte <Amt>{mxn(link.amountMinor)}</Amt> · bruto <Amt>{mxn(link.grossAmountMinor)}</Amt>.</p>
       {!link.valid ? <p role="alert">{link.invalidReason || "El cobro vinculado ya no cumple los requisitos."} Este vínculo no descuenta el fijo por conciliar. Revisa el cobro o desvincúlalo.</p> : null}
       <div className="payment-reconciliation-actions">
-        {onOpenEvent ? <button type="button" className="text-button" disabled={disabled || busy} onClick={() => onOpenEvent(link.eventId)}>Ver cobro y evidencia</button> : null}
+        {onOpenEvent ? <button type="button" className="text-button" disabled={disabled || busy || opening?.status === "opening"} onClick={() => void openEvidence(link.eventId)}>Ver cobro y evidencia</button> : null}
         <button type="button" className="text-button" disabled={unavailable} onClick={() => { setPickerOpen(true); setConfirmation(undefined); setSelectedId(undefined); }}>Elegir otro cobro</button>
         <button type="button" className="text-button" disabled={unavailable} onClick={() => setConfirmation("unlink")}>Revisar desvínculo</button>
       </div>
     </div> : null}
     {disabled ? <p className="payment-reconciliation-warning">Guarda o descarta los cambios del fijo antes de conciliar.</p> : null}
     {error ? <p role="alert" className="form-error">{error}</p> : null}
+    {opening?.status === "opening" ? <p role="status">Abriendo cobro y evidencia…</p> : null}
+    {opening?.status === "failed" ? <div role="alert">
+      <p>No pudimos abrir este cobro. Intenta de nuevo.</p>
+      <button type="button" className="text-button" disabled={disabled || busy} onClick={() => void openEvidence(opening.id)}>Reintentar evidencia</button>
+    </div> : null}
     {confirmation === "unlink" || (confirmation === "link" && selected) ? <PaymentReconciliationConfirmation
       payment={payment} month={month} event={selected} unlink={confirmation === "unlink"} busy={busy}
       disabled={disabled || !onReconcile || (confirmation === "link" && (candidatesLoading || Boolean(candidatesError)))}
@@ -126,7 +148,7 @@ export function PaymentReconciliation({ payment, month, candidates, candidatesLo
               <span><strong>{event.merchantRaw}</strong><small>{dayLabel(chargeDate(event).toISOString())}{event.status === "needs_review" ? " · Por confirmar" : ""}</small>
                 <small>Mi parte <Amt>{mxn(eventAmount(event))}</Amt> · bruto <Amt>{mxn(event.amount.amountMinor)}</Amt></small></span>
             </label>
-            {onOpenEvent ? <button type="button" className="text-button" disabled={disabled || busy} onClick={() => onOpenEvent(event.id)}>Ver cobro y evidencia</button> : null}
+            {onOpenEvent ? <button type="button" className="text-button" disabled={disabled || busy || opening?.status === "opening"} onClick={() => void openEvidence(event.id)}>Ver cobro y evidencia</button> : null}
           </div>)}
         </fieldset>}
         <button type="button" className="secondary-button" disabled={unavailable || !selected} onClick={() => setConfirmation("link")}>Revisar vínculo</button>

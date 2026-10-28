@@ -1,4 +1,4 @@
-import { Children, isValidElement, useState, type ReactElement, type ReactNode } from "react";
+import { Children, isValidElement, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { mockEvents } from "../api/mock-data";
@@ -6,9 +6,9 @@ import { PaymentReconciliation, PaymentReconciliationConfirmation, type Observed
 
 vi.mock("react", async importOriginal => {
   const actual = await importOriginal<typeof import("react")>();
-  return { ...actual, useState: vi.fn(actual.useState) };
+  return { ...actual, useState: vi.fn(actual.useState), useRef: vi.fn(actual.useRef), useEffect: vi.fn(actual.useEffect) };
 });
-afterEach(() => vi.mocked(useState).mockRestore());
+afterEach(() => { vi.mocked(useState).mockRestore(); vi.mocked(useRef).mockRestore(); vi.mocked(useEffect).mockRestore(); });
 
 const event: ObservedEvent = { ...mockEvents[0]!, id: "chosen", merchantRaw: "OPENAI", status: "accepted",
   occurredAt: "2026-10-18T12:00:00Z", amount: { currency: "MXN", amountMinor: 399_00 }, msi: undefined };
@@ -61,12 +61,51 @@ describe("payment reconciliation interaction boundaries", () => {
       expect(onReconcile).not.toHaveBeenCalled();
     }
   });
+
+  it("opens the selected charge evidence, recovers from lookup failure, and preserves the candidate selection", async () => {
+    const onOpenEvent = vi.fn().mockRejectedValueOnce(new Error("Offline")).mockResolvedValueOnce(undefined);
+    const onReconcile = vi.fn();
+    const render = stateHarness();
+    const props = { ...base, onReconcile, onOpenEvent };
+    let view = render(props);
+    find(view, child => child.type === "input" && child.props.type === "radio").props.onChange!();
+    view = render(props);
+    button(view, "Ver cobro y evidencia").props.onClick!();
+    await settle();
+    view = render(props);
+    expect(renderToStaticMarkup(view)).toContain("No pudimos abrir este cobro");
+    expect(find(view, child => child.type === "input" && child.props.type === "radio").props.checked).toBe(true);
+    button(view, "Reintentar evidencia").props.onClick!();
+    await settle();
+    view = render(props);
+    expect(renderToStaticMarkup(view)).not.toContain("No pudimos abrir este cobro");
+    expect(onOpenEvent.mock.calls.map(([id]) => id)).toEqual(["chosen", "chosen"]);
+    expect(onOpenEvent.mock.calls[0]![1].aborted).toBe(true);
+    expect(onOpenEvent.mock.calls[1]![1].aborted).toBe(false);
+    expect(onReconcile).not.toHaveBeenCalled();
+  });
+
+  it("aborts a pending evidence lookup on unmount and ignores its late result", async () => {
+    let finish!: () => void;
+    const onOpenEvent = vi.fn((_id: string, _signal: AbortSignal) => new Promise<void>(resolve => { finish = resolve; }));
+    const render = stateHarness();
+    const props = { ...base, onOpenEvent };
+    const view = render(props);
+    button(view, "Ver cobro y evidencia").props.onClick!();
+    const cleanup = vi.mocked(useEffect).mock.calls[0]![0]() as () => void;
+    cleanup();
+    expect(onOpenEvent.mock.calls[0]![1].aborted).toBe(true);
+    finish(); await settle();
+    expect(onOpenEvent).toHaveBeenCalledTimes(1);
+  });
 });
 
 // Exercise the component's actual callbacks and state transitions without a browser/DOM dependency.
 // React's renderer remains responsible for rendering the JSX and confirmation component.
 const stateHarness = () => {
   const state: unknown[] = [];
+  vi.mocked(useRef).mockReturnValue({ current: undefined });
+  vi.mocked(useEffect).mockImplementation(() => {});
   let cursor = 0;
   vi.mocked(useState).mockImplementation((initial?: unknown) => {
     const index = cursor++;

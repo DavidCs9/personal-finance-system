@@ -329,19 +329,20 @@ describe('registered statement API', () => {
 });
 
 describe("fixed payment reconciliation boundary", () => {
+  const expectedPayment={name:"OpenAI",amountMinor:39900,dueDay:18};
   it("sends explicit charge identity and expected prior link, preserving zero and the server plan", async () => {
     const plan = { month: "2026-10", upcomingPayments: [{ id: "openai", amountMinor: 39900,
       reconciliation: { eventId: "charge", amountMinor: 0, valid: true } }] };
     vi.mocked(fetch).mockResolvedValue(jsonResponse(plan));
-    await expect(ledgerApi.reconcilePayment("2026-10", "openai", "charge", null, token(Date.now() + 600_000, "api"))).resolves.toEqual(plan);
+    await expect(ledgerApi.reconcilePayment("2026-10", "openai", "charge", null, expectedPayment, token(Date.now() + 600_000, "api"))).resolves.toEqual(plan);
     expect(fetch).toHaveBeenCalledWith("https://api.example.test/months/2026-10/payments/openai/reconciliation",
-      expect.objectContaining({ method: "PUT", body: JSON.stringify({ eventId: "charge", expectedEventId: null }) }));
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ eventId: "charge", expectedEventId: null, expectedPayment }) }));
   });
 
   it("sends an explicit unlink rather than replacing the recurring payment configuration", async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({ month: "2026-10", upcomingPayments: [] }));
-    await ledgerApi.reconcilePayment("2026-10", "openai", null, "charge", token(Date.now() + 600_000, "api"));
+    await ledgerApi.reconcilePayment("2026-10", "openai", null, "charge", expectedPayment, token(Date.now() + 600_000, "api"));
     expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/reconciliation"),
-      expect.objectContaining({ body: JSON.stringify({ eventId: null, expectedEventId: "charge" }) }));
+      expect.objectContaining({ body: JSON.stringify({ eventId: null, expectedEventId: "charge", expectedPayment }) }));
   });
 });

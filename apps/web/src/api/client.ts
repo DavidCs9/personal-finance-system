@@ -12,7 +12,7 @@ import type {
   SantanderStatementImportResult,
   StatementImportDecision,
 } from "../types";
-import type { MonthlyPlan } from "../monthly-plan";
+import type { MonthlyPlan, PlannedPayment } from "../monthly-plan";
 import type { CardCycle } from "../card-cycle";
 import type { CardLiabilitySnapshot, WealthOverview } from "../wealth";
 import { CAJITA_ACCOUNT_ID, type FutureCommitments, type MonthSummary, type SpendingAnalytics, type WealthSnapshot } from "@finance/domain";
@@ -379,11 +379,13 @@ export const ledgerApi = {
     });
   },
   async reconcilePayment(month: string, paymentId: string, eventId: string | null,
-    expectedEventId: string | null, idToken: string): Promise<MonthlyPlan> {
+    expectedEventId: string | null, expectedPayment: Pick<PlannedPayment, "name" | "amountMinor" | "dueDay">,
+    idToken: string): Promise<MonthlyPlan> {
     return request<MonthlyPlan>(`/months/${encodeURIComponent(month)}/payments/${encodeURIComponent(paymentId)}/reconciliation`, idToken, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventId, expectedEventId }),
+      body: JSON.stringify({ eventId, expectedEventId,
+        expectedPayment:{name:expectedPayment.name,amountMinor:expectedPayment.amountMinor,dueDay:expectedPayment.dueDay} }),
     });
   },
   async uploadNominas(
