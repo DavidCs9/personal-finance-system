@@ -83,11 +83,13 @@ describe('native bank import public flows',()=>{
       expect((ready.rows as unknown[]).length).toBeGreaterThan(0);
       const capture=await native.readBankImport(p.kind,id,'owner');
       expect(capture?.extractionKey).toContain(createHash('sha256').update('job-1').digest('hex'));
-      expect(await p.apply(id,'owner',undefined)).toHaveProperty('summary');
+      const decisions = JSON.stringify({decisions:Object.fromEntries((ready.rows as {identity:string;status:string}[])
+        .filter(row=>row.status==='needs_decision' || row.status==='ambiguous').map(row=>[row.identity,{action:'skip'}]))});
+      expect(await p.apply(id,'owner',decisions)).toHaveProperty('summary');
       const applied=await native.readBankImport(p.kind,id,'owner');expect(applied?.status).toBe('applied');
       expect(applied?.rows).toEqual(capture?.rows);
       const writes=vi.mocked(S3Client.prototype.send).mock.calls.filter(([c])=>c instanceof PutObjectCommand).length;
-      expect(await p.preview(upload,'owner')).toEqual(ready);
+      expect(await p.preview(upload,'owner')).toEqual(shared.statementImportResponse(applied!));
       expect(await p.apply(id,'owner',undefined)).toMatchObject({alreadyApplied:true,summary:applied?.result});
       expect(await native.readBankImport(p.kind,id,'owner')).toEqual(applied);
       expect(vi.mocked(S3Client.prototype.send).mock.calls.filter(([c])=>c instanceof PutObjectCommand)).toHaveLength(writes);
@@ -104,8 +106,29 @@ describe('native bank import public flows',()=>{
         await native.completeBankImport(p.kind,id,'owner',new Date().toISOString(),{created:0,linked:0,skipped:0});
         return {status:'FAILED',statusMessage:'Late failure'};
       });
-      expect(await p.get(id,'owner')).toEqual(ready);
+      expect(await p.get(id,'owner')).toEqual(shared.statementImportResponse((await native.readBankImport(p.kind,id,'owner'))!));
       expect((await native.readBankImport(p.kind,id,'owner'))?.status).toBe('applied');
+    });
+    it(`${p.provider} refreshes legacy preview classifications from retained evidence without new extraction or financial writes`,async()=>{
+      await p.preview(upload,'owner');const first=await p.get(id,'owner');
+      const printed=(first.rows as {identity:string;kind:string;status:string}[]).find(row=>row.kind==='msi' && row.status==='new');
+      expect(printed).toBeDefined();
+      await sql.query("UPDATE olbia.bank_import_rows SET status='needs_decision' WHERE kind=$1 AND content_sha256=$2 AND identity=$3",
+        [p.kind,id,printed!.identity]);
+      const retained=(await native.readBankImport(p.kind,id,'owner'))!;
+      const writeCount=vi.mocked(S3Client.prototype.send).mock.calls.filter(([command])=>command instanceof PutObjectCommand).length;
+      const refreshed=await p.get(id,'owner');
+      expect((refreshed.rows as {identity:string;status:string}[]).find(row=>row.identity===printed!.identity)?.status).toBe('new');
+      const current=(await native.readBankImport(p.kind,id,'owner'))!;
+      expect(current.source).toEqual(retained.source);expect(current.extractionKey).toBe(retained.extractionKey);
+      expect((await p.get(id,'owner')).rows).toEqual(refreshed.rows);
+      expect((await native.readBankImport(p.kind,id,'owner'))!.previewedAt).toBe(current.previewedAt);
+      expect(jobs.startTextractDocumentAnalysis).toHaveBeenCalledOnce();
+      expect(jobs.fetchTextractStatementExtraction).toHaveBeenCalledOnce();
+      expect(vi.mocked(S3Client.prototype.send).mock.calls.filter(([command])=>command instanceof PutObjectCommand)).toHaveLength(writeCount);
+      expect((await sql.query('SELECT id FROM olbia.ledger_movements')).rows).toEqual([]);
+      expect((await sql.query('SELECT movement_id FROM olbia.installment_plans')).rows).toEqual([]);
+      expect((await sql.query('SELECT id FROM olbia.ledger_revisions')).rows).toEqual([]);
     });
     it(`${p.provider} retries document failures but keeps transient SQL/evidence failure processing`,async()=>{
       await p.preview(upload,'owner');

@@ -31,9 +31,10 @@ export const previewAmexActivity = async (body: string | undefined, owner: strin
   if (existing?.status === 'applied') return response(existing);
   const rows = await classify(document, owner);
   const now = new Date().toISOString();
-  return response(await startBankImport({ kind: 'amex_activity', importId: input.sha256, owner, status: 'previewed',
+  const record=await startBankImport({ kind: 'amex_activity', importId: input.sha256, owner, status: 'previewed',
     createdAt: now, previewedAt: now, source: activitySource(owner, input.sha256), accountLastFour: document.accountLastFour,
-    product: document.product, period: document.period, rows }));
+    product: document.product, period: document.period, rows });
+  return response(record.status==='previewed'?{...record,rows}:record);
 };
 
 const create = (record: BankImportRecord, row: BankImportRow, at: string, msi?: MsiPlan) => createBankMovement({ record, row, event: {

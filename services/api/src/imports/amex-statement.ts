@@ -4,6 +4,7 @@ import {
   parseFlexibleDate,
 } from "./statement-dates.js";
 import type { TextractStatementExtraction, TextractTable } from "./textract-document.js";
+import { amexMerchantsMatch } from './msi-reconciliation.js';
 
 export class InvalidAmexStatementError extends Error {}
 
@@ -441,6 +442,9 @@ const parseChargesAndPlansFromLines = (
       if (!occurredOn) continue;
       const inline = splitTrailingAmount(dated[3]);
       let merchantRaw = cleanMerchant(inline.merchantRaw);
+      const continuation = lines.slice(index+1,index+4);
+      const nextDate = continuation.findIndex(next => /^\d{1,2}\s+de\s+/i.test(next));
+      const merchantReference = merchantReferenceFrom([dated[3],...continuation.slice(0,nextDate < 0 ? undefined : nextDate)].join(' '));
       let installment = installmentFrom(dated[3]) ?? installmentFrom(lines[index + 1] ?? "");
       let amountMinor = inline.amountMinor;
       if (amountMinor === undefined) {
@@ -469,6 +473,7 @@ const parseChargesAndPlansFromLines = (
         credit: false,
         installmentIndex: installment.index,
         installmentMonths: installment.months,
+        ...(merchantReference ? {merchantReference} : {}),
         msi: true,
         identity: [
           "amex_statement_msi",
@@ -668,6 +673,7 @@ export interface AmexMsiEvidenceLine {
   readonly installmentIndex: number;
   readonly installmentMonths: number;
   readonly originalAmountMinor?: number;
+  readonly originalOn?: string;
   readonly identity: string;
 }
 
@@ -680,18 +686,18 @@ export const amexMsiEvidenceLines = (
       Boolean(charge.msi && charge.installmentIndex !== undefined && charge.installmentMonths !== undefined),
   );
 
-  const usedPlans = new Set<string>();
+  const usedPlans = new Set<number>();
   const fromCharges = msiCharges.map((charge, index) => {
-    const plan = document.msiPlans.find((candidate) => {
-      const key = `${candidate.installmentIndex}/${candidate.installmentMonths}:${candidate.cuotaMinor}`;
-      if (usedPlans.has(key)) return false;
-      return (
+    const metadataMatches = document.msiPlans.flatMap((candidate,position) =>
+      !usedPlans.has(position) && (
         candidate.installmentIndex === charge.installmentIndex
         && candidate.installmentMonths === charge.installmentMonths
         && candidate.cuotaMinor === charge.amountMinor
-      );
-    });
-    if (plan) usedPlans.add(`${plan.installmentIndex}/${plan.installmentMonths}:${plan.cuotaMinor}`);
+      ) ? [{candidate,position}] : []);
+    const matches = metadataMatches.filter(({candidate}) => amexMerchantsMatch(candidate.merchantRaw,charge.merchantRaw));
+    const plan = matches.length === 1 ? matches[0]!.candidate : undefined;
+    if (plan) usedPlans.add(matches[0]!.position);
+    else for (const match of metadataMatches) usedPlans.add(match.position);
     return {
       ...(charge.merchantReference ? { merchantReference: charge.merchantReference } : {}),
       merchantRaw: charge.merchantRaw,
@@ -700,12 +706,13 @@ export const amexMsiEvidenceLines = (
       installmentIndex: charge.installmentIndex,
       installmentMonths: charge.installmentMonths,
       originalAmountMinor: plan?.originalAmountMinor,
+      originalOn: plan?.originalOn,
       identity: charge.identity || `amex_msi:${document.accountLastFour}:${charge.amountMinor}:${charge.installmentIndex}/${charge.installmentMonths}:${index}`,
     };
   });
 
   const fromPlansOnly = document.msiPlans
-    .filter((plan) => !usedPlans.has(`${plan.installmentIndex}/${plan.installmentMonths}:${plan.cuotaMinor}`))
+    .filter((_plan,index) => !usedPlans.has(index))
     .map((plan, index) => ({
       merchantRaw: plan.merchantRaw,
       amountMinor: plan.cuotaMinor,
@@ -713,6 +720,7 @@ export const amexMsiEvidenceLines = (
       installmentIndex: plan.installmentIndex,
       installmentMonths: plan.installmentMonths,
       originalAmountMinor: plan.originalAmountMinor,
+      originalOn: plan.originalOn,
       identity: `amex_plan:${document.accountLastFour}:${plan.originalAmountMinor}:${plan.installmentIndex}/${plan.installmentMonths}:${index}`,
     }));
 

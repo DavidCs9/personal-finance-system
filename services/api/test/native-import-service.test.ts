@@ -5,7 +5,7 @@ import * as connection from '../../ledger/src/dsql/connection.js';
 import { currentSqlClient,withSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
 import type { SqlClient } from '../../ledger/src/dsql/projection.js';
 import * as readers from '../src/events/sql-reads.js';
-import { readBankImport,startBankImport,saveStatementPreview,failBankImport,completeBankImport,type BankImportRecord } from '../src/imports/import-sql.js';
+import { readBankImport,startBankImport,saveStatementPreview,refreshStatementPreview,failBankImport,completeBankImport,type BankImportRecord } from '../src/imports/import-sql.js';
 
 let sql:PGlite,statements:string[];
 const hash='a'.repeat(64),at='2026-10-02T12:00:00.123Z';
@@ -93,5 +93,35 @@ describe('native import lifecycle and relational evidence',()=>{
     const query=vi.fn(async()=>{throw new Error('Native SQL unavailable');});
     vi.mocked(readers.readerPool).mockReturnValue({query});
     await expect(readBankImport(record.kind,hash,'owner')).rejects.toThrow('Native SQL unavailable');expect(query).toHaveBeenCalledOnce();
+  });
+  it('refreshes only changed classifications and keeps a stable preview timestamp for repeated reads',async()=>{
+    await startBankImport(processing);
+    const initial=await saveStatementPreview(processing.kind,hash,'owner','first-job',preview);
+    const stable=await refreshStatementPreview(initial,[{...preview.rows[0]!,originalOn:'2026-07-30'}]);
+    expect(stable.previewedAt).toBe(initial.previewedAt);
+    expect(stable.rows[0]).toHaveProperty('originalOn','2026-07-30');
+    const rows=[{...preview.rows[0]!,transactionId:'BANKREF123',status:'matched' as const,eventId:'historical-target',candidateEventIds:['historical-target'],
+      candidates:[{id:'historical-target',merchantRaw:'Existing plan',months:3,cuotaMinor:100,principalMinor:300}]}];
+    const refreshed=await refreshStatementPreview(initial,rows);
+    expect(refreshed.rows).toEqual(rows);
+    expect(refreshed.source).toEqual(initial.source);
+    expect(refreshed.extractionKey).toBe(initial.extractionKey);
+    const reread=(await readBankImport(processing.kind,hash,'owner'))!;
+    expect(reread.rows).toMatchObject([{status:'matched',transactionId:'BANKREF123',eventId:'historical-target',candidateEventIds:['historical-target']}]);
+    expect((await refreshStatementPreview(reread,rows)).previewedAt).toBe(refreshed.previewedAt);
+    // A stale reader cannot replace a newer set of candidate assertions.
+    expect(await refreshStatementPreview(initial,preview.rows)).toEqual(reread);
+    expect(statements.filter(s=>/^\s*(INSERT|UPDATE|DELETE)\s+(INTO\s+|FROM\s+)?olbia\./.test(s))
+      .every(s=>/olbia\.(bank_import|application_barrier)/.test(s))).toBe(true);
+  });
+  it('rejects changed literal rows during refresh and never rewrites applied evidence after a race',async()=>{
+    await startBankImport(processing);
+    const initial=await saveStatementPreview(processing.kind,hash,'owner','first-job',preview);
+    for(const changes of [{merchantRaw:'Changed source'}, {amountMinor:999}, {identity:'invented'}])
+      await expect(refreshStatementPreview(initial,[{...preview.rows[0]!,...changes}])).rejects.toThrow('evidencia');
+    expect(await readBankImport(processing.kind,hash,'owner')).toEqual(initial);
+    const applied=await completeBankImport(processing.kind,hash,'owner',at,{created:1,linked:0,skipped:0});
+    expect(await refreshStatementPreview(initial,[])).toEqual(applied);
+    expect(await readBankImport(processing.kind,hash,'owner')).toEqual(applied);
   });
 });

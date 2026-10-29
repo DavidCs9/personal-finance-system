@@ -89,12 +89,13 @@ export function AmexActivitySheet({ idToken, onClose, onApplied }: {
             {row.purchaseOn && row.purchaseOn !== row.occurredOn && <small>Fecha de compra del archivo: {row.purchaseOn}</small>}
           </div>
           <strong><Amt>{money(row.amountMinor)}</Amt></strong>
+          {row.reason === "conflicting_msi_plan" && <p className="form-hint">Ya hay un plan que podría corresponder. Conserva ese plan y vincula su identidad desde el PDF antes de volver a revisar este Excel; no se creará otro.</p>}
           {needsDecision(row) && !preview.alreadyApplied && <label className="amex-activity-decision">
             <span>Decisión para {row.merchantRaw}</span>
             <select value={decisions[row.identity]?.eventId ?? decisions[row.identity]?.action ?? ""}
               disabled={busy} onChange={event => select(row, event.target.value)}>
               <option value="">Elegir…</option>
-              {row.candidates?.map(candidate => <option value={candidate.id} key={candidate.id}>
+              {row.reason !== "conflicting_msi_plan" && row.candidates?.map(candidate => <option value={candidate.id} key={candidate.id}>
                 Vincular: {candidate.merchantRaw}{candidate.occurredAt ? ` · ${candidate.occurredAt.slice(0, 10)}` : ""} · {candidate.id.slice(-6)}
               </option>)}
               {row.kind === "purchase" && <option value="create">Es otra compra: importar como nueva</option>}

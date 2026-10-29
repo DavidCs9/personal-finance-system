@@ -90,6 +90,28 @@ describe('matchEvidenceLine', () => {
     }
   });
 
+  it('does not confirm a different principal merely because merchant, quota, index and month match', () => {
+    const plan = buildMsiSchedule({ principalMinor: 600_000, months: 3,
+      startMonth: '2026-06', origin: 'manual', cuotaMinor: 200_000 });
+    const result = matchEvidenceLine({ merchantRaw: 'AEROLINEA RESERVA 123', amountMinor: 200_000,
+      occurredOn: '2026-07-06', installmentIndex: 2, installmentMonths: 3,
+      originalAmountMinor: 700_000, identity: 'different-principal' },
+    [{ id: 'existing-plan', merchantRaw: 'AEROLINEA RESERVA 123', status: 'accepted', msi: plan }]);
+    expect(result).toEqual({ kind: 'needs_decision', reason: 'no_matching_plan', candidates: [] });
+    expect(plan.installments[1]?.status).toBe('committed');
+  });
+
+  it('does not identify generic automatic plans by equal totals when the indexed calendar differs', () => {
+    const plan = buildMsiSchedule({ principalMinor: 600_000, months: 3,
+      startMonth: '2026-05', origin: 'amex_auto', cuotaMinor: 200_000 });
+    const result = matchEvidenceLine({ merchantRaw: 'MESES EN AUTOMÁTICO NACIONAL', amountMinor: 200_000,
+      occurredOn: '2026-07-06', installmentIndex: 2, installmentMonths: 3,
+      originalAmountMinor: 600_000, identity: 'different-automatic-cycle' },
+    [{ id: 'older-plan', merchantRaw: 'OTRA COMPRA', status: 'accepted', msi: plan }]);
+    expect(result).toEqual({ kind: 'needs_decision', reason: 'no_matching_plan', candidates: [] });
+    expect(plan.installments.map(item => item.status)).toEqual(['committed', 'committed', 'committed']);
+  });
+
   it('skips evidence already confirmed by observation id', () => {
     const plan = markInstallmentSpent(
       buildMsiSchedule({

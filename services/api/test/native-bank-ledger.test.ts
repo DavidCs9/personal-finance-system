@@ -51,7 +51,7 @@ const apply = (record: BankImportRecord, rows: readonly StatementPreviewRow[], d
     decisionBody, prepareRows: async () => ({ rebuildRows: async () => rows, afterRows }),
   });
 const budgetRows = (count: number): StatementPreviewRow[] => Array.from({ length: count }, (_, i) => ({ ...row,
-  identity: `budget-plan-${i}`, kind: 'msi', msi: true, merchantRaw: `Budget purchase ${i}`,
+  identity: `budget-plan-${i}`, kind: 'msi', msi: true, merchantRaw: `Budget ${String(i).padStart(2, '0')} purchase`,
   amountMinor: 10000 + i * 10000, installmentIndex: 1, installmentMonths: 48,
   originalAmountMinor: (10000 + i * 10000) * 48, status: 'needs_decision' }));
 const planDecisions = (rows: readonly StatementPreviewRow[]) => JSON.stringify({ decisions: Object.fromEntries(rows.map(r =>
@@ -64,8 +64,9 @@ describe('native bank financial authority and exact provenance', () => {
     await expect(apply(record, rows, planDecisions(rows))).rejects.toThrow('demasiadas filas');
     expect(await fixture.snapshot()).toEqual(before);
     expect(await imports.readBankImport(kind, record.importId, record.owner)).toEqual(record);
-    // Undecided rows remain skipped; printed n/N rows intentionally interpret explicit "skip" as accept-as-printed.
-    const decisions = JSON.stringify({ decisions: { [rows[0].identity]: { action: 'create_plan', months: 48, cuotaMinor: rows[0].amountMinor } } });
+    // Every omitted row is now an explicit, literal skip; incomplete decisions cannot silently complete an import.
+    const decisions = JSON.stringify({ decisions: Object.fromEntries(rows.map((r,i) => [r.identity,
+      i === 0 ? {action:'create_plan',months:48,cuotaMinor:r.amountMinor} : {action:'skip'}])) });
     expect(await apply(record, rows, decisions)).toMatchObject({ summary: { created: 1, skipped: 58 } });
     expect((await fixture.sql.query('SELECT * FROM olbia.installment_entries')).rows).toHaveLength(48);
   }, 20_000);
@@ -169,7 +170,9 @@ describe('native bank financial authority and exact provenance', () => {
 
   it.each(['amex_statement', 'santander_statement'] as const)('%s confirms an existing plan against the selected import, preserving original capture', async kind => {
     const plan = buildMsiSchedule({ principalMinor: 9000, months: 3, cuotaMinor: 3000, startMonth: '2026-08', origin: 'manual' });
-    const id = await fixture.create({ msi: plan, merchantRaw: 'Original MSI shop' });
+    const institution = kind === 'amex_statement' ? 'american_express_mx' : 'santander_mx';
+    const id = await fixture.create({ msi: plan, merchantRaw: 'Original MSI shop', institution,
+      account:{institution,lastFour:'1234'} });
     const original = (await readLedgerDetail(fixture.pool, id))!.observations;
     const msiRow: StatementPreviewRow = { ...row, kind: 'msi', msi: true, merchantRaw: 'Original MSI shop', amountMinor: 3000,
       installmentIndex: 1, installmentMonths: 3, originalAmountMinor: 9000, status: 'matched', eventId: id, candidateEventIds: [id] };
@@ -183,7 +186,8 @@ describe('native bank financial authority and exact provenance', () => {
 
   it.each(['existing', 'new'] as const)('CSV %s plan apply preserves original cuota and exact row provenance through the real public flow', async mode => {
     const sourceBody = csv.replace('ORIGINAL PURCHASE', 'AMAZON A MESES');
-    const id = mode === 'existing' ? await fixture.create({ merchantRaw: 'AMAZON A MESES', msi: buildMsiSchedule({
+    const id = mode === 'existing' ? await fixture.create({ merchantRaw: 'AMAZON A MESES',
+      account:{institution:'santander_mx',lastFour:'1234'}, msi: buildMsiSchedule({
       principalMinor: 300, months: 3, cuotaMinor: 100, startMonth: '2026-08', origin: 'manual',
     }) }) : undefined;
     const original = id ? (await readLedgerDetail(fixture.pool, id))!.observations : undefined;
@@ -255,4 +259,218 @@ describe('native bank financial authority and exact provenance', () => {
     for (const table of ['ledger_movements', 'ledger_observations', 'source_claims'])
       expect((await fixture.sql.query(`SELECT * FROM olbia.${table}`)).rows).toHaveLength(1);
   });
+});
+
+const printedMsiRow = (changes: Partial<StatementPreviewRow> = {}): StatementPreviewRow => ({
+  ...row, identity:'printed-quota', kind:'msi', msi:true, merchantRaw:'AMAZON A MESES',
+  amountMinor:3000, occurredOn:'2026-10-04', originalOn:'2026-09-30',
+  installmentIndex:1, installmentMonths:3, originalAmountMinor:9000, status:'new', ...changes,
+});
+const bankScope = {institution:'santander_mx',accountLastFour:'1234'};
+
+describe('automatic statement decisions and stable native plan identity', () => {
+  it('creates a complete printed plan without a decision and preserves literal principal, source and replay', async () => {
+    const printed = printedMsiRow({originalAmountMinor:9001}), record=await save('santander_statement',[printed]);
+    const result=await apply(record,[printed]);
+    expect(result).toMatchObject({summary:{created:1,linked:0,skipped:0}});
+    const event=(await readLedgerDetail(fixture.pool,String((result.created as Record<string,unknown>[])[0].id)))!;
+    expect(event).toMatchObject({amount:{amountMinor:9001},msi:{principalMinor:9001,months:3,
+      installments:[{month:'2026-10',status:'spent',amountMinor:3000},{month:'2026-11',status:'committed'},{}]}});
+    const before=await fixture.snapshot();
+    expect(await apply(record,[printed])).toMatchObject({alreadyApplied:true});
+    expect(await fixture.snapshot()).toEqual(before);
+  });
+
+  it('reuses one purchase through later monthly bank-row FKs even after the visible merchant was renamed', async () => {
+    const first=printedMsiRow(), firstRecord=await save('santander_statement',[first]);
+    const result=await apply(firstRecord,[first]);
+    const id=String((result.created as Record<string,unknown>[])[0].id);
+    await fixture.sql.query("UPDATE olbia.ledger_movements SET merchant_raw='Mi dron' WHERE id=$1",[id]);
+    for (const [index,month,hash] of [[2,'2026-11','b'],[3,'2026-12','c']] as const) {
+      const printed=printedMsiRow({identity:`quota-${index}`,installmentIndex:index,occurredOn:`${month}-04`});
+      const events=await bank.bankLedgerEvents();
+      expect(events.find(event=>event.id===id)).toMatchObject({bankMsiAssertions:[{accountLastFour:'1234',merchantRaw:first.merchantRaw}]});
+      const classified=shared.classifyMsiEvidenceRow(printed,events,bankScope);
+      expect(classified).toMatchObject({status:'matched',eventId:id});
+      const record=await save('santander_statement',[classified],hash.repeat(64));
+      expect(await apply(record,[classified])).toMatchObject({summary:{created:0,linked:1,msiConfirmed:1}});
+    }
+    expect((await fixture.sql.query('SELECT id FROM olbia.ledger_movements')).rows).toEqual([{id}]);
+    expect((await fixture.sql.query('SELECT evidence_content_sha256 FROM olbia.installment_entries ORDER BY installment_index')).rows)
+      .toEqual([{evidence_content_sha256:'a'.repeat(64)},{evidence_content_sha256:'b'.repeat(64)},{evidence_content_sha256:'c'.repeat(64)}]);
+  });
+
+  it.each([
+    {institution:'american_express_mx',lastFour:'1234',currency:'MXN'},
+    {institution:'santander_mx',lastFour:'5678',currency:'MXN'},
+    {institution:'santander_mx',lastFour:'1234',currency:'USD'},
+  ])('does not link matching amounts from another bank/card/currency: %o', async input => {
+    const plan=buildMsiSchedule({principalMinor:9000,months:3,cuotaMinor:3000,startMonth:'2026-10',origin:'manual'});
+    await fixture.create({institution:input.institution,account:{institution:input.institution,lastFour:input.lastFour},
+      amount:{amountMinor:9000,currency:input.currency},merchantRaw:'AMAZON A MESES',msi:plan});
+    expect(shared.classifyMsiEvidenceRow(printedMsiRow(),await bank.bankLedgerEvents(),bankScope))
+      .toMatchObject({status:'new',candidateEventIds:[]});
+  });
+
+  it('blocks a new plan when a dated manual estimate has no card identity and a contradictory principal', async () => {
+    const plan=buildMsiSchedule({principalMinor:8940,months:3,cuotaMinor:2980,startMonth:'2026-10',origin:'manual'});
+    const id=await fixture.create({institution:'santander_mx',merchantRaw:'Mi compra',occurredAt:'2026-09-30T12:00:00Z',
+      amount:{amountMinor:8940,currency:'MXN'},msi:plan});
+    const classified=shared.classifyMsiEvidenceRow(printedMsiRow(),await bank.bankLedgerEvents(),bankScope);
+    expect(classified).toMatchObject({status:'needs_decision',reason:'conflicting_msi_plan',candidateEventIds:[id],
+      candidates:[{id,principalMinor:8940,cuotaMinor:2980,months:3,occurredAt:'2026-09-30T12:00:00.000Z'}]});
+    const record=await save('santander_statement',[classified]);
+    const before=await fixture.snapshot();
+    await expect(apply(record,[classified])).rejects.toThrow('requiere revisión');
+    await expect(apply(record,[classified],JSON.stringify({decisions:{[classified.identity]:{action:'create_plan',months:3,cuotaMinor:3000}}})))
+      .rejects.toThrow('requiere revisión');
+    expect(await fixture.snapshot()).toEqual(before);
+    expect((await imports.readBankImport(record.kind,record.importId,record.owner))!.status).toBe('previewed');
+    expect(await apply(record,[classified],JSON.stringify({decisions:{[classified.identity]:{action:'skip'}}})))
+      .toMatchObject({summary:{created:0,linked:0,skipped:1}});
+  });
+
+  it('requires a listed decision for two compatible plans, then confirms one without creating a third', async () => {
+    const plan=buildMsiSchedule({principalMinor:9000,months:3,cuotaMinor:3000,startMonth:'2026-10',origin:'manual'});
+    const create=()=>fixture.create({institution:'santander_mx',account:{institution:'santander_mx',lastFour:'1234'},
+      amount:{amountMinor:9000,currency:'MXN'},merchantRaw:'AMAZON A MESES',msi:plan});
+    const [left,right]=[await create(),await create()];
+    const classified=shared.classifyMsiEvidenceRow(printedMsiRow(),await bank.bankLedgerEvents(),bankScope);
+    expect(classified).toMatchObject({status:'needs_decision',reason:'ambiguous_msi_match'});
+    expect(new Set(classified.candidateEventIds)).toEqual(new Set([left,right]));
+    const record=await save('santander_statement',[classified]);
+    const before=await fixture.snapshot();
+    await expect(apply(record,[classified])).rejects.toThrow('requiere revisión');
+    expect(await fixture.snapshot()).toEqual(before);
+    expect(await apply(record,[classified],JSON.stringify({decisions:{[classified.identity]:{action:'confirm_msi',eventId:left}}})))
+      .toMatchObject({summary:{created:0,linked:1,msiConfirmed:1}});
+    expect((await fixture.sql.query('SELECT id FROM olbia.ledger_movements')).rows).toHaveLength(2);
+  });
+
+  it('rolls back the entire batch when an automatic new row acquired a plan after preview', async () => {
+    const printed=printedMsiRow(), record=await save('santander_statement',[row,printed]);
+    const plan=buildMsiSchedule({principalMinor:9000,months:3,cuotaMinor:3000,startMonth:'2026-10',origin:'manual'});
+    await fixture.create({institution:'santander_mx',account:{institution:'santander_mx',lastFour:'1234'},
+      amount:{amountMinor:9000,currency:'MXN'},merchantRaw:printed.merchantRaw,msi:plan});
+    const current=shared.classifyMsiEvidenceRow(printed,await bank.bankLedgerEvents(),bankScope);
+    expect(current.status).toBe('matched');
+    const before=await fixture.snapshot();
+    await expect(apply(record,[row,current])).rejects.toThrow('cambió desde la consulta');
+    expect(await fixture.snapshot()).toEqual(before);
+    expect((await imports.readBankImport(record.kind,record.importId,record.owner))!.status).toBe('previewed');
+  });
+});
+
+it('keeps an Amex purchase reference across monthly statements and blocks a contradictory reference', async () => {
+  const first=printedMsiRow({merchantReference:'BANKPURCHASE123'}), record=await save('amex_statement',[first]);
+  const result=await apply(record,[first]);
+  const id=String((result.created as Record<string,unknown>[])[0].id);
+  const events=await bank.bankLedgerEvents();
+  expect(events.find(event=>event.id===id)).toMatchObject({bankMsiAssertions:[{institution:'american_express_mx',merchantReference:'BANKPURCHASE123'}]});
+  const next=printedMsiRow({identity:'next-quota',installmentIndex:2,occurredOn:'2026-11-04',merchantReference:'BANKPURCHASE123'});
+  const scope={institution:'american_express_mx',accountLastFour:'1234'};
+  expect(shared.classifyMsiEvidenceRow(next,events,scope)).toMatchObject({status:'matched',eventId:id});
+  const conflict=shared.classifyMsiEvidenceRow({...next,merchantReference:'OTHERPURCHASE456'},events,scope);
+  expect(conflict).toMatchObject({status:'needs_decision',reason:'conflicting_msi_plan',candidateEventIds:[id]});
+});
+
+const seedManualPlan = async (changes: {card?:string;status?:'accepted'|'needs_review'|'rejected';principal?:number;quota?:number} = {}) => {
+  const id=randomUUID(),observation=randomUUID(),principal=changes.principal??8940,quota=changes.quota??2980;
+  const plan=buildMsiSchedule({principalMinor:principal,months:3,cuotaMinor:quota,startMonth:'2026-09',origin:'manual'});
+  const source={kind:'manual_entry',bucket:'evidence',key:'retained-manual.json',sha256:'d'.repeat(64),contentType:'application/json'};
+  const account={institution:'american_express_mx',...(changes.card?{lastFour:changes.card}:{})};
+  const ledger=await import('../../ledger/src/dsql/ledger-writes.js');
+  await fixture.run(async()=>{
+    await ledger.insertLedgerMovement(currentSqlClient()!,{id,institution:'american_express_mx',eventType:'card_purchase',
+      status:changes.status??'accepted',amount:{amountMinor:principal,currency:'MXN'},merchantRaw:'Mi compra manual',
+      occurredAt:'2026-09-30T12:00:00.000Z',receivedAt:'2026-09-30T12:00:00.000Z',ingestedAt:'2026-09-30T12:00:00.000Z',
+      account,source,parserVersion:'manual-entry-v1',parseWarnings:[],tags:['compra:reloj'],categoryId:'shopping',msi:plan},
+      observation,'2026-09-30T12:00:00.000Z');
+    await ledger.appendLedgerObservation(currentSqlClient()!,{id:observation,movementId:id,captureSource:'manual',
+      observedAt:'2026-09-30T12:00:00.000Z',reconciliationAt:'2026-09-30T12:00:00.000Z',
+      institution:'american_express_mx',eventType:'card_purchase',amount:{amountMinor:principal,currency:'MXN'},
+      merchantRaw:'Mi compra manual',occurredAt:'2026-09-30T12:00:00.000Z',account,source,parserVersion:'manual-entry-v1',parseWarnings:[]});
+  });
+  return id;
+};
+
+describe('one-time explicit manual plan reconciliation', () => {
+  it('corrects one existing ID from printed bank terms and uses its FK/reference for future cuotas without another decision', async () => {
+    const id=await seedManualPlan({status:'needs_review'}),before=(await readLedgerDetail(fixture.pool,id))!;
+    const printed=printedMsiRow({merchantReference:'PURCHASEONE123'}),scope={institution:'american_express_mx',accountLastFour:'1234'};
+    const classified=shared.classifyMsiEvidenceRow(printed,await bank.bankLedgerEvents(),scope);
+    const candidate=classified.candidates.find(candidate=>candidate.id===id)!;
+    expect(candidate).toMatchObject({canReconcilePlan:true,expectedPlan:{principalMinor:8940,cuotaMinor:2980,months:3,
+      startMonth:'2026-09',occurredAt:'2026-09-30T12:00:00.000Z',accountLastFour:null}});
+    const record=await save('amex_statement',[classified]);
+    const decisions=JSON.stringify({decisions:{[classified.identity]:{action:'reconcile_plan',eventId:id,expectedPlan:candidate.expectedPlan}}});
+    expect(await apply(record,[classified],decisions)).toMatchObject({summary:{created:0,linked:1,msiConfirmed:1}});
+    const corrected=(await readLedgerDetail(fixture.pool,id))!;
+    expect(corrected).toMatchObject({id,merchantRaw:'Mi compra manual',status:'needs_review',tags:['compra:reloj'],categoryId:'shopping',
+      amount:{amountMinor:9000,currency:'MXN'},account:{lastFour:'1234'},primaryObservationId:before.primaryObservationId,
+      msi:{principalMinor:9000,cuotaMinor:3000,months:3,installments:[{month:'2026-10',status:'spent'},{month:'2026-11'},{month:'2026-12'}]}});
+    expect((corrected.observations as Record<string,unknown>[]).find(item=>item.captureSource==='manual'))
+      .toEqual((before.observations as Record<string,unknown>[])[0]);
+    expect((corrected.observations as Record<string,unknown>[]).find(item=>item.captureSource==='amex_statement'))
+      .toMatchObject({amount:{amountMinor:3000},merchantRaw:printed.merchantRaw,account:{lastFour:'1234'}});
+    expect(corrected.bankTransactionId).toBeUndefined();
+    expect((await fixture.sql.query('SELECT merchant_reference,bank_transaction_id FROM olbia.bank_import_rows')).rows)
+      .toContainEqual({merchant_reference:'PURCHASEONE123',bank_transaction_id:null});
+    expect((corrected.revisions as Record<string,unknown>[]).some(revision=>
+      (revision.changes as Record<string,unknown>).amount && (revision.changes as Record<string,unknown>).msi)).toBe(true);
+    const replay=await fixture.snapshot();expect(await apply(record,[classified],decisions)).toMatchObject({alreadyApplied:true});
+    expect(await fixture.snapshot()).toEqual(replay);
+    const next=printedMsiRow({identity:'next-print',installmentIndex:2,occurredOn:'2026-11-04',merchantReference:'PURCHASEONE123'});
+    const nextClassified=shared.classifyMsiEvidenceRow(next,await bank.bankLedgerEvents(),scope);
+    expect(nextClassified).toMatchObject({status:'matched',eventId:id});
+    const nextRecord=await save('amex_statement',[nextClassified],'b'.repeat(64));
+    expect(await apply(nextRecord,[nextClassified])).toMatchObject({summary:{created:0,linked:1,msiConfirmed:1}});
+    expect((await fixture.sql.query('SELECT id FROM olbia.ledger_movements')).rows).toEqual([{id}]);
+  });
+
+  it('rejects a stale expected plan atomically, including purchases earlier in the same batch', async () => {
+    const id=await seedManualPlan(),scope={institution:'american_express_mx',accountLastFour:'1234'};
+    const classified=shared.classifyMsiEvidenceRow(printedMsiRow(),await bank.bankLedgerEvents(),scope);
+    const expected=classified.candidates.find(candidate=>candidate.id===id)!.expectedPlan;
+    const record=await save('amex_statement',[row,classified]);
+    await fixture.sql.query('UPDATE olbia.installment_plans SET cuota_minor=2981 WHERE movement_id=$1',[id]);
+    const current=shared.classifyMsiEvidenceRow(printedMsiRow(),await bank.bankLedgerEvents(),scope);
+    const before=await fixture.snapshot();
+    await expect(apply(record,[row,current],JSON.stringify({decisions:{[current.identity]:{action:'reconcile_plan',eventId:id,expectedPlan:expected}}})))
+      .rejects.toThrow('plan manual cambió');
+    expect(await fixture.snapshot()).toEqual(before);
+    expect((await imports.readBankImport(record.kind,record.importId,record.owner))!.status).toBe('previewed');
+  });
+
+  it.each([{card:'5678'}, {status:'rejected' as const}])('does not offer a manual correction for incompatible current capture: %o', async changes => {
+    const id=await seedManualPlan(changes);
+    const classified=shared.classifyMsiEvidenceRow(printedMsiRow(),await bank.bankLedgerEvents(),{institution:'american_express_mx',accountLastFour:'1234'});
+    expect(classified.candidates.find(candidate=>candidate.id===id)?.canReconcilePlan).not.toBe(true);
+  });
+  it.each(['amount','calendar','bank_candidate'])('does not offer an operation the native writer must reject: %s',async defect=>{
+    const id=await seedManualPlan();
+    if(defect==='amount')await fixture.sql.query('UPDATE olbia.ledger_movements SET amount_minor=8941 WHERE id=$1',[id]);
+    if(defect==='calendar')await fixture.sql.query("UPDATE olbia.installment_entries SET month='2026-07' WHERE movement_id=$1 AND installment_index=1",[id]);
+    if(defect==='bank_candidate') {
+      const record=await save('amex_statement',[printedMsiRow()]);
+      await fixture.sql.query(`INSERT INTO olbia.installment_evidence_candidates
+        (movement_id,installment_index,import_kind,content_sha256,row_position) VALUES ($1,1,$2,$3,0)`,[id,record.kind,record.importId]);
+    }
+    const classified=shared.classifyMsiEvidenceRow(printedMsiRow(),await bank.bankLedgerEvents(),{institution:'american_express_mx',accountLastFour:'1234'});
+    expect(classified.candidates.find(candidate=>candidate.id===id)?.canReconcilePlan).not.toBe(true);
+  });
+});
+
+it('does not suppress another PDF by a legacy row label before checking purchase ambiguity', async () => {
+  const plan=buildMsiSchedule({principalMinor:9000,months:3,cuotaMinor:3000,startMonth:'2026-10',origin:'amex_auto'});
+  for(const merchant of ['PURCHASE ONE','PURCHASE TWO']) {
+    await fixture.create({institution:'american_express_mx',account:{institution:'american_express_mx',lastFour:'1234'},
+      amount:{amountMinor:9000,currency:'MXN'},merchantRaw:merchant,
+      msi:{...plan,installments:plan.installments.map(item=>({...item,status:'spent' as const}))}});
+  }
+  await fixture.sql.query("UPDATE olbia.installment_entries SET evidence_identity='reused-row-label',evidence_origin='legacy_backfill',confirmed_at='2026-10-04T12:00:00Z' WHERE installment_index=1");
+  const line=printedMsiRow({identity:'reused-row-label',merchantRaw:'MESES EN AUTOMÁTICO NACIONAL'});
+  const classified=shared.classifyMsiEvidenceRow(line,await bank.bankLedgerEvents(),{institution:'american_express_mx',accountLastFour:'1234'});
+  expect(classified).toMatchObject({status:'needs_decision',reason:'ambiguous_msi_match'});
+  expect(classified.candidateEventIds).toHaveLength(2);
 });

@@ -140,6 +140,20 @@ export interface StatementImportCandidate {
   readonly id: string;
   readonly merchantRaw: string;
   readonly occurredAt?: string;
+  readonly months?: number;
+  readonly cuotaMinor?: number;
+  readonly principalMinor?: number;
+  readonly canReconcilePlan?: boolean;
+  readonly expectedPlan?: StatementPlanSnapshot;
+}
+
+export interface StatementPlanSnapshot {
+  readonly principalMinor: number;
+  readonly cuotaMinor: number;
+  readonly months: number;
+  readonly startMonth: string;
+  readonly occurredAt: string;
+  readonly accountLastFour: string | null;
 }
 
 export interface StatementImportRow {
@@ -153,7 +167,9 @@ export interface StatementImportRow {
   readonly installmentIndex?: number;
   readonly installmentMonths?: number;
   readonly originalAmountMinor?: number;
+  readonly originalOn?: string;
   readonly status: StatementRowStatus;
+  readonly reason?: "ambiguous_msi_match" | "incomplete_msi_schedule" | "conflicting_msi_plan";
   readonly eventId?: string;
   readonly candidateEventIds?: readonly string[];
   readonly candidates?: readonly StatementImportCandidate[];
@@ -163,6 +179,8 @@ export interface StatementImportRow {
 export interface StatementImportSummary {
   readonly total: number;
   readonly new: number;
+  readonly newPlans?: number;
+  readonly newPurchases?: number;
   readonly matched: number;
   readonly ambiguous: number;
   readonly duplicate: number;
@@ -200,4 +218,8 @@ export interface AmexImportResult {
 
 export type SantanderStatementImportPreview = AmexImportPreview;
 export type SantanderStatementImportResult = AmexImportResult;
-export type StatementImportDecision = SantanderImportDecision;
+export type StatementImportDecision = SantanderImportDecision | {
+  readonly action: "reconcile_plan";
+  readonly eventId: string;
+  readonly expectedPlan: StatementPlanSnapshot;
+};

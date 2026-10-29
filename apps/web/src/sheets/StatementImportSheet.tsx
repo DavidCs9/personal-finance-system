@@ -1,12 +1,14 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { addCalendarMonths, dayKeyInZone } from "@finance/domain";
 import { ledgerApi } from "../api/client";
 import { Amt } from "../components/Amt";
 import { Sheet } from "../components/Sheet";
-import { money } from "../lib/format";
+import { monthKeyLabel, timeZone } from "../lib/format";
 import type {
   AmexImportPreview,
   AmexImportResult,
   StatementImportDecision,
+  StatementImportCandidate,
   StatementImportRow,
 } from "../types";
 
@@ -14,32 +16,114 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 type Provider = "amex" | "santander";
 
+const statementMoney = (minor: number): string =>
+  new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(minor / 100);
+
+const candidateDayLabel = (value: string): string => {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "short", year: "numeric", timeZone }).format(date)
+    : "Fecha no disponible";
+};
+
 const msiNeedsDecision = (row: StatementImportRow): boolean =>
   row.kind === "msi" && (row.status === "needs_decision" || row.status === "unplanned");
 
-const isAutomaticAmexLabel = (merchantRaw: string): boolean =>
-  /MESES EN AUTOM[AÁ]TICO/i.test(merchantRaw);
+const msiReviewReason = (row: StatementImportRow): string => {
+  if (row.reason === "ambiguous_msi_match") return "Más de un plan puede corresponder a esta cuota. Hace falta identificar cuál.";
+  if (row.reason === "conflicting_msi_plan") return "Hay un plan que podría corresponder, pero la evidencia no permite vincularlo con seguridad. Revisa el plan y actualiza esta revisión si corriges sus datos.";
+  if (row.reason === "incomplete_msi_schedule") {
+    if (!Number.isInteger(row.installmentIndex) || !Number.isInteger(row.installmentMonths)
+      || (row.installmentMonths ?? 0) < 1 || (row.installmentMonths ?? 0) > 48
+      || (row.installmentIndex ?? 0) < 1 || (row.installmentIndex ?? 0) > (row.installmentMonths ?? 0)) {
+      return "El estado no contiene un plazo completo para crear el plan. Falta identificar la cuota y el número de meses.";
+    }
+    if (!Number.isSafeInteger(row.originalAmountMinor) || (row.originalAmountMinor ?? 0) <= 0) {
+      return "Falta una compra total válida en el estado. No podemos crear el plan automáticamente sin ese dato.";
+    }
+    return "El plazo, la cuota y la compra total leídos no forman un plan coherente. Revisa esos datos.";
+  }
+  return row.candidates?.length
+    ? "No pudimos identificar un único plan para esta cuota. Revisa los candidatos."
+    : "No pudimos resolver el plan con la información del estado. Revisa el plazo y la cuota.";
+};
+
+const rowActionLabel = (row: StatementImportRow, decision?: StatementImportDecision): string => {
+  if (decision?.action === "skip") return "No se incorporará ahora";
+  if (decision?.action === "confirm_msi") return "Se vinculará al plan elegido";
+  if (decision?.action === "reconcile_plan") return "Se vinculará al plan manual con los datos del estado";
+  if (decision?.action === "create_plan") return "Se creará el plan completado";
+  if (decision?.action === "link") return "Se vinculará al movimiento elegido";
+  if (decision?.action === "create") return "Se creará un movimiento distinto";
+  if (row.status === "new") return row.kind === "msi" ? "Plan nuevo del estado" : "Se creará un movimiento";
+  if (row.status === "matched") return row.kind === "msi" ? "Se vinculará al plan existente" : "Se vinculará al movimiento existente";
+  if (msiNeedsDecision(row) || row.status === "ambiguous") return "Requiere revisión";
+  if (row.status === "duplicate") return "Ya registrado · no se repetirá";
+  return row.status === "excluded" ? "Fuera de gasto" : "Sin acción";
+};
 
 const decisionResolved = (decision: StatementImportDecision | undefined): boolean => {
   if (!decision) return false;
   if (decision.action === "skip" || decision.action === "create" || decision.action === "link") return true;
   if (decision.action === "confirm_msi") return Boolean(decision.eventId);
+  if (decision.action === "reconcile_plan") return Boolean(decision.eventId && decision.expectedPlan);
   if (decision.action === "create_plan") {
     return Number.isInteger(decision.months) && Number.isInteger(decision.cuotaMinor);
   }
   return false;
 };
 
+export function ManualPlanComparison({ row, candidate, accountLastFour, selected, disabled, onSelect }: {
+  readonly row: StatementImportRow;
+  readonly candidate: StatementImportCandidate;
+  readonly accountLastFour?: string;
+  readonly selected?: StatementImportDecision;
+  readonly disabled: boolean;
+  readonly onSelect: (decision: StatementImportDecision) => void;
+}) {
+  const expected = candidate.expectedPlan;
+  if (!candidate.canReconcilePlan || !expected || !row.originalOn || !accountLastFour
+    || !Number.isInteger(row.installmentIndex) || !Number.isInteger(row.installmentMonths)
+    || (row.installmentIndex ?? 0) < 1 || (row.installmentIndex ?? 0) > (row.installmentMonths ?? 0)
+    || (row.installmentMonths ?? 0) > 48 || !Number.isSafeInteger(row.originalAmountMinor)
+    || (row.originalAmountMinor ?? 0) <= 0 || !Number.isSafeInteger(row.amountMinor) || row.amountMinor <= 0) return null;
+  const startMonth = addCalendarMonths(row.occurredOn.slice(0, 7), -(row.installmentIndex! - 1));
+  const chosen = selected?.action === "reconcile_plan" && selected.eventId === candidate.id;
+  return <section className="statement-plan-comparison" aria-label={`Vincular plan manual ${candidate.merchantRaw}`}>
+    <h4>Vincular el plan manual</h4>
+    <p>Confirma la relación si corresponden a la misma compra. Al aplicar, el plan conservará su identidad e historial y usará los datos del estado.</p>
+    <table>
+      <caption>Datos del plan al aplicar</caption>
+      <thead><tr><th scope="col">Dato</th><th scope="col">Plan manual</th><th scope="col">Estado de cuenta</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Compra total</th><td><Amt>{statementMoney(expected.principalMinor)}</Amt></td><td><Amt>{statementMoney(row.originalAmountMinor!)}</Amt></td></tr>
+        <tr><th scope="row">Cuota</th><td><Amt>{statementMoney(expected.cuotaMinor)}</Amt></td><td><Amt>{statementMoney(row.amountMinor)}</Amt></td></tr>
+        <tr><th scope="row">Plazo</th><td>{expected.months} meses</td><td>{row.installmentMonths} meses</td></tr>
+        <tr><th scope="row">Inicio</th><td>{monthKeyLabel(expected.startMonth)}</td><td>{monthKeyLabel(startMonth)}</td></tr>
+        <tr><th scope="row">Fecha de compra</th><td>{dayKeyInZone(new Date(expected.occurredAt))}</td><td>{row.originalOn}</td></tr>
+        <tr><th scope="row">Tarjeta</th><td>{expected.accountLastFour ?? "Sin identificar"}</td><td>{accountLastFour}</td></tr>
+      </tbody>
+    </table>
+    <p>Se conservará una sola compra. Esta cuota quedará vinculada a su plan y la relación quedará registrada para las próximas cuotas.</p>
+    <button type="button" className="secondary-button" disabled={disabled || chosen}
+      onClick={() => onSelect({ action: "reconcile_plan", eventId: candidate.id, expectedPlan: expected })}>
+      {chosen ? "Vínculo preparado ✓" : "Vincular a este plan con los datos del estado"}
+    </button>
+  </section>;
+}
+
 export function StatementImportSheet({
   provider,
   idToken,
   initialImportId,
+  onOpenEvent,
   onClose,
   onApplied,
 }: {
   provider: Provider;
   idToken: string;
   initialImportId?: string;
+  onOpenEvent?: (eventId: string, signal: AbortSignal) => Promise<void>;
   onClose(): void;
   onApplied(result: AmexImportResult): void;
 }) {
@@ -52,6 +136,9 @@ export function StatementImportSheet({
   const [result, setResult] = useState<AmexImportResult>();
   const [busy, setBusy] = useState(Boolean(initialImportId));
   const [error, setError] = useState<string>();
+  const [openingEvidence, setOpeningEvidence] = useState<{ id: string; status: "opening" | "failed" }>();
+  const [refreshing, setRefreshing] = useState(false);
+  const evidenceController = useRef<AbortController | undefined>(undefined);
   const cancelledRef = useRef(false);
   const ambiguous = preview?.rows?.filter((row) => row.status === "ambiguous") ?? [];
   const msiDecide = preview?.rows?.filter(msiNeedsDecision) ?? [];
@@ -59,15 +146,38 @@ export function StatementImportSheet({
     ambiguous.filter((row) => !decisionResolved(decisions[row.identity])).length
     + msiDecide.filter((row) => !decisionResolved(decisions[row.identity])).length;
   const label = provider === "amex" ? "Amex" : "Santander";
-  const needsDecisionCount =
-    preview?.summary?.needsDecision ?? preview?.summary?.unplanned ?? msiDecide.length;
+  const blocked = busy || refreshing;
+  const newPlansCount = preview?.rows?.filter(row => row.kind === "msi"
+    && (decisions[row.identity]?.action === "create_plan" || row.status === "new" && decisions[row.identity]?.action !== "skip")).length ?? 0;
+  const newPurchasesCount = preview?.rows?.filter(row => row.kind === "purchase"
+    && (decisions[row.identity]?.action === "create" || row.status === "new" && decisions[row.identity]?.action !== "skip")).length ?? 0;
+  const linksCount = preview?.rows?.filter(row => {
+    const action = decisions[row.identity]?.action;
+    return action === "link" || action === "confirm_msi" || action === "reconcile_plan" || row.status === "matched" && action !== "skip";
+  }).length ?? 0;
 
   useEffect(() => {
     cancelledRef.current = false;
     return () => {
       cancelledRef.current = true;
+      evidenceController.current?.abort();
     };
   }, []);
+
+  const openEvidence = async (eventId: string) => {
+    if (blocked || !onOpenEvent) return;
+    evidenceController.current?.abort();
+    const controller = new AbortController();
+    evidenceController.current = controller;
+    const isCurrent = () => !controller.signal.aborted && evidenceController.current === controller;
+    setOpeningEvidence({ id: eventId, status: "opening" });
+    try {
+      await onOpenEvent(eventId, controller.signal);
+      if (isCurrent()) setOpeningEvidence(undefined);
+    } catch {
+      if (isCurrent()) setOpeningEvidence({ id: eventId, status: "failed" });
+    }
+  };
 
   const waitUntilReady = useCallback(async (importId: string, isCancelled = () => cancelledRef.current): Promise<AmexImportPreview> => {
     for (let attempt = 0; attempt < 45; attempt += 1) {
@@ -81,6 +191,25 @@ export function StatementImportSheet({
     }
     throw new Error("Textract tardó demasiado. Intenta de nuevo en un momento.");
   }, [provider, idToken]);
+
+  const refreshReview = async () => {
+    if (!preview || blocked) return;
+    evidenceController.current?.abort();
+    setRefreshing(true);
+    setError(undefined);
+    try {
+      const fresh = await waitUntilReady(preview.importId);
+      if (cancelledRef.current) return;
+      setPreview(fresh);
+      setDecisions({});
+      setPlanDrafts({});
+      setOpeningEvidence(undefined);
+    } catch (reason) {
+      if (!cancelledRef.current) setError(reason instanceof Error ? reason.message : "No pudimos actualizar la revisión. Intenta de nuevo.");
+    } finally {
+      if (!cancelledRef.current) setRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     if (!initialImportId) return;
@@ -130,7 +259,7 @@ export function StatementImportSheet({
   };
 
   const apply = async () => {
-    if (!preview || preview.status !== "ready" || unresolved > 0) return;
+    if (!preview || preview.status !== "ready" || unresolved > 0 || blocked) return;
     setBusy(true);
     setError(undefined);
     try {
@@ -189,13 +318,13 @@ export function StatementImportSheet({
       eyebrow={`ESTADO ${label.toUpperCase()}`}
       title="Conciliar periodo"
       onClose={onClose}
-      className={readyPreview ? "sheet-split" : undefined}
+      className={readyPreview ? "statement-import-sheet sheet-split" : "statement-import-sheet"}
     >
       {initialImportId && busy && !readyPreview ? <p role="status">Recuperando la conciliación del PDF registrado…</p> : !readyPreview ? (
         <form className="sheet-form statement-upload-form" onSubmit={(event) => void inspect(event)}>
           <p>
-            Sube el PDF del estado de cuenta. Conciliamos compras del periodo y confirmamos cuotas
-            MSI existentes. Las cuotas sin plan requieren tu decisión.
+            Sube el PDF del estado de cuenta. Olbia identifica movimientos ya registrados y planes
+            existentes, y prepara los registros que faltan con los datos del PDF. Sólo pide revisión si hay datos incompletos o coincidencias que no puede resolver.
           </p>
           <label className="file-field">
             <span>Archivo PDF · máximo 50 MB</span>
@@ -215,6 +344,7 @@ export function StatementImportSheet({
         </form>
       ) : (
         <div className="import-preview">
+          <div className="statement-review-content">
           <div className="import-preview-head">
             <p className="import-account">
               {readyPreview.product} · {readyPreview.accountLastFour} · {readyPreview.period?.from} a{" "}
@@ -222,22 +352,30 @@ export function StatementImportSheet({
             </p>
             <div className="import-summary">
               <div>
-                <strong>{readyPreview.summary?.new ?? 0}</strong>
-                <span>Nuevos</span>
+                <strong>{newPurchasesCount}</strong>
+                <span>Movimientos nuevos</span>
               </div>
               <div>
-                <strong>{readyPreview.summary?.matched ?? 0}</strong>
-                <span>Conciliados</span>
+                <strong>{linksCount}</strong>
+                <span>Se vincularán</span>
               </div>
-              <div className={needsDecisionCount ? "attention" : ""}>
-                <strong>{needsDecisionCount}</strong>
-                <span>MSI sin plan</span>
+              <div>
+                <strong>{newPlansCount}</strong>
+                <span>Planes nuevos</span>
               </div>
-              <div className={readyPreview.summary?.ambiguous ? "attention" : ""}>
-                <strong>{readyPreview.summary?.ambiguous ?? 0}</strong>
-                <span>Por decidir</span>
+              <div className={unresolved ? "attention" : ""}>
+                <strong>{unresolved}</strong>
+                <span>Por revisar</span>
               </div>
             </div>
+            <p className="import-note">Al aplicar, se vincularán las coincidencias únicas y se crearán los registros que faltan. Cada fila indica lo que ocurrirá.</p>
+            <button type="button" className="text-button statement-refresh" disabled={blocked}
+              onClick={() => void refreshReview()}>{refreshing ? "Actualizando revisión…" : "Actualizar revisión"}</button>
+            {openingEvidence?.status === "opening" ? <p role="status" className="import-note">Abriendo movimiento y evidencia…</p> : null}
+            {openingEvidence?.status === "failed" ? <div role="alert" className="import-note">
+              <p>No pudimos abrir este movimiento. Intenta de nuevo.</p>
+              <button type="button" className="text-button" disabled={blocked} onClick={() => void openEvidence(openingEvidence.id)}>Reintentar evidencia</button>
+            </div> : null}
             {(readyPreview.summary?.excluded ?? 0) > 0 && (
               <p className="import-note">
                 {readyPreview.summary?.excluded} pago o abono queda fuera del gasto.
@@ -245,16 +383,18 @@ export function StatementImportSheet({
             )}
             {ambiguous.length > 0 && (
               <section className="ambiguous-list">
-                <p className="eyebrow">COMPRAS AMBIGUAS</p>
+                <p className="eyebrow">MOVIMIENTOS QUE REQUIEREN REVISIÓN</p>
                 {ambiguous.map((row) => (
                   <div className="ambiguous-row" key={row.identity}>
                     <div>
                       <strong>{row.merchantRaw}</strong>
                       <small>
-                        {row.occurredOn} · <Amt>{money(row.amountMinor)}</Amt>
+                        {row.occurredOn} · <Amt>{statementMoney(row.amountMinor)}</Amt>
                       </small>
+                      <small>Más de un movimiento coincide con los datos del estado. Elige el que corresponde o registra una compra distinta.</small>
                     </div>
                     <select
+                      disabled={blocked}
                       aria-label={`Decisión para ${row.merchantRaw}`}
                       value={
                         decisions[row.identity]?.action === "create"
@@ -288,48 +428,48 @@ export function StatementImportSheet({
             )}
             {msiDecide.length > 0 && (
               <section className="ambiguous-list">
-                <p className="eyebrow">MSI SIN PLAN</p>
+                <p className="eyebrow">PLANES QUE REQUIEREN REVISIÓN</p>
                 {msiDecide.map((row) => {
                   const draft = planDrafts[row.identity] ?? {
-                    months: String(row.installmentMonths ?? 3),
+                    months: String(row.installmentMonths ?? ""),
                     cuota: (row.amountMinor / 100).toFixed(2),
                   };
                   const selected = decisions[row.identity];
-                  const autoLabel = isAutomaticAmexLabel(row.merchantRaw);
-                  const hasSchedule =
-                    Number.isInteger(row.installmentIndex)
-                    && Number.isInteger(row.installmentMonths)
-                    && (row.installmentMonths ?? 0) >= 1
-                    && (row.installmentIndex ?? 0) >= 1;
+                  const canCompletePlan = row.reason === "incomplete_msi_schedule";
                   return (
                     <div className="ambiguous-row" key={row.identity}>
                       <div>
                         <strong>{row.merchantRaw}</strong>
                         <small>
-                          {row.occurredOn} · <Amt>{money(row.amountMinor)}</Amt>
+                          {row.occurredOn} · <Amt>{statementMoney(row.amountMinor)}</Amt>
                           {row.installmentIndex ? ` · cuota ${row.installmentIndex}` : ""}
                           {row.installmentMonths ? `/${row.installmentMonths}` : ""}
                           {row.originalAmountMinor ? (
                             <>
                               {" "}
-                              · total <Amt>{money(row.originalAmountMinor)}</Amt>
+                              · total <Amt>{statementMoney(row.originalAmountMinor)}</Amt>
                             </>
                           ) : null}
                         </small>
-                        {autoLabel && (
-                          <small>
-                            Etiqueta automática Amex — el plan usa total y cuota n/N del estado.
+                        <small>{msiReviewReason(row)}</small>
+                        {(row.candidates ?? []).map(candidate => <div className="statement-plan-candidate" key={candidate.id}>
+                          <small>Plan registrado: {candidate.merchantRaw}
+                          {candidate.months ? ` · ${candidate.months} meses` : ""}
+                          {candidate.cuotaMinor !== undefined ? <> · cuota <Amt>{statementMoney(candidate.cuotaMinor)}</Amt></> : null}
+                          {candidate.principalMinor !== undefined ? <> · compra total <Amt>{statementMoney(candidate.principalMinor)}</Amt></> : null}
+                          {candidate.occurredAt ? ` · ${candidateDayLabel(candidate.occurredAt)}` : ""}
                           </small>
-                        )}
-                        {hasSchedule && !autoLabel && (
-                          <small>
-                            Plazo leído del estado — revisa meses/cuota o confirma el plan.
-                          </small>
-                        )}
+                          {onOpenEvent ? <button type="button" className="text-button" disabled={blocked || openingEvidence?.status === "opening"}
+                            onClick={() => void openEvidence(candidate.id)}>Ver plan y evidencia</button> : null}
+                          <ManualPlanComparison row={row} candidate={candidate} accountLastFour={readyPreview.accountLastFour}
+                            selected={selected} disabled={blocked}
+                            onSelect={decision => setDecisions(current => ({ ...current, [row.identity]: decision }))} />
+                        </div>)}
                       </div>
                       <div className="msi-decide">
-                        {(row.candidates ?? []).length > 0 && (
+                        {row.reason === "ambiguous_msi_match" && (row.candidates ?? []).length > 0 && (
                           <select
+                            disabled={blocked}
                             aria-label={`Confirmar MSI ${row.merchantRaw}`}
                             value={
                               selected?.action === "confirm_msi" || selected?.action === "link"
@@ -355,9 +495,11 @@ export function StatementImportSheet({
                             ))}
                           </select>
                         )}
+                        {canCompletePlan && <>
                         <label>
                           Meses
                           <input
+                            disabled={blocked}
                             type="number"
                             min={1}
                             max={48}
@@ -373,6 +515,7 @@ export function StatementImportSheet({
                         <label>
                           Cuota
                           <input
+                            disabled={blocked}
                             type="number"
                             min={0.01}
                             step={0.01}
@@ -388,51 +531,38 @@ export function StatementImportSheet({
                         <button
                           type="button"
                           className="text-button"
+                          disabled={blocked}
                           onClick={() => {
-                            const months = Number.parseInt(draft.months, 10);
-                            const cuotaMajor = Number.parseFloat(draft.cuota);
-                            if (!Number.isInteger(months) || months < 1 || !(cuotaMajor > 0)) return;
+                            const months = Number(draft.months);
+                            const cuotaMajor = Number(draft.cuota);
+                            const cuotaMinor = Math.round(cuotaMajor * 100);
+                            if (!Number.isInteger(months) || months < 1 || months > 48
+                              || !Number.isSafeInteger(cuotaMinor) || cuotaMinor <= 0) return;
                             setDecisions((current) => ({
                               ...current,
                               [row.identity]: {
                                 action: "create_plan",
                                 months,
-                                cuotaMinor: Math.round(cuotaMajor * 100),
+                                cuotaMinor,
                               },
                             }));
                           }}
                         >
-                          {selected?.action === "create_plan" ? "Plan listo ✓" : "Crear plan"}
+                          {selected?.action === "create_plan" ? "Plan listo ✓" : "Completar y crear plan"}
                         </button>
+                        </>}
                         <button
                           type="button"
                           className="text-button"
+                          disabled={blocked}
                           onClick={() => {
-                            if (hasSchedule) {
-                              const months = row.installmentMonths!;
-                              setDecisions((current) => ({
-                                ...current,
-                                [row.identity]: {
-                                  action: "create_plan",
-                                  months,
-                                  cuotaMinor: row.amountMinor,
-                                },
-                              }));
-                              return;
-                            }
                             setDecisions((current) => ({
                               ...current,
                               [row.identity]: { action: "skip" },
                             }));
                           }}
                         >
-                          {hasSchedule
-                            ? selected?.action === "create_plan"
-                              ? "Plan del estado ✓"
-                              : "Usar plan del estado"
-                            : selected?.action === "skip"
-                              ? "Omitido ✓"
-                              : "Omitir"}
+                          {selected?.action === "skip" ? "Sin incorporar ahora ✓" : "No incorporar esta cuota ahora"}
                         </button>
                       </div>
                     </div>
@@ -455,41 +585,33 @@ export function StatementImportSheet({
                 <span className="payment-name">
                   <strong>{row.merchantRaw}</strong>
                   <small>
-                    {row.status === "new"
-                      ? "Nuevo"
-                      : row.status === "matched"
-                        ? row.kind === "msi"
-                          ? "Cuota a confirmar"
-                          : "Coincide"
-                        : msiNeedsDecision(row)
-                          ? "MSI sin plan"
-                          : row.status === "ambiguous"
-                            ? "Por decidir"
-                            : row.status === "duplicate"
-                              ? "Ya cargado"
-                              : row.status === "excluded"
-                                ? "Fuera de gasto"
-                                : "Sin acción"}
+                    {rowActionLabel(row, decisions[row.identity])}
                   </small>
+                  {row.kind === "msi" && <small>
+                    {row.occurredOn} · {" "}
+                    {row.installmentIndex && row.installmentMonths ? `Cuota ${row.installmentIndex}/${row.installmentMonths}` : "Plazo incompleto"}
+                    {row.originalAmountMinor ? <> · compra total <Amt>{statementMoney(row.originalAmountMinor)}</Amt></> : null}
+                  </small>}
                 </span>
                 <strong className="payment-amount">
-                  <Amt>{money(row.amountMinor)}</Amt>
+                  <Amt>{statementMoney(row.amountMinor)}</Amt>
                 </strong>
               </div>
             ))}
+          </div>
           </div>
           <div className="import-preview-footer">
             {error && <p className="form-error">{error}</p>}
             <button
               className="primary-button"
               type="button"
-              disabled={busy || unresolved > 0}
+              disabled={blocked || unresolved > 0}
               onClick={() => void apply()}
             >
-              {busy
+              {refreshing ? "Actualizando revisión…" : busy
                 ? "Aplicando…"
                 : unresolved > 0
-                  ? `Faltan ${unresolved} decisiones`
+                  ? `Revisa ${unresolved} ${unresolved === 1 ? "caso" : "casos"}`
                   : "Aplicar conciliación"}
             </button>
           </div>

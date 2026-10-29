@@ -1211,6 +1211,29 @@ html.private-mode .hero-amount .amt {
 .msi-decide label { display: grid; gap: 4px; font-size: 9px; color: var(--muted); }
 .msi-decide input { border: 1px solid #c9ab78; border-radius: 8px; background: #fffdf8; padding: 8px; font-size: 11px; }
 .msi-decide .text-button { justify-self: start; }
+.statement-import-sheet .ambiguous-row > div:first-child { display: grid; gap: 6px; min-width: 0; }
+.statement-import-sheet .ambiguous-row strong,
+.statement-import-sheet .payment-name strong { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
+.statement-import-sheet .ambiguous-row small { flex: initial; font-size: 11px; line-height: 1.45; }
+.statement-import-sheet .msi-decide { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.statement-import-sheet .msi-decide :is(input, select, button),
+.statement-import-sheet .ambiguous-row > select { min-height: 44px; font-size: 12px; }
+.statement-import-sheet .payment-row { grid-template-columns: 36px minmax(0, 1fr) auto; gap: 9px; }
+.statement-import-sheet .payment-amount { white-space: nowrap; }
+.statement-import-sheet .statement-plan-candidate { display: grid; gap: 6px; }
+.statement-import-sheet .statement-plan-candidate button { min-height: 44px; justify-self: start; text-align: left; }
+.statement-import-sheet .statement-refresh { min-height: 44px; justify-self: start; }
+.statement-import-sheet .statement-plan-comparison { display: grid; gap: 10px; margin-block: 8px; padding-block: 12px; border-block: 1px solid var(--line); }
+.statement-import-sheet .statement-plan-comparison h4,
+.statement-import-sheet .statement-plan-comparison p { margin: 0; font-size: 12px; line-height: 1.5; }
+.statement-import-sheet .statement-plan-comparison table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 11px; }
+.statement-import-sheet .statement-plan-comparison caption { padding-bottom: 8px; text-align: left; font-weight: 700; }
+.statement-import-sheet .statement-plan-comparison :is(th, td) { border-bottom: 1px solid var(--line); padding: 8px 4px; text-align: left; overflow-wrap: anywhere; vertical-align: top; }
+.statement-import-sheet .statement-plan-comparison button { width: 100%; min-height: 44px; white-space: normal; text-align: left; }
+.statement-import-sheet .statement-review-content { display: grid; grid-auto-rows: max-content; align-content: start; gap: 14px; flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+.statement-import-sheet .import-preview-list { flex: none; overflow: visible; }
+.statement-import-sheet .ambiguous-list { max-height: none; overflow: visible; }
+.statement-import-sheet .import-preview-footer { background: var(--paper); }
 .import-footer { display: grid; gap: 7px; }
 .import-result { display: grid; justify-items: center; gap: 8px; padding: 10px 0 2px; text-align: center; }
 .import-result .result-mark { display: grid; place-items: center; width: 54px; height: 54px; margin-bottom: 8px; border-radius: 50%; color: #fff; background: var(--green); font-size: 25px; }

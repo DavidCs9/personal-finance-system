@@ -156,3 +156,39 @@ describe('parseAmexStatementExtraction', () => {
     expect(evidence.every((row) => row.originalAmountMinor !== undefined)).toBe(true);
   });
 });
+
+describe('MSI bank reference and summary pairing', () => {
+  it('retains the commercial purchase reference separately while keeping the visible merchant clean', () => {
+    const document=parseAmexStatementExtraction(fromLines('amex',[
+      'Período de Facturación Del 7 de Septiembre al 6 de Octubre de 2026',
+      'Número de Cuenta: 3717-797421-21007','The Gold Elite Credit Card American Express',
+      'Transacciones de Meses sin Intereses',
+      '24 de Septiembre TAR OPERACIONES QUERETARO /REFBOOK123456 CARGO 01 DE 03 3,060.27',
+      'Resumen de Meses sin Intereses',
+    ]));
+    expect(document.charges.find(charge=>charge.msi)).toMatchObject({merchantRaw:'TAR OPERACIONES QUERETARO',merchantReference:'BOOK123456'});
+    expect(amexMsiEvidenceLines(document)[0]).toHaveProperty('merchantReference','BOOK123456');
+  });
+
+  it('pairs equal cuotas by merchant without dropping the second printed plan', () => {
+    const base=parseAmexStatementExtraction(goldLiveExtraction);
+    const charges=['MERCHANT ALPHA','MERCHANT BETA'].map((merchantRaw,index)=>({occurredOn:'2026-07-06',merchantRaw,
+      amountMinor:10000,credit:false,installmentIndex:1,installmentMonths:3,msi:true,identity:`printed-${index}`}));
+    const plans=charges.map((charge,index)=>({merchantRaw:charge.merchantRaw,originalOn:'2026-07-01',
+      originalAmountMinor:30000+index,pendingMinor:20000,installmentIndex:1,installmentMonths:3,cuotaMinor:10000}));
+    const lines=amexMsiEvidenceLines({...base,charges,msiPlans:plans});
+    expect(lines).toHaveLength(2);
+    expect(lines.map(line=>line.originalAmountMinor)).toEqual([30000,30001]);
+  });
+
+  it('does not assign either principal when matching summaries are ambiguous', () => {
+    const base=parseAmexStatementExtraction(goldLiveExtraction);
+    const charge={occurredOn:'2026-07-06',merchantRaw:'MERCHANT ALPHA',amountMinor:10000,credit:false,
+      installmentIndex:1,installmentMonths:3,msi:true,identity:'printed-ambiguous'};
+    const summary={merchantRaw:charge.merchantRaw,originalOn:'2026-07-01',originalAmountMinor:30000,pendingMinor:20000,
+      installmentIndex:1,installmentMonths:3,cuotaMinor:10000};
+    const lines=amexMsiEvidenceLines({...base,charges:[charge],msiPlans:[summary,{...summary,originalAmountMinor:30001}]});
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.originalAmountMinor).toBeUndefined();
+  });
+});
