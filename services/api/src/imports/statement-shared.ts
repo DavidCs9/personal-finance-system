@@ -1,18 +1,22 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import type { MsiPlan } from '@finance/domain';
+import { type MsiPlan } from '@finance/domain';
 import { msiPlanPurchaseOccurredAt } from '@finance/ledger';
-import { buildPlanFromCreateDecision, matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
+import { buildPlanFromCreateDecision, matchEvidenceLine as matchMsiEvidence, type EvidenceLine } from './msi-reconciliation.js';
 import { InvalidAmexStatementError } from './amex-statement.js';
 import { InvalidSantanderStatementError } from './santander-statement.js';
 import {
+  classifyMsiEvidenceRow,
+  statementMsiEvents,
   statementMsiApplyAction,
   statementPreviewSummary,
   statementPurchaseApplyAction,
   type StatementDecision,
   type StatementPreviewRow,
   type StatementProvider,
+  type ExpectedManualPlan,
 } from './statement-reconciliation.js';
+import { reconcileManualPlanFromStatement } from './statement-manual-plan.js';
 import type { TextractStatementExtraction } from './textract-document.js';
 import { rawSourceBucketName, s3 } from '../http/clients.js';
 import { errorName, type JsonObject } from '../http/response.js';
@@ -28,6 +32,11 @@ export type StatementImportEvent = {
   readonly isBase64Encoded?: boolean;
   readonly headers?: Record<string, string | undefined>;
 };
+
+// A row label can recur in another PDF. The retained import header owns replay;
+// cross-file matching must still prove a unique current purchase.
+const matchEvidenceLine = (line: EvidenceLine, events: readonly JsonObject[]) =>
+  matchMsiEvidence(line, events, {trustLegacyEvidenceIdentity:false});
 
 type StatementPreviewDocument = {
   readonly accountLastFour: string;
@@ -62,7 +71,7 @@ export const claimedStatementIdentities = async (
   return claimedBankRows(statementImportKind(provider), identities);
 };
 
-export { classifyMsiEvidenceRow } from './statement-reconciliation.js';
+export {classifyMsiEvidenceRow,statementMsiEvents} from './statement-msi.js';
 
 export const statementPreviewResponse = (
   importId: string,
@@ -141,6 +150,7 @@ export const parseStatementDecisions = (body: string | undefined): Readonly<Reco
         months?: unknown;
         cuotaMinor?: unknown;
         startMonth?: unknown;
+        expectedPlan?: unknown;
       };
       if (decision.action === 'create') {
         decisions[identity] = { action: 'create' };
@@ -148,6 +158,22 @@ export const parseStatementDecisions = (body: string | undefined): Readonly<Reco
       }
       if (decision.action === 'skip') {
         decisions[identity] = { action: 'skip' };
+        continue;
+      }
+      if (decision.action === 'reconcile_plan') {
+        const expected=decision.expectedPlan as ExpectedManualPlan | undefined;
+        if(typeof decision.eventId!=='string' || !expected || typeof expected!=='object' || Array.isArray(expected)
+          || !Number.isSafeInteger(expected.principalMinor) || expected.principalMinor<=0
+          || !Number.isSafeInteger(expected.cuotaMinor) || expected.cuotaMinor<=0
+          || !Number.isInteger(expected.months) || expected.months<1 || expected.months>48
+          || typeof expected.startMonth!=='string' || !isValidMonth(expected.startMonth)
+          || typeof expected.occurredAt!=='string' || !Number.isFinite(new Date(expected.occurredAt).getTime())
+          || expected.accountLastFour!==null && (typeof expected.accountLastFour!=='string' || !/^\d{4}$/.test(expected.accountLastFour)))
+          throw new InvalidAmexStatementError('Vuelve a consultar los términos actuales del plan manual antes de confirmar.');
+        decisions[identity]={action:'reconcile_plan',eventId:decision.eventId,expectedPlan:{
+          principalMinor:expected.principalMinor,cuotaMinor:expected.cuotaMinor,months:expected.months,
+          startMonth:expected.startMonth,occurredAt:expected.occurredAt,accountLastFour:expected.accountLastFour,
+        }};
         continue;
       }
       if (decision.action === 'link' || decision.action === 'confirm_msi') {
@@ -255,20 +281,34 @@ const applyStatementImportInternal = async (input: StatementApplyInput,
   const currentRows = await work.rebuildRows();
   const appliedAt = new Date().toISOString();
   let eventsSnapshot = await bankLedgerEvents();
-  if (input.conservativeAmex) eventsSnapshot = eventsSnapshot.filter(event => event.institution === 'american_express_mx'
-    && (event.account as JsonObject | undefined)?.lastFour === stored.accountLastFour);
   const createdPlanIds = new Set<string>(), usedTargets = new Set<string>();
   const retainMsiCapture = async (row: StatementPreviewRow, eventId: string) => {
     if (input.conservativeAmex && !await linkBankEvidence({ record: stored, row, eventId, appliedAt,
       parserVersion: 'amex-mx-statement-textract-v1', reason: 'Cuota vinculada al estado de cuenta Amex.' }))
       throw new InvalidAmexStatementError('La cuota cambió. Vuelve a revisar el PDF.');
   };
+  const msiScope = {institution: input.provider === 'amex' ? 'american_express_mx' : 'santander_mx',
+    accountLastFour: stored.accountLastFour ?? ''};
   let createdCount = 0;
   let linked = 0;
   let skipped = 0;
   let msiConfirmed = 0;
   let createdUnplanned = 0;
   const created: JsonObject[] = [];
+
+  // An unresolved or stale row is not a successful import with missing finances.
+  for (const row of currentRows) {
+    const preview = previewByIdentity.get(row.identity), decision = decisions[row.identity];
+    if (row.kind === 'msi') {
+      const action = statementMsiApplyAction(row, preview, decision);
+      if (action.kind === 'skip' && decision?.action !== 'skip' && row.status !== 'skipped'
+        && row.status !== 'duplicate' && row.status !== 'excluded')
+        throw new invalid('Hay una cuota que requiere revisión o cambió desde la consulta. Vuelve a consultar el estado antes de incorporarlo.');
+    } else if (decision?.action !== 'skip' && ((row.status === 'ambiguous'
+      && statementPurchaseApplyAction(row, preview, decision).kind === 'skip')
+      || ((row.status === 'new' || row.status === 'matched') && statementPurchaseApplyAction(row, preview, decision).kind === 'skip')))
+      throw new invalid('La conciliación cambió desde la consulta. Vuelve a consultar el estado antes de incorporarlo.');
+  }
 
   for (const row of currentRows) {
     bankRowPosition(stored, row);
@@ -285,28 +325,35 @@ const applyStatementImportInternal = async (input: StatementApplyInput,
         installmentIndex: row.installmentIndex,
         installmentMonths: row.installmentMonths,
         originalAmountMinor: row.originalAmountMinor,
+        originalOn: row.originalOn,
+        merchantReference: row.merchantReference,
       };
       const action = input.conservativeAmex && row.candidateEventIds.length && decisions[row.identity]?.action === 'skip'
         ? { kind: 'skip' as const } : statementMsiApplyAction(row, preview, decisions[row.identity]);
       const msiNote = input.provider === 'amex'
         ? 'Cuota MSI confirmada con estado de cuenta Amex.'
         : 'Cuota MSI confirmada con estado de cuenta Santander.';
+      if(action.kind==='reconcile_plan') {
+        await reconcileManualPlanFromStatement(stored,row,action.eventId,action.expectedPlan,appliedAt);
+        msiConfirmed+=1;linked+=1;
+        eventsSnapshot=await bankLedgerEvents();
+        continue;
+      }
       if (action.kind === 'confirm_msi') {
         if (input.conservativeAmex && usedTargets.has(`${action.eventId}:${row.installmentIndex}`))
           throw new InvalidAmexStatementError('Dos filas apuntan a la misma cuota. Revisa la conciliación.');
-        const selectedEvent = eventsSnapshot.find(event => event.id === action.eventId);
+        const selectedEvent = statementMsiEvents(eventsSnapshot,msiScope).find(event => event.id === action.eventId);
         const match = input.conservativeAmex && selectedEvent ? selectedAmexMsi(evidence, selectedEvent) : matchEvidenceLine(
           evidence,
-          eventsSnapshot.filter((event) => event.id === action.eventId),
+          statementMsiEvents(eventsSnapshot, msiScope).filter((event) => event.id === action.eventId),
         );
         if (match.kind !== 'confirm') {
           if (input.conservativeAmex)
             throw new InvalidAmexStatementError('El plan elegido ya no es compatible. Vuelve a revisar el PDF; no se guardó el lote.');
           // Fall back to full snapshot if scoped miss (e.g. plan updated mid-apply).
-          const fallback = matchEvidenceLine(evidence, eventsSnapshot);
+          const fallback = matchEvidenceLine(evidence, statementMsiEvents(eventsSnapshot, msiScope));
           if (fallback.kind !== 'confirm' || fallback.eventId !== action.eventId) {
-            skipped += 1;
-            continue;
+            throw new invalid('El plan elegido ya no coincide con esta cuota. Vuelve a consultar el estado.');
           }
           const updated = await persistEventMsi(fallback.eventId, input.owner, fallback.previous, fallback.next, msiNote, bankPlanEvidence(stored, row, fallback.next));
           if (updated) {
@@ -337,7 +384,8 @@ const applyStatementImportInternal = async (input: StatementApplyInput,
         if (input.conservativeAmex && row.candidateEventIds.length)
           throw new InvalidAmexStatementError('La cuota tiene posibles planes existentes. Elige uno u omite la fila.');
         // Prefer confirming an existing plan (merchant+principal) over opening a duplicate.
-        const existing = matchEvidenceLine(evidence, eventsSnapshot.filter(e => !input.conservativeAmex || !createdPlanIds.has(String(e.id))));
+        const refreshed = classifyMsiEvidenceRow(evidence, eventsSnapshot, msiScope);
+        const existing = matchEvidenceLine(evidence, statementMsiEvents(eventsSnapshot.filter(e => !input.conservativeAmex || !createdPlanIds.has(String(e.id))), msiScope));
         if (existing.kind === 'confirm') {
           const updated = await persistEventMsi(existing.eventId, input.owner, existing.previous, existing.next, msiNote, bankPlanEvidence(stored, row, existing.next));
           if (updated) {
@@ -356,6 +404,8 @@ const applyStatementImportInternal = async (input: StatementApplyInput,
         }
         if (input.conservativeAmex && existing.kind === 'needs_decision' && existing.candidates.length)
           throw new InvalidAmexStatementError('Hay posibles planes existentes. Revisa la cuota antes de crear otro.');
+        if (refreshed.reason === 'ambiguous_msi_match' || refreshed.reason === 'conflicting_msi_plan')
+          throw new invalid('Hay un plan existente que debe revisarse antes de crear otro. Vuelve a consultar el estado.');
         const plan = buildPlanFromCreateDecision(evidence, {
           months: action.months,
           cuotaMinor: action.cuotaMinor,

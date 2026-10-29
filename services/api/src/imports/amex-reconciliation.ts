@@ -1,6 +1,6 @@
 import { amountsWithinTolerance, markInstallmentSpent, type MsiPlan } from '@finance/domain';
-import { amexMerchantsMatch, matchEvidenceLine, isAutomaticAmexLabel, type EvidenceLine, type EvidenceMatchResult } from './msi-reconciliation.js';
-import { classifyMsiEvidenceRow } from './statement-reconciliation.js';
+import { amexMerchantsMatch, eventMerchantsMatch, matchEvidenceLine, isAutomaticAmexLabel, type EvidenceLine, type EvidenceMatchResult } from './msi-reconciliation.js';
+import { classifyMsiEvidenceRow, statementMsiEvents } from './statement-reconciliation.js';
 import type { BankImportRow } from './import-sql.js';
 import { BankImportError } from './import-sql.js';
 import { readerPool } from '../events/sql-reads.js';
@@ -55,7 +55,7 @@ export const classifyAmexRows = (input: {
   readonly retained: readonly AmexRetainedRow[];
   readonly claimed: ReadonlySet<string>;
 }): readonly BankImportRow[] => {
-  const scoped = input.events.filter(e => sameCard(e, input.accountLastFour));
+  const scoped = statementMsiEvents(input.events,{institution:'american_express_mx',accountLastFour:input.accountLastFour});
   const rows = input.rows.map((row): BankImportRow => {
     const base = { ...row, candidateEventIds: [] as string[], candidates: [] as { id: string; merchantRaw: string; occurredAt?: string }[] };
     if (input.claimed.has(row.identity)) {
@@ -66,21 +66,21 @@ export const classifyAmexRows = (input: {
     if (row.credit || row.amountMinor <= 0) return { ...base, status: 'excluded' };
     if (row.kind === 'msi') {
       if (!row.installmentIndex || !row.installmentMonths)
-        return { ...base, status: 'needs_decision' };
+        return { ...base, status: 'needs_decision',reason:'incomplete_msi_schedule' };
       // Include already-spent cuotas and incomplete plans when detecting ambiguity.
       const possible = scoped.filter(event => {
         const plan = event.msi as MsiPlan | undefined;
         if (!plan || plan.months !== row.installmentMonths || !amountsWithinTolerance(plan.cuotaMinor, row.amountMinor)) return false;
         if (row.originalAmountMinor !== undefined && !amountsWithinTolerance(plan.principalMinor, row.originalAmountMinor)) return false;
-        return isAutomaticAmexLabel(row.merchantRaw) || amexMerchantsMatch(String(event.merchantRaw), row.merchantRaw);
+        return isAutomaticAmexLabel(row.merchantRaw) || eventMerchantsMatch(event, row.merchantRaw);
       });
       const labels = possible.map(e => ({ id: String(e.id), merchantRaw: String(e.merchantRaw), occurredAt: e.occurredAt as string | undefined }));
       if (possible.length > 1 || possible.some(e => e.status === 'rejected' || (e.msi as MsiPlan).needsScheduleCompletion))
-        return { ...base, status: 'needs_decision', candidateEventIds: labels.map(c => c.id), candidates: labels };
-      const result = classifyMsiEvidenceRow(row, possible.length ? possible : scoped.filter(e => e.status !== 'rejected'));
+        return { ...base, status: 'needs_decision',reason:possible.some(e=>e.status==='rejected' || (e.msi as MsiPlan).needsScheduleCompletion)?'conflicting_msi_plan':'ambiguous_msi_match', candidateEventIds: labels.map(c => c.id), candidates: labels };
+      const result = classifyMsiEvidenceRow(row,input.events,{institution:'american_express_mx',accountLastFour:input.accountLastFour});
       if (possible.length && (result.status !== 'matched' || (possible[0].msi as MsiPlan).installments
         .find(i => i.index === row.installmentIndex)?.month !== row.occurredOn.slice(0, 7)))
-        return { ...base, status: 'needs_decision', candidateEventIds: labels.map(c => c.id), candidates: labels };
+        return { ...base, status: 'needs_decision',reason:'conflicting_msi_plan', candidateEventIds: labels.map(c => c.id), candidates: labels };
       return { ...base, ...result, ...(result.status === 'skipped' ? { status: 'duplicate' as const } : {}) };
     }
     const days = daysFor(row);
@@ -115,7 +115,7 @@ export const classifyAmexRows = (input: {
 };
 
 export const scopedAmexEvents = (events: readonly JsonObject[], accountLastFour: string) =>
-  events.filter(event => sameCard(event, accountLastFour));
+  statementMsiEvents(events,{institution:'american_express_mx',accountLastFour});
 
 /** Explicit selection may disambiguate generic Amex labels, but never incompatible terms or cancelled cuotas. */
 export const selectedAmexMsi = (line: EvidenceLine, event: JsonObject): EvidenceMatchResult => {
@@ -124,7 +124,7 @@ export const selectedAmexMsi = (line: EvidenceLine, event: JsonObject): Evidence
   if (!plan || plan.needsScheduleCompletion || event.status === 'rejected' || plan.months !== line.installmentMonths
     || !amountsWithinTolerance(plan.cuotaMinor, line.amountMinor) || !installment || installment.status === 'cancelled'
     || line.originalAmountMinor !== undefined && !amountsWithinTolerance(plan.principalMinor, line.originalAmountMinor)
-    || !isAutomaticAmexLabel(line.merchantRaw) && !amexMerchantsMatch(String(event.merchantRaw), line.merchantRaw))
+    || !isAutomaticAmexLabel(line.merchantRaw) && !eventMerchantsMatch(event, line.merchantRaw))
     return { kind: 'needs_decision', reason: 'incompatible_plan', candidates: [] };
   return { kind: 'confirm', eventId: String(event.id), previous: plan, installmentIndex: installment.index,
     next: markInstallmentSpent(plan, installment.index, { amountMinor: line.amountMinor, occurredOn: line.occurredOn,

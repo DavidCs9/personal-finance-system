@@ -1,7 +1,5 @@
-import { matchEvidenceLine, type EvidenceLine } from './msi-reconciliation.js';
-import type { JsonObject } from '../http/response.js';
 import { merchantsMatch as santanderMerchantsMatch } from "./santander-csv.js";
-import { amexMerchantsMatch, canCreateMsiPlanFromEvidence } from "./msi-reconciliation.js";
+import { amexMerchantsMatch, hasCompleteMsiPlanEvidence } from "./msi-reconciliation.js";
 import type { StatementProvider } from "./textract-document.js";
 
 export type { StatementProvider };
@@ -22,10 +20,25 @@ export interface StatementCandidate {
   readonly id: string;
   readonly merchantRaw: string;
   readonly occurredAt?: string;
+  readonly months?: number;
+  readonly cuotaMinor?: number;
+  readonly principalMinor?: number;
+  readonly canReconcilePlan?: boolean;
+  readonly expectedPlan?: ExpectedManualPlan;
+}
+
+export interface ExpectedManualPlan {
+  readonly principalMinor: number;
+  readonly cuotaMinor: number;
+  readonly months: number;
+  readonly startMonth: string;
+  readonly occurredAt: string;
+  readonly accountLastFour: string | null;
 }
 
 export interface StatementPreviewRow {
   readonly merchantReference?: string;
+  readonly purchaseOn?: string;
   readonly identity: string;
   readonly kind: StatementRowKind;
   readonly merchantRaw: string;
@@ -36,6 +49,9 @@ export interface StatementPreviewRow {
   readonly installmentIndex?: number;
   readonly installmentMonths?: number;
   readonly originalAmountMinor?: number;
+  readonly originalOn?: string;
+  readonly transactionId?: string;
+  readonly reason?: "ambiguous_msi_match" | "incomplete_msi_schedule" | "conflicting_msi_plan";
   readonly status: StatementRowStatus;
   readonly eventId?: string;
   readonly candidateEventIds: readonly string[];
@@ -46,6 +62,7 @@ export type StatementDecision =
   | { readonly action: "create" }
   | { readonly action: "link"; readonly eventId: string }
   | { readonly action: "confirm_msi"; readonly eventId: string }
+  | { readonly action: "reconcile_plan"; readonly eventId: string; readonly expectedPlan: ExpectedManualPlan }
   | {
       readonly action: "create_plan";
       readonly months: number;
@@ -58,6 +75,7 @@ export type StatementApplyAction =
   | { readonly kind: "create" }
   | { readonly kind: "link"; readonly eventId: string }
   | { readonly kind: "confirm_msi"; readonly eventId: string }
+  | { readonly kind: "reconcile_plan"; readonly eventId: string; readonly expectedPlan: ExpectedManualPlan }
   | {
       readonly kind: "create_plan";
       readonly months: number;
@@ -82,6 +100,7 @@ export const classifyPurchaseCharge = (input: {
     readonly amountMinor: number;
     readonly occurredOn: string;
     readonly credit?: boolean;
+    readonly transactionId?: string;
   };
   readonly events: readonly Record<string, unknown>[];
   readonly claimed: ReadonlySet<string>;
@@ -94,6 +113,7 @@ export const classifyPurchaseCharge = (input: {
     amountMinor: input.charge.amountMinor,
     occurredOn: input.charge.occurredOn,
     credit: input.charge.credit,
+    transactionId: input.charge.transactionId,
     msi: false,
     candidateEventIds: [] as string[],
     candidates: [] as StatementCandidate[],
@@ -148,6 +168,7 @@ export const statementPurchaseApplyAction = (
   decision?: StatementDecision,
 ): StatementApplyAction => {
   if (current.kind !== "purchase") return { kind: "skip" };
+  if (decision?.action === 'skip') return {kind:'skip'};
   if (current.status === "new" && preview?.status === "new") return { kind: "create" };
   if (
     current.status === "matched"
@@ -172,7 +193,13 @@ export const statementMsiApplyAction = (
   decision?: StatementDecision,
 ): StatementApplyAction => {
   if (current.kind !== "msi") return { kind: "skip" };
+  if (decision?.action === "skip") return { kind: "skip" };
   if (current.status === "skipped" || preview?.status === "skipped") return { kind: "skip" };
+  if (current.status === "new" && preview?.status === "new"
+    && current.candidateEventIds.length === 0 && preview.candidateEventIds.length === 0
+    && hasCompleteMsiPlanEvidence(current)) {
+    return { kind: "create_plan", months: current.installmentMonths!, cuotaMinor: current.amountMinor };
+  }
   if (
     current.status === "matched"
     && preview?.status === "matched"
@@ -182,30 +209,17 @@ export const statementMsiApplyAction = (
     return { kind: "confirm_msi", eventId: current.eventId };
   }
   if (current.status === "needs_decision" && preview?.status === "needs_decision") {
-    if (decision?.action === "skip") {
-      // With n/N + cuota on the statement, omit means "accept the plan as printed".
-      if (
-        canCreateMsiPlanFromEvidence({
-          amountMinor: current.amountMinor,
-          installmentIndex: current.installmentIndex,
-          installmentMonths: current.installmentMonths,
-          originalAmountMinor: current.originalAmountMinor,
-        })
-      ) {
-        return {
-          kind: "create_plan",
-          months: current.installmentMonths!,
-          cuotaMinor: current.amountMinor,
-        };
-      }
-      return { kind: "skip" };
-    }
+    if (decision?.action === "reconcile_plan" && current.reason === "conflicting_msi_plan"
+      && current.candidateEventIds.includes(decision.eventId) && preview.candidateEventIds.includes(decision.eventId)
+      && current.candidates.some(candidate => candidate.id === decision.eventId && candidate.canReconcilePlan))
+      return {kind:'reconcile_plan',eventId:decision.eventId,expectedPlan:decision.expectedPlan};
+    if (current.reason === "conflicting_msi_plan") return { kind: "skip" };
     if (decision?.action === "confirm_msi") {
-      const allowed = current.candidateEventIds.length === 0
-        || current.candidateEventIds.includes(decision.eventId);
+      const allowed = current.candidateEventIds.includes(decision.eventId);
       if (allowed) return { kind: "confirm_msi", eventId: decision.eventId };
     }
     if (decision?.action === "create_plan") {
+      if (current.candidateEventIds.length > 0) return { kind: "skip" };
       return {
         kind: "create_plan",
         months: decision.months,
@@ -236,63 +250,9 @@ export const statementPreviewSummary = (rows: readonly StatementPreviewRow[]) =>
     skipped: count("skipped"),
     purchases: rows.filter((row) => row.kind === "purchase").length,
     msi: rows.filter((row) => row.kind === "msi").length,
+    newPlans: rows.filter(row => row.kind === "msi" && row.status === "new").length,
+    newPurchases: rows.filter(row => row.kind === "purchase" && row.status === "new").length,
   };
 };
 
-export const classifyMsiEvidenceRow = (
-  line: EvidenceLine,
-  events: readonly JsonObject[],
-): StatementPreviewRow => {
-  const match = matchEvidenceLine(line, events);
-  if (match.kind === 'confirm') {
-    return {
-      identity: line.identity,
-      kind: 'msi',
-      merchantRaw: line.merchantRaw,
-      amountMinor: line.amountMinor,
-      occurredOn: line.occurredOn,
-      msi: true,
-      installmentIndex: line.installmentIndex,
-      installmentMonths: line.installmentMonths,
-      originalAmountMinor: line.originalAmountMinor,
-      status: 'matched',
-      eventId: match.eventId,
-      candidateEventIds: [match.eventId],
-      candidates: [],
-    };
-  }
-  if (match.kind === 'needs_decision') {
-    const candidates = match.candidates.map((candidate) => ({
-      id: candidate.eventId,
-      merchantRaw: candidate.merchantRaw,
-    }));
-    return {
-      identity: line.identity,
-      kind: 'msi',
-      merchantRaw: line.merchantRaw,
-      amountMinor: line.amountMinor,
-      occurredOn: line.occurredOn,
-      msi: true,
-      installmentIndex: line.installmentIndex,
-      installmentMonths: line.installmentMonths,
-      originalAmountMinor: line.originalAmountMinor,
-      status: 'needs_decision',
-      candidateEventIds: candidates.map((candidate) => candidate.id),
-      candidates,
-    };
-  }
-  return {
-    identity: line.identity,
-    kind: 'msi',
-    merchantRaw: line.merchantRaw,
-    amountMinor: line.amountMinor,
-    occurredOn: line.occurredOn,
-    msi: true,
-    installmentIndex: line.installmentIndex,
-    installmentMonths: line.installmentMonths,
-    originalAmountMinor: line.originalAmountMinor,
-    status: 'skipped',
-    candidateEventIds: [],
-    candidates: [],
-  };
-};
+export {classifyMsiEvidenceRow,statementMsiEvents} from './statement-msi.js';

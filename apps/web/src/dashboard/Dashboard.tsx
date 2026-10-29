@@ -754,27 +754,6 @@ export function Dashboard({
           }}
         />
       )}
-      {activeEvent && (
-        <EventSheet
-          key={activeEvent.id}
-          event={activeEvent}
-          idToken={idToken}
-          demoMode={demoMode}
-          onClose={() => setActiveEvent(undefined)}
-          onVerified={(event) => {
-            setActiveEvent(event);
-            void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
-            void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
-            void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot }).then(() => {
-              const refreshed = queryClient.getQueryData<MonthlyPlan>(monthlyPlanQueryKey(selectedMonth));
-              if (refreshed) setEditingPayment(current => current
-                ? refreshed.upcomingPayments.find(payment => payment.id === current.id) : current);
-            });
-            void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
-            void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
-          }}
-        />
-      )}
       {assistantOpen && (
         <AssistantSheet
           month={selectedMonth}
@@ -826,6 +805,7 @@ export function Dashboard({
           provider="amex"
           idToken={idToken}
           initialImportId={resumeStatementId}
+          onOpenEvent={openMsiEvent}
           onClose={closeStatementImport}
           onApplied={() => {
             closeStatementImport();
@@ -842,6 +822,7 @@ export function Dashboard({
           provider="santander"
           idToken={idToken}
           initialImportId={resumeStatementId}
+          onOpenEvent={openMsiEvent}
           onClose={closeStatementImport}
           onApplied={() => {
             closeStatementImport();
@@ -975,6 +956,28 @@ export function Dashboard({
             setCajitaOpen(false);
             setSelectedWealthAccount(CAJITA_ACCOUNT_ID);
             setTab("wealth");
+          }}
+        />
+      )}
+      {activeEvent && (
+        <EventSheet
+          key={activeEvent.id}
+          event={activeEvent}
+          idToken={idToken}
+          demoMode={demoMode}
+          onClose={() => setActiveEvent(undefined)}
+          onVerified={(event) => {
+            const paymentContext = editingPayment;
+            setActiveEvent(event);
+            void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot }).then(() => {
+              const refreshed = queryClient.getQueryData<MonthlyPlan>(monthlyPlanQueryKey(selectedMonth));
+              if (refreshed) setEditingPayment(current => current && current === paymentContext
+                ? refreshed.upcomingPayments.find(payment => payment.id === current.id) : current);
+            });
+            void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
+            void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
           }}
         />
       )}

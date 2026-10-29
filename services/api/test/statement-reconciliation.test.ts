@@ -110,6 +110,7 @@ describe('statementPurchaseApplyAction', () => {
       candidates: [],
     };
     expect(statementPurchaseApplyAction(neu, neu)).toEqual({ kind: 'create' });
+    expect(statementPurchaseApplyAction(neu, neu, {action:'skip'})).toEqual({kind:'skip'});
     const matched = {
       ...neu,
       status: 'matched' as const,
@@ -162,7 +163,7 @@ describe('statementMsiApplyAction', () => {
     msi: true,
   };
 
-  it('creates a plan from skip when the statement already has n/N metadata', () => {
+  it('honors skip literally even when the statement already has a complete plan', () => {
     const withSchedule = {
       ...needsDecisionRow,
       merchantRaw: 'MESES EN AUTOMÁTICO NACIONAL',
@@ -171,19 +172,61 @@ describe('statementMsiApplyAction', () => {
       originalAmountMinor: 674_900,
       amountMinor: 224_967,
     };
-    expect(statementMsiApplyAction(withSchedule, withSchedule, { action: 'skip' })).toEqual({
-      kind: 'create_plan',
-      months: 3,
-      cuotaMinor: 224_967,
-    });
+    expect(statementMsiApplyAction(withSchedule, withSchedule, { action: 'skip' })).toEqual({ kind: 'skip' });
+    const automatic = { ...withSchedule, status: 'new' as const };
+    expect(statementMsiApplyAction(automatic, automatic, { action: 'skip' })).toEqual({ kind: 'skip' });
   });
 
-  it('honors explicit create_plan decisions', () => {
+  it('creates a new complete plan from printed principal and i/N without a manual decision', () => {
+    const complete = { ...needsDecisionRow, status: 'new' as const, installmentIndex: 2,
+      installmentMonths: 3, originalAmountMinor: 150_001 };
+    expect(statementMsiApplyAction(complete, complete)).toEqual({
+      kind: 'create_plan', months: 3, cuotaMinor: 50_000,
+    });
+    for (const incomplete of [
+      { ...complete, installmentIndex: undefined },
+      { ...complete, installmentMonths: undefined },
+      { ...complete, originalAmountMinor: undefined },
+      { ...complete, originalAmountMinor: 0 },
+      { ...complete, candidateEventIds: ['unresolved-plan'] },
+    ]) {
+      expect(statementMsiApplyAction(incomplete, incomplete)).toEqual({ kind: 'skip' });
+    }
+  });
+
+  it('allows an explicit complete schedule when the original statement metadata is incomplete', () => {
     expect(statementMsiApplyAction(needsDecisionRow, needsDecisionRow, {
       action: 'create_plan',
       months: 3,
       cuotaMinor: 50_000,
     })).toEqual({ kind: 'create_plan', months: 3, cuotaMinor: 50_000 });
+  });
+
+  it('rejects arbitrary or empty plan IDs when no existing plan candidate was identified', () => {
+    for (const eventId of ['', 'unrelated-plan']) {
+      expect(statementMsiApplyAction(needsDecisionRow, needsDecisionRow, { action: 'confirm_msi', eventId }))
+        .toEqual({ kind: 'skip' });
+    }
+    const ambiguous = { ...needsDecisionRow, candidateEventIds: ['candidate-a', 'candidate-b'] };
+    expect(statementMsiApplyAction(ambiguous, ambiguous, { action: 'confirm_msi', eventId: 'unrelated-plan' }))
+      .toEqual({ kind: 'skip' });
+    expect(statementMsiApplyAction(ambiguous, ambiguous, { action: 'confirm_msi', eventId: 'candidate-b' }))
+      .toEqual({ kind: 'confirm_msi', eventId: 'candidate-b' });
+    expect(statementMsiApplyAction(ambiguous, ambiguous, { action: 'create_plan', months: 3, cuotaMinor: 50_000 }))
+      .toEqual({ kind: 'skip' });
+  });
+
+  it('does not create or force-confirm a plan whose evidence conflicts with an existing candidate', () => {
+    const conflict = { ...needsDecisionRow, reason: 'conflicting_msi_plan' as const,
+      candidateEventIds: ['conflicting-plan'], installmentIndex: 1, installmentMonths: 3,
+      originalAmountMinor: 150_000 };
+    expect(statementMsiApplyAction(conflict, conflict)).toEqual({ kind: 'skip' });
+    expect(statementMsiApplyAction(conflict, conflict, { action: 'create_plan', months: 3, cuotaMinor: 50_000 }))
+      .toEqual({ kind: 'skip' });
+    expect(statementMsiApplyAction(conflict, conflict, { action: 'confirm_msi', eventId: 'conflicting-plan' }))
+      .toEqual({ kind: 'skip' });
+    expect(statementMsiApplyAction(conflict, conflict, { action: 'link', eventId: 'conflicting-plan' }))
+      .toEqual({ kind: 'skip' });
   });
 
   it('still skips when MSI metadata is incomplete', () => {

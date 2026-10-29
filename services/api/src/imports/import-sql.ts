@@ -143,6 +143,33 @@ export const saveStatementPreview=(kind:BankImportKind,importId:string,owner:str
   const candidates=await prepareRows(client,record);
   await putHeader(client,record);await replaceRows(client,record,candidates);return record;
 });
+
+/** Refresh derived classifications against the retained extraction, without touching applied captures. */
+export const refreshStatementPreview=(prepared:BankImportRecord,rows:readonly BankImportRow[]):Promise<BankImportRecord>=>withSqlTransaction(async()=>{
+  const client=applicationSqlClient();
+  const current=await readBankImport(prepared.kind,prepared.importId,prepared.owner,client);
+  if(!current)throw changed();
+  if(current.status!=='previewed' || current.previewedAt!==prepared.previewedAt
+    || current.extractionKey!==prepared.extractionKey || current.textractJobId!==prepared.textractJobId
+    || current.source.bucket!==prepared.source.bucket || current.source.key!==prepared.source.key
+    || current.source.sha256!==prepared.source.sha256 || current.source.contentType!==prepared.source.contentType)return current;
+  // Explanations and plan details are derived for this response, never a document authority.
+  const classification=(lines:readonly BankImportRow[])=>JSON.stringify(lines.map(row=>({
+    identity:row.identity,status:row.status,eventId:row.eventId??null,transactionId:row.transactionId??null,merchantReference:row.merchantReference??null,purchaseOn:row.purchaseOn??null,candidateEventIds:row.candidateEventIds,
+    candidates:row.candidates.map(candidate=>({id:candidate.id,merchantRaw:candidate.merchantRaw,occurredAt:candidate.occurredAt??null})),
+  })));
+  if(current.rows.length!==rows.length || current.rows.some((row,index)=>{
+    const next=rows[index];return !next || ['identity','merchantRaw','amountMinor','occurredOn','installmentIndex',
+      'installmentMonths','originalAmountMinor','kind','credit'].some(field=>row[field as keyof BankImportRow]!==next[field as keyof BankImportRow])
+      || Boolean(row.transactionId && row.transactionId!==next.transactionId)
+      || Boolean(row.merchantReference && row.merchantReference!==next.merchantReference)
+      || Boolean(row.purchaseOn && row.purchaseOn!==next.purchaseOn);
+  }))throw new BankImportError('La evidencia del estado cambió. Vuelve a revisar el archivo.');
+  if(classification(current.rows)===classification(rows))return {...current,rows};
+  const record={...current,rows,previewedAt:new Date().toISOString()};
+  const candidates=await prepareRows(client,record);
+  await putHeader(client,record);await replaceRows(client,record,candidates);return record;
+});
 export const failBankImport=(kind:BankImportKind,importId:string,owner:string,jobId:string,errorMessage:string,
   evidence:Pick<BankImportRecord,'extractionKey'|'textractAnswers'>={}):Promise<BankImportRecord>=>withSqlTransaction(async()=>{
   const client=applicationSqlClient();const existing=await readBankImport(kind,importId,owner,client);if(!existing)throw changed();

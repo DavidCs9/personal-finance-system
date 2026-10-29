@@ -1,5 +1,5 @@
 import { resolveStatementSource } from './statement-upload.js';
-import { readBankImport, startBankImport, saveStatementPreview, failBankImport, type BankImportRecord } from './import-sql.js';
+import { readBankImport, startBankImport, saveStatementPreview, refreshStatementPreview, failBankImport, type BankImportRecord } from './import-sql.js';
 import {
   InvalidSantanderStatementError,
   parseSantanderStatementExtraction,
@@ -54,7 +54,7 @@ const buildSantanderStatementPreviewRows = async (
     installmentIndex: charge.installmentIndex,
     installmentMonths: charge.installmentMonths,
     originalAmountMinor: charge.originalAmountMinor,
-  }, events));
+  }, events, {institution:'santander_mx',accountLastFour:document.accountLastFour}));
   return [...purchaseRows, ...msiRows];
 };
 
@@ -66,6 +66,7 @@ export const previewSantanderStatementImport = async (
   const sha256 = source.sha256;
   const existing = await readBankImport('santander_statement', sha256, owner);
   if (existing?.status === 'applied' || existing?.status === 'processing') return statementImportResponse(existing);
+  if (existing?.status === 'previewed') return getSantanderStatementImport(existing.importId, owner);
   const textractJobId = await startTextractDocumentAnalysis(
     textract,
     rawSourceBucketName,
@@ -84,6 +85,10 @@ export const getSantanderStatementImport = async (importId: string, owner: strin
   if (!/^[a-f0-9]{64}$/.test(importId)) throw new InvalidSantanderStatementError('Identificador de importación inválido.');
   const stored = await readBankImport('santander_statement', importId, owner);
   if (!stored) throw new InvalidSantanderStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
+  if (stored.status === 'previewed') {
+    const document = parseSantanderStatementExtraction(await loadStatementTextractExtraction(stored));
+    return statementImportResponse(await refreshStatementPreview(stored, await buildSantanderStatementPreviewRows(document)));
+  }
   if (stored.status !== 'processing') return statementImportResponse(stored);
   const jobId = stored.textractJobId;
   if (!jobId) throw new Error('Missing native statement Textract job.');

@@ -1,5 +1,5 @@
 import { resolveStatementSource } from './statement-upload.js';
-import { readBankImport, startBankImport, saveStatementPreview, failBankImport, type BankImportRecord } from './import-sql.js';
+import { readBankImport, startBankImport, saveStatementPreview, refreshStatementPreview, failBankImport, type BankImportRecord } from './import-sql.js';
 import { findDeferralPurchaseSubset } from './amex-deferral.js';
 import {
   amexMsiEvidenceLines,
@@ -51,6 +51,7 @@ export const previewAmexImport = async (
   const sha256 = source.sha256;
   const existing = await readBankImport('amex_statement', sha256, owner);
   if (existing?.status === 'applied' || existing?.status === 'processing') return statementImportResponse(existing);
+  if (existing?.status === 'previewed') return getAmexImport(existing.importId, owner);
   const textractJobId = await startTextractDocumentAnalysis(
     textract,
     rawSourceBucketName,
@@ -69,6 +70,10 @@ export const getAmexImport = async (importId: string, owner: string): Promise<Js
   if (!/^[a-f0-9]{64}$/.test(importId)) throw new InvalidAmexStatementError('Identificador de importación inválido.');
   const stored = await readBankImport('amex_statement', importId, owner);
   if (!stored) throw new InvalidAmexStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
+  if (stored.status === 'previewed') {
+    const document = parseAmexStatementExtraction(await loadStatementTextractExtraction(stored));
+    return statementImportResponse(await refreshStatementPreview(stored, await buildAmexPreviewRows(document, owner)));
+  }
   if (stored.status !== 'processing') return statementImportResponse(stored);
   const jobId = stored.textractJobId;
   if (!jobId) throw new Error('Missing native statement Textract job.');

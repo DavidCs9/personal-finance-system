@@ -58,9 +58,10 @@ const pdfDocument = (lines: readonly string[]): AmexStatementDocument => parseAm
 });
 const previewPdf = async (document: AmexStatementDocument) => {
   const rows = await amex.buildAmexPreviewRows(document, owner), importId = createHash('sha256').update(JSON.stringify(document)).digest('hex');
-  return imports.startBankImport({ kind: 'amex_statement', importId, owner, status: 'previewed', createdAt: '2026-11-07T12:00:00Z',
+  const record=await imports.startBankImport({ kind: 'amex_statement', importId, owner, status: 'previewed', createdAt: '2026-11-07T12:00:00Z',
     previewedAt: '2026-11-07T12:00:00Z', accountLastFour: '3456', product: document.product, period: document.period,
     source: { bucket: 'evidence', key: `${importId}.pdf`, sha256: importId, contentType: 'application/pdf' }, rows });
+  return {...record,rows};
 };
 const applyPdf = (importId: string, document: AmexStatementDocument, decisions: unknown = {}) => statements.applyStatementImport({
   provider: 'amex', conservativeAmex: true, importId, owner, decisionBody: JSON.stringify({ decisions }),
@@ -271,4 +272,55 @@ describe('Amex activity parsing and native financial application', () => {
     expect(await apply(p.importId, decisions)).toMatchObject({ alreadyApplied: true });
     expect(await fixture.snapshot()).toEqual(before);
   });
+});
+
+it.each(['xlsx-preview-first','pdf-first'])('%s keeps a confirmed manual purchase through later Excel months and overlap',async order=>{
+  const ledger=await import('@finance/ledger/native-ledger');
+  const id=randomUUID(),observation=randomUUID(),at='2026-09-30T12:00:00.000Z';
+  const plan=buildMsiSchedule({principalMinor:8940,cuotaMinor:2980,months:3,startMonth:'2026-10',origin:'manual'});
+  const source={bucket:'evidence',key:'manual.json',sha256:'d'.repeat(64),contentType:'application/json'};
+  await fixture.run(async()=>{
+    await ledger.insertLedgerMovement(currentSqlClient()!,{id,institution:'american_express_mx',eventType:'card_purchase',status:'accepted',
+      amount:{amountMinor:8940,currency:'MXN'},merchantRaw:'Mi compra manual',occurredAt:at,receivedAt:at,ingestedAt:at,
+      source,parserVersion:'manual-entry-v1',parseWarnings:[],msi:plan,tags:['compra:reloj']},observation,at);
+    await ledger.appendLedgerObservation(currentSqlClient()!,{id:observation,movementId:id,captureSource:'manual',
+      institution:'american_express_mx',eventType:'card_purchase',amount:{amountMinor:8940,currency:'MXN'},merchantRaw:'Mi compra manual',
+      observedAt:at,reconciliationAt:at,occurredAt:at,source,parserVersion:'manual-entry-v1',parseWarnings:[]});
+  });
+  const rows=[{date:'04 Nov 2026',purchaseDate:'05 Nov 2026',amount:30,merchant:'BANK MERCHANT',reference:'AT-quota-two',detail:'CARGO 02 DE 03 /REFpurchase-one'}];
+  if(order==='xlsx-preview-first'){
+    const first=await preview(rows);
+    expect(first.rows[0]).toMatchObject({status:'needs_decision',reason:'conflicting_msi_plan',candidateEventIds:[id]});
+    const before=await fixture.snapshot();
+    await expect(apply(first.importId,{[first.rows[0].identity]:{action:'create_plan',months:3,cuotaMinor:3000}})).rejects.toThrow('cambiaron');
+    expect(await fixture.snapshot()).toEqual(before);
+  }
+  const document:AmexStatementDocument={accountLastFour:'3456',product:'Gold Elite American Express',period:{from:'2026-09-07',to:'2026-10-06'},
+    charges:[{identity:'bank-quota-one',merchantRaw:'BANK MERCHANT',occurredOn:'2026-10-04',amountMinor:3000,credit:false,msi:true,
+      installmentIndex:1,installmentMonths:3,merchantReference:'purchase-one'}],
+    msiPlans:[{merchantRaw:'BANK MERCHANT',originalOn:'2026-09-30',originalAmountMinor:9000,pendingMinor:6000,cuotaMinor:3000,installmentIndex:1,installmentMonths:3}],deferralCredits:[]};
+  const pdf=await previewPdf(document),candidate=pdf.rows[0].candidates.find(c=>c.id===id)!;
+  expect(candidate.canReconcilePlan).toBe(true);
+  expect(await applyPdf(pdf.importId,document,{[pdf.rows[0].identity]:{action:'reconcile_plan',eventId:id,expectedPlan:candidate.expectedPlan}}))
+    .toMatchObject({summary:{created:0,linked:1,msiConfirmed:1}});
+  const weekly=await preview(rows);
+  expect(weekly.rows[0]).toMatchObject({status:'matched',eventId:id});
+  expect(await apply(weekly.importId)).toMatchObject({summary:{created:0,linked:1,msiConfirmed:1}});
+  const monthly=await previewBytes(activityWorkbook([{date:'04 Dic 2026',amount:30,merchant:'BANK MERCHANT',
+    reference:'AT-quota-three',detail:'CARGO 03 DE 03 /REFpurchase-one'}],'23456','07 Nov 2026 a 06 Dic 2026'));
+  expect(monthly.rows[0]).toMatchObject({status:'matched',eventId:id});
+  expect(await apply(monthly.importId)).toMatchObject({summary:{created:0,linked:1,msiConfirmed:1}});
+  const overlap=await preview([{date:'04 Nov 2026',amount:-1,reference:'AT-payment'},...rows]);
+  expect(overlap.rows.map(row=>row.status)).toEqual(['excluded','duplicate']);
+  expect(await apply(overlap.importId)).toMatchObject({summary:{created:0,linked:0,skipped:2}});
+  const beforeReplay=await fixture.snapshot();expect(await apply(weekly.importId)).toMatchObject({alreadyApplied:true});
+  expect(await fixture.snapshot()).toEqual(beforeReplay);
+  expect((await fixture.sql.query('SELECT movement_id FROM olbia.installment_plans')).rows).toEqual([{movement_id:id}]);
+  expect((await fixture.sql.query('SELECT merchant_raw,amount_minor,account_last_four FROM olbia.ledger_movements')).rows)
+    .toEqual([{merchant_raw:'Mi compra manual',amount_minor:9000,account_last_four:'3456'}]);
+  expect((await fixture.sql.query('SELECT status,evidence_import_kind FROM olbia.installment_entries ORDER BY installment_index')).rows)
+    .toEqual([{status:'spent',evidence_import_kind:'amex_statement'},{status:'spent',evidence_import_kind:'amex_activity'},{status:'spent',evidence_import_kind:'amex_activity'}]);
+  expect((await fixture.sql.query('SELECT tag FROM olbia.ledger_tags')).rows).toEqual([{tag:'compra:reloj'}]);
+  expect((await fixture.sql.query('SELECT amount_minor FROM olbia.ledger_observations WHERE id=$1',[observation])).rows)
+    .toEqual([{amount_minor:8940}]);
 });

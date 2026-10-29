@@ -6,7 +6,7 @@ import { appendLedgerObservation, insertLedgerMovement, insertLedgerRevision, in
   type BankRowEvidence } from '@finance/ledger/native-ledger';
 import type { MsiPlan } from '@finance/domain';
 import type { ObservedEventInput } from '@finance/ledger/native-ledger';
-import { readerPool } from '../events/sql-reads.js';
+import { readerPool, withLedgerReadSnapshot } from '../events/sql-reads.js';
 import { BankImportError, type BankImportKind, type BankImportRecord, type BankImportRow } from './import-sql.js';
 
 export const bankClaimToken = (identity: string): string => createHash('sha256').update(identity).digest('hex');
@@ -18,7 +18,35 @@ export const withBankApplyTransaction = async <T>(callback: () => Promise<T>): P
     throw error;
   }
 };
-export const bankLedgerEvents = () => readLedgerMovements(readerPool());
+export interface BankMsiAssertion {
+  readonly institution: string;
+  readonly accountLastFour: string;
+  readonly merchantRaw: string;
+  readonly originalAmountMinor?: number;
+  readonly installmentMonths?: number;
+  readonly merchantReference?: string;
+}
+
+/** Retained bank-row FKs identify the same purchase in later statements, even after a display-name edit. */
+export const bankLedgerEvents = (): Promise<Record<string, unknown>[]> => withLedgerReadSnapshot(async () => {
+  const client = readerPool();
+  const movements = await readLedgerMovements(client);
+  const assertions = (await client.query(`SELECT DISTINCT i.movement_id,b.kind,b.account_last_four,
+    r.merchant_raw,r.original_amount_mxn_minor,r.installment_months,r.merchant_reference
+    FROM olbia.installment_entries i JOIN olbia.bank_import_rows r
+      ON r.kind=i.evidence_import_kind AND r.content_sha256=i.evidence_content_sha256 AND r.position=i.evidence_row_position
+    JOIN olbia.bank_imports b ON b.kind=r.kind AND b.content_sha256=r.content_sha256
+    WHERE i.evidence_origin='bank_row'`)).rows;
+  const ambiguous = new Set((await client.query('SELECT DISTINCT movement_id FROM olbia.installment_evidence_candidates')).rows.map(row=>row.movement_id));
+  return movements.map(event => ({...event, hasUnresolvedBankMsiEvidence:ambiguous.has(event.id),
+    bankMsiAssertions: assertions.filter(row => row.movement_id === event.id).map(row => ({
+    institution: row.kind === 'amex_statement' || row.kind === 'amex_activity' ? 'american_express_mx' : 'santander_mx',
+    accountLastFour: String(row.account_last_four ?? ''), merchantRaw: String(row.merchant_raw),
+    ...(row.original_amount_mxn_minor != null ? {originalAmountMinor:Number(row.original_amount_mxn_minor)} : {}),
+    ...(row.installment_months != null ? {installmentMonths:Number(row.installment_months)} : {}),
+    ...((row.kind === 'amex_statement' || row.kind === 'amex_activity') && row.merchant_reference != null ? {merchantReference:String(row.merchant_reference)} : {}),
+  } satisfies BankMsiAssertion))}));
+});
 export const claimedBankRows = async (kind: BankImportKind, identities: readonly string[]): Promise<ReadonlySet<string>> => {
   if (!identities.length) return new Set();
   const tokens = identities.map(bankClaimToken);
@@ -74,6 +102,7 @@ export const createBankMovement = (input: {
 export const linkBankEvidence = (input: {
   readonly record: BankImportRecord; readonly row: BankImportRow; readonly eventId: string;
   readonly appliedAt: string; readonly reason: string; readonly parserVersion: string;
+  readonly account?: Readonly<Record<string,unknown>>;
 }): Promise<boolean> => withSqlTransaction(async client => {
   const { record, row, eventId, appliedAt } = input;
   bankRowPosition(record, row);
@@ -84,6 +113,7 @@ export const linkBankEvidence = (input: {
   await appendLedgerObservation(client, { id: observationId, movementId: eventId, captureSource: record.kind,
     observedAt: appliedAt, reconciliationAt: at, institution: record.kind.startsWith('amex_') ? 'american_express_mx' : 'santander_mx',
     eventType: 'card_purchase', amount: { amountMinor: row.amountMinor, currency: 'MXN' }, merchantRaw: row.merchantRaw,
+    ...(input.account ? {account:input.account} : {}),
     occurredAt: at, source: record.source, parserVersion: input.parserVersion, parseWarnings: [],
     rowNumber: row.rowNumber, bankTransactionId: row.transactionId,
     ...(record.kind === 'amex_activity' ? { account: { institution: 'american_express_mx', lastFour: record.accountLastFour } } : {}) });

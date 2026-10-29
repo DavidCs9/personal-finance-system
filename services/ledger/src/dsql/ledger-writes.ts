@@ -137,6 +137,60 @@ export const markMovementReconciled=async(client:SqlClient,id:string,at:string):
   if(!(await client.query('UPDATE olbia.ledger_movements SET reconciled_at=$2 WHERE id=$1 RETURNING id',[id,at])).rows.length)
     throw new LedgerPreconditionError('Movement no longer exists');
 };
+
+export interface ManualPlanBankTermsExpected {
+  readonly principalMinor:number;readonly cuotaMinor:number;readonly months:number;
+  readonly startMonth:string;readonly occurredAt:string;readonly accountLastFour:string|null;
+}
+export interface ManualPlanBankTermsNext {
+  readonly principalMinor:number;readonly account:Readonly<Record<string,unknown>>;
+  readonly bankTransactionId?:string;readonly reconciledAt:string;
+}
+
+/** The caller appends bank evidence/history and replaces the plan in this same transaction. */
+export const confirmManualPlanBankTerms=async(client:SqlClient,id:string,expected:ManualPlanBankTermsExpected,
+  next:ManualPlanBankTermsNext):Promise<void>=>{
+  assertMoney(expected.principalMinor);assertMoney(expected.cuotaMinor);assertMoney(next.principalMinor);
+  if(expected.principalMinor<=0 || expected.cuotaMinor<=0 || next.principalMinor<=0
+    || !Number.isInteger(expected.months) || expected.months<1 || expected.months>48
+    || !/^[0-9]{4}-(0[1-9]|1[0-2])$/.test(expected.startMonth)
+    || !Number.isFinite(millis(expected.occurredAt)) || !Number.isFinite(millis(next.reconciledAt))
+    || (expected.accountLastFour!==null && !/^\d{4}$/.test(expected.accountLastFour))
+    || typeof next.account.accountId!=='string' || !next.account.accountId.trim()
+    || typeof next.account.displayName!=='string' || !next.account.displayName.trim()
+    || typeof next.account.institution!=='string' || !next.account.institution.trim()
+    || typeof next.account.lastFour!=='string' || !/^\d{4}$/.test(next.account.lastFour)
+    || (next.bankTransactionId!==undefined && (typeof next.bankTransactionId!=='string' || !next.bankTransactionId.trim())))invalid();
+  if(expected.accountLastFour!==null && expected.accountLastFour!==next.account.lastFour)
+    throw new LedgerPreconditionError('Bank evidence contradicts the observed card');
+  const account=accountValues(next.account);
+  reserveLedgerMutations(1);
+  const updated=await client.query(`UPDATE olbia.ledger_movements AS m SET
+    amount_minor=$2,account_present=$3,account_id=$4,account_name=$5,account_institution=$6,account_last_four=$7,
+    bank_transaction_id=COALESCE($8,m.bank_transaction_id),reconciled_at=$9
+    WHERE m.id=$1 AND m.status IN ('accepted','needs_review') AND m.currency='MXN'
+      AND m.personal_amount_minor IS NULL AND m.institution=$6 AND m.amount_minor=$10
+      AND m.occurred_at IS NOT DISTINCT FROM $14::timestamptz
+      AND m.account_last_four IS NOT DISTINCT FROM $15::text
+      AND EXISTS (SELECT 1 FROM olbia.ledger_observations o
+        WHERE o.id=m.primary_observation_id AND o.movement_id=m.id AND o.capture_source='manual')
+      AND EXISTS (SELECT 1 FROM olbia.installment_plans p WHERE p.movement_id=m.id
+        AND p.principal_minor=$10 AND p.cuota_minor=$11 AND p.months=$12
+        AND p.status IN ('active','completed') AND p.needs_schedule_completion IS DISTINCT FROM true
+        AND (SELECT count(*) FROM olbia.installment_entries e WHERE e.movement_id=m.id)=p.months
+        AND EXISTS (SELECT 1 FROM olbia.installment_entries first
+          WHERE first.movement_id=m.id AND first.installment_index=1 AND first.month=$13)
+        AND NOT EXISTS (SELECT 1 FROM olbia.installment_entries e WHERE e.movement_id=m.id
+          AND (e.installment_index>p.months OR e.status='cancelled' OR e.evidence_import_kind IS NOT NULL
+            OR e.evidence_content_sha256 IS NOT NULL OR e.evidence_row_position IS NOT NULL
+            OR (substring(e.month,1,4)::integer-substring($13::text,1,4)::integer)*12
+              +substring(e.month,6,2)::integer-substring($13::text,6,2)::integer<>e.installment_index-1)))
+      AND NOT EXISTS (SELECT 1 FROM olbia.installment_evidence_candidates candidate WHERE candidate.movement_id=m.id)
+    RETURNING m.id`,[id,next.principalMinor,...account,optional(next.bankTransactionId),next.reconciledAt,
+      expected.principalMinor,expected.cuotaMinor,expected.months,expected.startMonth,expected.occurredAt,expected.accountLastFour]);
+  if(!updated.rows.length)throw new LedgerPreconditionError('Manual MSI plan changed or already has bank evidence');
+};
+
 export const promoteForeignAuthorization=async(client:SqlClient,id:string,event:ObservedEventInput,reconciliationAt:string):Promise<void>=>{
   assertMoney(event.amount.amountMinor);
   if(event.amount.currency!=='MXN')invalid();

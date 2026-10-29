@@ -42,6 +42,10 @@ Las listas de MSI, gastos fijos y fechas usan secciones desplegables nativas, in
 
 **Importar Excel Amex** revisa la actividad semanal antes de aplicarla: muestra tarjeta, periodo, cada importe y su clasificación, y pide resolver coincidencias dudosas y planes MSI. Permite omitir literalmente una fila. No presenta el periodo del Excel como cobertura de un estado de cuenta. El original descargable permanece accesible desde la evidencia del movimiento.
 
+La revisión de un **estado de cuenta PDF** explica las acciones que Olbia ya resolvió: compras nuevas, planes nuevos del estado, cuotas que se vincularán y filas ya registradas. Conserva i/N, cuota, principal y fecha como evidencia legible; no pide decidir entre crear o usar el plan si los datos ya lo determinan. Sólo los conflictos reales muestran controles de revisión, con el motivo y los candidatos concretos. **Aplicar conciliación** confirma el lote revisado. El título o estado de una previsualización no afirma que sus cambios ya estén aplicados. Las decisiones automáticas y sus límites siguen las [reglas MSI](financial-rules.md#msi-y-estados-de-cuenta).
+
+Si un candidato es una captura manual aún sin identidad bancaria probada, la revisión puede ofrecer vincular esa misma compra una vez, mostrando los datos manuales y los del PDF antes de aplicar. La confirmación conserva el plan existente y explica la corrección; las cuotas de los siguientes estados reutilizan la identidad guardada. No presentar esa confirmación inicial como una tarea mensual.
+
 **Patrimonio** responde cuánto tienes en neto hoy. Orden: **Neto → Dónde está → Debes → Historial → Holdings**. No mezclar gasto mensual ni Te quedan. El total usa tendencia mensual desde agosto 2026; una cuenta usa historial diario. Mostrar lista numérica, con sparkline mínima de apoyo. El selector global de mes sigue usable, sin convertir el patrimonio actual en un corte mensual. Actualizar total refresca Bitso e IBKR; Fondo muestra su condición ilíquida hasta diciembre.
 
 ## Voz y sistema visual

@@ -20,6 +20,7 @@ import { localDate, toPublicEvent } from '../events/queries.js';
 import { persistEventMsi } from '../events/mutations.js';
 import { assertPreparedImport, bankLedgerEvents, bankPlanEvidence, bankRowPosition, claimedBankRows, createBankMovement, linkBankEvidence, withBankApplyTransaction } from './bank-ledger.js';
 import { readBankImport, startBankImport, completeBankImport, type BankImportRecord } from './import-sql.js';
+import { statementMsiEvents } from './statement-shared.js';
 
 interface SantanderPreviewRow extends SantanderCsvRow {
   readonly status: SantanderReconciliationStatus;
@@ -32,7 +33,8 @@ const candidateEvents = (document: SantanderCsvDocument, row: SantanderCsvRow, e
   events.filter((event) => {
     const account = event.account as JsonObject | undefined;
     const amount = event.amount as JsonObject | undefined;
-    return account?.lastFour === document.accountLastFour
+    return event.institution === 'santander_mx' && event.status !== 'rejected'
+      && account?.lastFour === document.accountLastFour
       && amount?.currency === 'MXN'
       && amount.amountMinor === row.amountMinor
       && localDate(event.occurredAt ?? event.receivedAt) === row.occurredOn
@@ -42,6 +44,7 @@ const candidateEvents = (document: SantanderCsvDocument, row: SantanderCsvRow, e
 
 const classifySantanderRows = async (document: SantanderCsvDocument): Promise<readonly SantanderPreviewRow[]> => {
   const [events, claims] = await Promise.all([bankLedgerEvents(), claimedBankRows('santander_csv', document.rows.map(row => row.identity))]);
+  const msiEvents = statementMsiEvents(events, {institution:'santander_mx',accountLastFour:document.accountLastFour});
   return document.rows.map((row): SantanderPreviewRow => {
     if (claims.has(row.identity)) return { ...row, status: 'duplicate', candidateEventIds: [], candidates: [] };
     if (row.amountMinor < 0) return { ...row, status: 'excluded', candidateEventIds: [], candidates: [] };
@@ -51,7 +54,7 @@ const classifySantanderRows = async (document: SantanderCsvDocument): Promise<re
         amountMinor: row.amountMinor,
         occurredOn: row.occurredOn,
         identity: row.identity,
-      }, events);
+      }, msiEvents);
       if (match.kind === 'confirm') {
         return {
           ...row,
@@ -240,6 +243,7 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
   let skipped = 0;
   let msiConfirmed = 0;
   let eventsSnapshot = await bankLedgerEvents();
+  const currentMsiEvents = () => statementMsiEvents(eventsSnapshot, {institution:'santander_mx',accountLastFour:document.accountLastFour});
   for (const row of rows) {
     bankRowPosition(stored, row);
     const previewRow = previewByIdentity.get(row.identity);
@@ -254,8 +258,8 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
       : undefined;
 
     if (action.kind === 'confirm_msi' && msiEvidence) {
-      const scoped = eventsSnapshot.filter((event) => event.id === action.eventId);
-      const match = matchEvidenceLine(msiEvidence, scoped.length > 0 ? scoped : eventsSnapshot);
+      const scoped = currentMsiEvents().filter((event) => event.id === action.eventId);
+      const match = matchEvidenceLine(msiEvidence, scoped.length > 0 ? scoped : currentMsiEvents());
       if (match.kind === 'confirm' && match.eventId === action.eventId) {
         const updated = await persistEventMsi(
           match.eventId,
@@ -277,7 +281,7 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
     }
 
     if (action.kind === 'create_plan' && msiEvidence) {
-      const existing = matchEvidenceLine(msiEvidence, eventsSnapshot);
+      const existing = matchEvidenceLine(msiEvidence, currentMsiEvents());
       if (existing.kind === 'confirm') {
         const updated = await persistEventMsi(
           existing.eventId,
@@ -316,7 +320,7 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
     if (action.kind === 'create') {
       // Matched MSI rows use link/confirm; never invent schedules on plain create.
       if (msiEvidence) {
-        const match = matchEvidenceLine(msiEvidence, eventsSnapshot);
+        const match = matchEvidenceLine(msiEvidence, currentMsiEvents());
         if (match.kind === 'confirm') {
           const updated = await persistEventMsi(
             match.eventId,
@@ -343,8 +347,8 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
       } else skipped += 1;
     } else if (action.kind === 'link') {
       if (msiEvidence) {
-        const scoped = eventsSnapshot.filter((event) => event.id === action.eventId);
-        const match = matchEvidenceLine(msiEvidence, scoped.length > 0 ? scoped : eventsSnapshot);
+        const scoped = currentMsiEvents().filter((event) => event.id === action.eventId);
+        const match = matchEvidenceLine(msiEvidence, scoped.length > 0 ? scoped : currentMsiEvents());
         if (match.kind === 'confirm') {
           const updated = await persistEventMsi(
             match.eventId,

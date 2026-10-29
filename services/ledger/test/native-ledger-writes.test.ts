@@ -8,9 +8,11 @@ import { runSqlTransaction } from '../src/dsql/sql-runtime.js';
 import { saveNativeCapture } from '../src/dsql/ledger-capture.js';
 import { readLedgerDetail } from '../src/dsql/ledger-reads.js';
 import {
-  insertLedgerRevision, InvalidLedgerWriteError, LedgerPreconditionError, replaceInstallmentPlan,
+  confirmManualPlanBankTerms, insertLedgerRevision, InvalidLedgerWriteError, LedgerPreconditionError, replaceInstallmentPlan,
   replaceMovementTags, setMovementCategory, setMovementPersonalAmount, setMovementStatus,
+  type ManualPlanBankTermsExpected,
 } from '../src/dsql/ledger-writes.js';
+import { LedgerMutationBudgetError, reserveLedgerMutations, withLedgerMutationBudget } from '../src/dsql/ledger-budget.js';
 import type { SqlClient, TransactionPool } from '../src/dsql/projection.js';
 
 let sql: PGlite;
@@ -37,6 +39,21 @@ const seedImport = async (contentHash = hash) => {
     (kind,content_sha256,position,identity,occurred_on,merchant_raw,amount_mxn_minor,status,row_kind)
     VALUES ($1,$2,0,'confirmed-row','2026-10-02','Original',3333,'matched','msi')`, [kind, contentHash]);
 };
+const manualTerms:ManualPlanBankTermsExpected={principalMinor:10000,cuotaMinor:3333,months:3,
+  startMonth:'2026-10',occurredAt:at,accountLastFour:null};
+const bankTerms={principalMinor:10001,account:{accountId:'american_express_mx:1007',displayName:'American Express · 1007',
+  institution:'american_express_mx',lastFour:'1007'},bankTransactionId:'printed-bank-reference',reconciledAt:'2026-10-08T12:00:00.000Z'};
+const createManualPlan=()=>runSqlTransaction(pool,async client=>{
+  const capture=await saveNativeCapture(client,{token:randomUUID(),captureSource:'manual',reconciliationAt:at,
+    event:{id:randomUUID(),institution:'american_express_mx',eventType:'card_purchase',status:'accepted',
+      amount:{amountMinor:10000,currency:'MXN'},merchantRaw:'Nombre personal de la compra',occurredAt:at,
+      account:{accountId:'american_express_mx:manual',displayName:'American Express (manual)',institution:'american_express_mx'},
+      receivedAt:at,ingestedAt:at,categoryId:'shopping',tags:['compra:objeto'],
+      source:{bucket:'evidence',key:randomUUID(),sha256:hash,contentType:'application/json',kind:'manual_entry'},
+      parserVersion:'manual-entry-v1',parseWarnings:[]}});
+  await replaceInstallmentPlan(client,capture.eventId,schedule());
+  return capture;
+});
 beforeAll(async () => {
   sql = new PGlite();
   for (const statement of [...SCHEMA_STATEMENTS, ...NATIVE_LEDGER_SCHEMA_STATEMENTS]) await sql.query(statement);
@@ -191,5 +208,111 @@ describe('native financial edits and MSI provenance', () => {
     expect(deleted).toBe(true); expect(await snapshot()).toEqual(before);
     await runSqlTransaction(pool, client => replaceInstallmentPlan(client, eventId, undefined));
     expect((await readLedgerDetail(pool, eventId))!.msi).toBeUndefined();
+  });
+});
+
+describe('manual MSI bank term confirmation',()=>{
+  it('updates only current principal/account/reconciliation while preserving the original manual evidence and context',async()=>{
+    const {eventId}=await createManualPlan();
+    const before=(await readLedgerDetail(pool,eventId))!;
+    const originalRows=await snapshot();
+    await runSqlTransaction(pool,client=>confirmManualPlanBankTerms(client,eventId,manualTerms,bankTerms));
+    const after=(await readLedgerDetail(pool,eventId))!;
+    expect(after).toMatchObject({amount:{amountMinor:10001,currency:'MXN'},account:bankTerms.account,
+      bankTransactionId:bankTerms.bankTransactionId,reconciledAt:bankTerms.reconciledAt,
+      merchantRaw:before.merchantRaw,occurredAt:at,status:'accepted',categoryId:'shopping',tags:['compra:objeto']});
+    expect(after.observations).toEqual(before.observations);
+    expect(after.msi).toEqual(before.msi);
+    expect(after.revisions).toEqual(before.revisions);
+    const updatedRows=await snapshot();
+    for(const table of NATIVE_LEDGER_TABLES.filter(table=>table!=='ledger_movements'))
+      expect(updatedRows[table],table).toEqual(originalRows[table]);
+  });
+
+  it('retains needs_review and accepts a matching known card without clearing a previous bank reference',async()=>{
+    const {eventId}=await createManualPlan();
+    await sql.query(`UPDATE olbia.ledger_movements SET status='needs_review',account_last_four='1007',
+      bank_transaction_id='retained-reference' WHERE id=$1`,[eventId]);
+    const {bankTransactionId:_reference,...withoutReference}=bankTerms;
+    await runSqlTransaction(pool,client=>confirmManualPlanBankTerms(client,eventId,
+      {...manualTerms,accountLastFour:'1007'},withoutReference));
+    expect(await readLedgerDetail(pool,eventId)).toMatchObject({status:'needs_review',
+      account:bankTerms.account,bankTransactionId:'retained-reference',amount:{amountMinor:10001}});
+  });
+
+  it('rejects bank evidence from another card when the manual movement already identifies its card',async()=>{
+    const {eventId}=await createManualPlan();
+    await sql.query("UPDATE olbia.ledger_movements SET account_last_four='1007' WHERE id=$1",[eventId]);
+    const before=await snapshot();
+    await expect(runSqlTransaction(pool,client=>confirmManualPlanBankTerms(client,eventId,
+      {...manualTerms,accountLastFour:'1007'},
+      {...bankTerms,account:{...bankTerms.account,lastFour:'1000',accountId:'american_express_mx:1000'}})))
+      .rejects.toBeInstanceOf(LedgerPreconditionError);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it.each([
+    ['principal',{principalMinor:10001}],['quota',{cuotaMinor:3334}],['months',{months:4}],
+    ['start month',{startMonth:'2026-09'}],['purchase instant',{occurredAt:'2026-10-02T12:00:00.124Z'}],
+    ['observed card',{accountLastFour:'1007'}],
+  ])('rejects a stale expected %s without changing any native row',async(_label,changed)=>{
+    const {eventId}=await createManualPlan();
+    const before=await snapshot();
+    await expect(runSqlTransaction(pool,client=>confirmManualPlanBankTerms(client,eventId,{...manualTerms,...changed},bankTerms)))
+      .rejects.toBeInstanceOf(LedgerPreconditionError);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it.each([
+    ['non-manual primary',"UPDATE olbia.ledger_observations SET capture_source='email' WHERE movement_id=$1"],
+    ['rejected movement',"UPDATE olbia.ledger_movements SET status='rejected' WHERE id=$1"],
+    ['deferred movement',"UPDATE olbia.ledger_movements SET status='deferred_msi' WHERE id=$1"],
+    ['foreign amount',"UPDATE olbia.ledger_movements SET currency='USD' WHERE id=$1"],
+    ['personal zero',"UPDATE olbia.ledger_movements SET personal_amount_minor=0 WHERE id=$1"],
+    ['incomplete stub',"UPDATE olbia.installment_plans SET needs_schedule_completion=true WHERE movement_id=$1"],
+    ['cancelled plan',"UPDATE olbia.installment_plans SET status='cancelled' WHERE movement_id=$1"],
+    ['cancelled installment',"UPDATE olbia.installment_entries SET status='cancelled' WHERE movement_id=$1 AND installment_index=2"],
+    ['missing installment',"DELETE FROM olbia.installment_entries WHERE movement_id=$1 AND installment_index=3"],
+    ['drifted calendar',"UPDATE olbia.installment_entries SET month='2027-01' WHERE movement_id=$1 AND installment_index=3"],
+  ])('rejects an ineligible %s without changing any row',async(_label,statement)=>{
+    const {eventId}=await createManualPlan();
+    await sql.query(statement,[eventId]);
+    const before=await snapshot();
+    await expect(runSqlTransaction(pool,client=>confirmManualPlanBankTerms(client,eventId,manualTerms,bankTerms)))
+      .rejects.toBeInstanceOf(LedgerPreconditionError);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it('rejects both proven and ambiguous prior bank-row relationships',async()=>{
+    const {eventId}=await createManualPlan();
+    await seedImport();
+    const confirmed=markInstallmentSpent(schedule(),1,{amountMinor:3333,occurredOn:'2026-10-02',
+      evidenceObservationId:'confirmed-row',confirmedAt:at});
+    await runSqlTransaction(pool,client=>replaceInstallmentPlan(client,eventId,confirmed,[
+      {installmentIndex:1,kind,contentSha256:hash,rowPosition:0},
+    ]));
+    const proven=await snapshot();
+    await expect(runSqlTransaction(pool,client=>confirmManualPlanBankTerms(client,eventId,manualTerms,bankTerms)))
+      .rejects.toBeInstanceOf(LedgerPreconditionError);
+    expect(await snapshot()).toEqual(proven);
+    await sql.query(`UPDATE olbia.installment_entries SET evidence_origin='ambiguous_bank_row',evidence_import_kind=NULL,
+      evidence_content_sha256=NULL,evidence_row_position=NULL WHERE movement_id=$1 AND installment_index=1`,[eventId]);
+    await sql.query('INSERT INTO olbia.installment_evidence_candidates VALUES ($1,1,$2,$3,0)',[eventId,kind,hash]);
+    const ambiguous=await snapshot();
+    await expect(runSqlTransaction(pool,client=>confirmManualPlanBankTerms(client,eventId,manualTerms,bankTerms)))
+      .rejects.toBeInstanceOf(LedgerPreconditionError);
+    expect(await snapshot()).toEqual(ambiguous);
+  });
+
+  it('reserves exactly one mutation and rolls back its current-row update with a later transaction failure',async()=>{
+    const {eventId}=await createManualPlan();
+    const before=await snapshot();
+    await expect(runSqlTransaction(pool,client=>withLedgerMutationBudget(async()=>{
+      reserveLedgerMutations(2998);
+      await confirmManualPlanBankTerms(client,eventId,manualTerms,bankTerms);
+      expect(()=>reserveLedgerMutations(1)).toThrow(LedgerMutationBudgetError);
+      throw new Error('Later audit insertion failed');
+    }))).rejects.toThrow('Later audit insertion failed');
+    expect(await snapshot()).toEqual(before);
   });
 });
