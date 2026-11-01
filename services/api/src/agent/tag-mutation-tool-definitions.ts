@@ -133,6 +133,22 @@ export const TAG_MUTATION_TOOL_DEFINITIONS = [
       required: ['operationIds'],
     },
   },
+  {
+    name: 'manage_category',
+    description: 'Administra UNA categoría del catálogo, no sus movimientos: create crea, update cambia nombre/orden manteniendo ID, archive la retira de nuevas asignaciones sin borrar historia ni reglas, restore la reactiva. La instrucción explícita de David autoriza el cambio; ejecuta en el mismo turno sin segunda confirmación. Consulta list_categories primero y usa su operationId y revision como expectedRevision. Reintenta con los mismos argumentos/operationId. Crear no clasifica movimientos: después usa preview/apply_category_edit cuando David lo haya pedido. No crea ni modifica reglas por comercio. Para deshacer, consulta y aplica el nombre/orden anterior o archive/restore con la revisión vigente.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        operationId: { type: 'string', description: 'UUID devuelto por list_categories; conservarlo al reintentar la misma solicitud.' },
+        action: { type: 'string', enum: ['create','update','archive','restore'] },
+        categoryId: { type: 'string', description: 'ID estable; en create uno nuevo, en otras acciones el ID exacto del catálogo.' },
+        expectedRevision: { type: 'integer', description: 'revision leída en list_categories; obligatorio excepto en create.' },
+        name: { type: 'string', description: 'Nombre visible de 1–100 caracteres; obligatorio en create, opcional en update.' },
+        sortOrder: { type: 'integer', description: 'Orden visible opcional (entero de 32 bits). Create usa 0 si se omite.' },
+      },
+      required: ['operationId','action','categoryId'],
+    },
+  },
 ] as const;
 
 export type TagMutationToolName = (typeof TAG_MUTATION_TOOL_DEFINITIONS)[number]['name'];

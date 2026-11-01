@@ -6,7 +6,7 @@ Olbia's global financial assistant follows the [UI](ui-design-brief.md) and [fin
 
 Cognito JWT → dedicated REST API POST /agent/chat → streaming Lambda → AgentCore Harness → IAM Gateways. Ledger's other routes stay on HTTP API. Browser reads SSE with fetch/ReadableStream, not EventSource; it never calls AgentCore. Authorizer/handler restrict claims.sub to AgentOwnerSub; tools use the configured AGENT_OWNER, never a model/browser-supplied owner. CORS permits Olbia's web origin, including authorization errors.
 
-Harness owns the loop. Finance read tools and bounded mutations use separate Gateway/Lambda targets. Native Cedar Policy Engine ENFORCE denies by default and permits only the eight mutation actions to the exact Harness IAM role. Read tools have no write authority; no generic database-write tool or public /bulk-edits endpoint exists. Managed Web Search preserves citations; code interpreter is off.
+Harness owns the loop. Finance read tools and bounded mutations use separate Gateway/Lambda targets. Native Cedar Policy Engine ENFORCE denies by default and permits only the bounded mutation actions to the exact Harness IAM role. Read tools have no write authority; no generic database-write tool or public /bulk-edits endpoint exists. Managed Web Search preserves citations; code interpreter is off.
 
 Harness/Memory/Web Search run in us-east-1; finance Gateway/tools/DSQL in us-east-2. Model/prompt/inference are resolved at runtime, not hardcoded. The Sonnet adaptive-thinking path omits temperature from its invocation and reserves reasoning/answer tokens according to the adapter; provider configuration remains in Prompt Management. Inspect [agent code](../services/api/src/agent) for exact streaming/tool contracts.
 
@@ -21,6 +21,7 @@ Harness/Memory/Web Search run in us-east-1; finance Gateway/tools/DSQL in us-eas
 | WebSearch | Current public information with links/citations. |
 | preview/apply/undo_tag_edit; apply_tag_edits | Bounded tag-only operations. |
 | preview/apply/undo_category_edit; apply_category_edits | Bounded category-only operations. |
+| list_categories; manage_category | Read the catalog; create, rename/reorder, archive or restore one category. |
 
 Investment history excludes Cajita/Fondo/debts/Neto. Default period all; as-of uses latest evidence on/before date. Global series carries each account forward and exposes coverage, ages, partial/mixed dates. Variation includes FX and is not flow-adjusted return. Symbol ambiguity returns candidate holding IDs, never guesses. Unit-price extremes exclude pre-buy/post-sell days; extrema use daily evidence even if displayed monthly. Range change and first/last in-range change are distinct. Expected no_data/ambiguous/invalid states are data, technical failures are errors.
 
@@ -32,6 +33,14 @@ An explicit chat instruction authorizes the bounded tags/category change. In the
 2. Preview returns every affected movement and freezes IDs, previous/next values, count and amount. Maximum 49 movements per operation; batch accepts 1–12 nonoverlapping operations under existing limits.
 3. Apply exactly those operation IDs atomically, creating a revision per movement. Changed preconditions/expired previews reject apply and require a fresh preview. Apply/undo are idempotent; undo restores frozen before-state under current preconditions.
 4. SSE mutation refreshes ledger and shows factual receipt per operation. No second UI confirmation; undo is requested by chat. Category edits never change merchant rules. Tags never change financial totals.
+
+### Category catalog control plane
+
+An explicit instruction such as “crea Mascotas” or “renombra Shopping a Compras” authorizes `manage_category` in the same turn, without a second UI confirmation. `list_categories` returns all SQL identities, including archived entries, their revision and a fresh operationId. Create requires a new stable ID and name; update requires the current revision and changes only name/order. An existing ID never changes.
+
+Archive is the catalog deletion operation: it retains the identity, historical labels, movement references and merchant rules, blocks new assignments and suspends automatic matching to that category. Restore reactivates it. Undo of a prior movement assignment may restore an archived historical category; new apply operations must target active categories. Renaming changes the displayed label in historical views while retaining the category ID and every earlier catalog value in immutable history. Catalog edits do not reclassify movements or create merchant rules; use the existing bounded movement tools when David also requests assignments.
+
+Catalog changes commit atomically with lifecycle revision and immutable before/after history. The same operationId and arguments return the original receipt; reuse for another request or a stale revision fails. Legacy catalog PUT participates in the same history/revision and cannot reactivate archived entries. SSE emits a factual catalog receipt and refreshes affected views and assignment choices. To revert, read the latest revision and apply the previous name/order or archive/restore in a new audited operation. No generic SQL write tool is exposed.
 
 ## Conversations and memory
 

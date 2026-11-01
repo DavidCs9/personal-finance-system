@@ -14,6 +14,7 @@ import {
   TAG_MUTATION_TOOL_DEFINITIONS,
   type TagMutationToolName,
 } from './tag-mutation-tool-definitions.js';
+import { manageAgentCategory } from '../categories/control-plane.js';
 
 export { TAG_MUTATION_TOOL_DEFINITIONS, type TagMutationToolName };
 
@@ -34,6 +35,8 @@ export const runTagMutationTool = async (
   input: Record<string, unknown>,
 ): Promise<unknown> => {
   switch (name as TagMutationToolName | string) {
+    case 'manage_category':
+      return manageAgentCategory(owner, input);
     case 'preview_tag_edit':
       return previewAgentTagEdit(owner, parseAgentTagEditInput(input));
     case 'apply_tag_edit':

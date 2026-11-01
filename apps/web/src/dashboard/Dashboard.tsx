@@ -761,6 +761,7 @@ export function Dashboard({
           demoMode={demoMode}
           onClose={() => setAssistantOpen(false)}
           onMutated={() => {
+            void queryClient.invalidateQueries({ queryKey: ["categories"] });
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot });

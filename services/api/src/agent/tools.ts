@@ -11,6 +11,7 @@ import {
 } from './aggregates.js';
 import { TOOL_DEFINITIONS, type AgentToolName } from './tool-definitions.js';
 import type { SpendingRange } from './spending-range.js';
+import { listAgentCategories } from '../categories/control-plane.js';
 
 export { TOOL_DEFINITIONS, type AgentToolName };
 
@@ -20,6 +21,8 @@ export const runAgentTool = async (
   input: Record<string, unknown>,
 ): Promise<unknown> => {
   switch (name as AgentToolName | string) {
+    case 'list_categories':
+      return listAgentCategories();
     case 'month_snapshot':
       return monthSnapshot(owner, String(input.month));
     case 'plan_month_scenario':

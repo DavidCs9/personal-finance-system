@@ -7,6 +7,7 @@ import { isOCCError } from '@aws/aurora-dsql-node-postgres-connector';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from './ledger-schema.js';
 import { NATIVE_WEALTH_SCHEMA_STATEMENTS, nativeWealthReadGrant, nativeWealthWriteGrants } from './wealth-schema.js';
 import { NATIVE_PLANNING_SCHEMA_STATEMENTS, NATIVE_PLANNING_TABLES } from './planning-schema.js';
+import { NATIVE_CATEGORY_SCHEMA_STATEMENTS, nativeCategoryReadGrant, nativeCategoryWriteGrants } from './category-schema.js';
 
 import { MIGRATION_EVIDENCE_TABLES } from './catalog.js';
 export class BootstrapFailure extends Error {
@@ -132,6 +133,7 @@ export const SCHEMA_STATEMENTS = [
   ...NATIVE_DELIVERY_SCHEMA_STATEMENTS,
   ...NATIVE_THREAD_SCHEMA_STATEMENTS,
   ...NATIVE_EXCEPTION_SCHEMA_STATEMENTS,
+  ...NATIVE_CATEGORY_SCHEMA_STATEMENTS,
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
@@ -178,6 +180,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('schema-grant', 'GRANT USAGE ON SCHEMA olbia TO olbia_projector');
   await query('read-grant', 'GRANT SELECT ON olbia.schema_migrations,olbia.movement_months,olbia.runtime_state TO olbia_projector');
   await query('catalog-projector-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_projector');
+  await query('category-projector-read', nativeCategoryReadGrant('olbia_projector'));
   await query('plans-projector-read', 'GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO olbia_projector');
   await query('planning-links-projector-read', `GRANT SELECT ON ${NATIVE_PLANNING_TABLES.map(t => `olbia.${t}`).join(',')} TO olbia_projector`);
   await query('payroll-projector-read', 'GRANT SELECT ON olbia.payslips,olbia.payslip_lines TO olbia_projector');
@@ -208,6 +211,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query('threads-reader-read', nativeThreadReadGrant('olbia_reader'));
     await query('reader-migration-read', 'GRANT SELECT ON olbia.schema_migrations TO olbia_reader');
     await query('catalog-reader-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_reader');
+    await query('category-reader-read', nativeCategoryReadGrant('olbia_reader'));
     await query('plans-reader-read', 'GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO olbia_reader');
     await query('planning-links-reader-read', `GRANT SELECT ON ${NATIVE_PLANNING_TABLES.map(t => `olbia.${t}`).join(',')} TO olbia_reader`);
     await query('payroll-reader-read', 'GRANT SELECT ON olbia.payslips,olbia.payslip_lines TO olbia_reader');
@@ -227,6 +231,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query('ledger-verifier-read', nativeLedgerReadGrant(role));
     await query('wealth-verifier-read', nativeWealthReadGrant(role));
     await query('exceptions-verifier-read',nativeExceptionReadGrant(role));
+    await query('category-verifier-read', nativeCategoryReadGrant(role));
     await query('threads-verifier-read', nativeThreadReadGrant(role));
     await query('delivery-verifier-read', nativeDeliveryReadGrant(role));
     await query('push-verifier-read', nativePushReadGrant(role));
@@ -267,6 +272,9 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     }
     if (writer) await query(`view-${role}`,`GRANT SELECT ON olbia.movement_months TO ${role}`);
     await query(`catalog-read-${role}`, `GRANT SELECT ON olbia.spend_categories TO ${role}`);
+    await query(`category-read-${role}`, nativeCategoryReadGrant(role));
+    if (writer) for (const [index, statement] of nativeCategoryWriteGrants(role).entries())
+      await query(`category-write-${role}-${index}`, statement);
     await query(`plans-read-${role}`, `GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO ${role}`);
     await query(`planning-links-read-${role}`, `GRANT SELECT ON ${NATIVE_PLANNING_TABLES.map(t => `olbia.${t}`).join(',')} TO ${role}`);
     await query(`payroll-read-${role}`, `GRANT SELECT ON olbia.payslips,olbia.payslip_lines TO ${role}`);
@@ -308,6 +316,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   }
   await query('native-control-complete','INSERT INTO olbia.schema_migrations VALUES (20,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('native-payment-reconciliation-complete','INSERT INTO olbia.schema_migrations VALUES (22,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
+  await query('category-catalog-complete','INSERT INTO olbia.schema_migrations VALUES (24,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 };
 
 export const nativeLedgerReadGrant = (role: string): string =>

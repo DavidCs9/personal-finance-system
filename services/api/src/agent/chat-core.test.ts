@@ -174,3 +174,14 @@ describe('Harness reasoning and travel planning configuration', () => {
     expect(buildHarnessSystemPrompt('Prompt base.', 'Cuanto gaste en restaurantes?')).toBe('Prompt base.');
   });
 });
+
+
+it('emits factual catalog receipts only from completed catalog writes', () => {
+  expect(mutationFromToolResult('manage_category', { operationId: 'catalog-change', action: 'archive',
+    category: { id: 'shopping', name: 'Compras', archived: true, revision: 2 } })).toMatchObject({
+      type: 'mutation', kind: 'category_catalog', operationId: 'catalog-change',
+      change: { action: 'archive', categoryId: 'shopping', name: 'Compras', archived: true },
+    });
+  expect(mutationFromToolResult('list_categories', { operationId: 'read-only' })).toBeUndefined();
+  expect(mutationFromToolResult('manage_category', { operationId: 'failed', error: 'stale' })).toBeUndefined();
+});

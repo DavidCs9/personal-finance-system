@@ -23,8 +23,9 @@ const putCategoryCatalogInternal = async (categories: readonly SpendCategory[]):
 const upsertMerchantRuleInternal = saveMerchantRule;
 
 export const resolveCategoryForMerchant = async (merchantRaw: string): Promise<string | undefined> => {
-  const rules = await listMerchantRules();
-  return resolveCategoryId(merchantRaw, rules);
+  const [rules, categories] = await Promise.all([listMerchantRules(), listCategories()]);
+  const active = new Set(categories.filter(category => !category.archived).map(category => category.id));
+  return resolveCategoryId(merchantRaw, rules.filter(rule => !rule.categoryId || active.has(rule.categoryId)));
 };
 
 

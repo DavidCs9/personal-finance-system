@@ -12,6 +12,7 @@ describe('AgentCore tag mutation target schema', () => {
       'apply_category_edit',
       'undo_category_edit',
       'apply_category_edits',
+      'manage_category',
     ]);
     expect(cloudFormationTagMutationTools[0]).toMatchObject({
       Name: 'preview_tag_edit',
