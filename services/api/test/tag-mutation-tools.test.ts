@@ -2,17 +2,21 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { nativeFixture } from './fixtures/native-ledger.js';
 import { readLedgerDetail } from '../../ledger/src/dsql/ledger-reads.js';
 import type { SqlClient, TransactionPool } from '../../ledger/src/dsql/projection.js';
+import type { Context } from 'aws-lambda';
 
 const harness = vi.hoisted(() => ({ pool: undefined as unknown as SqlClient & TransactionPool }));
 vi.mock('../../ledger/src/dsql/connection.js', () => ({ createPool: () => harness.pool }));
 let fixture: Awaited<ReturnType<typeof nativeFixture>>;
 let runTagMutationTool: typeof import('../src/agent/tag-mutation-tools.js').runTagMutationTool;
 let readBulkOperation: typeof import('../src/events/bulk-storage.js').readBulkOperation;
+let handler: typeof import('../src/agent/tag-mutation-tools-handler.js').handler;
 beforeAll(async () => {
   vi.stubEnv('METADATA_TABLE_NAME', 'metadata'); vi.stubEnv('RAW_EMAIL_BUCKET_NAME', 'evidence');
+  vi.stubEnv('AGENT_OWNER', 'owner-1');
   fixture = await nativeFixture(); harness.pool = fixture.pool;
   ({ runTagMutationTool } = await import('../src/agent/tag-mutation-tools.js'));
   ({ readBulkOperation } = await import('../src/events/bulk-storage.js'));
+  ({ handler } = await import('../src/agent/tag-mutation-tools-handler.js'));
 }, 30_000);
 beforeEach(() => fixture.reset());
 afterAll(async () => { await fixture.sql.close(); vi.unstubAllEnvs(); });
@@ -98,5 +102,33 @@ describe('tag and category mutation Gateway tools on native SQL', () => {
 
   it('rejects tools outside the dedicated mutation contract', async () => {
     await expect(runTagMutationTool('owner-1', 'set_category', {})).rejects.toThrow(/desconocida/);
+  });
+
+  it('preserves category names through native Gateway arguments across the complete catalog lifecycle', async () => {
+    const { randomUUID } = await import('node:crypto');
+    const context = { clientContext: { custom: { bedrockAgentCoreToolName: 'olbia-tag-mutations___manage_category' } } } as unknown as Context;
+    const manage = (args: Record<string, unknown>) => handler({ operationId: randomUUID(), categoryId: 'regalos', ...args }, context);
+    const before = await fixture.snapshot();
+    expect(await manage({ action: 'create', name: 'Regalos', sortOrder: 115, owner: 'untrusted-input' }))
+      .toMatchObject({ category: { id: 'regalos', name: 'Regalos', revision: 1, archived: false } });
+    expect(await manage({ action: 'update', name: 'Regalos y detalles', expectedRevision: 1 }))
+      .toMatchObject({ category: { id: 'regalos', name: 'Regalos y detalles', revision: 2 } });
+    expect(await manage({ action: 'archive', expectedRevision: 2 }))
+      .toMatchObject({ category: { id: 'regalos', archived: true, revision: 3 } });
+    expect(await manage({ action: 'restore', expectedRevision: 3 }))
+      .toMatchObject({ category: { id: 'regalos', name: 'Regalos y detalles', archived: false, revision: 4 } });
+    expect((await fixture.sql.query('SELECT changed_by,action FROM olbia.category_catalog_changes ORDER BY revision')).rows)
+      .toEqual(['create','update','archive','restore'].map(action => ({ changed_by: 'owner-1', action })));
+    expect(await fixture.snapshot()).toEqual(before);
+  });
+
+  it('keeps business names with explicit toolName and nested legacy envelopes', async () => {
+    const { randomUUID } = await import('node:crypto');
+    for (const nested of [false, true]) {
+      const args = { operationId: randomUUID(), action: 'create', categoryId: nested ? 'nested_category' : 'flat_category',
+        name: nested ? 'Nested label' : 'Flat label' };
+      const event = nested ? { name: 'manage_category', arguments: args } : { toolName: 'manage_category', ...args };
+      expect(await handler(event, {} as Context)).toMatchObject({ category: { id: args.categoryId, name: args.name } });
+    }
   });
 });
