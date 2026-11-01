@@ -82,7 +82,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'list_movements',
     description:
-      'Total y lista de movimientos de gasto para un periodo (máx 50 filas, total sin truncar), opcionalmente filtrados por categoría o tag exacto. Usa range para hoy, ayer, esta semana, últimos 7 días, este mes o este año; custom para fechas explícitas; month para un mes calendario completo. Las fechas usan la zona financiera de México. Si complete=false, aclara que excludedMonthOnlySpentMinor no pudo asignarse al día exacto; no lo sumes al total.',
+      'Total y lista paginada de gasto (máx 50 filas por página, total y movementCount del filtro completo). Para categorizar pendientes usa categoryId=_uncategorized y el mes solicitado; recorre nextCursor manteniendo los mismos filtros hasta null. Cada fila trae ref breve para eventRefs de preview; si es ambigua usa su id completo. No reescribas UUIDs ni infieras que sólo existen las filas de una página. Usa range para hoy, ayer, esta semana, últimos 7 días, este mes o este año; custom para fechas explícitas; month para un mes calendario completo. Las fechas usan Chihuahua; datePrecision=day no acredita hora. Si complete=false, declara excludedMonthOnlySpentMinor sin sumarlo al total.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -94,9 +94,10 @@ export const TOOL_DEFINITIONS = [
         },
         fromDay: { type: 'string', description: 'Inicio inclusivo YYYY-MM-DD para range=custom.' },
         toDay: { type: 'string', description: 'Fin inclusivo YYYY-MM-DD para range=custom.' },
-        categoryId: { type: 'string' },
+        categoryId: { type: 'string', description: 'ID del catálogo o _uncategorized para todos los pendientes.' },
         tag: { type: 'string', description: 'Tag exacto, por ejemplo viaje:vegas.' },
         limit: { type: 'number', description: 'Máximo de filas devueltas (1–50; default 20).' },
+        cursor: { type: 'string', description: 'nextCursor de la página anterior con los mismos filtros. Omitir en la primera página.' },
       },
     },
   },
@@ -114,7 +115,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'wealth_snapshot',
-    description: 'Patrimonio neto, activos y deudas de tarjeta (solo lectura).',
+    description: 'Foto actual de patrimonio neto, activos y deudas de tarjeta, con fechas, antigüedad y datos faltantes. No es proyección de cierre ni cambia con el mes seleccionado. Usa marketInvestmentsMxnMinor para Bitso+IBKR y cashAccountMxnMinor para Cajita; Fondo no es efectivo disponible antes de diciembre. Deuda incluye el saldo total, no sólo cuotas. Declara missing/stale; no asumas compras a MSI ni nómina pendiente sin evidencia o indicación de David.',
     inputSchema: {
       type: 'object',
       properties: {},

@@ -3,7 +3,7 @@ export const TAG_MUTATION_TOOL_DEFINITIONS = [
     name: 'preview_tag_edit',
     description: [
       'Es un dry run que congela movimientos accepted exactos antes de cambiar tags y devuelve affected completo, no sólo una muestra.',
-      'Usa eventIds cuando ya identificaste movimientos concretos con list_movements; acepta IDs de fechas distintas. También acepta un rango sólo si lleva merchantRaw exacto, sourceTags u onlyUntagged=true. Nunca llames esta tool con sólo fechas.',
+      'Prefiere eventRefs con las referencias breves de list_movements; SQL exige una identidad única. Si una referencia es ambigua, usa eventId/eventIds completos, copiados exactamente. Acepta fechas distintas. También acepta un rango sólo si lleva merchantRaw exacto, sourceTags u onlyUntagged=true. Nunca llames esta tool con sólo fechas. Prepara como máximo cuatro previews por respuesta para evitar truncar argumentos; aplica esos y sigue con el siguiente lote.',
       'Revisa todos los afectados antes de apply. La instrucción explícita del usuario en el chat autoriza el cambio: después de recibir operationId debes llamar apply_tag_edit o apply_tag_edits inmediatamente en el mismo turno, sin pedir confirmación en la UI.',
       'Sólo modifica tags; nunca categorías.',
     ].join(' '),
@@ -16,6 +16,7 @@ export const TAG_MUTATION_TOOL_DEFINITIONS = [
         removeTags: { type: 'array', items: { type: 'string' }, description: 'Tags que se quitarán.' },
         eventId: { type: 'string', description: 'ID exacto de un movimiento. Alternativa breve a eventIds para un solo movimiento.' },
         eventIds: { type: 'array', items: { type: 'string' }, description: 'IDs exactos de movimientos; 1–49, únicos. Puede usarse sin fechas.' },
+        eventRefs: { type: 'array', minItems: 1, maxItems: 49, items: { type: 'string', pattern: '^[a-fA-F0-9]{8}$' }, description: 'Referencias ref de list_movements. No combinar con eventId/eventIds; ambigüedad rechaza sin guardar cambios.' },
         merchantRaw: { type: 'string', description: 'Comercio exacto a filtrar dentro del rango; compara sin mayúsculas, acentos ni espacios extra.' },
         sourceTags: { type: 'array', items: { type: 'string' }, description: 'Sólo cambia movimientos que aún contienen todos estos tags.' },
         onlyUntagged: { type: 'boolean', description: 'Sólo cambia movimientos que aún no tienen tags. No combinar con sourceTags.' },
@@ -70,7 +71,7 @@ export const TAG_MUTATION_TOOL_DEFINITIONS = [
     name: 'preview_category_edit',
     description: [
       'Es un dry run que congela movimientos accepted exactos antes de cambiar su categoría y devuelve affected completo, no sólo una muestra.',
-      'Usa eventIds cuando ya identificaste movimientos concretos con list_movements; acepta IDs de fechas distintas. También acepta un rango sólo si lleva merchantRaw exacto, sourceCategoryId o onlyUncategorized=true. Nunca llames esta tool con sólo fechas.',
+      'Consulta list_categories y usa un ID vigente. Prefiere eventRefs con las referencias breves de list_movements; SQL exige una identidad única. Si una referencia es ambigua, usa eventId/eventIds completos, copiados exactamente. Acepta fechas distintas. También acepta un rango sólo si lleva merchantRaw exacto, sourceCategoryId o onlyUncategorized=true. Nunca llames esta tool con sólo fechas. Prepara como máximo cuatro previews por respuesta para evitar truncar argumentos; aplica esos y sigue con el siguiente lote. Al terminar verifica month_snapshot o list_movements con _uncategorized antes de afirmar que acabaste.',
       'Revisa todos los afectados antes de apply. La instrucción explícita del usuario en el chat autoriza el cambio: después de recibir operationId debes llamar apply_category_edit o apply_category_edits inmediatamente en el mismo turno, sin pedir confirmación en la UI.',
       'Sólo modifica categoryId; nunca tags ni reglas de comercio.',
     ].join(' '),
@@ -82,6 +83,7 @@ export const TAG_MUTATION_TOOL_DEFINITIONS = [
         categoryId: { type: 'string', description: 'ID de categoría destino del catálogo de Olbia.' },
         eventId: { type: 'string', description: 'ID exacto de un movimiento. Alternativa breve a eventIds para un solo movimiento.' },
         eventIds: { type: 'array', items: { type: 'string' }, description: 'IDs exactos de movimientos; 1–49, únicos. Puede usarse sin fechas.' },
+        eventRefs: { type: 'array', minItems: 1, maxItems: 49, items: { type: 'string', pattern: '^[a-fA-F0-9]{8}$' }, description: 'Referencias ref de list_movements. No combinar con eventId/eventIds; ambigüedad rechaza sin guardar cambios.' },
         merchantRaw: { type: 'string', description: 'Comercio exacto a filtrar dentro del rango; compara sin mayúsculas, acentos ni espacios extra.' },
         sourceCategoryId: { type: 'string', description: 'Sólo cambia movimientos que aún tienen esta categoría actual.' },
         onlyUncategorized: { type: 'boolean', description: 'Sólo cambia movimientos que aún no tienen categoría. No combinar con sourceCategoryId.' },

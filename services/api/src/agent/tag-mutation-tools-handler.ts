@@ -1,5 +1,8 @@
 import type { Context } from 'aws-lambda';
 import { runTagMutationTool, TAG_MUTATION_TOOL_DEFINITIONS } from './tag-mutation-tools.js';
+import { InvalidBulkEditError } from '../events/bulk-edits.js';
+import { InvalidCategoryError } from '../categories/catalog.js';
+import { rejectedToolRequest } from './tool-errors.js';
 
 export const handler = async (
   event: Record<string, unknown>,
@@ -7,7 +10,15 @@ export const handler = async (
 ): Promise<unknown> => {
   const owner = process.env.AGENT_OWNER?.trim();
   if (!owner) throw new Error('AGENT_OWNER is not configured on the tag mutation Lambda.');
-  return runTagMutationTool(owner, resolveToolName(event, context), resolveArgs(event, context));
+  try {
+    return await runTagMutationTool(owner, resolveToolName(event, context), resolveArgs(event, context));
+  } catch (error) {
+    if (error instanceof InvalidCategoryError || error instanceof InvalidBulkEditError) {
+      return rejectedToolRequest(error.message,
+        error instanceof InvalidCategoryError ? 'list_categories' : error.recoveryTool);
+    }
+    throw error;
+  }
 };
 
 export const tagMutationGatewayToolDefinitions = () =>

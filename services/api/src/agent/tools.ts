@@ -43,6 +43,7 @@ export const runAgentTool = async (
         categoryId: typeof input.categoryId === 'string' ? input.categoryId : undefined,
         tag: typeof input.tag === 'string' ? input.tag : undefined,
         limit: typeof input.limit === 'number' ? input.limit : undefined,
+        cursor: typeof input.cursor === 'string' ? input.cursor : undefined,
       });
     case 'compare_months':
       return compareMonths(

@@ -12,6 +12,7 @@ import { getMonthSummary } from '../months/summary.js';
 import { withLedgerReadSnapshot } from '../events/sql-reads.js';
 import { getWealthOverview, listWealthSnapshots } from '../wealth/service.js';
 import { listCategories } from '../categories/service.js';
+import { wealthFactsForAgent } from './wealth-facts.js';
 import { loadCategorizedMonthEvents, loadCategorizedMonthsEvents, loadCategorizedComparisonEvents } from '../analytics/events.js';
 import { isValidMonth } from '../months/monthly-plan.js';
 import {
@@ -211,24 +212,7 @@ export const listMovementsForAgent = async (
 };
 
 export const wealthSnapshotForAgent = async (owner: string): Promise<Record<string, unknown>> => {
-  const wealth = await getWealthOverview(owner);
-  return {
-    currency: wealth.currency,
-    netMxnMinor: wealth.netMxnMinor,
-    assetsMxnMinor: wealth.assetsMxnMinor,
-    liabilitiesMxnMinor: wealth.liabilitiesMxnMinor,
-    accounts: (wealth.accounts as readonly Record<string, unknown>[]).map((account) => ({
-      id: account.id,
-      name: account.name,
-      connected: account.connected,
-      latestMxnMinor: (account.latestSnapshot as { totalMxnMinor?: number } | undefined)?.totalMxnMinor ?? null,
-    })),
-    liabilities: (wealth.liabilities as readonly Record<string, unknown>[]).map((liability) => ({
-      cardId: liability.cardId,
-      name: liability.name,
-      latestMxnMinor: (liability.latestSnapshot as { amountMinor?: number } | undefined)?.amountMinor ?? null,
-    })),
-  };
+  return wealthFactsForAgent(await getWealthOverview(owner));
 };
 
 export const investmentHistory = async (

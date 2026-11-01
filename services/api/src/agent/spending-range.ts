@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   addCalendarMonths,
   countsTowardMonthSpend,
@@ -31,6 +32,7 @@ export interface SpendingRangeQuery {
   readonly categoryId?: string;
   readonly tag?: string;
   readonly limit?: number;
+  readonly cursor?: string;
 }
 
 export class InvalidSpendingRangeQueryError extends Error {}
@@ -165,6 +167,31 @@ type SpendingMovement = {
   readonly installmentMonths?: number;
 };
 
+const movementKey = (row: SpendingMovement) => ({
+  day: row.occurredOn ?? `${row.month}-00`, amount: row.amountMinor,
+  id: row.id, month: row.month, installment: row.installmentIndex ?? 0,
+});
+type MovementKey = ReturnType<typeof movementKey>;
+const compareMovementKeys = (left: MovementKey, right: MovementKey): number =>
+  right.day.localeCompare(left.day) || right.amount - left.amount || left.id.localeCompare(right.id)
+  || left.month.localeCompare(right.month) || left.installment - right.installment;
+
+const cursorKey = (cursor: string, selection: string): MovementKey => {
+  try {
+    if (cursor.length > 1024) throw new Error();
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    const key = parsed.key;
+    if (parsed.version !== 1 || parsed.selection !== selection || !key
+      || typeof key.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(key.day)
+      || typeof key.id !== 'string' || key.id.length > 100
+      || typeof key.month !== 'string' || !isValidMonth(key.month)
+      || !Number.isSafeInteger(key.amount) || !Number.isInteger(key.installment)) throw new Error();
+    return key;
+  } catch {
+    throw new InvalidSpendingRangeQueryError('El cursor no corresponde a estos filtros. Vuelve a consultar sin cursor.');
+  }
+};
+
 const categoryMatches = (event: CategorizedSpendEvent, categoryId: string | undefined): boolean => {
   if (!categoryId) return true;
   if (categoryId === '_uncategorized') return !event.categoryId;
@@ -255,16 +282,21 @@ export const spendingRangeFromEvents = (
     }
   }
 
-  movements.sort((left, right) => {
-    const leftDay = left.occurredOn ?? `${left.month}-00`;
-    const rightDay = right.occurredOn ?? `${right.month}-00`;
-    return rightDay.localeCompare(leftDay) || right.amountMinor - left.amountMinor;
-  });
+  movements.sort((left, right) => compareMovementKeys(movementKey(left), movementKey(right)));
   const totalSpentMinor = movements.reduce((sum, movement) => sum + movement.amountMinor, 0);
   const uncertainMinor = movements
     .filter((movement) => movement.status === 'needs_review')
     .reduce((sum, movement) => sum + movement.amountMinor, 0);
   const limit = Math.min(Math.max(Math.trunc(query.limit ?? 20), 1), 50);
+  const selection = createHash('sha256').update(JSON.stringify([
+    range.fromDay, range.toDay, query.categoryId ?? null, query.tag ?? null,
+  ])).digest('hex');
+  const after = query.cursor === undefined ? undefined : cursorKey(query.cursor, selection);
+  const remaining = after ? movements.filter(row => compareMovementKeys(movementKey(row), after) > 0) : movements;
+  const page = remaining.slice(0, limit);
+  const nextCursor = remaining.length > limit ? Buffer.from(JSON.stringify({
+    version: 1, selection, key: movementKey(page.at(-1)!),
+  })).toString('base64url') : null;
 
   return {
     currency: 'MXN',
@@ -278,7 +310,8 @@ export const spendingRangeFromEvents = (
     excludedMonthOnlySpentMinor,
     excludedMonthOnlyMovementCount,
     complete: excludedMonthOnlyMovementCount === 0,
-    movements: movements.slice(0, limit),
-    truncated: movements.length > limit,
+    movements: page.map(row => ({ ...row, ref: row.id.slice(0, 8) })),
+    nextCursor,
+    truncated: nextCursor !== null,
   };
 };

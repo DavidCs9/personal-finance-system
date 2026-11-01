@@ -25,6 +25,45 @@ const capture = { occurredAt: '2026-08-22T12:00:00.000Z', receivedAt: '2026-08-2
 const operationId = (result: unknown) => (result as { operationId: string }).operationId;
 
 describe('tag and category mutation Gateway tools on native SQL', () => {
+  it('resolves short native references and freezes full IDs for audited apply', async () => {
+    const id = await fixture.create({ ...capture, merchantRaw: 'Shop', categoryId: 'otros' });
+    const result = await handler({ toolName: 'preview_category_edit', categoryId: 'shopping', eventRefs: [id.slice(0, 8)] }, {} as Context);
+    expect(result).toMatchObject({ affected: [{ id }], movementCount: 1 });
+    expect(await readBulkOperation('owner-1', operationId(result))).toMatchObject({ selection: { eventIds: [id] } });
+    await handler({ toolName: 'apply_category_edit', operationId: operationId(result) }, {} as Context);
+    expect(await readLedgerDetail(fixture.pool, id)).toMatchObject({ categoryId: 'shopping', revisions: [{ source: 'assistant_chat_category_edit' }] });
+  });
+
+  it('rejects ambiguous, absent and mixed references without creating previews or edits', async () => {
+    await fixture.create({ ...capture, id: '12345678-0000-4000-8000-000000000001' });
+    await fixture.create({ ...capture, id: '12345678-0000-4000-8000-000000000002' });
+    const before = await fixture.snapshot();
+    for (const args of [
+      { eventRefs: ['12345678'] }, { eventRefs: ['ffffffff'] },
+      { eventRefs: ['12345678'], eventIds: ['12345678-0000-4000-8000-000000000001'] },
+      { eventRefs: ['12345678', '12345678'] }, { eventRefs: ['%'] },
+    ]) {
+      expect(await handler({ toolName: 'preview_tag_edit', addTags: ['review'], ...args }, {} as Context))
+        .toMatchObject({ ok: false, status: 'invalid_request', retryable: false, recovery: { tool: 'list_movements' } });
+      expect(await fixture.snapshot()).toEqual(before);
+    }
+  });
+
+  it('returns domain validation to Gateway but preserves unexpected SQL failures as failures', async () => {
+    const id = await fixture.create({ ...capture });
+    const before = await fixture.snapshot();
+    expect(await handler({ toolName: 'preview_category_edit', categoryId: 'missing_category', eventId: id }, {} as Context))
+      .toMatchObject({ ok: false, status: 'invalid_request', recovery: { tool: 'list_categories' } });
+    const readHandler = (await import('../src/agent/tools-handler.js')).handler;
+    expect(await readHandler({ toolName: 'list_movements', month: 'not-a-month' }, {} as Context))
+      .toMatchObject({ ok: false, status: 'invalid_request', recovery: { tool: 'list_movements' } });
+    expect(await fixture.snapshot()).toEqual(before);
+    const query = vi.spyOn(harness.pool, 'query').mockRejectedValueOnce(new Error('database unavailable'));
+    try {
+      await expect(handler({ toolName: 'preview_tag_edit', addTags: ['review'], eventRefs: [id.slice(0, 8)] }, {} as Context))
+        .rejects.toThrow('database unavailable');
+    } finally { query.mockRestore(); }
+  });
   it('freezes owner-scoped tag intent and routes apply/undo with complete audit history', async () => {
     const id = await fixture.create({ ...capture, merchantRaw: 'Panda Express' });
     const result = await runTagMutationTool('owner-1', 'preview_tag_edit', { eventId: id, addTags: ['Viaje:Végas'] });

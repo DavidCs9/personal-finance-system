@@ -3,15 +3,19 @@ import {
   BedrockAgentCoreClient,
   InvokeHarnessCommand,
   type HarnessBedrockModelConfig,
+  type InvokeHarnessStreamOutput,
 } from '@aws-sdk/client-bedrock-agentcore';
 import { CognitoJwtVerifier } from 'aws-jwt-verify';
 import { resolveRuntimePrompt } from './prompt-runtime.js';
+import { isRejectedToolRequest } from './tool-errors.js';
 
 const harnessArn = process.env.HARNESS_ARN?.trim();
 const cognitoUserPoolId = process.env.COGNITO_USER_POOL_ID?.trim();
 const cognitoClientId = process.env.COGNITO_CLIENT_ID?.trim();
 const agentcore = new BedrockAgentCoreClient({
   region: process.env.AGENTCORE_REGION?.trim() || undefined,
+  // An invocation can commit tool effects before a transport failure; replay is not safe.
+  maxAttempts: 1,
 });
 
 const jwtVerifier = cognitoUserPoolId && cognitoClientId
@@ -134,14 +138,6 @@ export const requestMethod = (event: AgentChatGatewayEvent): string =>
 
 export const requestIdOf = (event: AgentChatGatewayEvent): string =>
   event.requestContext.requestId || randomUUID();
-
-const isTransient = (error: unknown): boolean => {
-  const name = error && typeof error === 'object' && 'name' in error
-    ? String((error as { name: string }).name)
-    : '';
-  const message = error instanceof Error ? error.message : String(error);
-  return /throttl|timeout|temporar|429|503|ECONNRESET/i.test(`${name} ${message}`);
-};
 
 export const citationsFromPayload = (data: Record<string, unknown>): AgentSseEvent[] => {
   const out: AgentSseEvent[] = [];
@@ -407,12 +403,14 @@ async function* invokeHarnessStream(
   month: string,
   userMessage: string,
   sessionId: string,
+  requestId: string,
 ): AsyncGenerator<AgentSseEvent> {
   if (!harnessArn) {
     throw new Error('HARNESS_ARN no configurado: el proxy solo habla con AgentCore Harness.');
   }
 
   const prompt = await resolveRuntimePrompt();
+  const model = buildHarnessModelConfig(prompt);
 
   const response = await agentcore.send(new InvokeHarnessCommand({
     harnessArn,
@@ -423,8 +421,12 @@ async function* invokeHarnessStream(
     actorId: owner,
     systemPrompt: [{ text: buildHarnessSystemPrompt(prompt.text, userMessage) }],
     model: {
-      bedrockModelConfig: buildHarnessModelConfig(prompt),
+      bedrockModelConfig: model,
     },
+    // The native loop limit must agree with the managed model generation budget.
+    maxTokens: model.maxTokens,
+    maxIterations: 25,
+    timeoutSeconds: 270,
     messages: [{
       role: 'user',
       content: [{
@@ -433,161 +435,179 @@ async function* invokeHarnessStream(
     }],
   }));
 
+  yield* harnessStreamEvents(response.stream ?? (async function* () {})(), requestId);
+}
+
+export async function* harnessStreamEvents(
+  stream: AsyncIterable<InvokeHarnessStreamOutput>,
+  requestId: string,
+): AsyncGenerator<AgentSseEvent> {
+
   const toolUseByIndex = new Map<number, { toolUseId: string; name: string; inputJson: string }>();
-  const toolResultByIndex = new Map<number, { toolUseId: string; status?: string; payload?: Record<string, unknown> }>();
+  const toolResultByIndex = new Map<number, { toolUseId: string; status?: string; text?: string; payload?: Record<string, unknown> }>();
   const activeTools = new Map<string, { name: string; label: string; attempt: number; startedAt: number }>();
   const attemptsByTool = new Map<string, number>();
   const activeReasoning = new Map<number, { reasoningId: string; startedAt: number }>();
   const emittedMutations = new Set<string>();
   let reasoningSequence = 0;
-
-  for await (const event of response.stream ?? []) {
-    if (event.contentBlockDelta?.delta?.text) {
-      yield { type: 'token', text: event.contentBlockDelta.delta.text };
+  let stopReason: string | undefined;
+  const interruptedMessage = 'La respuesta quedó incompleta. Los cambios confirmados se conservan. Escribe «continúa» en esta conversación para retomar.';
+  function* closeActivity(): Generator<AgentSseEvent> {
+    for (const reasoning of activeReasoning.values()) {
+      yield { type: 'reasoning_complete', reasoningId: reasoning.reasoningId, durationMs: Math.max(0, Date.now() - reasoning.startedAt) };
     }
-
-    if (event.contentBlockDelta?.delta?.reasoningContent
-      && event.contentBlockDelta.contentBlockIndex !== undefined
-      && !activeReasoning.has(event.contentBlockDelta.contentBlockIndex)) {
-      reasoningSequence += 1;
-      const reasoningId = `reasoning-${reasoningSequence}`;
-      activeReasoning.set(event.contentBlockDelta.contentBlockIndex, {
-        reasoningId,
-        startedAt: Date.now(),
-      });
-      yield {
-        type: 'reasoning_start',
-        reasoningId,
-        label: 'Analizando contexto y restricciones',
-      };
+    activeReasoning.clear();
+    for (const [toolUseId, active] of activeTools) {
+      yield { type: 'tool_failed', toolUseId, name: active.name, label: active.label,
+        attempt: active.attempt, durationMs: Math.max(0, Date.now() - active.startedAt),
+        message: 'No recibí confirmación de esta operación. Consulta su estado antes de repetirla.' };
     }
+    activeTools.clear();
+  }
 
-    const startToolUse = event.contentBlockStart?.start?.toolUse;
-    if (startToolUse && event.contentBlockStart?.contentBlockIndex !== undefined) {
-      const toolUseId = startToolUse.toolUseId ?? `tool-${event.contentBlockStart.contentBlockIndex}`;
-      const name = toolNameFromHarness(startToolUse.name ?? 'unknown');
-      const attempt = (attemptsByTool.get(name) ?? 0) + 1;
-      const label = toolLabel(name);
-      attemptsByTool.set(name, attempt);
-      toolUseByIndex.set(event.contentBlockStart.contentBlockIndex, {
-        toolUseId,
-        name,
-        inputJson: '',
-      });
-      activeTools.set(toolUseId, { name, label, attempt, startedAt: Date.now() });
-      yield { type: 'tool_start', toolUseId, name, label, attempt };
-    }
-
-    const startToolResult = event.contentBlockStart?.start?.toolResult;
-    if (startToolResult && event.contentBlockStart?.contentBlockIndex !== undefined) {
-      toolResultByIndex.set(event.contentBlockStart.contentBlockIndex, {
-        toolUseId: startToolResult.toolUseId ?? '',
-        status: startToolResult.status,
-      });
-    }
-
-    const toolUseDelta = event.contentBlockDelta?.delta?.toolUse;
-    if (toolUseDelta?.input && event.contentBlockDelta?.contentBlockIndex !== undefined) {
-      const current = toolUseByIndex.get(event.contentBlockDelta.contentBlockIndex);
-      if (current) {
-        current.inputJson += toolUseDelta.input;
+  try {
+    for await (const event of stream) {
+      if (event.messageStop?.stopReason) {
+        stopReason = event.messageStop.stopReason;
+        if (!['end_turn', 'stop_sequence', 'tool_use', 'tool_result'].includes(stopReason)) {
+          yield* closeActivity();
+          yield { type: 'error', message: interruptedMessage, requestId };
+          return;
+        }
       }
-    }
+      if (event.contentBlockDelta?.delta?.text) {
+        yield { type: 'token', text: event.contentBlockDelta.delta.text };
+      }
 
-    if (event.contentBlockStop?.contentBlockIndex !== undefined) {
-      const reasoning = activeReasoning.get(event.contentBlockStop.contentBlockIndex);
-      if (reasoning) {
+      if (event.contentBlockDelta?.delta?.reasoningContent
+        && event.contentBlockDelta.contentBlockIndex !== undefined
+        && !activeReasoning.has(event.contentBlockDelta.contentBlockIndex)) {
+        reasoningSequence += 1;
+        const reasoningId = `reasoning-${reasoningSequence}`;
+        activeReasoning.set(event.contentBlockDelta.contentBlockIndex, {
+          reasoningId,
+          startedAt: Date.now(),
+        });
         yield {
-          type: 'reasoning_complete',
-          reasoningId: reasoning.reasoningId,
-          durationMs: Math.max(0, Date.now() - reasoning.startedAt),
+          type: 'reasoning_start',
+          reasoningId,
+          label: 'Analizando contexto y restricciones',
         };
-        activeReasoning.delete(event.contentBlockStop.contentBlockIndex);
       }
 
-      toolUseByIndex.delete(event.contentBlockStop.contentBlockIndex);
+      const startToolUse = event.contentBlockStart?.start?.toolUse;
+      if (startToolUse && event.contentBlockStart?.contentBlockIndex !== undefined) {
+        const toolUseId = startToolUse.toolUseId ?? `tool-${event.contentBlockStart.contentBlockIndex}`;
+        const name = toolNameFromHarness(startToolUse.name ?? 'unknown');
+        const attempt = (attemptsByTool.get(name) ?? 0) + 1;
+        const label = toolLabel(name);
+        attemptsByTool.set(name, attempt);
+        toolUseByIndex.set(event.contentBlockStart.contentBlockIndex, {
+          toolUseId,
+          name,
+          inputJson: '',
+        });
+        activeTools.set(toolUseId, { name, label, attempt, startedAt: Date.now() });
+        yield { type: 'tool_start', toolUseId, name, label, attempt };
+      }
 
-      const result = toolResultByIndex.get(event.contentBlockStop.contentBlockIndex);
-      if (result) {
-        const active = activeTools.get(result.toolUseId);
-        if (active) {
-          const durationMs = Math.max(0, Date.now() - active.startedAt);
-          if (result.status === 'error') {
-            yield {
-              type: 'tool_failed',
-              toolUseId: result.toolUseId,
-              name: active.name,
-              label: active.label,
-              attempt: active.attempt,
-              durationMs,
-              message: `No se pudo completar: ${active.label.toLowerCase()}.`,
-            };
-          } else {
-            const summary = result.payload ? summarizeToolResult(active.name, result.payload) : { material: false };
-            yield {
-              type: 'tool_complete',
-              toolUseId: result.toolUseId,
-              name: active.name,
-              label: active.label,
-              attempt: active.attempt,
-              durationMs,
-              ...summary,
-            };
-          }
-          activeTools.delete(result.toolUseId);
+      const startToolResult = event.contentBlockStart?.start?.toolResult;
+      if (startToolResult && event.contentBlockStart?.contentBlockIndex !== undefined) {
+        toolResultByIndex.set(event.contentBlockStart.contentBlockIndex, {
+          toolUseId: startToolResult.toolUseId ?? '',
+          status: startToolResult.status,
+        });
+      }
+
+      const toolUseDelta = event.contentBlockDelta?.delta?.toolUse;
+      if (toolUseDelta?.input && event.contentBlockDelta?.contentBlockIndex !== undefined) {
+        const current = toolUseByIndex.get(event.contentBlockDelta.contentBlockIndex);
+        if (current) {
+          current.inputJson += toolUseDelta.input;
         }
-        toolResultByIndex.delete(event.contentBlockStop.contentBlockIndex);
       }
-    }
 
-    const toolResultDeltas = event.contentBlockDelta?.delta?.toolResult;
-    if (Array.isArray(toolResultDeltas)) {
-      const toolResultIndex = event.contentBlockDelta?.contentBlockIndex;
-      for (const block of toolResultDeltas) {
-        if (block.json && typeof block.json === 'object' && !Array.isArray(block.json)) {
-          const payload = block.json as Record<string, unknown>;
-          const result = toolResultIndex === undefined
-            ? undefined
-            : toolResultByIndex.get(toolResultIndex);
-          if (result) result.payload = payload;
-          const active = result ? activeTools.get(result.toolUseId) : undefined;
-          for (const mutation of mutationsFromToolResult(active?.name, payload)) {
-            const key = `${mutation.action}:${mutation.operationId}`;
-            if (!emittedMutations.has(key)) {
-              emittedMutations.add(key);
-              yield mutation;
-            }
-          }
-          yield* citationsFromPayload(payload);
-        } else if (typeof block.text === 'string') {
-          const parsed = tryParseJsonObject(block.text);
-          if (parsed) {
-            const result = toolResultIndex === undefined
-              ? undefined
-              : toolResultByIndex.get(toolResultIndex);
-            if (result) result.payload = parsed;
-            const active = result ? activeTools.get(result.toolUseId) : undefined;
-            for (const mutation of mutationsFromToolResult(active?.name, parsed)) {
+      if (event.contentBlockStop?.contentBlockIndex !== undefined) {
+        const reasoning = activeReasoning.get(event.contentBlockStop.contentBlockIndex);
+        if (reasoning) {
+          yield {
+            type: 'reasoning_complete',
+            reasoningId: reasoning.reasoningId,
+            durationMs: Math.max(0, Date.now() - reasoning.startedAt),
+          };
+          activeReasoning.delete(event.contentBlockStop.contentBlockIndex);
+        }
+
+        toolUseByIndex.delete(event.contentBlockStop.contentBlockIndex);
+
+        const result = toolResultByIndex.get(event.contentBlockStop.contentBlockIndex);
+        if (result) {
+          const active = activeTools.get(result.toolUseId);
+          if (!result.payload && result.text) result.payload = tryParseJsonObject(result.text);
+          if (result.payload && result.status !== 'error' && !isRejectedToolRequest(result.payload)) {
+            for (const mutation of mutationsFromToolResult(active?.name, result.payload)) {
               const key = `${mutation.action}:${mutation.operationId}`;
-              if (!emittedMutations.has(key)) {
-                emittedMutations.add(key);
-                yield mutation;
-              }
+              if (!emittedMutations.has(key)) { emittedMutations.add(key); yield mutation; }
             }
-            yield* citationsFromPayload(parsed);
+            yield* citationsFromPayload(result.payload);
+          }
+          if (active) {
+            const durationMs = Math.max(0, Date.now() - active.startedAt);
+            if (result.status === 'error' || isRejectedToolRequest(result.payload)) {
+              yield {
+                type: 'tool_failed',
+                toolUseId: result.toolUseId,
+                name: active.name,
+                label: active.label,
+                attempt: active.attempt,
+                durationMs,
+                message: `No se pudo completar: ${active.label.toLowerCase()}.`,
+              };
+            } else {
+              const summary = result.payload ? summarizeToolResult(active.name, result.payload) : { material: false };
+              yield {
+                type: 'tool_complete',
+                toolUseId: result.toolUseId,
+                name: active.name,
+                label: active.label,
+                attempt: active.attempt,
+                durationMs,
+                ...summary,
+              };
+            }
+            activeTools.delete(result.toolUseId);
+          }
+          toolResultByIndex.delete(event.contentBlockStop.contentBlockIndex);
+        }
+      }
+
+      const toolResultDeltas = event.contentBlockDelta?.delta?.toolResult;
+      if (Array.isArray(toolResultDeltas)) {
+        const toolResultIndex = event.contentBlockDelta?.contentBlockIndex;
+        for (const block of toolResultDeltas) {
+          const result = toolResultIndex === undefined ? undefined : toolResultByIndex.get(toolResultIndex);
+          if (block.json && typeof block.json === 'object' && !Array.isArray(block.json)) {
+            if (result) result.payload = block.json as Record<string, unknown>;
+          } else if (typeof block.text === 'string') {
+            if (result) result.text = (result.text ?? '') + block.text;
           }
         }
       }
-    }
 
-    if (event.validationException || event.internalServerException || event.runtimeClientError) {
-      const detail = event.validationException?.message
-        ?? event.internalServerException?.message
-        ?? event.runtimeClientError?.message
-        ?? 'Error de Harness';
-      yield { type: 'error', message: 'No pude consultar tus datos. Reintenta.', requestId: detail };
-      return;
+      if (event.validationException || event.internalServerException || event.runtimeClientError) {
+        yield* closeActivity();
+        yield { type: 'error', message: interruptedMessage, requestId };
+        return;
+      }
     }
+  } catch {
+    yield* closeActivity();
+    yield { type: 'error', message: interruptedMessage, requestId };
+    return;
+  }
+  if (!['end_turn', 'stop_sequence'].includes(stopReason ?? '') || activeTools.size > 0) {
+    yield* closeActivity();
+    yield { type: 'error', message: interruptedMessage, requestId };
   }
 }
 
@@ -598,22 +618,15 @@ export const runAgentChat = async function* (
   sessionId: string,
   requestId: string,
 ): AsyncGenerator<AgentSseEvent> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      yield* invokeHarnessStream(owner, month, message, sessionId);
-      return;
-    } catch (error) {
-      lastError = error;
-      if (!isTransient(error) || attempt === 2) break;
-    }
+  try {
+    yield* invokeHarnessStream(owner, month, message, sessionId, requestId);
+  } catch {
+    yield {
+      type: 'error',
+      message: 'La respuesta se interrumpió. Los cambios confirmados se conservan. Escribe «continúa» en esta conversación para retomar.',
+      requestId,
+    };
   }
-  const detail = lastError instanceof Error ? lastError.message : 'Error desconocido';
-  yield {
-    type: 'error',
-    message: 'No pude consultar tus datos. Reintenta.',
-    requestId: `${requestId}:${detail.slice(0, 80)}`,
-  };
 };
 
 export const collectAgentChat = async (
