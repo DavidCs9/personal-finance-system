@@ -8,6 +8,7 @@ export const wealthFactsForAgent = (wealth: WealthBalanceOverview, now = new Dat
     latestMxnMinor: account.latestSnapshot?.totalMxnMinor ?? null,
     day: account.latestSnapshot?.day ?? null,
     capturedAt: account.latestSnapshot?.capturedAt ?? null,
+    source: account.latestSnapshot?.source ?? null,
     ageDays: account.latestSnapshot ? wealthSnapshotAgeDays(account.latestSnapshot.day, now) : null,
     liquidity: account.id === 'fondo_ahorro' ? 'payroll_savings_illiquid_until_december'
       : account.id === 'nu_cajita_emergencia' ? 'cash' : 'market_investment',
@@ -17,11 +18,14 @@ export const wealthFactsForAgent = (wealth: WealthBalanceOverview, now = new Dat
     latestMxnMinor: liability.latestSnapshot?.totalMxnMinor ?? null,
     day: liability.latestSnapshot?.day ?? null,
     capturedAt: liability.latestSnapshot?.capturedAt ?? null,
+    source: liability.latestSnapshot?.source ?? null,
     ageDays: liability.latestSnapshot ? wealthSnapshotAgeDays(liability.latestSnapshot.day, now) : null,
   }));
   const market = accounts.filter(account => account.id === 'bitso' || account.id === 'ibkr');
   return {
     scope: 'current_net_worth', currency: wealth.currency, asOfDay: wealth.asOfDay,
+    balanceBasis: 'latest_selected_snapshots',
+    individualPurchaseCoverage: 'not_determined_by_this_tool',
     netMxnMinor: wealth.netMxnMinor, assetsMxnMinor: wealth.assetsMxnMinor,
     liabilitiesMxnMinor: wealth.liabilitiesMxnMinor,
     marketInvestmentsMxnMinor: market.length === 2 && market.every(account => account.latestMxnMinor !== null)

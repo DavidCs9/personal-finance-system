@@ -14,7 +14,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'month_snapshot',
     description:
-      'Resumen del mes: Has gastado, Te quedan, proyección, MSI, incertidumbre y monto sin categoría. Usa la misma matemática que Resumen.',
+      'Resumen del mes: Has gastado, Te quedan, proyección, MSI, incertidumbre y monto sin categoría. Usa la misma matemática que Resumen. Sólo acredita calendarios MSI existentes. Una compra hipotética no tiene primera cuota acreditada: no asignes su primera cuota a este mes ni al siguiente sin evidencia; si muestras ese impacto mensual, declara la condición de inicio y no lo presentes como proyección confirmada.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -122,7 +122,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'wealth_snapshot',
-    description: 'Foto actual de patrimonio neto, activos y deudas de tarjeta, con fechas, antigüedad y datos faltantes. No es proyección de cierre ni cambia con el mes seleccionado. Usa marketInvestmentsMxnMinor para Bitso+IBKR y cashAccountMxnMinor para Cajita; Fondo no es efectivo disponible antes de diciembre. Deuda incluye el saldo total, no sólo cuotas. Declara missing/stale; no asumas compras a MSI ni nómina pendiente sin evidencia o indicación de David.',
+    description: 'Foto de patrimonio desde las últimas capturas seleccionadas, con fechas, fuente, antigüedad y faltantes. individualPurchaseCoverage no está determinada: una fecha de captura no prueba que una compra reciente ya esté incluida. No afirmes que está absorbida ni vuelvas a restarla sin comprobar inclusión o presentar ambos escenarios condicionales. No es proyección de cierre ni acredita riesgo cero. Usa marketInvestmentsMxnMinor para Bitso+IBKR y cashAccountMxnMinor para Cajita; Fondo no es efectivo disponible antes de diciembre. Deuda incluye saldo total, no sólo cuotas. Declara missing/stale; no supongas MSI, primera cuota o nómina pendiente sin evidencia o indicación explícita.',
     inputSchema: {
       type: 'object',
       properties: {},

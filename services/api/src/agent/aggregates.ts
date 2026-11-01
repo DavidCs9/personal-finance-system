@@ -80,6 +80,7 @@ export const monthSnapshot = async (
   readonly summary: MonthSummary;
   readonly uncategorizedMinor: number;
   readonly uncategorizedEventCount: number;
+  readonly knownMsiSchedulesOnly: true;
 }> => {
   return withLedgerReadSnapshot(async () => {
     const [summary, events, names] = await Promise.all([
@@ -91,6 +92,7 @@ export const monthSnapshot = async (
     return {
       month,
       summary,
+      knownMsiSchedulesOnly: true,
       uncategorizedMinor: byCategory.uncategorizedMinor,
       uncategorizedEventCount: byCategory.uncategorizedEventCount,
     };

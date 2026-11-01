@@ -17,9 +17,10 @@ describe('agent wealth facts', () => {
     };
     const result = wealthFactsForAgent(wealth, new Date('2026-10-31T18:00:00Z'));
     expect(result).toMatchObject({ scope: 'current_net_worth', asOfDay: '2026-10-31', netMxnMinor: 25235801,
+      balanceBasis: 'latest_selected_snapshots', individualPurchaseCoverage: 'not_determined_by_this_tool',
       marketInvestmentsMxnMinor: 8235801, cashAccountMxnMinor: 10000000,
       staleManualAccountIds: ['nu_cajita_emergencia'], staleLiabilityCardIds: ['card'],
-      liabilities: [{ latestMxnMinor: 2000000, day: '2026-10-22', ageDays: 9 }] });
+      liabilities: [{ latestMxnMinor: 2000000, day: '2026-10-22', ageDays: 9, source: 'manual' }] });
     expect(result.accounts.find(account => account.id === 'fondo_ahorro')?.liquidity).toBe('payroll_savings_illiquid_until_december');
     const missing = wealthFactsForAgent({ ...wealth, accounts: wealth.accounts.map(account => account.id === 'bitso'
       ? { ...account, latestSnapshot: null } : account), liabilities: [{ ...wealth.liabilities[0]!, latestSnapshot: null }] });
