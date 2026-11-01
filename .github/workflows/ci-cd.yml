@@ -172,6 +172,16 @@ jobs:
           prompt_text="$(jq -er --arg name "$default_variant" '.variants[] | select(.name == $name) | .templateConfiguration.text.text' <<<"$prompt_json")"
           prompt_text_part_1="${prompt_text:0:3500}"
           prompt_text_part_2="${prompt_text:3500}"
+          # Register both private multiline values before later steps print GITHUB_ENV.
+          mask_prompt_part() {
+            local masked_prompt="$1"
+            masked_prompt="${masked_prompt//'%'/'%25'}"
+            masked_prompt="${masked_prompt//$'\r'/'%0D'}"
+            masked_prompt="${masked_prompt//$'\n'/'%0A'}"
+            printf '::add-mask::%s\n' "$masked_prompt"
+          }
+          mask_prompt_part "$prompt_text_part_1"
+          mask_prompt_part "$prompt_text_part_2"
           prompt_model="$(jq -er '.defaultVariant as $name | .variants[] | select(.name == $name) | .modelId' <<<"$prompt_json")"
           prompt_temperature="$(jq -er '.defaultVariant as $name | .variants[] | select(.name == $name) | .inferenceConfiguration.text.temperature' <<<"$prompt_json")"
           prompt_max_tokens="$(jq -er '.defaultVariant as $name | .variants[] | select(.name == $name) | .inferenceConfiguration.text.maxTokens' <<<"$prompt_json")"
