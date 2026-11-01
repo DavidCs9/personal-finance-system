@@ -167,36 +167,8 @@ jobs:
           pointer='/personal-finance-v1/agent/runtime-system-prompt-version-arn'
           active_arn="$(aws ssm get-parameter --name "$pointer" --query Parameter.Value --output text)"
           draft_arn="${active_arn%:*}"
-          prompt_json="$(aws bedrock-agent get-prompt --prompt-identifier "$draft_arn" --output json)"
-          default_variant="$(jq -er '.defaultVariant' <<<"$prompt_json")"
-          prompt_text="$(jq -er --arg name "$default_variant" '.variants[] | select(.name == $name) | .templateConfiguration.text.text' <<<"$prompt_json")"
-          prompt_text_part_1="${prompt_text:0:3500}"
-          prompt_text_part_2="${prompt_text:3500}"
-          # Register both private multiline values before later steps print GITHUB_ENV.
-          mask_prompt_part() {
-            local masked_prompt="$1"
-            masked_prompt="${masked_prompt//'%'/'%25'}"
-            masked_prompt="${masked_prompt//$'\r'/'%0D'}"
-            masked_prompt="${masked_prompt//$'\n'/'%0A'}"
-            printf '::add-mask::%s\n' "$masked_prompt"
-          }
-          mask_prompt_part "$prompt_text_part_1"
-          mask_prompt_part "$prompt_text_part_2"
-          prompt_model="$(jq -er '.defaultVariant as $name | .variants[] | select(.name == $name) | .modelId' <<<"$prompt_json")"
-          prompt_temperature="$(jq -er '.defaultVariant as $name | .variants[] | select(.name == $name) | .inferenceConfiguration.text.temperature' <<<"$prompt_json")"
-          prompt_max_tokens="$(jq -er '.defaultVariant as $name | .variants[] | select(.name == $name) | .inferenceConfiguration.text.maxTokens' <<<"$prompt_json")"
-          delimiter="OLBIA_PROMPT_$(date +%s%N)"
-          {
-            echo "OLBIA_SYSTEM_PROMPT_PART_1<<${delimiter}_1"
-            echo "$prompt_text_part_1"
-            echo "${delimiter}_1"
-            echo "OLBIA_SYSTEM_PROMPT_PART_2<<${delimiter}_2"
-            echo "$prompt_text_part_2"
-            echo "${delimiter}_2"
-            echo "OLBIA_SYSTEM_PROMPT_MODEL_ID=$prompt_model"
-            echo "OLBIA_SYSTEM_PROMPT_TEMPERATURE=$prompt_temperature"
-            echo "OLBIA_SYSTEM_PROMPT_MAX_TOKENS=$prompt_max_tokens"
-          } >> "$GITHUB_ENV"
+          aws bedrock-agent get-prompt --prompt-identifier "$draft_arn" --output json |
+            python3 .github/scripts/export_managed_prompt.py
       - run: npm run build --workspace @finance/web
       - name: Synthesize the reviewed deployment assembly once
         run: npx cdk synth PersonalFinanceV1 --quiet --output cdk.out.recovery
@@ -211,6 +183,12 @@ jobs:
           --parameters PersonalFinanceV1:AgentOwnerSub="$AGENT_OWNER_SUB"
           --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart1="$OLBIA_SYSTEM_PROMPT_PART_1"
           --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart2="$OLBIA_SYSTEM_PROMPT_PART_2"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart3="$OLBIA_SYSTEM_PROMPT_PART_3"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart4="$OLBIA_SYSTEM_PROMPT_PART_4"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart5="$OLBIA_SYSTEM_PROMPT_PART_5"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart6="$OLBIA_SYSTEM_PROMPT_PART_6"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart7="$OLBIA_SYSTEM_PROMPT_PART_7"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart8="$OLBIA_SYSTEM_PROMPT_PART_8"
           --parameters PersonalFinanceV1:OlbiaSystemPromptModelId="$OLBIA_SYSTEM_PROMPT_MODEL_ID"
           --parameters PersonalFinanceV1:OlbiaSystemPromptTemperature="$OLBIA_SYSTEM_PROMPT_TEMPERATURE"
           --parameters PersonalFinanceV1:OlbiaSystemPromptMaxTokens="$OLBIA_SYSTEM_PROMPT_MAX_TOKENS"
@@ -222,6 +200,12 @@ jobs:
           --parameters PersonalFinanceV1:AgentOwnerSub="$AGENT_OWNER_SUB"
           --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart1="$OLBIA_SYSTEM_PROMPT_PART_1"
           --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart2="$OLBIA_SYSTEM_PROMPT_PART_2"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart3="$OLBIA_SYSTEM_PROMPT_PART_3"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart4="$OLBIA_SYSTEM_PROMPT_PART_4"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart5="$OLBIA_SYSTEM_PROMPT_PART_5"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart6="$OLBIA_SYSTEM_PROMPT_PART_6"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart7="$OLBIA_SYSTEM_PROMPT_PART_7"
+          --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart8="$OLBIA_SYSTEM_PROMPT_PART_8"
           --parameters PersonalFinanceV1:OlbiaSystemPromptModelId="$OLBIA_SYSTEM_PROMPT_MODEL_ID"
           --parameters PersonalFinanceV1:OlbiaSystemPromptTemperature="$OLBIA_SYSTEM_PROMPT_TEMPERATURE"
           --parameters PersonalFinanceV1:OlbiaSystemPromptMaxTokens="$OLBIA_SYSTEM_PROMPT_MAX_TOKENS"

@@ -18,6 +18,10 @@ it('gives the deployed verifier read-only access to every supported evidence fam
     env:{account:'225989371926',region:'us-east-2'},
   });
   const template=Template.fromStack(stack);
+  const prompt = Object.values(template.findResources('AWS::Bedrock::Prompt'))[0];
+  expect(prompt.Properties.Variants[0].TemplateConfiguration.Text.Text).toEqual({
+    'Fn::Join': ['', Array.from({ length: 8 }, (_, index) => ({ Ref: `OlbiaSystemPromptTextPart${index + 1}` }))],
+  });
   const api = Object.values(template.findResources('AWS::Lambda::Function'))
     .find(resource => resource.Properties.FunctionName === 'personal-finance-v1-api')!;
   const assetHash = api.Properties.Code.S3Key.replace(/\.zip$/, '');
