@@ -25,6 +25,36 @@ const event = (
 describe('spending ranges', () => {
   const now = new Date('2026-08-16T18:00:00.000Z');
 
+  it('walks tied rows without skipping pending movements after the previous page is classified', () => {
+    const rows = Array.from({ length: 61 }, (_, index) => event(
+      `${String(index).padStart(8, '0')}-0000-4000-8000-000000000000`, 100_00,
+      '2026-08-15T12:00:00.000Z', { categoryId: null },
+    ));
+    const query = { month: '2026-08', categoryId: '_uncategorized', limit: 20 };
+    const first = spendingRangeFromEvents(rows, query, now);
+    expect(first).toMatchObject({ movementCount: 61, totalSpentMinor: 6100_00, truncated: true });
+    expect(first.movements[0]!.ref).toBe('00000000');
+    const classified = new Set(first.movements.map(row => row.id));
+    const remaining = rows.map(row => classified.has(row.id) ? { ...row, categoryId: 'shopping' } : row);
+    const second = spendingRangeFromEvents(remaining, { ...query, cursor: first.nextCursor! }, now);
+    const third = spendingRangeFromEvents(remaining, { ...query, cursor: second.nextCursor! }, now);
+    const fourth = spendingRangeFromEvents(remaining, { ...query, cursor: third.nextCursor! }, now);
+    expect(second.movementCount).toBe(41);
+    expect([...first.movements, ...second.movements, ...third.movements, ...fourth.movements].map(row => row.id))
+      .toEqual(rows.map(row => row.id));
+    expect(fourth).toMatchObject({ nextCursor: null, truncated: false });
+  });
+
+  it('rejects malformed cursors and cursors used with another month or filter', () => {
+    const rows = [event('one', 100, '2026-08-15T12:00:00Z'), event('two', 100, '2026-08-15T12:00:00Z')];
+    const first = spendingRangeFromEvents(rows, { month: '2026-08', limit: 1 }, now);
+    for (const query of [
+      { month: '2026-09', cursor: first.nextCursor! },
+      { month: '2026-08', categoryId: '_uncategorized', cursor: first.nextCursor! },
+      { month: '2026-08', cursor: 'invalid' },
+    ]) expect(() => spendingRangeFromEvents(rows, query, now)).toThrow(/cursor/);
+  });
+
   it('resolves yesterday in the finance timezone and totals only that calendar day', () => {
     const result = spendingRangeFromEvents([
       event('late-local', 125_00, '2026-08-16T05:30:00.000Z'),

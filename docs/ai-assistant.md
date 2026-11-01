@@ -10,6 +10,8 @@ Harness owns the loop. Finance read tools and bounded mutations use separate Gat
 
 Harness/Memory/Web Search run in us-east-1; finance Gateway/tools/DSQL in us-east-2. Model/prompt/inference are resolved at runtime, not hardcoded. The Sonnet adaptive-thinking path omits temperature from its invocation and reserves reasoning/answer tokens according to the adapter; provider configuration remains in Prompt Management. Inspect [agent code](../services/api/src/agent) for exact streaming/tool contracts.
 
+The native loop receives the same generation budget as the resolved model, with explicit iteration/time bounds. A limit stop, missing terminal answer or broken stream remains incomplete, closes activity and retains confirmed receipts. Resume in the same conversation. Neither the SDK nor the adapter automatically replays an invocation after failure: a tool may already have committed before the connection was interrupted. Unknown outcomes require reading the operation state before another mutation.
+
 ## Tools and financial meaning
 
 | Tools | Purpose |
@@ -22,8 +24,13 @@ Harness/Memory/Web Search run in us-east-1; finance Gateway/tools/DSQL in us-eas
 | preview/apply/undo_tag_edit; apply_tag_edits | Bounded tag-only operations. |
 | preview/apply/undo_category_edit; apply_category_edits | Bounded category-only operations. |
 | list_categories; manage_category | Read the catalog; create, rename/reorder, archive or restore one category. |
+| edit_operation_status | Read the owned preview/apply/undo or catalog receipt after an interruption, including expiry and divergence from current state. |
 
 Investment history excludes Cajita/Fondo/debts/Neto. Default period all; as-of uses latest evidence on/before date. Global series carries each account forward and exposes coverage, ages, partial/mixed dates. Variation includes FX and is not flow-adjusted return. Symbol ambiguity returns candidate holding IDs, never guesses. Unit-price extremes exclude pre-buy/post-sell days; extrema use daily evidence even if displayed monthly. Range change and first/last in-range change are distinct. Expected no_data/ambiguous/invalid states are data, technical failures are errors.
+
+`list_movements` paginates with `nextCursor` and stable financial ordering; keep the same period/category/tag filters until the cursor is null. Totals/count cover the complete filter, not one page. Use `_uncategorized` to work through pending classifications; assigning a previous page does not skip the following page. A cursor is a read position, not a persisted snapshot. Each row provides a short `ref`; previews resolve `eventRefs` through native SQL only when each prefix uniquely identifies a movement, then freeze the full IDs. Missing/ambiguous/duplicate references reject without creating a preview; full exact IDs remain available. Never approximate a misspelled ID.
+
+Gateway handlers return expected domain rejections as `ok=false, status=invalid_request`, with a message and recovery tool; the agent must correct the request instead of retrying it unchanged. SSE marks this as failed activity even if transport succeeded. Unexpected SQL/provider exceptions remain failures. `wealth_snapshot` preserves canonical totals and supplies capture dates/source, missing/stale manual balances, the deterministic Bitso+IBKR subtotal and separate cash/restricted-savings meaning. Its basis is the latest selected snapshots; it does not determine whether a particular recent purchase is included. Never assert absorption or subtract again without evidence; use conditional scenarios when coverage is unknown. A photograph does not establish a month-end forecast, financing terms, zero risk or future income. `month_snapshot` includes known MSI schedules only; the first installment month of a hypothetical purchase remains unknown until established.
 
 ## Mutations
 

@@ -1,5 +1,12 @@
 export const TOOL_DEFINITIONS = [
   {
+    name: 'edit_operation_status',
+    description: 'Consulta de sólo lectura del operationId exacto de un preview/apply/undo de tags/categorías o cambio de catálogo. Úsala para retomar tras un corte sin repetir escrituras. Devuelve pending/applied/undone, expiración y si los movimientos aún coinciden con el recibo: applied acredita la operación histórica, no que nadie haya editado después. not_found no autoriza inventar/repetir cambios. Si pending expiró o cambió el estado, relee y genera un preview nuevo. No crea previews ni aplica cambios.',
+    inputSchema: { type: 'object', properties: {
+      operationId: { type: 'string', description: 'UUID exacto recibido previamente; nunca inventar ni abreviar.' },
+    }, required: ['operationId'] },
+  },
+  {
     name: 'list_categories',
     description: 'Consulta el catálogo SQL completo: IDs, nombres, orden, archived y revision. Incluye archivadas para conservar historia. Devuelve un operationId nuevo para manage_category; consulta antes de cada cambio. No inventes IDs existentes ni revisiones. Para una categoría nueva elige un ID estable en minúsculas sin acentos (letras, números, guion bajo; máximo 40).',
     inputSchema: { type: 'object', properties: {} },
@@ -7,7 +14,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'month_snapshot',
     description:
-      'Resumen del mes: Has gastado, Te quedan, proyección, MSI, incertidumbre y monto sin categoría. Usa la misma matemática que Resumen.',
+      'Resumen del mes: Has gastado, Te quedan, proyección, MSI, incertidumbre y monto sin categoría. Usa la misma matemática que Resumen. Sólo acredita calendarios MSI existentes. Una compra hipotética no tiene primera cuota acreditada: no asignes su primera cuota a este mes ni al siguiente sin evidencia; si muestras ese impacto mensual, declara la condición de inicio y no lo presentes como proyección confirmada.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -82,7 +89,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'list_movements',
     description:
-      'Total y lista de movimientos de gasto para un periodo (máx 50 filas, total sin truncar), opcionalmente filtrados por categoría o tag exacto. Usa range para hoy, ayer, esta semana, últimos 7 días, este mes o este año; custom para fechas explícitas; month para un mes calendario completo. Las fechas usan la zona financiera de México. Si complete=false, aclara que excludedMonthOnlySpentMinor no pudo asignarse al día exacto; no lo sumes al total.',
+      'Total y lista paginada de gasto (máx 50 filas por página, total y movementCount del filtro completo). Para categorizar pendientes usa categoryId=_uncategorized y el mes solicitado; recorre nextCursor manteniendo los mismos filtros hasta null. Cada fila trae ref breve para eventRefs de preview; si es ambigua usa su id completo. No reescribas UUIDs ni infieras que sólo existen las filas de una página. Usa range para hoy, ayer, esta semana, últimos 7 días, este mes o este año; custom para fechas explícitas; month para un mes calendario completo. Las fechas usan Chihuahua; datePrecision=day no acredita hora. Si complete=false, declara excludedMonthOnlySpentMinor sin sumarlo al total.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -94,9 +101,10 @@ export const TOOL_DEFINITIONS = [
         },
         fromDay: { type: 'string', description: 'Inicio inclusivo YYYY-MM-DD para range=custom.' },
         toDay: { type: 'string', description: 'Fin inclusivo YYYY-MM-DD para range=custom.' },
-        categoryId: { type: 'string' },
+        categoryId: { type: 'string', description: 'ID del catálogo o _uncategorized para todos los pendientes.' },
         tag: { type: 'string', description: 'Tag exacto, por ejemplo viaje:vegas.' },
         limit: { type: 'number', description: 'Máximo de filas devueltas (1–50; default 20).' },
+        cursor: { type: 'string', description: 'nextCursor de la página anterior con los mismos filtros. Omitir en la primera página.' },
       },
     },
   },
@@ -114,7 +122,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'wealth_snapshot',
-    description: 'Patrimonio neto, activos y deudas de tarjeta (solo lectura).',
+    description: 'Foto de patrimonio desde las últimas capturas seleccionadas, con fechas, fuente, antigüedad y faltantes. individualPurchaseCoverage no está determinada: una fecha de captura no prueba que una compra reciente ya esté incluida. No afirmes que está absorbida ni vuelvas a restarla sin comprobar inclusión o presentar ambos escenarios condicionales. No es proyección de cierre ni acredita riesgo cero. Usa marketInvestmentsMxnMinor para Bitso+IBKR y cashAccountMxnMinor para Cajita; Fondo no es efectivo disponible antes de diciembre. Deuda incluye saldo total, no sólo cuotas. Declara missing/stale; no supongas MSI, primera cuota o nómina pendiente sin evidencia o indicación explícita.',
     inputSchema: {
       type: 'object',
       properties: {},

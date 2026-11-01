@@ -42,12 +42,14 @@ const assistantCategoryAudit: BulkEditAudit = {
   categoriesOnly: true,
 };
 
-export class InvalidBulkEditError extends Error {}
+export class InvalidBulkEditError extends Error {
+  constructor(message: string, readonly recoveryTool = 'list_movements') { super(message); }
+}
 
 const requireBulkCategories = async (ids: readonly (string | null)[], allowArchived = false): Promise<void> => {
   try { await requireCatalogCategories(ids, allowArchived); }
   catch (error) {
-    if (error instanceof InvalidCategoryError) throw new InvalidBulkEditError(error.message);
+    if (error instanceof InvalidCategoryError) throw new InvalidBulkEditError(error.message, 'list_categories');
     throw error;
   }
 };

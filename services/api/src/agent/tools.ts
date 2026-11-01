@@ -12,6 +12,7 @@ import {
 import { TOOL_DEFINITIONS, type AgentToolName } from './tool-definitions.js';
 import type { SpendingRange } from './spending-range.js';
 import { listAgentCategories } from '../categories/control-plane.js';
+import { editOperationStatus } from './edit-status.js';
 
 export { TOOL_DEFINITIONS, type AgentToolName };
 
@@ -21,6 +22,8 @@ export const runAgentTool = async (
   input: Record<string, unknown>,
 ): Promise<unknown> => {
   switch (name as AgentToolName | string) {
+    case 'edit_operation_status':
+      return editOperationStatus(owner, input.operationId);
     case 'list_categories':
       return listAgentCategories();
     case 'month_snapshot':
@@ -43,6 +46,7 @@ export const runAgentTool = async (
         categoryId: typeof input.categoryId === 'string' ? input.categoryId : undefined,
         tag: typeof input.tag === 'string' ? input.tag : undefined,
         limit: typeof input.limit === 'number' ? input.limit : undefined,
+        cursor: typeof input.cursor === 'string' ? input.cursor : undefined,
       });
     case 'compare_months':
       return compareMonths(

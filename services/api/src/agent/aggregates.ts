@@ -9,9 +9,11 @@ import {
   wealthSnapshotAgeDays,
 } from '@finance/domain';
 import { getMonthSummary } from '../months/summary.js';
-import { withLedgerReadSnapshot } from '../events/sql-reads.js';
+import { readerPool, withLedgerReadSnapshot } from '../events/sql-reads.js';
+import { readLedgerMovementIdsByPrefix } from '@finance/ledger/native-ledger';
 import { getWealthOverview, listWealthSnapshots } from '../wealth/service.js';
 import { listCategories } from '../categories/service.js';
+import { wealthFactsForAgent } from './wealth-facts.js';
 import { loadCategorizedMonthEvents, loadCategorizedMonthsEvents, loadCategorizedComparisonEvents } from '../analytics/events.js';
 import { isValidMonth } from '../months/monthly-plan.js';
 import {
@@ -78,6 +80,7 @@ export const monthSnapshot = async (
   readonly summary: MonthSummary;
   readonly uncategorizedMinor: number;
   readonly uncategorizedEventCount: number;
+  readonly knownMsiSchedulesOnly: true;
 }> => {
   return withLedgerReadSnapshot(async () => {
     const [summary, events, names] = await Promise.all([
@@ -89,6 +92,7 @@ export const monthSnapshot = async (
     return {
       month,
       summary,
+      knownMsiSchedulesOnly: true,
       uncategorizedMinor: byCategory.uncategorizedMinor,
       uncategorizedEventCount: byCategory.uncategorizedEventCount,
     };
@@ -201,7 +205,12 @@ export const listMovementsForAgent = async (
     const events = range.months.length === 1
       ? await loadMonthEvents(range.months[0]!)
       : await loadRangeEvents(range.months);
-    return spendingRangeFromEvents(events, query, now);
+    const result = spendingRangeFromEvents(events, query, now);
+    const refs = [...new Set(result.movements.map(row => row.ref).filter(ref => /^[a-f0-9]{8}$/.test(ref)))];
+    const ids = refs.length ? await readLedgerMovementIdsByPrefix(readerPool(), refs) : [];
+    return { ...result, movements: result.movements.map(row => ({ ...row,
+      ref: ids.filter(id => id.startsWith(row.ref)).length === 1 ? row.ref : undefined,
+    })) };
   } catch (error) {
     if (error instanceof InvalidSpendingRangeQueryError) {
       throw new InvalidAgentQueryError(error.message);
@@ -211,24 +220,7 @@ export const listMovementsForAgent = async (
 };
 
 export const wealthSnapshotForAgent = async (owner: string): Promise<Record<string, unknown>> => {
-  const wealth = await getWealthOverview(owner);
-  return {
-    currency: wealth.currency,
-    netMxnMinor: wealth.netMxnMinor,
-    assetsMxnMinor: wealth.assetsMxnMinor,
-    liabilitiesMxnMinor: wealth.liabilitiesMxnMinor,
-    accounts: (wealth.accounts as readonly Record<string, unknown>[]).map((account) => ({
-      id: account.id,
-      name: account.name,
-      connected: account.connected,
-      latestMxnMinor: (account.latestSnapshot as { totalMxnMinor?: number } | undefined)?.totalMxnMinor ?? null,
-    })),
-    liabilities: (wealth.liabilities as readonly Record<string, unknown>[]).map((liability) => ({
-      cardId: liability.cardId,
-      name: liability.name,
-      latestMxnMinor: (liability.latestSnapshot as { amountMinor?: number } | undefined)?.amountMinor ?? null,
-    })),
-  };
+  return wealthFactsForAgent(await getWealthOverview(owner));
 };
 
 export const investmentHistory = async (

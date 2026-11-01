@@ -25,6 +25,92 @@ const capture = { occurredAt: '2026-08-22T12:00:00.000Z', receivedAt: '2026-08-2
 const operationId = (result: unknown) => (result as { operationId: string }).operationId;
 
 describe('tag and category mutation Gateway tools on native SQL', () => {
+  it('reads owned operation status and detects later edits without replaying or changing evidence', async () => {
+    const { runAgentTool } = await import('../src/agent/tools.js');
+    const { setMovementCategory } = await import('../../ledger/src/dsql/ledger-writes.js');
+    const { applicationSqlClient } = await import('../../ledger/src/dsql/sql-runtime.js');
+    const id = await fixture.create({ ...capture, categoryId: 'otros' });
+    const preview = await runTagMutationTool('owner-1', 'preview_category_edit', { eventId: id, categoryId: 'shopping' });
+    const args = { operationId: operationId(preview) };
+    const before = await fixture.snapshot();
+    expect(await runAgentTool('owner-1', 'edit_operation_status', args)).toMatchObject({
+      status: 'pending', expired: false, currentStateMatchesReceipt: true,
+    });
+    expect(await runAgentTool('other-owner', 'edit_operation_status', args)).toMatchObject({ status: 'not_found' });
+    expect(await fixture.snapshot()).toEqual(before);
+    await runTagMutationTool('owner-1', 'apply_category_edit', args);
+    expect(await runAgentTool('owner-1', 'edit_operation_status', args)).toMatchObject({ status: 'applied', currentStateMatchesReceipt: true });
+    await fixture.run(() => setMovementCategory(applicationSqlClient(), id, 'restaurantes'));
+    const changed = await fixture.snapshot();
+    expect(await runAgentTool('owner-1', 'edit_operation_status', args)).toMatchObject({
+      status: 'applied', currentStateMatchesReceipt: false, changedMovementIds: [id],
+    });
+    expect(await fixture.snapshot()).toEqual(changed);
+  });
+
+  it('reads catalog receipts without mistaking an old revision for current state', async () => {
+    const { randomUUID } = await import('node:crypto');
+    const { runAgentTool } = await import('../src/agent/tools.js');
+    const firstId = randomUUID();
+    await handler({ toolName: 'manage_category', action: 'create', categoryId: 'operation_test',
+      name: 'Original', operationId: firstId }, {} as Context);
+    expect(await runAgentTool('owner-1', 'edit_operation_status', { operationId: firstId }))
+      .toMatchObject({ status: 'applied', kind: 'category_catalog', currentStateMatchesReceipt: true });
+    await handler({ toolName: 'manage_category', action: 'update', categoryId: 'operation_test',
+      name: 'Renamed', operationId: randomUUID(), expectedRevision: 1 }, {} as Context);
+    const before = await fixture.snapshot();
+    expect(await runAgentTool('owner-1', 'edit_operation_status', { operationId: firstId }))
+      .toMatchObject({ status: 'applied', currentStateMatchesReceipt: false,
+        category: { name: 'Original' }, currentCategory: { name: 'Renamed' } });
+    expect(await fixture.snapshot()).toEqual(before);
+  });
+
+  it('resolves short native references and freezes full IDs for audited apply', async () => {
+    const { runAgentTool } = await import('../src/agent/tools.js');
+    const id = await fixture.create({ ...capture, merchantRaw: 'Shop', categoryId: 'otros' });
+    const listed = await runAgentTool('owner-1', 'list_movements', { month: '2026-08' }) as { movements: { id: string; ref: string }[] };
+    expect(listed.movements).toMatchObject([{ id, ref: id.slice(0, 8) }]);
+    const result = await handler({ toolName: 'preview_category_edit', categoryId: 'shopping', eventRefs: [listed.movements[0]!.ref] }, {} as Context);
+    expect(result).toMatchObject({ affected: [{ id }], movementCount: 1 });
+    expect(await readBulkOperation('owner-1', operationId(result))).toMatchObject({ selection: { eventIds: [id] } });
+    await handler({ toolName: 'apply_category_edit', operationId: operationId(result) }, {} as Context);
+    expect(await readLedgerDetail(fixture.pool, id)).toMatchObject({ categoryId: 'shopping', revisions: [{ source: 'assistant_chat_category_edit' }] });
+  });
+
+  it('rejects ambiguous, absent and mixed references without creating previews or edits', async () => {
+    const { runAgentTool } = await import('../src/agent/tools.js');
+    await fixture.create({ ...capture, id: '12345678-0000-4000-8000-000000000001' });
+    await fixture.create({ ...capture, id: '12345678-0000-4000-8000-000000000002' });
+    const listed = await runAgentTool('owner-1', 'list_movements', { month: '2026-08' }) as { movements: { ref?: string }[] };
+    expect(listed.movements).toHaveLength(2);
+    expect(listed.movements.every(row => row.ref === undefined)).toBe(true);
+    const before = await fixture.snapshot();
+    for (const args of [
+      { eventRefs: ['12345678'] }, { eventRefs: ['ffffffff'] },
+      { eventRefs: ['12345678'], eventIds: ['12345678-0000-4000-8000-000000000001'] },
+      { eventRefs: ['12345678', '12345678'] }, { eventRefs: ['%'] },
+    ]) {
+      expect(await handler({ toolName: 'preview_tag_edit', addTags: ['review'], ...args }, {} as Context))
+        .toMatchObject({ ok: false, status: 'invalid_request', retryable: false, recovery: { tool: 'list_movements' } });
+      expect(await fixture.snapshot()).toEqual(before);
+    }
+  });
+
+  it('returns domain validation to Gateway but preserves unexpected SQL failures as failures', async () => {
+    const id = await fixture.create({ ...capture });
+    const before = await fixture.snapshot();
+    expect(await handler({ toolName: 'preview_category_edit', categoryId: 'missing_category', eventId: id }, {} as Context))
+      .toMatchObject({ ok: false, status: 'invalid_request', recovery: { tool: 'list_categories' } });
+    const readHandler = (await import('../src/agent/tools-handler.js')).handler;
+    expect(await readHandler({ toolName: 'list_movements', month: 'not-a-month' }, {} as Context))
+      .toMatchObject({ ok: false, status: 'invalid_request', recovery: { tool: 'list_movements' } });
+    expect(await fixture.snapshot()).toEqual(before);
+    const query = vi.spyOn(harness.pool, 'query').mockRejectedValueOnce(new Error('database unavailable'));
+    try {
+      await expect(handler({ toolName: 'preview_tag_edit', addTags: ['review'], eventRefs: [id.slice(0, 8)] }, {} as Context))
+        .rejects.toThrow('database unavailable');
+    } finally { query.mockRestore(); }
+  });
   it('freezes owner-scoped tag intent and routes apply/undo with complete audit history', async () => {
     const id = await fixture.create({ ...capture, merchantRaw: 'Panda Express' });
     const result = await runTagMutationTool('owner-1', 'preview_tag_edit', { eventId: id, addTags: ['Viaje:Végas'] });

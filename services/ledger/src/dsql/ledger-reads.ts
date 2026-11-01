@@ -87,6 +87,14 @@ export const movementFromNative=(row:Row):Row=>{
 
 /** Months match actual financial relationships, without synthetic index keys or document pagination. */
 export const isLedgerMovementId=(id:string):boolean=>/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(id);
+/** A prefix is usable only when the caller verifies exactly one native identity matches it. */
+export const readLedgerMovementIdsByPrefix = async (client: SqlClient, prefixes: readonly string[]): Promise<string[]> => {
+  if (prefixes.length < 1 || prefixes.length > 49 || prefixes.some(prefix => !/^[a-f0-9]{8}$/.test(prefix))) {
+    throw new Error('Invalid movement reference lookup');
+  }
+  return (await client.query('SELECT id FROM olbia.ledger_movements WHERE id::text LIKE ANY($1::text[])',
+    [prefixes.map(prefix => `${prefix}%`)])).rows.map(row => String(row.id));
+};
 export const ledgerMovementReadStatement = `${nativeSelection}
     WHERE ($1::uuid[] IS NULL OR m.id=ANY($1::uuid[])) AND ($2::text[] IS NULL OR
       to_char(COALESCE(m.occurred_at,m.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM')=ANY($2::text[]) OR

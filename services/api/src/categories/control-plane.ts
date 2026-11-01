@@ -2,6 +2,18 @@ import { randomUUID } from 'node:crypto';
 import { normalizeMerchantKey } from '@finance/domain';
 import { applicationSqlClient, withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { catalogFingerprint, InvalidCategoryError, readCategoryCatalog, validateCategory, writeCategory } from './catalog.js';
+import type { ReadSqlClient } from '../events/sql-reads.js';
+
+export const readAgentCatalogOperation = async (owner: string, operationId: string, client: ReadSqlClient) => {
+  const row = (await client.query(`SELECT action,revision,category_id,created_at,previous_value,next_value
+    FROM olbia.category_catalog_changes WHERE operation_id=$1 AND changed_by=$2`, [operationId, owner])).rows[0];
+  if (!row) return undefined;
+  const current = (await readCategoryCatalog(client)).find(category => category.id === row.category_id);
+  return { ok: true, operationId, kind: 'category_catalog', status: 'applied', action: row.action,
+    createdAt: new Date(row.created_at as string | Date).toISOString(),
+    previous: row.previous_value, category: row.next_value,
+    currentStateMatchesReceipt: current?.revision === Number(row.revision), currentCategory: current ?? null };
+};
 
 /** Read-only discovery also supplies a fresh retry identity for the next bounded write. */
 export const listAgentCategories = async () => ({

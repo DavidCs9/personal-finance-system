@@ -1,5 +1,7 @@
 import type { Context } from 'aws-lambda';
 import { runAgentTool, TOOL_DEFINITIONS } from './tools.js';
+import { InvalidAgentQueryError } from './aggregates.js';
+import { rejectedToolRequest } from './tool-errors.js';
 
 /**
  * AgentCore Gateway Lambda target handler.
@@ -17,8 +19,12 @@ export const handler = async (
 
   const toolName = resolveToolName(event, context);
   const args = resolveArgs(event);
-  const result = await runAgentTool(owner, toolName, args);
-  return result;
+  try {
+    return await runAgentTool(owner, toolName, args);
+  } catch (error) {
+    if (error instanceof InvalidAgentQueryError) return rejectedToolRequest(error.message, toolName);
+    throw error;
+  }
 };
 
 export const gatewayToolDefinitions = () =>
