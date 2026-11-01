@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { defaultCuotaMinor, monthKeyInZone, replaceMsiSchedule, addCalendarMonths } from "@finance/domain";
 import { ledgerApi } from "../api/client";
 import { Amt } from "../components/Amt";
@@ -45,7 +45,16 @@ export function EventSheet({
   const [personalAmount, setPersonalAmount] = useState(
     event.personalAmountMinor === undefined ? "" : (event.personalAmountMinor / 100).toFixed(2),
   );
-  const [categories, setCategories] = useState<readonly { id: string; name: string }[]>([]);
+  const categoriesQuery = useQuery({
+    queryKey: ["categories", demoMode],
+    queryFn: async () => demoMode ? [
+      { id: "restaurantes", name: "Restaurantes" },
+      { id: "transporte", name: "Transporte" },
+      { id: "deportes", name: "Deportes" },
+      { id: "otros", name: "Otros" },
+    ] : (await ledgerApi.listCategories(idToken)).categories,
+  });
+  const categories: readonly { id: string; name: string; archived?: boolean }[] = categoriesQuery.data ?? [];
 
   useEffect(() => {
     setActivityOriginals([]);
@@ -84,23 +93,6 @@ export function EventSheet({
       event.personalAmountMinor === undefined ? "" : (event.personalAmountMinor / 100).toFixed(2),
     );
   }, [event.id, event.msi, event.amount.amountMinor, event.categoryId, event.tags, event.personalAmountMinor]);
-
-  useEffect(() => {
-    if (demoMode) {
-      setCategories([
-        { id: "restaurantes", name: "Restaurantes" },
-        { id: "transporte", name: "Transporte" },
-        { id: "deportes", name: "Deportes" },
-        { id: "otros", name: "Otros" },
-      ]);
-      return;
-    }
-    void ledgerApi.listCategories(idToken).then((result) => {
-      setCategories(result.categories);
-    }).catch(() => {
-      setCategories([]);
-    });
-  }, [demoMode, idToken]);
 
   const updateCache = (updated: PurchaseEvent) => {
     const spendMonth = monthKeyInZone(eventDate(updated));
@@ -482,16 +474,18 @@ export function EventSheet({
             </div>
           </div>
           <Field label="Categoría">
-            <select value={categoryId} onChange={(change) => setCategoryId(change.target.value)}>
+            <select value={categoryId} disabled={categoriesQuery.isPending || categoriesQuery.isError} onChange={(change) => setCategoryId(change.target.value)}>
               <option value="">Sin categoría</option>
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
+              {categories.filter((category) => !category.archived || category.id === event.categoryId).map((category) => (
+                <option key={category.id} value={category.id} disabled={category.archived}>
+                  {category.name}{category.archived ? " (archivada)" : ""}
                 </option>
               ))}
             </select>
           </Field>
-          <button className="primary-button" type="submit" disabled={categoryMutation.isPending}>
+          {categoriesQuery.isPending && <p role="status">Consultando categorías…</p>}
+          {categoriesQuery.isError && <p className="form-error">No se pudo consultar el catálogo de categorías.</p>}
+          <button className="primary-button" type="submit" disabled={categoryMutation.isPending || categoriesQuery.isPending || categoriesQuery.isError || categories.some((category) => category.id === categoryId && category.archived)}>
             {categoryMutation.isPending ? "Guardando…" : "Guardar categoría"}
           </button>
         </form>

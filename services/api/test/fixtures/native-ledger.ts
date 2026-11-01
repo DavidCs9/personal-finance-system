@@ -42,7 +42,7 @@ export const nativeFixture = async () => {
   const run = <T>(fn: () => Promise<T>): Promise<T> => runSqlTransaction(pool, fn);
   const reset = async () => {
     await sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES,...NATIVE_PLANNING_TABLES,'ingestion_retry_attempts', 'projection_state', 'command_receipts', 'merchant_rules',
-      'bank_imports', 'bank_import_rows', 'bank_import_candidates'].map(t => `olbia.${t}`).join(',')}`);
+      'bank_imports', 'bank_import_rows', 'bank_import_candidates', 'category_lifecycle', 'category_catalog_changes'].map(t => `olbia.${t}`).join(',')}`);
     await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
   };
   const create = (changes: Partial<ObservedEventInput> = {}) => seedNativeMovement(pool, changes);

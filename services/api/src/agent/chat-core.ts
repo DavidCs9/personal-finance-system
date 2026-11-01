@@ -30,7 +30,7 @@ export type AgentSseEvent =
   | { readonly type: 'tool_complete'; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly summary?: string; readonly material: boolean }
   | { readonly type: 'tool_failed'; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly message: string }
   | { readonly type: 'citation'; readonly kind: string; readonly id?: string; readonly label: string }
-  | { readonly type: 'mutation'; readonly kind: 'tag_edit' | 'category_edit'; readonly action: 'applied' | 'undone'; readonly operationId: string; readonly movementCount: number; readonly amountMinor: number; readonly fromDay: string; readonly toDay: string; readonly change: Record<string, unknown> }
+  | { readonly type: 'mutation'; readonly kind: 'tag_edit' | 'category_edit' | 'category_catalog'; readonly action: 'applied' | 'undone'; readonly operationId: string; readonly movementCount: number; readonly amountMinor: number; readonly fromDay: string; readonly toDay: string; readonly change: Record<string, unknown> }
   | { readonly type: 'done'; readonly requestId: string; readonly sessionId: string }
   | { readonly type: 'error'; readonly message: string; readonly requestId: string };
 
@@ -174,6 +174,8 @@ export const toolNameFromHarness = (name: string): string =>
 
 const toolLabel = (name: string): string => {
   switch (name) {
+    case 'list_categories': return 'Consultando el catálogo de categorías';
+    case 'manage_category': return 'Actualizando el catálogo de categorías';
     case 'month_snapshot': return 'Revisando el resumen del mes';
     case 'plan_month_scenario': return 'Calculando escenarios del mes';
     case 'spend_by_category': return 'Revisando categorías de gasto';
@@ -298,6 +300,10 @@ export const summarizeToolResult = (
         summary: `Revisé el historial de ${String(payload.symbol ?? (payload.accountId === 'all' ? 'tus inversiones de mercado' : payload.accountId ?? 'la inversión'))}.`,
         material: true,
       };
+    case 'list_categories':
+      return { summary: 'Consulté el catálogo de categorías.', material: false };
+    case 'manage_category':
+      return { summary: 'Actualicé el catálogo de categorías.', material: true };
     case 'preview_tag_edit':
     case 'preview_category_edit':
       return {
@@ -360,6 +366,14 @@ export const mutationsFromToolResult = (
   toolName: string | undefined,
   payload: Record<string, unknown>,
 ): readonly Extract<AgentSseEvent, { readonly type: 'mutation' }>[] => {
+  if (toolName === 'manage_category' && typeof payload.operationId === 'string'
+    && payload.category && typeof payload.category === 'object' && !Array.isArray(payload.category)) {
+    const category = payload.category as Record<string, unknown>;
+    if (typeof category.id !== 'string' || typeof category.name !== 'string' || !['create','update','archive','restore'].includes(String(payload.action))) return [];
+    return [{ type: 'mutation', kind: 'category_catalog', action: 'applied', operationId: payload.operationId,
+      movementCount: 0, amountMinor: 0, fromDay: '', toDay: '',
+      change: { action: payload.action, categoryId: category.id, name: category.name, archived: category.archived } }];
+  }
   if ((toolName === 'apply_tag_edits' || toolName === 'apply_category_edits') && Array.isArray(payload.operations)) {
     const mutations: Extract<AgentSseEvent, { readonly type: 'mutation' }>[] = [];
     const kind = toolName === 'apply_tag_edits' ? 'tag_edit' : 'category_edit';

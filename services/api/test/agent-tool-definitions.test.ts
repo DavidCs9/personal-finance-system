@@ -59,6 +59,7 @@ describe('AgentCore finance tool definitions', () => {
       'apply_category_edit',
       'undo_category_edit',
       'apply_category_edits',
+      'manage_category',
     ]);
     const preview = TAG_MUTATION_TOOL_DEFINITIONS[0];
     expect(preview.inputSchema.properties).toHaveProperty('addTags');

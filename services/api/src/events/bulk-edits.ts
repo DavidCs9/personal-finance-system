@@ -44,8 +44,8 @@ const assistantCategoryAudit: BulkEditAudit = {
 
 export class InvalidBulkEditError extends Error {}
 
-const requireBulkCategories = async (ids: readonly (string | null)[]): Promise<void> => {
-  try { await requireCatalogCategories(ids); }
+const requireBulkCategories = async (ids: readonly (string | null)[], allowArchived = false): Promise<void> => {
+  try { await requireCatalogCategories(ids, allowArchived); }
   catch (error) {
     if (error instanceof InvalidCategoryError) throw new InvalidBulkEditError(error.message);
     throw error;
@@ -663,7 +663,7 @@ const transactOperationInternal = async (
   }
   await requireBulkCategories(operation.events
     .filter(event => event.previousCategoryId !== event.nextCategoryId)
-    .map(event => direction === 'apply' ? event.nextCategoryId : event.previousCategoryId));
+    .map(event => direction === 'apply' ? event.nextCategoryId : event.previousCategoryId), direction === 'undo');
   assertMutationBudget([operation]);
   return mutateOperation(operation, direction, changedBy, now.toISOString(), audit);
 };

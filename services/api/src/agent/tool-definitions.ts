@@ -1,5 +1,10 @@
 export const TOOL_DEFINITIONS = [
   {
+    name: 'list_categories',
+    description: 'Consulta el catálogo SQL completo: IDs, nombres, orden, archived y revision. Incluye archivadas para conservar historia. Devuelve un operationId nuevo para manage_category; consulta antes de cada cambio. No inventes IDs existentes ni revisiones. Para una categoría nueva elige un ID estable en minúsculas sin acentos (letras, números, guion bajo; máximo 40).',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'month_snapshot',
     description:
       'Resumen del mes: Has gastado, Te quedan, proyección, MSI, incertidumbre y monto sin categoría. Usa la misma matemática que Resumen.',

@@ -1,4 +1,5 @@
 // Historical migration fixture. Never imported by deployed code.
+import { NATIVE_CATEGORY_SCHEMA_STATEMENTS } from '../../src/dsql/category-schema.js';
 import { NATIVE_EXCEPTION_SCHEMA_STATEMENTS,nativeExceptionReadGrant,nativeExceptionWriteGrants } from '../../src/dsql/exception-schema.js';
 import { migrateIngestionReview,type OriginalEmailReader } from '../../src/dsql/exception-copy.js';
 import { NATIVE_THREAD_SCHEMA_STATEMENTS, nativeThreadReadGrant, nativeThreadWriteGrants } from '../../src/dsql/thread-schema.js';
@@ -177,6 +178,7 @@ export const SCHEMA_STATEMENTS = [
   ...NATIVE_DELIVERY_SCHEMA_STATEMENTS,
   ...NATIVE_THREAD_SCHEMA_STATEMENTS,
   ...NATIVE_EXCEPTION_SCHEMA_STATEMENTS,
+  ...NATIVE_CATEGORY_SCHEMA_STATEMENTS,
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {

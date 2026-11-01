@@ -23,6 +23,7 @@ const assistantMonthLabel = (month: string): string => new Intl.DateTimeFormat("
 }).format(new Date(`${month}-01T00:00:00Z`));
 
 const mutationChangeLabel = (mutation: Extract<AgentChatEvent, { type: "mutation" }>): string => {
+  if (mutation.kind === "category_catalog") return mutation.change.name ?? mutation.change.categoryId ?? "Catálogo";
   if (mutation.kind === "category_edit") return `Categoría ${mutation.change.categoryId ?? "sin categoría"}`;
   const { change } = mutation;
   const parts = [
@@ -568,14 +569,20 @@ export function AssistantSheet({
               )}
               {message.mutations?.map((mutation) => (
                 <div key={`${mutation.action}-${mutation.operationId}`} className="assistant-proposal">
-                  <p>
-                    {mutation.action === "applied"
-                      ? mutation.kind === "category_edit" ? "Categoría actualizada" : "Etiquetas actualizadas"
-                      : "Edición deshecha"}
-                    {" · "}{mutation.movementCount} movimientos · <Amt>{money(mutation.amountMinor)}</Amt>
-                  </p>
-                  <small>{mutation.fromDay}–{mutation.toDay} · {mutationChangeLabel(mutation)}</small>
-                  <small>Puedes pedir “deshaz ese cambio” en el chat.</small>
+                  {mutation.kind === "category_catalog" ? <>
+                    <p>{({ create: "Categoría creada", update: "Categoría actualizada", archive: "Categoría archivada", restore: "Categoría restaurada" } as Record<string, string>)[mutation.change.action ?? ""] ?? "Catálogo actualizado"}</p>
+                    <small>{mutationChangeLabel(mutation)}</small>
+                    <small>Puedes pedir revertir el cambio en el chat.</small>
+                  </> : <>
+                    <p>
+                      {mutation.action === "applied"
+                        ? mutation.kind === "category_edit" ? "Categoría actualizada" : "Etiquetas actualizadas"
+                        : "Edición deshecha"}
+                      {" · "}{mutation.movementCount} movimientos · <Amt>{money(mutation.amountMinor)}</Amt>
+                    </p>
+                    <small>{mutation.fromDay}–{mutation.toDay} · {mutationChangeLabel(mutation)}</small>
+                    <small>Puedes pedir “deshaz ese cambio” en el chat.</small>
+                  </>}
                 </div>
               ))}
             </div>

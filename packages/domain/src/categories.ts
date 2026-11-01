@@ -4,6 +4,9 @@ export interface SpendCategory {
   readonly id: string;
   readonly name: string;
   readonly sortOrder: number;
+  /** Retired entries retain their labels and financial references. */
+  readonly archived?: boolean;
+  readonly revision?: number;
 }
 
 export interface MerchantCategoryRule {
@@ -17,7 +20,7 @@ export interface MerchantCategoryRule {
   readonly updatedAt: string;
 }
 
-/** Suggested default catalog for V1 (fixed list; subcategories later). */
+/** Initial suggestions, seeded once; the live SQL catalog is editable. */
 export const DEFAULT_SPEND_CATEGORIES: readonly SpendCategory[] = [
   { id: "restaurantes", name: "Restaurantes", sortOrder: 10 },
   { id: "supermercado", name: "Supermercado", sortOrder: 20 },
