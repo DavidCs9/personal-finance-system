@@ -1,5 +1,12 @@
 export const TOOL_DEFINITIONS = [
   {
+    name: 'edit_operation_status',
+    description: 'Consulta de sólo lectura del operationId exacto de un preview/apply/undo de tags/categorías o cambio de catálogo. Úsala para retomar tras un corte sin repetir escrituras. Devuelve pending/applied/undone, expiración y si los movimientos aún coinciden con el recibo: applied acredita la operación histórica, no que nadie haya editado después. not_found no autoriza inventar/repetir cambios. Si pending expiró o cambió el estado, relee y genera un preview nuevo. No crea previews ni aplica cambios.',
+    inputSchema: { type: 'object', properties: {
+      operationId: { type: 'string', description: 'UUID exacto recibido previamente; nunca inventar ni abreviar.' },
+    }, required: ['operationId'] },
+  },
+  {
     name: 'list_categories',
     description: 'Consulta el catálogo SQL completo: IDs, nombres, orden, archived y revision. Incluye archivadas para conservar historia. Devuelve un operationId nuevo para manage_category; consulta antes de cada cambio. No inventes IDs existentes ni revisiones. Para una categoría nueva elige un ID estable en minúsculas sin acentos (letras, números, guion bajo; máximo 40).',
     inputSchema: { type: 'object', properties: {} },

@@ -170,6 +170,7 @@ export const toolNameFromHarness = (name: string): string =>
 
 const toolLabel = (name: string): string => {
   switch (name) {
+    case 'edit_operation_status': return 'Revisando el estado de la operación';
     case 'list_categories': return 'Consultando el catálogo de categorías';
     case 'manage_category': return 'Actualizando el catálogo de categorías';
     case 'month_snapshot': return 'Revisando el resumen del mes';
@@ -298,6 +299,8 @@ export const summarizeToolResult = (
       };
     case 'list_categories':
       return { summary: 'Consulté el catálogo de categorías.', material: false };
+    case 'edit_operation_status':
+      return { summary: 'Consulté el estado de la operación.', material: false };
     case 'manage_category':
       return { summary: 'Actualicé el catálogo de categorías.', material: true };
     case 'preview_tag_edit':

@@ -10,12 +10,15 @@ export const handler = async (
 ): Promise<unknown> => {
   const owner = process.env.AGENT_OWNER?.trim();
   if (!owner) throw new Error('AGENT_OWNER is not configured on the tag mutation Lambda.');
+  const toolName = resolveToolName(event, context);
   try {
-    return await runTagMutationTool(owner, resolveToolName(event, context), resolveArgs(event, context));
+    return await runTagMutationTool(owner, toolName, resolveArgs(event, context));
   } catch (error) {
     if (error instanceof InvalidCategoryError || error instanceof InvalidBulkEditError) {
       return rejectedToolRequest(error.message,
-        error instanceof InvalidCategoryError ? 'list_categories' : error.recoveryTool);
+        error instanceof InvalidCategoryError ? 'list_categories'
+          : error.recoveryTool === 'list_movements' && /^(apply|undo)_/.test(toolName)
+            ? 'edit_operation_status' : error.recoveryTool);
     }
     throw error;
   }

@@ -9,7 +9,8 @@ import {
   wealthSnapshotAgeDays,
 } from '@finance/domain';
 import { getMonthSummary } from '../months/summary.js';
-import { withLedgerReadSnapshot } from '../events/sql-reads.js';
+import { readerPool, withLedgerReadSnapshot } from '../events/sql-reads.js';
+import { readLedgerMovementIdsByPrefix } from '@finance/ledger/native-ledger';
 import { getWealthOverview, listWealthSnapshots } from '../wealth/service.js';
 import { listCategories } from '../categories/service.js';
 import { wealthFactsForAgent } from './wealth-facts.js';
@@ -202,7 +203,12 @@ export const listMovementsForAgent = async (
     const events = range.months.length === 1
       ? await loadMonthEvents(range.months[0]!)
       : await loadRangeEvents(range.months);
-    return spendingRangeFromEvents(events, query, now);
+    const result = spendingRangeFromEvents(events, query, now);
+    const refs = [...new Set(result.movements.map(row => row.ref).filter(ref => /^[a-f0-9]{8}$/.test(ref)))];
+    const ids = refs.length ? await readLedgerMovementIdsByPrefix(readerPool(), refs) : [];
+    return { ...result, movements: result.movements.map(row => ({ ...row,
+      ref: ids.filter(id => id.startsWith(row.ref)).length === 1 ? row.ref : undefined,
+    })) };
   } catch (error) {
     if (error instanceof InvalidSpendingRangeQueryError) {
       throw new InvalidAgentQueryError(error.message);
