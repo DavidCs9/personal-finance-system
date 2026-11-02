@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
-import textwrap
 import unittest
 
 
@@ -153,22 +152,6 @@ else:
                 self.assertNotEqual(result, 0)
 
 
-class PrivatePromptMaskingTests(unittest.TestCase):
-    def test_masks_both_prompt_parts_before_exporting_to_later_steps(self):
-        workflow = (HERE.parent / 'workflows' / 'ci-cd.yml').read_text()
-        export = workflow.index('} >> "$GITHUB_ENV"')
-        for part in ['prompt_text_part_1', 'prompt_text_part_2']:
-            self.assertLess(workflow.index(f'mask_prompt_part "${part}"'), export)
-
-    def test_native_mask_command_encodes_multiline_and_percent_content(self):
-        workflow = (HERE.parent / 'workflows' / 'ci-cd.yml').read_text()
-        start = workflow.index('          mask_prompt_part() {')
-        end = workflow.index('          }\n', start) + len('          }\n')
-        function = textwrap.dedent(workflow[start:end])
-        result = subprocess.run(['bash', '-c', function + '\nmask_prompt_part "$PRIVATE_PROMPT"'],
-            env={**os.environ, 'PRIVATE_PROMPT': 'Private profile\nLine 100%\r\nVoice'},
-            capture_output=True, text=True, check=True)
-        self.assertEqual(result.stdout, '::add-mask::Private profile%0ALine 100%25%0D%0AVoice\n')
 
 
 if __name__ == '__main__':

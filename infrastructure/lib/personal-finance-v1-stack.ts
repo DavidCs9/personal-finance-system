@@ -1,4 +1,5 @@
 import { SQL_AUTHORITY } from './storage-cutover';
+import { managedPromptTextParameters } from './managed-prompt-parameters';
 import * as cdk from 'aws-cdk-lib';
 import { DsqlProjection } from './dsql-projection';
 import { Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
@@ -88,18 +89,7 @@ export class PersonalFinanceV1Stack extends Stack {
       default: '',
       description: 'Cognito sub of the single finance owner used by AgentCore Gateway tools.',
     });
-    const olbiaSystemPromptTextPart1 = new cdk.CfnParameter(this, 'OlbiaSystemPromptTextPart1', {
-      type: 'String',
-      noEcho: true,
-      maxLength: 4096,
-      description: 'First part of the current Olbia DRAFT, read from Prompt Management by CI.',
-    });
-    const olbiaSystemPromptTextPart2 = new cdk.CfnParameter(this, 'OlbiaSystemPromptTextPart2', {
-      type: 'String',
-      noEcho: true,
-      maxLength: 4096,
-      description: 'Second part of the current Olbia DRAFT, read from Prompt Management by CI.',
-    });
+    const olbiaSystemPromptTextParts = managedPromptTextParameters(this);
     const olbiaSystemPromptModelId = new cdk.CfnParameter(this, 'OlbiaSystemPromptModelId', {
       type: 'String',
       description: 'Current Olbia DRAFT model ID, read from Bedrock Prompt Management by the deploy workflow.',
@@ -792,10 +782,7 @@ export class PersonalFinanceV1Stack extends Stack {
           },
           TemplateConfiguration: {
             Text: {
-              Text: cdk.Fn.join('', [
-                olbiaSystemPromptTextPart1.valueAsString,
-                olbiaSystemPromptTextPart2.valueAsString,
-              ]),
+              Text: cdk.Fn.join('', olbiaSystemPromptTextParts.map(part => part.valueAsString)),
             },
           },
         }],
