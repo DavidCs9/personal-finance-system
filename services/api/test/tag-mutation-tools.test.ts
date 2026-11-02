@@ -55,13 +55,34 @@ describe('tag and category mutation Gateway tools on native SQL', () => {
     await handler({ toolName: 'manage_category', action: 'create', categoryId: 'operation_test',
       name: 'Original', operationId: firstId }, {} as Context);
     expect(await runAgentTool('owner-1', 'edit_operation_status', { operationId: firstId }))
-      .toMatchObject({ status: 'applied', kind: 'category_catalog', currentStateMatchesReceipt: true });
+      .toMatchObject({ status: 'applied', kind: 'category_catalog', currentStateMatchesReceipt: true,
+        comparisonScope: 'catalog_revision', subsequentEditHistory: 'not_determined_by_this_tool' });
     await handler({ toolName: 'manage_category', action: 'update', categoryId: 'operation_test',
       name: 'Renamed', operationId: randomUUID(), expectedRevision: 1 }, {} as Context);
     const before = await fixture.snapshot();
     expect(await runAgentTool('owner-1', 'edit_operation_status', { operationId: firstId }))
       .toMatchObject({ status: 'applied', currentStateMatchesReceipt: false,
         category: { name: 'Original' }, currentCategory: { name: 'Renamed' } });
+    expect(await fixture.snapshot()).toEqual(before);
+  });
+
+  it('does not infer untouched history when an undone classification changes and later matches again', async () => {
+    const { runAgentTool } = await import('../src/agent/tools.js');
+    const { setMovementCategory } = await import('../../ledger/src/dsql/ledger-writes.js');
+    const { applicationSqlClient } = await import('../../ledger/src/dsql/sql-runtime.js');
+    const id = await fixture.create({ ...capture, categoryId: 'otros' });
+    const preview = await runTagMutationTool('owner-1', 'preview_category_edit', { eventId: id, categoryId: 'shopping' });
+    const args = { operationId: operationId(preview) };
+    await runTagMutationTool('owner-1', 'apply_category_edit', args);
+    await runTagMutationTool('owner-1', 'undo_category_edit', args);
+    await fixture.run(() => setMovementCategory(applicationSqlClient(), id, 'restaurantes'));
+    await fixture.run(() => setMovementCategory(applicationSqlClient(), id, 'otros'));
+    const before = await fixture.snapshot();
+    expect(await runAgentTool('owner-1', 'edit_operation_status', args)).toMatchObject({
+      status: 'undone', currentStateMatchesReceipt: true, changedMovementIds: [],
+      comparisonScope: 'classification_values_modified_by_operation',
+      subsequentEditHistory: 'not_determined_by_this_tool',
+    });
     expect(await fixture.snapshot()).toEqual(before);
   });
 

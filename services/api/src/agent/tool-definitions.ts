@@ -1,7 +1,7 @@
 export const TOOL_DEFINITIONS = [
   {
     name: 'edit_operation_status',
-    description: 'Consulta de sólo lectura del operationId exacto de un preview/apply/undo de tags/categorías o cambio de catálogo. Úsala para retomar tras un corte sin repetir escrituras. Devuelve pending/applied/undone, expiración y si los movimientos aún coinciden con el recibo: applied acredita la operación histórica, no que nadie haya editado después. not_found no autoriza inventar/repetir cambios. Si pending expiró o cambió el estado, relee y genera un preview nuevo. No crea previews ni aplica cambios.',
+    description: 'Consulta de sólo lectura del operationId exacto de un preview/apply/undo de tags/categorías o cambio de catálogo. Úsala para retomar tras un corte sin repetir escrituras. Devuelve pending/applied/undone, expiración y una comparación puntual con el estado actual, limitada por comparisonScope. Tanto applied como undone acreditan la operación histórica. currentStateMatchesReceipt=true sólo significa que los valores comparados coinciden ahora; no demuestra que nadie haya editado después, porque pudieron cambiar y volver a coincidir. subsequentEditHistory=not_determined_by_this_tool: esta tool no verifica la historia de cambios intermedios. not_found no autoriza inventar/repetir cambios. Si pending expiró o cambió el estado, relee y genera un preview nuevo. No crea previews ni aplica cambios.',
     inputSchema: { type: 'object', properties: {
       operationId: { type: 'string', description: 'UUID exacto recibido previamente; nunca inventar ni abreviar.' },
     }, required: ['operationId'] },

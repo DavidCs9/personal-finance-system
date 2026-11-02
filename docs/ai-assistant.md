@@ -24,7 +24,7 @@ The native loop receives the same generation budget as the resolved model, with 
 | preview/apply/undo_tag_edit; apply_tag_edits | Bounded tag-only operations. |
 | preview/apply/undo_category_edit; apply_category_edits | Bounded category-only operations. |
 | list_categories; manage_category | Read the catalog; create, rename/reorder, archive or restore one category. |
-| edit_operation_status | Read the owned preview/apply/undo or catalog receipt after an interruption, including expiry and divergence from current state. |
+| edit_operation_status | Read the owned preview/apply/undo or catalog receipt after an interruption, including expiry and current comparison within `comparisonScope`. Matching values now do not prove absence of intervening edits; `subsequentEditHistory` is not determined by this tool. |
 
 Investment history excludes Cajita/Fondo/debts/Neto. Default period all; as-of uses latest evidence on/before date. Global series carries each account forward and exposes coverage, ages, partial/mixed dates. Variation includes FX and is not flow-adjusted return. Symbol ambiguity returns candidate holding IDs, never guesses. Unit-price extremes exclude pre-buy/post-sell days; extrema use daily evidence even if displayed monthly. Range change and first/last in-range change are distinct. Expected no_data/ambiguous/invalid states are data, technical failures are errors.
 
