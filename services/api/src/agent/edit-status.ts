@@ -33,6 +33,7 @@ export const editOperationStatus = async (owner: string, operationId: unknown, n
       amountMinor: operation.amountMinor, appliedAt: operation.appliedAt ?? null, undoneAt: operation.undoneAt ?? null,
       expired: operation.status === 'pending' && operation.expiresAt * 1000 <= now,
       comparisonScope: 'classification_values_modified_by_operation',
+      subsequentEditHistory: 'not_determined_by_this_tool',
       currentStateMatchesReceipt: changedMovementIds.length === 0, changedMovementIds };
   });
 };

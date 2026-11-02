@@ -12,6 +12,7 @@ export const readAgentCatalogOperation = async (owner: string, operationId: stri
   return { ok: true, operationId, kind: 'category_catalog', status: 'applied', action: row.action,
     createdAt: new Date(row.created_at as string | Date).toISOString(),
     previous: row.previous_value, category: row.next_value,
+    comparisonScope: 'catalog_revision', subsequentEditHistory: 'not_determined_by_this_tool',
     currentStateMatchesReceipt: current?.revision === Number(row.revision), currentCategory: current ?? null };
 };
 
