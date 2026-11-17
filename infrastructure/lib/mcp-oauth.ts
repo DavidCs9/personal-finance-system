@@ -27,6 +27,7 @@ export const financeMcpOAuth = (scope: Construct, userPool: cognito.UserPool) =>
   });
   const domain = userPool.addDomain('FinanceMcpLogin', {
     cognitoDomain: { domainPrefix: `olbia-finance-${stack.account}-${stack.region}` },
+    managedLoginVersion: cognito.ManagedLoginVersion.NEWER_MANAGED_LOGIN,
   });
   const client = userPool.addClient('ChatGptMcpClient', {
     userPoolClientName: 'olbia-chatgpt-read-only',
@@ -47,6 +48,11 @@ export const financeMcpOAuth = (scope: Construct, userPool: cognito.UserPool) =>
     refreshTokenValidity: Duration.days(30),
     enableTokenRevocation: true,
   });
+  const branding = new cognito.CfnManagedLoginBranding(scope, 'ChatGptMcpLoginBranding', {
+    userPoolId: userPool.userPoolId, clientId: client.userPoolClientId,
+    useCognitoProvidedValues: true,
+  });
+  branding.node.addDependency(domain);
   const credentials = new secretsmanager.Secret(scope, 'ChatGptMcpCredentials', {
     description: 'Static ChatGPT OAuth client credentials. Never publish in outputs or logs.',
     removalPolicy: RemovalPolicy.DESTROY,

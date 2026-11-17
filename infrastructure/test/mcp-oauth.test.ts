@@ -12,6 +12,8 @@ it('uses the existing private pool with a separate code-only read client and kee
   financeMcpOAuth(stack, pool);
   const template = Template.fromStack(stack);
   template.resourceCountIs('AWS::Cognito::UserPool', 1);
+  template.hasResourceProperties('AWS::Cognito::UserPoolDomain', { ManagedLoginVersion: 2 });
+  template.hasResourceProperties('AWS::Cognito::ManagedLoginBranding', { UseCognitoProvidedValues: true });
   template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
     AllowedOAuthFlows: ['code'], GenerateSecret: true, EnableTokenRevocation: true,
     AllowedOAuthScopes: Match.arrayWith(['openid', 'email', 'phone', 'profile']),
