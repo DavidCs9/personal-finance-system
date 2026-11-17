@@ -145,6 +145,7 @@ jobs:
       SES_SENDER_EMAIL: ${{ vars.SES_SENDER_EMAIL }}
       ALERT_RECIPIENT_EMAIL: ${{ vars.ALERT_RECIPIENT_EMAIL }}
       AGENT_OWNER_SUB: ${{ vars.AGENT_OWNER_SUB }}
+      MCP_OAUTH_CALLBACK_URLS: ${{ vars.MCP_OAUTH_CALLBACK_URLS || 'https://chatgpt.com/connector_platform_oauth_redirect' }}
     permissions:
       contents: read
       id-token: write
@@ -181,6 +182,7 @@ jobs:
           --parameters PersonalFinanceV1:SesSenderEmail="$SES_SENDER_EMAIL"
           --parameters PersonalFinanceV1:AlertRecipientEmail="$ALERT_RECIPIENT_EMAIL"
           --parameters PersonalFinanceV1:AgentOwnerSub="$AGENT_OWNER_SUB"
+          --parameters PersonalFinanceV1:McpOAuthCallbackUrls="$MCP_OAUTH_CALLBACK_URLS"
           --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart1="$OLBIA_SYSTEM_PROMPT_PART_1"
           --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart2="$OLBIA_SYSTEM_PROMPT_PART_2"
           --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart3="$OLBIA_SYSTEM_PROMPT_PART_3"
@@ -198,6 +200,7 @@ jobs:
           --parameters PersonalFinanceV1:SesSenderEmail="$SES_SENDER_EMAIL"
           --parameters PersonalFinanceV1:AlertRecipientEmail="$ALERT_RECIPIENT_EMAIL"
           --parameters PersonalFinanceV1:AgentOwnerSub="$AGENT_OWNER_SUB"
+          --parameters PersonalFinanceV1:McpOAuthCallbackUrls="$MCP_OAUTH_CALLBACK_URLS"
           --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart1="$OLBIA_SYSTEM_PROMPT_PART_1"
           --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart2="$OLBIA_SYSTEM_PROMPT_PART_2"
           --parameters PersonalFinanceV1:OlbiaSystemPromptTextPart3="$OLBIA_SYSTEM_PROMPT_PART_3"
