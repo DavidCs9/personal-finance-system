@@ -865,7 +865,9 @@ export class PersonalFinanceV1Stack extends Stack {
       actions: ['bedrock-agentcore:ListGateways'], resources: ['*'],
     }));
     financeMcpOAuthFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['bedrock-agentcore:CreateGateway'], resources: ['*'],
+      // Create-time dependencies are checked before AWS assigns the Gateway ARN.
+      actions: ['bedrock-agentcore:CreateGateway', 'bedrock-agentcore:TagResource',
+        'bedrock-agentcore:SynchronizeGatewayTargets'], resources: ['*'],
       conditions: { StringEquals: { 'aws:RequestTag/OlbiaIntegration': 'chatgpt-read-only',
         'aws:RequestTag/CloudFormationStackId': this.stackId } },
     }));
@@ -873,7 +875,7 @@ export class PersonalFinanceV1Stack extends Stack {
       actions: ['bedrock-agentcore:GetGateway', 'bedrock-agentcore:UpdateGateway', 'bedrock-agentcore:DeleteGateway',
         'bedrock-agentcore:ListGatewayTargets', 'bedrock-agentcore:GetGatewayTarget',
         'bedrock-agentcore:CreateGatewayTarget', 'bedrock-agentcore:UpdateGatewayTarget', 'bedrock-agentcore:DeleteGatewayTarget',
-        'bedrock-agentcore:SynchronizeGatewayTargets', 'bedrock-agentcore:TagResource', 'bedrock-agentcore:ListTagsForResource'],
+        'bedrock-agentcore:SynchronizeGatewayTargets', 'bedrock-agentcore:ListTagsForResource'],
       resources: [`arn:aws:bedrock-agentcore:${this.region}:${this.account}:gateway/olbiachatgptfinance-*`],
     }));
     financeMcpOAuthFunction.addToRolePolicy(new iam.PolicyStatement({
