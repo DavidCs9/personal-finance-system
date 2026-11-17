@@ -41,7 +41,7 @@ beforeEach(() => {
   mocks.send.mockImplementation(async command => {
     switch (command.constructor.name) {
       case 'CreateGatewayCommand':
-        gateway = { ...gateway, ...command.input }; mocks.listed = true; return gateway;
+        gateway = { ...gateway, ...command.input, status: 'READY' }; mocks.listed = true; return gateway;
       case 'GetGatewayCommand':
         if (!mocks.listed) throw missing();
         return gateway;
@@ -169,6 +169,23 @@ describe('native ChatGPT Gateway reusing the finance read implementation', () =>
   it('reports the native readiness failure reason without dumping request configuration', async () => {
     gateway = { ...gateway, status: 'FAILED', statusReasons: ['Missing workload identity permission'] };
     await expect(handler({ RequestType: 'Update', ResourceProperties: props })).rejects.toThrow('Missing workload identity permission');
-    expect(commands()).toEqual(['GetGatewayCommand']);
+    expect(commands()).toEqual(['GetGatewayCommand', 'ListTagsForResourceCommand', 'GetGatewayCommand']);
+    expect(commands()).not.toContain('DeleteGatewayCommand');
+  });
+
+  it('recovers only an owned failed bootstrap without attached tools', async () => {
+    gateway.status = 'FAILED'; mocks.targets = [];
+    await handler({ RequestType: 'Create', ResourceProperties: props });
+    const calls = commands();
+    expect(calls.indexOf('DeleteGatewayCommand')).toBeLessThan(calls.indexOf('CreateGatewayCommand'));
+    expect(calls.indexOf('UpdateGatewayCommand')).toBeLessThan(calls.indexOf('CreateGatewayTargetCommand'));
+    expect(gateway.authorizerConfiguration?.customJWTAuthorizer?.allowedAudience).toEqual([gateway.gatewayUrl]);
+  });
+
+  it('does not recover a failed bootstrap owned by another stack', async () => {
+    gateway.status = 'FAILED'; mocks.targets = []; mocks.tagOwner = 'different-stack';
+    await expect(handler({ RequestType: 'Create', ResourceProperties: props })).rejects.toThrow('does not belong');
+    expect(commands()).not.toContain('DeleteGatewayCommand');
+    expect(commands()).not.toContain('CreateGatewayCommand');
   });
 });

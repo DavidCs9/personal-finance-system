@@ -915,6 +915,8 @@ export class PersonalFinanceV1Stack extends Stack {
     financeMcpOAuthResource.node.addDependency(mcpOAuth.client);
     financeMcpOAuthResource.node.addDependency(mcpOAuth.domain);
     financeMcpOAuthResource.node.addDependency(financeMcpGatewayRole);
+    // A Lambda reference alone does not wait for its separately attached policy.
+    financeMcpOAuthResource.node.addDependency(financeMcpOAuthFunction.role!.node.findChild('DefaultPolicy'));
     new cdk.CfnOutput(this, 'FinanceMcpUrl', { value: financeMcpOAuthResource.getAttString('GatewayUrl') });
     const harnessArn = agentcoreResources.getAttString('HarnessArn');
     const agentMemoryId = agentcoreResources.getAttString('MemoryId');
