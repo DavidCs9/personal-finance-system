@@ -165,4 +165,10 @@ describe('native ChatGPT Gateway reusing the finance read implementation', () =>
     await handler({ RequestType: 'Delete', ResourceProperties: props });
     expect(commands()).toContain('DeleteGatewayCommand');
   });
+
+  it('reports the native readiness failure reason without dumping request configuration', async () => {
+    gateway = { ...gateway, status: 'FAILED', statusReasons: ['Missing workload identity permission'] };
+    await expect(handler({ RequestType: 'Update', ResourceProperties: props })).rejects.toThrow('Missing workload identity permission');
+    expect(commands()).toEqual(['GetGatewayCommand']);
+  });
 });

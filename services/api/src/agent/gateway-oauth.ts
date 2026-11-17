@@ -77,7 +77,7 @@ const waitReady = async (gatewayId: string): Promise<GetGatewayResponse> => {
     const gateway = await client.send(new GetGatewayCommand({ gatewayIdentifier: gatewayId }));
     if (gateway.status === 'READY') return gateway;
     if (['FAILED', 'UPDATE_UNSUCCESSFUL', 'DELETING'].includes(gateway.status ?? '')) {
-      throw new Error('Finance Gateway did not become ready.');
+      throw new Error(`Finance Gateway ${gateway.status}: ${(gateway.statusReasons ?? []).join('; ').slice(0, 512) || 'no reason returned'}`);
     }
     await new Promise(resolve => setTimeout(resolve, 2_000));
   }
@@ -88,7 +88,9 @@ const waitTargetReady = async (gatewayId: string, targetId: string) => {
   for (let attempt = 0; attempt < 60; attempt++) {
     const target = await client.send(new GetGatewayTargetCommand({ gatewayIdentifier: gatewayId, targetId }));
     if (target.status === 'READY') return;
-    if (['FAILED', 'UPDATE_UNSUCCESSFUL', 'DELETING'].includes(target.status ?? '')) throw new Error('Finance read target failed.');
+    if (['FAILED', 'UPDATE_UNSUCCESSFUL', 'DELETING'].includes(target.status ?? '')) {
+      throw new Error(`Finance read target ${target.status}: ${(target.statusReasons ?? []).join('; ').slice(0, 512) || 'no reason returned'}`);
+    }
     await new Promise(resolve => setTimeout(resolve, 2_000));
   }
   throw new Error('Finance read target timed out.');
