@@ -27,4 +27,5 @@ it('uses the existing private pool with a separate code-only read client and kee
   expect(JSON.stringify(secretLookup.Properties.Update)).toContain('false');
   expect(template.toJSON().Parameters.McpOAuthCallbackUrls.AllowedPattern).not.toContain('.*');
   template.resourceCountIs('AWS::SecretsManager::Secret', 1);
+  template.hasResource('AWS::SecretsManager::Secret', { DeletionPolicy: 'Delete', UpdateReplacePolicy: 'Delete' });
 });
