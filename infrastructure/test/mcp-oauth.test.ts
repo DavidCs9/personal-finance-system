@@ -45,6 +45,7 @@ it('uses native lifecycle, denies bootstrap tool exposure, and binds read tools 
   template.resourceCountIs('AWS::BedrockAgentCore::GatewayTarget', 1);
   template.hasResourceProperties('AWS::BedrockAgentCore::Gateway', {
     AuthorizerType: 'CUSTOM_JWT', ProtocolType: 'MCP',
+    ProtocolConfiguration: { Mcp: { SupportedVersions: ['2025-03-26', '2025-06-18', '2025-11-25', '2026-07-28'] } },
     AuthorizerConfiguration: { CustomJWTAuthorizer: {
       AllowedAudience: [{ Ref: 'McpOAuthResourceUrl' }], AllowedClients: [stack.resolve(oauth.client.userPoolClientId)],
       AllowedScopes: ['olbia-finance/read'], DiscoveryUrl: stack.resolve(oauth.discoveryUrl),

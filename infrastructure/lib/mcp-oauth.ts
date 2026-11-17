@@ -81,6 +81,7 @@ export const financeMcpGateway = (scope: Construct, props: {
   const invoke = props.tools.grantInvoke(role);
   const gateway = new CfnGateway(scope, 'FinanceMcpReadGateway', {
     name: 'OlbiaChatGptRead', roleArn: role.roleArn, protocolType: 'MCP', authorizerType: 'CUSTOM_JWT',
+    protocolConfiguration: { mcp: { supportedVersions: ['2025-03-26', '2025-06-18', '2025-11-25', '2026-07-28'] } },
     authorizerConfiguration: { customJwtAuthorizer: {
       discoveryUrl: props.oauth.discoveryUrl, allowedClients: [props.oauth.client.userPoolClientId],
       allowedAudience: [audience.valueAsString], allowedScopes: [MCP_READ_SCOPE],
