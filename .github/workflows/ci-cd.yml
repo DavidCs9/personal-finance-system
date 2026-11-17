@@ -214,6 +214,22 @@ jobs:
           --parameters PersonalFinanceV1:OlbiaSystemPromptMaxTokens="$OLBIA_SYSTEM_PROMPT_MAX_TOKENS"
           --require-approval never
         working-directory: infrastructure
+      - name: Bind native MCP audience before exposing read tools
+        shell: bash
+        working-directory: infrastructure
+        run: |
+          set -euo pipefail
+          test "$(aws sts get-caller-identity --query Account --output text)" = '225989371926'
+          mcp_url=$(aws cloudformation describe-stacks --stack-name PersonalFinanceV1 --query 'Stacks[0].Outputs[?OutputKey==`FinanceMcpUrl`].OutputValue | [0]' --output text)
+          audience=$(aws cloudformation describe-stacks --stack-name PersonalFinanceV1 --query 'Stacks[0].Parameters[?ParameterKey==`McpOAuthResourceUrl`].ParameterValue | [0]' --output text)
+          [[ "$mcp_url" =~ ^https://olbiachatgptread-[a-z0-9]+\.gateway\.bedrock-agentcore\.us-east-2\.amazonaws\.com/mcp$ ]]
+          if [[ "$audience" != "$mcp_url" ]]; then
+            test "$(aws sts get-caller-identity --query Account --output text)" = '225989371926'
+            npx cdk deploy PersonalFinanceV1 --app cdk.out.recovery \
+              --previous-parameters true \
+              --parameters "PersonalFinanceV1:McpOAuthResourceUrl=$mcp_url" \
+              --require-approval never
+          fi
       - name: Refresh AWS session for DSQL verification
         uses: aws-actions/configure-aws-credentials@v6
         with:
