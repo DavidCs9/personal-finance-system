@@ -139,24 +139,27 @@ export const handler = async (event: {
   if (!gatewayId && event.RequestType === 'Delete') {
     return { PhysicalResourceId: event.PhysicalResourceId ?? 'olbia-chatgpt-mcp::removed', Data: {} };
   }
-  if (!gatewayId) {
+  const createGateway = async (replacing = '') => {
     const created = await client.send(new CreateGatewayCommand({
       name: props.GatewayName, roleArn: props.GatewayRoleArn, protocolType: 'MCP',
       description: 'Read-only ChatGPT access to the existing Olbia finance tools.',
       authorizerType: 'CUSTOM_JWT', authorizerConfiguration: bootstrapAuth, tags: ownershipTags(props),
-      clientToken: createHash('sha256').update(`${props.StackId}:${props.GatewayName}:${props.ClientId}`).digest('hex'),
+      clientToken: createHash('sha256').update(`${props.StackId}:${props.GatewayName}:${props.ClientId}:${replacing}`).digest('hex'),
     }));
-    gatewayId = created.gatewayId;
-    if (!gatewayId) throw new Error('OAuth Gateway creation returned no identity.');
-  }
-  let gateway = event.RequestType === 'Delete'
-    ? await client.send(new GetGatewayCommand({ gatewayIdentifier: gatewayId }))
-    : await waitReady(gatewayId);
-  if (!gateway.gatewayArn) throw new Error('OAuth Gateway has no ARN.');
-  const tags = await client.send(new ListTagsForResourceCommand({ resourceArn: gateway.gatewayArn }));
-  if (Object.entries(ownershipTags(props)).some(([key, value]) => tags.tags?.[key] !== value)) {
-    throw new Error('OAuth Gateway does not belong to this CloudFormation integration.');
-  }
+    if (!created.gatewayId) throw new Error('OAuth Gateway creation returned no identity.');
+    return created.gatewayId;
+  };
+  if (!gatewayId) gatewayId = await createGateway();
+  const readOwnedGateway = async (id: string): Promise<GetGatewayResponse> => {
+    const found = await client.send(new GetGatewayCommand({ gatewayIdentifier: id }));
+    if (!found.gatewayArn) throw new Error('OAuth Gateway has no ARN.');
+    const tags = await client.send(new ListTagsForResourceCommand({ resourceArn: found.gatewayArn }));
+    if (Object.entries(ownershipTags(props)).some(([key, value]) => tags.tags?.[key] !== value)) {
+      throw new Error('OAuth Gateway does not belong to this CloudFormation integration.');
+    }
+    return found;
+  };
+  let gateway = await readOwnedGateway(gatewayId);
   const targets = [];
   for await (const page of paginateListGatewayTargets({ client }, { gatewayIdentifier: gatewayId })) {
     targets.push(...(page.items ?? []));
@@ -164,6 +167,18 @@ export const handler = async (event: {
   if (targets.length > 1 || targets.some(t => t.name !== 'olbia-tools' || !t.targetId)) {
     throw new Error('OAuth can expose only the existing read-only finance target.');
   }
+  // A failed CloudFormation Create need not receive Delete. Recover only our
+  // empty bootstrap; never automatically replace an ingress with attached tools.
+  if (event.RequestType !== 'Delete' && gateway.status === 'FAILED' && targets.length === 0
+    && gateway.name === props.GatewayName && gateway.roleArn === props.GatewayRoleArn
+    && gateway.protocolType === 'MCP' && gateway.authorizerType === 'CUSTOM_JWT') {
+    const failedId = gatewayId;
+    await client.send(new DeleteGatewayCommand({ gatewayIdentifier: failedId }));
+    await waitRemoved(() => client.send(new GetGatewayCommand({ gatewayIdentifier: failedId })));
+    gatewayId = await createGateway(failedId);
+    gateway = await readOwnedGateway(gatewayId);
+  }
+  if (event.RequestType !== 'Delete' && gateway.status !== 'READY') gateway = await waitReady(gatewayId);
   if (event.RequestType === 'Delete') {
     // This resource owns only its new ingress. Never delete the shared Lambda,
     // legacy IAM Gateway, conversations, originals or financial data.

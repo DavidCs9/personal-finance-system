@@ -28,6 +28,8 @@ Native `OlbiaChatGptFinance` OAuth ingress reuses the existing read-only tools L
 
 `McpOAuthCallbackUrls` permits only exact official ChatGPT callback URLs. Its initial value is the documented stable callback, not proof of the callback assigned to a new connection. When ChatGPT shows a connection-specific callback, add that exact URL to the GitHub repository variable `MCP_OAUTH_CALLBACK_URLS` (comma separated), and apply it through the next reviewed main deployment. No wildcard, localhost or third-party redirect is accepted. Every normal deployment explicitly preserves this variable in both diff and deploy.
 
+A failed custom-resource creation can leave a native failed Gateway without receiving a cleanup event. The next reviewed deployment recovers only this stack's owned, failed bootstrap with zero attached targets; it never automatically replaces an ingress with tools. Provisioning waits for the caller's IAM policy, including native workload-identity dependencies. No direct production cleanup is required.
+
 Verify unauthenticated MCP requests return a discovery challenge, protected-resource metadata points to the configured Cognito issuer/read scope, discovery advertises S256, and private calls require David's access token with the exact client, resource audience and read scope. A successful real ChatGPT read query completes linking; until then do not claim end-to-end success. Retire the old chat/Harness/IAM Gateways and memory only after linking, without removing the shared read Lambda, SQL, originals, monthly-close analysis or ingestion fallback. Inspect the provisioner's resource identities before retirement: the old read target lives in a different region/Gateway from managed Web Search.
 
 ## Diagnosis and recovery
