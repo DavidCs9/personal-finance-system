@@ -882,6 +882,20 @@ export class PersonalFinanceV1Stack extends Stack {
       actions: ['iam:PassRole'], resources: [financeMcpGatewayRole.roleArn],
       conditions: { StringEquals: { 'iam:PassedToService': 'bedrock-agentcore.amazonaws.com' } },
     }));
+    // Gateway creates its same-named identity through the caller's forwarded
+    // session. Both the default directory and new identity must authorize creation.
+    financeMcpOAuthFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock-agentcore:CreateWorkloadIdentity', 'bedrock-agentcore:GetWorkloadIdentity',
+        'bedrock-agentcore:UpdateWorkloadIdentity', 'bedrock-agentcore:DeleteWorkloadIdentity'],
+      resources: [
+        `arn:aws:bedrock-agentcore:${this.region}:${this.account}:workload-identity-directory/default`,
+        `arn:aws:bedrock-agentcore:${this.region}:${this.account}:workload-identity-directory/default/workload-identity/olbiachatgptfinance-*`,
+      ],
+    }));
+    financeMcpOAuthFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock-agentcore:TagResource'],
+      resources: [`arn:aws:bedrock-agentcore:${this.region}:${this.account}:workload-identity-directory/default/workload-identity/olbiachatgptfinance-*`],
+    }));
     const financeMcpOAuthProvider = new cr.Provider(this, 'FinanceMcpOAuthProvider', {
       onEventHandler: financeMcpOAuthFunction,
       logGroup: logs.LogGroup.fromLogGroupName(this, 'FinanceMcpOAuthRetainedProviderLogs', '/aws/lambda/personal-finance-v1-finance-mcp-oauth-provider'),
