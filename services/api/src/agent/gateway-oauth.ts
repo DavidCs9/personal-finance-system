@@ -170,7 +170,7 @@ export const handler = async (event: {
   // A failed CloudFormation Create need not receive Delete. Recover only our
   // empty bootstrap; never automatically replace an ingress with attached tools.
   if (event.RequestType !== 'Delete' && gateway.status === 'FAILED' && targets.length === 0
-    && gateway.name === props.GatewayName && gateway.roleArn === props.GatewayRoleArn
+    && gateway.name === props.GatewayName
     && gateway.protocolType === 'MCP' && gateway.authorizerType === 'CUSTOM_JWT') {
     const failedId = gatewayId;
     await client.send(new DeleteGatewayCommand({ gatewayIdentifier: failedId }));

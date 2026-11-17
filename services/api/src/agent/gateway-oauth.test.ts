@@ -173,13 +173,15 @@ describe('native ChatGPT Gateway reusing the finance read implementation', () =>
     expect(commands()).not.toContain('DeleteGatewayCommand');
   });
 
-  it('recovers only an owned failed bootstrap without attached tools', async () => {
+  it('recovers an owned empty failed bootstrap after CloudFormation recreates its IAM role', async () => {
     gateway.status = 'FAILED'; mocks.targets = [];
+    gateway.roleArn = props.GatewayRoleArn + '-deleted-by-rollback';
     await handler({ RequestType: 'Create', ResourceProperties: props });
     const calls = commands();
     expect(calls.indexOf('DeleteGatewayCommand')).toBeLessThan(calls.indexOf('CreateGatewayCommand'));
     expect(calls.indexOf('UpdateGatewayCommand')).toBeLessThan(calls.indexOf('CreateGatewayTargetCommand'));
     expect(gateway.authorizerConfiguration?.customJWTAuthorizer?.allowedAudience).toEqual([gateway.gatewayUrl]);
+    expect(gateway.roleArn).toBe(props.GatewayRoleArn);
   });
 
   it('does not recover a failed bootstrap owned by another stack', async () => {
