@@ -1,5 +1,6 @@
 import { SQL_AUTHORITY } from './storage-cutover';
 import { managedPromptTextParameters } from './managed-prompt-parameters';
+import { financeMcpOAuth, MCP_READ_SCOPE } from './mcp-oauth';
 import * as cdk from 'aws-cdk-lib';
 import { DsqlProjection } from './dsql-projection';
 import { Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
@@ -431,6 +432,7 @@ export class PersonalFinanceV1Stack extends Stack {
       generateSecret: false,
       refreshTokenValidity: Duration.days(365),
     });
+    const mcpOAuth = financeMcpOAuth(this, userPool);
 
     const apiFunction = new NodejsFunction(this, 'ApiFunction', {
       ...lambdaDefaults,
@@ -843,6 +845,45 @@ export class PersonalFinanceV1Stack extends Stack {
     // wait until the role's separately managed IAM policy is fully attached.
     agentcoreResources.node.addDependency(memoryModelPolicy);
     agentcoreResources.node.addDependency(tagMutationPermit);
+    const financeMcpOAuthFunction = new NodejsFunction(this, 'FinanceMcpOAuthFunction', {
+      ...lambdaDefaults,
+      functionName: 'personal-finance-v1-finance-mcp-oauth',
+      entry: path.join(__dirname, '..', 'lambda', 'finance-mcp-oauth.ts'), handler: 'handler',
+      logGroup: this.createLogGroup('FinanceMcpOAuthLogGroup', 'personal-finance-v1-finance-mcp-oauth'),
+      description: 'CloudFormation-managed OAuth adaptation of the existing read-only MCP Gateway.',
+      timeout: Duration.minutes(5), memorySize: 256,
+      bundling: { ...lambdaDefaults.bundling, bundleAwsSDK: true },
+    });
+    financeMcpOAuthFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock-agentcore:ListGateways'], resources: ['*'],
+    }));
+    financeMcpOAuthFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock-agentcore:GetGateway', 'bedrock-agentcore:UpdateGateway',
+        'bedrock-agentcore:ListGatewayTargets', 'bedrock-agentcore:GetGatewayTarget'],
+      resources: [`arn:aws:bedrock-agentcore:${this.region}:${this.account}:gateway/olbiafinancegateway-*`],
+    }));
+    financeMcpOAuthFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['iam:PassRole'], resources: [gatewayRole.roleArn],
+      conditions: { StringEquals: { 'iam:PassedToService': 'bedrock-agentcore.amazonaws.com' } },
+    }));
+    const financeMcpOAuthProvider = new cr.Provider(this, 'FinanceMcpOAuthProvider', {
+      onEventHandler: financeMcpOAuthFunction,
+      logGroup: this.createLogGroup('FinanceMcpOAuthProviderLogs', 'personal-finance-v1-finance-mcp-oauth-provider'),
+    });
+    const financeMcpOAuthResource = new cdk.CustomResource(this, 'FinanceMcpOAuth', {
+      serviceToken: financeMcpOAuthProvider.serviceToken,
+      properties: {
+        GatewayName: 'OlbiaFinanceGateway', ToolsLambdaArn: agentToolsFunction.functionArn,
+        DiscoveryUrl: mcpOAuth.discoveryUrl, ClientId: mcpOAuth.client.userPoolClientId,
+        OwnerSub: agentOwnerSub.valueAsString, ReadScope: MCP_READ_SCOPE,
+        ProvisionerVersion: financeMcpOAuthFunction.currentVersion.version,
+        ToolsVersion: agentToolsFunction.currentVersion.version,
+      },
+    });
+    financeMcpOAuthResource.node.addDependency(agentcoreResources);
+    financeMcpOAuthResource.node.addDependency(mcpOAuth.client);
+    financeMcpOAuthResource.node.addDependency(mcpOAuth.domain);
+    new cdk.CfnOutput(this, 'FinanceMcpUrl', { value: financeMcpOAuthResource.getAttString('GatewayUrl') });
     const harnessArn = agentcoreResources.getAttString('HarnessArn');
     const agentMemoryId = agentcoreResources.getAttString('MemoryId');
 

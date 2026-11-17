@@ -22,6 +22,14 @@ For each measurement, record the sample count and date window. Use the Actions r
 
 Record the compiler version and actual npm/compiler cache restore result alongside each timing. Dependency or configuration changes invalidate compiler metadata and belong to the cold-cache cohort. Keep changed-code PRs, Markdown-only PRs and unchanged-source workflow dispatches separate; a warm dispatch isolates cache overhead but does not establish changed-code feedback percentiles. Compare complete trigger-to-verdict time as well as the compiler step so cache upload or runner scheduling cannot hide the agent's wait.
 
+## Private ChatGPT MCP connection
+
+The existing finance Gateway uses native Cognito OAuth for David's read-only tools. Stack outputs `FinanceMcpUrl`, `McpOAuthClientId`, `McpOAuthLoginUrl` and `McpOAuthCredentialsSecretArn` identify its setup. The client secret stays in Secrets Manager; copy it privately into ChatGPT's Advanced OAuth settings, never into chat, Git, deployment outputs or logs. Use Server URL and OAuth with the predefined client. Cognito performs code exchange with S256 PKCE; no DCR/CIMD service or new MCP server is needed.
+
+`McpOAuthCallbackUrls` permits only exact official ChatGPT callback URLs. Its initial value is the documented stable callback, not proof of the callback assigned to a new connection. When ChatGPT shows a connection-specific callback, add that exact URL to the GitHub repository variable `MCP_OAUTH_CALLBACK_URLS` (comma separated), and apply it through the next reviewed main deployment. No wildcard, localhost or third-party redirect is accepted. Every normal deployment explicitly preserves this variable in both diff and deploy.
+
+Verify unauthenticated MCP requests return a discovery challenge, protected-resource metadata points to the configured Cognito issuer/read scope, discovery advertises S256, and private calls require David's access token with the exact client, resource audience and read scope. A successful real ChatGPT read query completes linking; until then do not claim end-to-end success. The old app Harness uses IAM and cannot read finance tools after this accepted cutover. Retire its chat/runtime resources only after linking, without removing the shared read Lambda, SQL, originals, monthly-close analysis or ingestion fallback.
+
 ## Diagnosis and recovery
 
 Use native Actions/CloudFormation events, Lambda/CloudWatch errors, Scheduler/SQS DLQs and deployed verification results. Inspect the failed stage and retained report before retrying. Provider failure preserves last good wealth data; parser/model failure retains original MIME for review. Retry/discard an ingestion exception through Olbia: dispatcher carries its exact request-time attempt identity and completion is atomic with financial capture. Do not delete DLQ/evidence objects to silence alarms.
