@@ -845,35 +845,50 @@ export class PersonalFinanceV1Stack extends Stack {
     // wait until the role's separately managed IAM policy is fully attached.
     agentcoreResources.node.addDependency(memoryModelPolicy);
     agentcoreResources.node.addDependency(tagMutationPermit);
+    const financeMcpGatewayRole = new iam.Role(this, 'FinanceMcpGatewayRole', {
+      assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com'),
+      description: 'ChatGPT Gateway can invoke only the existing read-only finance Lambda.',
+    });
+    agentToolsFunction.grantInvoke(financeMcpGatewayRole);
     const financeMcpOAuthFunction = new NodejsFunction(this, 'FinanceMcpOAuthFunction', {
       ...lambdaDefaults,
       functionName: 'personal-finance-v1-finance-mcp-oauth',
       entry: path.join(__dirname, '..', 'lambda', 'finance-mcp-oauth.ts'), handler: 'handler',
-      logGroup: this.createLogGroup('FinanceMcpOAuthLogGroup', 'personal-finance-v1-finance-mcp-oauth'),
-      description: 'CloudFormation-managed OAuth adaptation of the existing read-only MCP Gateway.',
-      timeout: Duration.minutes(5), memorySize: 256,
+      // These exact 30-day groups were retained by the rolled-back first release.
+      // Reuse them natively, preserving the failed-release evidence and identity.
+      logGroup: logs.LogGroup.fromLogGroupName(this, 'FinanceMcpOAuthRetainedLogs', '/aws/lambda/personal-finance-v1-finance-mcp-oauth'),
+      description: 'Managed OAuth ingress reusing the existing read-only MCP Lambda and catalog.',
+      timeout: Duration.minutes(10), memorySize: 256,
       bundling: { ...lambdaDefaults.bundling, bundleAwsSDK: true },
     });
     financeMcpOAuthFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock-agentcore:ListGateways'], resources: ['*'],
     }));
     financeMcpOAuthFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['bedrock-agentcore:GetGateway', 'bedrock-agentcore:UpdateGateway',
-        'bedrock-agentcore:ListGatewayTargets', 'bedrock-agentcore:GetGatewayTarget'],
-      resources: [`arn:aws:bedrock-agentcore:${this.region}:${this.account}:gateway/olbiafinancegateway-*`],
+      actions: ['bedrock-agentcore:CreateGateway'], resources: ['*'],
+      conditions: { StringEquals: { 'aws:RequestTag/OlbiaIntegration': 'chatgpt-read-only',
+        'aws:RequestTag/CloudFormationStackId': this.stackId } },
     }));
     financeMcpOAuthFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['iam:PassRole'], resources: [gatewayRole.roleArn],
+      actions: ['bedrock-agentcore:GetGateway', 'bedrock-agentcore:UpdateGateway', 'bedrock-agentcore:DeleteGateway',
+        'bedrock-agentcore:ListGatewayTargets', 'bedrock-agentcore:GetGatewayTarget',
+        'bedrock-agentcore:CreateGatewayTarget', 'bedrock-agentcore:UpdateGatewayTarget', 'bedrock-agentcore:DeleteGatewayTarget',
+        'bedrock-agentcore:SynchronizeGatewayTargets', 'bedrock-agentcore:TagResource', 'bedrock-agentcore:ListTagsForResource'],
+      resources: [`arn:aws:bedrock-agentcore:${this.region}:${this.account}:gateway/olbiachatgptfinance-*`],
+    }));
+    financeMcpOAuthFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['iam:PassRole'], resources: [financeMcpGatewayRole.roleArn],
       conditions: { StringEquals: { 'iam:PassedToService': 'bedrock-agentcore.amazonaws.com' } },
     }));
     const financeMcpOAuthProvider = new cr.Provider(this, 'FinanceMcpOAuthProvider', {
       onEventHandler: financeMcpOAuthFunction,
-      logGroup: this.createLogGroup('FinanceMcpOAuthProviderLogs', 'personal-finance-v1-finance-mcp-oauth-provider'),
+      logGroup: logs.LogGroup.fromLogGroupName(this, 'FinanceMcpOAuthRetainedProviderLogs', '/aws/lambda/personal-finance-v1-finance-mcp-oauth-provider'),
     });
     const financeMcpOAuthResource = new cdk.CustomResource(this, 'FinanceMcpOAuth', {
       serviceToken: financeMcpOAuthProvider.serviceToken,
       properties: {
-        GatewayName: 'OlbiaFinanceGateway', ToolsLambdaArn: agentToolsFunction.functionArn,
+        GatewayName: 'OlbiaChatGptFinance', GatewayRoleArn: financeMcpGatewayRole.roleArn, StackId: this.stackId,
+        ToolsLambdaArn: agentToolsFunction.functionArn,
         DiscoveryUrl: mcpOAuth.discoveryUrl, ClientId: mcpOAuth.client.userPoolClientId,
         OwnerSub: agentOwnerSub.valueAsString, ReadScope: MCP_READ_SCOPE,
         ProvisionerVersion: financeMcpOAuthFunction.currentVersion.version,
@@ -883,6 +898,7 @@ export class PersonalFinanceV1Stack extends Stack {
     financeMcpOAuthResource.node.addDependency(agentcoreResources);
     financeMcpOAuthResource.node.addDependency(mcpOAuth.client);
     financeMcpOAuthResource.node.addDependency(mcpOAuth.domain);
+    financeMcpOAuthResource.node.addDependency(financeMcpGatewayRole);
     new cdk.CfnOutput(this, 'FinanceMcpUrl', { value: financeMcpOAuthResource.getAttString('GatewayUrl') });
     const harnessArn = agentcoreResources.getAttString('HarnessArn');
     const agentMemoryId = agentcoreResources.getAttString('MemoryId');

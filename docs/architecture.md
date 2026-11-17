@@ -24,6 +24,8 @@ flowchart LR
   Sync --> Evidence
   Ingest --> Evidence
   Chat --> Harness[AgentCore Harness · Gateways]
+  ChatGPT[Private ChatGPT plugin] --> OAuth[Cognito OAuth · native read-only Gateway]
+  OAuth --> Tools
   Harness --> Tools[Read tools · bounded mutation tools]
   Tools --> SQL
   Harness --> Memory[AgentCore Memory · transcripts]

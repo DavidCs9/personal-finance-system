@@ -1,4 +1,4 @@
-import { CfnOutput, CfnParameter, Duration, SecretValue, Stack } from 'aws-cdk-lib';
+import { CfnOutput, CfnParameter, Duration, RemovalPolicy, SecretValue, Stack } from 'aws-cdk-lib';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import type { Construct } from 'constructs';
@@ -44,6 +44,7 @@ export const financeMcpOAuth = (scope: Construct, userPool: cognito.UserPool) =>
   });
   const credentials = new secretsmanager.Secret(scope, 'ChatGptMcpCredentials', {
     description: 'Static ChatGPT OAuth client credentials. Never publish in outputs or logs.',
+    removalPolicy: RemovalPolicy.DESTROY,
     secretObjectValue: {
       clientId: SecretValue.unsafePlainText(client.userPoolClientId),
       clientSecret: client.userPoolClientSecret,
