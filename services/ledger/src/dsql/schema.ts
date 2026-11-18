@@ -157,6 +157,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   };
   if (!(await query('native-baseline', 'SELECT version FROM olbia.schema_migrations WHERE version=20')).rows.length) throw new BootstrapFailure('native-baseline');
   for (const [index, statement] of SCHEMA_STATEMENTS.entries()) await query(`schema-statement-${index + 1}`, statement);
+  await ensureBudgetSchema({ query: (statement, params) => query('budget-schema', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   await ensureAmexActivitySchema({ query: (statement, params) => query('amex-activity-schema', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   await ensureSantanderAccount({ query: (statement, params) => query('santander-account', statement, params) },
     { now, pause, waitMs: options.indexWaitMs });
@@ -172,6 +173,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     ['goal_payments_allocation_idx', 'goal_payments', 'allocation_id,id'],
     ['financial_receipts_income_idx', 'financial_change_receipts', 'income_id,applied_at'],
     ['financial_receipts_goal_idx', 'financial_change_receipts', 'goal_id,applied_at'],
+    ['financial_receipts_budget_idx', 'financial_change_receipts', 'budget_id,applied_at'],
   ]) {
     await query(`index-create-${name}`, `CREATE INDEX ASYNC IF NOT EXISTS ${name} ON olbia.${table} (${columns})`);
     const deadline = now() + (options.indexWaitMs ?? 180_000);
@@ -334,6 +336,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
       `GRANT SELECT (uuid,owner,paid_on,payroll_type,total_mxn_minor,employer_name) ON olbia.payslips TO ${role}`,
       `GRANT SELECT (owner,employer_key,ended_on) ON olbia.payroll_closures TO ${role}`,
       nativeLedgerReadGrant(role),
+      `GRANT SELECT ON olbia.spend_categories,olbia.category_lifecycle TO ${role}`,
       `GRANT INSERT ON olbia.ledger_movements,olbia.ledger_observations,olbia.source_claims,olbia.ledger_movement_warnings,olbia.ledger_observation_warnings,olbia.installment_plans,olbia.installment_entries,olbia.installment_evidence_candidates TO ${role}`,
       `GRANT DELETE ON olbia.ledger_movement_warnings,olbia.installment_plans,olbia.installment_entries,olbia.installment_evidence_candidates TO ${role}`,
     ].entries()) await query(`financial-writer-grant-${index}`,statement);
@@ -453,3 +456,25 @@ export const ensureNativeControlConstraints = async (client: SqlClient, options:
 export const ensureLedgerPrimaryObservation = (client: SqlClient, options: Parameters<typeof ensureValidatedConstraint>[5] = {}): Promise<void> =>
   ensureValidatedConstraint(client, 'ledger_movements', 'ledger_movements_primary_observation_fk',
     LEDGER_PRIMARY_OBSERVATION_CONSTRAINT, 'ledger-primary', options);
+
+/** Expand and validate before removing old checks; resumable across deployment retries. */
+export const ensureBudgetSchema = async (client: SqlClient, options: Parameters<typeof ensureValidatedConstraint>[5] = {}): Promise<void> => {
+  await client.query('ALTER TABLE olbia.financial_change_receipts ADD COLUMN IF NOT EXISTS budget_id uuid');
+  await client.query('ALTER TABLE olbia.financial_change_receipts ADD COLUMN IF NOT EXISTS budget_exclusion_id uuid');
+  await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_budget_fk',
+    'FOREIGN KEY (budget_id) REFERENCES olbia.spending_budgets(id)', 'budget-receipt-fk', options);
+  await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_budget_exclusion_fk',
+    'FOREIGN KEY (budget_exclusion_id) REFERENCES olbia.budget_exclusions(id)', 'budget-exclusion-receipt-fk', options);
+  for (const table of ['financial_write_operations', 'financial_change_receipts']) {
+    await ensureValidatedConstraint(client, table, `${table}_budget_kind_check`, "CHECK (kind IN ('income','goal','manual_charge','budget'))", 'budget-kind', options);
+    await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_kind_check`);
+  }
+  await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_budget_entity_check', `CHECK (
+    (kind='income' AND income_id IS NOT NULL AND goal_id IS NULL AND movement_id IS NULL AND budget_id IS NULL AND budget_exclusion_id IS NULL) OR
+    (kind='goal' AND goal_id IS NOT NULL AND income_id IS NULL AND movement_id IS NULL AND budget_id IS NULL AND budget_exclusion_id IS NULL) OR
+    (kind='manual_charge' AND movement_id IS NOT NULL AND income_id IS NULL AND goal_id IS NULL AND budget_id IS NULL AND budget_exclusion_id IS NULL) OR
+    (kind='budget' AND income_id IS NULL AND goal_id IS NULL AND movement_id IS NULL AND
+      ((budget_id IS NOT NULL AND budget_exclusion_id IS NULL) OR (budget_id IS NULL AND budget_exclusion_id IS NOT NULL))))`, 'budget-receipt', options);
+  await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_change_receipts_check');
+  await client.query('INSERT INTO olbia.schema_migrations VALUES (27,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
+};

@@ -1,3 +1,4 @@
+import { listBudgets, getBudgetStatus, getBudgetHistory, simulateBudgetPurchase } from '../financial-plans/budgets.js';
 import { FinancialPlanError } from '@finance/domain';
 import { listExpectedIncome, getExpectedIncome, listFinancialGoals, getFinancialGoal, previewFinancialChange, applyFinancialChange, getFinancialWriteStatus } from '../financial-plans/service.js';
 import { getStatementCatalog, getStatementSource } from '../imports/statement-catalog.js';
@@ -163,6 +164,20 @@ app.get('/statements/:provider/:importId/source', async ({ event, params }) => {
   return source ? statementResponse(HttpStatusCodes.OK, source) : statementResponse(HttpStatusCodes.NOT_FOUND, { message: 'Estado de cuenta no encontrado.' });
 });
 
+app.get('/budgets', async ({ event }) => {
+  const e = asHttpEvent(event);
+  return json(200, await listBudgets(ownerOf(e), { ...e.queryStringParameters,
+    ...(e.queryStringParameters?.limit !== undefined ? { limit: Number(e.queryStringParameters.limit) } : {}) }));
+});
+app.get('/budgets/status', async ({ event }) => json(200, await getBudgetStatus(ownerOf(asHttpEvent(event)), asHttpEvent(event).queryStringParameters ?? {})));
+app.get('/budgets/history', async ({ event }) => json(200, await getBudgetHistory(ownerOf(asHttpEvent(event)), asHttpEvent(event).queryStringParameters ?? {})));
+app.post('/budgets/simulate', async ({ event }) => {
+  const e = asHttpEvent(event);
+  let input: unknown;
+  try { input = JSON.parse(requestBody(e) ?? ''); } catch { throw new FinancialPlanError('Se requiere JSON válido.'); }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new FinancialPlanError('Se requiere un objeto.');
+  return json(200, await simulateBudgetPurchase(ownerOf(e), input as Record<string, unknown>));
+});
 app.get('/expected-income', async ({ event }) => {
   const e = asHttpEvent(event);
   return json(200, await listExpectedIncome(ownerOf(e), { ...e.queryStringParameters,
@@ -179,7 +194,7 @@ app.get('/financial-goals/:goalId', async ({ event, params }) =>
   json(200, await getFinancialGoal(ownerOf(asHttpEvent(event)), params.goalId)));
 app.get('/financial-writes/:operationId', async ({ event, params }) =>
   json(200, await getFinancialWriteStatus(ownerOf(asHttpEvent(event)), params.operationId)));
-for (const [path, kind] of [['/expected-income/preview', 'income'], ['/financial-goals/preview', 'goal']] as const) {
+for (const [path, kind] of [['/expected-income/preview', 'income'], ['/financial-goals/preview', 'goal'], ['/budgets/preview', 'budget']] as const) {
   app.post(path, async ({ event }) => {
     const e = asHttpEvent(event);
     let input: unknown;

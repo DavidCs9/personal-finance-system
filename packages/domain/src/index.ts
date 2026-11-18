@@ -284,3 +284,5 @@ export {
 } from './statement-catalog.js';
 
 export * from './financial-plans.js';
+
+export * from './budgets.js';

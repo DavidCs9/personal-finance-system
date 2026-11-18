@@ -14,7 +14,8 @@ it('exercises native financial plan writes and receipts while leaving every fina
       await smokeNativeFinancialPlans(client as unknown as SqlClient, 'owner');
       expect((await client.query('SELECT id FROM olbia.expected_income')).rows).toHaveLength(1);
       expect((await client.query('SELECT id FROM olbia.financial_goals')).rows).toHaveLength(1);
-      expect((await client.query('SELECT operation_id FROM olbia.financial_change_receipts')).rows).toHaveLength(1);
+      expect((await client.query('SELECT id FROM olbia.spending_budgets')).rows).toHaveLength(1);
+      expect((await client.query('SELECT operation_id FROM olbia.financial_change_receipts')).rows).toHaveLength(2);
       throw rollback;
     })).rejects.toBe(rollback);
     for (const table of NATIVE_FINANCIAL_PLAN_TABLES) expect((await sql.query(`SELECT * FROM olbia.${table}`)).rows).toEqual([]);

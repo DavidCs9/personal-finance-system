@@ -23,8 +23,8 @@ it('disabled stream and retired replay cannot read source data, recreate tables 
   expect(vi.mocked(AuroraDSQLPool.prototype.query).mock.calls).toHaveLength(queries);expect(source).not.toHaveBeenCalled();source.mockRestore();
 });
 it('verifies the current native catalog with no migration relations, source scan or evidence-report writes',async()=>{
-  expect(await maintenanceHandler({runId:'deployment',phase:'source'})).toMatchObject({phase:'done',projected:0,equal:52,lag:0,mismatch:0,summary:{mode:'native-sql',tables:52}});
-  expect((await sql.query("SELECT tablename FROM pg_tables WHERE schemaname='olbia'")).rows).toHaveLength(52);
+  expect(await maintenanceHandler({runId:'deployment',phase:'source'})).toMatchObject({phase:'done',projected:0,equal:55,lag:0,mismatch:0,summary:{mode:'native-sql',tables:55}});
+  expect((await sql.query("SELECT tablename FROM pg_tables WHERE schemaname='olbia'")).rows).toHaveLength(55);
   await expect(maintenanceHandler({runId:'',phase:'source'})).rejects.toThrow('runId');
 });
 it('does not run schema or cleanup on CloudFormation Delete and rejects unknown schema operations',async()=>{
@@ -35,6 +35,6 @@ it('does not run schema or cleanup on CloudFormation Delete and rejects unknown 
 });
 it('does not require DynamoDB access when a reviewed catalog retirement has already completed',async()=>{
   const source=vi.spyOn(DynamoDBClient.prototype,'send').mockRejectedValue(new Error('Source access forbidden'));
-  expect(await schemaHandler({action:'retire-migration-evidence'})).toMatchObject({verified:true,removedTables:0,remainingTables:52});
+  expect(await schemaHandler({action:'retire-migration-evidence'})).toMatchObject({verified:true,removedTables:0,remainingTables:55});
   expect(source).not.toHaveBeenCalled();source.mockRestore();
 });
