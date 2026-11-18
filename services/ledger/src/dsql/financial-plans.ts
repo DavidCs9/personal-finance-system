@@ -1,5 +1,5 @@
 import { FinancialPlanError, type ActualIncomeReceipt, type ExpectedIncome, type FinancialGoalState,
-  type FinancialGoal, type GoalAllocation, type GoalPayment, type IncomeTermination } from '@finance/domain';
+  type FinancialGoal, type GoalAllocation, type GoalPayment, type IncomeTermination, type IncomeMonthOverride, type IncomePaymentRule } from '@finance/domain';
 import type { SqlClient } from './projection.js';
 export type FinancialWriteKind = 'income' | 'goal' | 'manual_charge' | 'budget';
 export interface FinancialWriteOperation {
@@ -12,18 +12,44 @@ export interface FinancialWriteOperation {
 type Row = Record<string, unknown>;
 const instant = (value: unknown) => new Date(value as string | Date).toISOString();
 const day = (value: unknown): string | null => value == null ? null : value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
-const incomeFrom = (row: Row): ExpectedIncome => ({ id: String(row.id), name: String(row.name), employer: row.employer == null ? null : String(row.employer),
-  amountMxnMinor: Number(row.amount_mxn_minor), frequency: row.frequency as ExpectedIncome['frequency'],
-  paymentDays: [row.payment_day_1, row.payment_day_2].filter(value => value != null).map(Number), expectedPaymentDate: day(row.expected_on),
-  startDate: day(row.start_date)!, endDate: day(row.end_date), confidence: row.confidence as ExpectedIncome['confidence'],
-  status: row.status as ExpectedIncome['status'], revision: Number(row.revision), createdAt: instant(row.created_at), updatedAt: instant(row.updated_at) });
+const incomeFrom = (row: Row, overrides: readonly IncomeMonthOverride[]): ExpectedIncome => {
+  const paymentDays = [row.payment_day_1, row.payment_day_2].filter(value => value != null).map(Number);
+  const paymentRules = paymentDays.map((day, index): IncomePaymentRule => {
+    const kind = row[`payment_rule_${index + 1}`];
+    if (kind === 'last_business_day') return { kind };
+    return { kind: kind === 'previous_business_day' ? kind : 'calendar_day', day };
+  });
+  return { id: String(row.id), name: String(row.name), employer: row.employer == null ? null : String(row.employer),
+    amountMxnMinor: Number(row.amount_mxn_minor), frequency: row.frequency as ExpectedIncome['frequency'], paymentDays,
+    ...(paymentRules.some(rule => rule.kind !== 'calendar_day') ? { paymentRules } : {}),
+    ...(row.withhold_partial_months === true ? { withholdPartialMonths: true } : {}),
+    ...(overrides.length ? { monthOverrides: overrides } : {}),
+    expectedPaymentDate: day(row.expected_on), startDate: day(row.start_date)!, endDate: day(row.end_date),
+    confidence: row.confidence as ExpectedIncome['confidence'], status: row.status as ExpectedIncome['status'],
+    revision: Number(row.revision), createdAt: instant(row.created_at), updatedAt: instant(row.updated_at) };
+};
+const incomesWithOverrides = async (client: SqlClient, sources: readonly Row[]): Promise<readonly ExpectedIncome[]> => {
+  if (!sources.length) return [];
+  const rows = await client.query(`SELECT * FROM olbia.expected_income_month_overrides
+    WHERE income_id=ANY($1::uuid[]) ORDER BY income_id,month`, [sources.map(row => row.id)]);
+  const grouped = new Map<string, IncomeMonthOverride[]>();
+  for (const row of rows.rows) {
+    const id = String(row.income_id);
+    const entries = grouped.get(id) ?? [];
+    entries.push({ month: String(row.month), paymentDate: day(row.payment_on),
+      amountMxnMinor: row.amount_mxn_minor == null ? null : Number(row.amount_mxn_minor),
+      confidence: row.confidence as IncomeMonthOverride['confidence'], reason: String(row.reason) });
+    grouped.set(id, entries);
+  }
+  return sources.map(row => incomeFrom(row, grouped.get(String(row.id)) ?? []));
+};
 export const readExpectedIncome = async (client: SqlClient, owner: string, id: string): Promise<ExpectedIncome | null> => {
-  const row = (await client.query('SELECT * FROM olbia.expected_income WHERE id=$1::uuid AND owner=$2', [id, owner])).rows[0];
-  return row ? incomeFrom(row) : null;
+  const { rows } = await client.query('SELECT * FROM olbia.expected_income WHERE id=$1::uuid AND owner=$2', [id, owner]);
+  return (await incomesWithOverrides(client, rows))[0] ?? null;
 };
 export const listExpectedIncomeRows = async (client: SqlClient, owner: string, limit: number, cursor?: string): Promise<readonly ExpectedIncome[]> =>
-  (await client.query('SELECT * FROM olbia.expected_income WHERE owner=$1 AND ($2::uuid IS NULL OR id>$2::uuid) ORDER BY id LIMIT $3',
-    [owner, cursor ?? null, limit + 1])).rows.map(incomeFrom);
+  incomesWithOverrides(client, (await client.query('SELECT * FROM olbia.expected_income WHERE owner=$1 AND ($2::uuid IS NULL OR id>$2::uuid) ORDER BY id LIMIT $3',
+    [owner, cursor ?? null, limit + 1])).rows);
 export const readIncomeEvidence = async (client: SqlClient, owner: string, fromDay: string, untilDay: string): Promise<{
   readonly actual: readonly ActualIncomeReceipt[]; readonly terminations: readonly IncomeTermination[];
 }> => {
@@ -36,16 +62,38 @@ export const readIncomeEvidence = async (client: SqlClient, owner: string, fromD
   terminations: terminations.map(row => ({ employer: String(row.employer_key), endedOn: String(row.ended_on) })) };
 };
 export const writeExpectedIncome = async (client: SqlClient, owner: string, before: ExpectedIncome | null, after: ExpectedIncome): Promise<void> => {
+  const kindForSlot = (slot: number) => {
+    const kind = after.paymentRules?.[slot]?.kind;
+    return kind && kind !== 'calendar_day' ? kind : null;
+  };
   const values = [after.id, owner, after.name, after.employer, after.amountMxnMinor, after.frequency,
-    after.paymentDays[0] ?? null, after.paymentDays[1] ?? null, after.expectedPaymentDate, after.startDate, after.endDate,
-    after.confidence, after.status, after.revision, after.createdAt, after.updatedAt];
+    after.paymentDays[0] ?? null, after.paymentDays[1] ?? null, kindForSlot(0), kindForSlot(1),
+    after.withholdPartialMonths ?? null, after.expectedPaymentDate, after.startDate, after.endDate,
+    after.confidence, after.status, after.revision, after.updatedAt];
   if (!before) await client.query(`INSERT INTO olbia.expected_income
-    (id,owner,name,employer,amount_mxn_minor,frequency,payment_day_1,payment_day_2,expected_on,start_date,end_date,confidence,status,revision,created_at,updated_at)
-    VALUES (${values.map((_, index) => `$${index + 1}`).join(',')})`, values);
+    (id,owner,name,employer,amount_mxn_minor,frequency,payment_day_1,payment_day_2,payment_rule_1,payment_rule_2,withhold_partial_months,
+      expected_on,start_date,end_date,confidence,status,revision,updated_at,created_at)
+    VALUES (${[...values, after.createdAt].map((_, index) => `$${index + 1}`).join(',')})`, [...values, after.createdAt]);
   else if (!(await client.query(`UPDATE olbia.expected_income SET name=$3,employer=$4,amount_mxn_minor=$5,frequency=$6,
-    payment_day_1=$7,payment_day_2=$8,expected_on=$9,start_date=$10,end_date=$11,confidence=$12,status=$13,revision=$14,updated_at=$15
-    WHERE id=$1 AND owner=$2 AND revision=$16 RETURNING id`, [...values.slice(0, 14), after.updatedAt, before.revision])).rows.length)
+    payment_day_1=$7,payment_day_2=$8,payment_rule_1=$9,payment_rule_2=$10,withhold_partial_months=$11,
+    expected_on=$12,start_date=$13,end_date=$14,confidence=$15,status=$16,revision=$17,updated_at=$18
+    WHERE id=$1 AND owner=$2 AND revision=$19 RETURNING id`, [...values, before.revision])).rows.length)
     throw new FinancialPlanError('El ingreso cambió; crea otro preview.', 'conflict');
+
+  const next = new Map(after.monthOverrides?.map(item => [item.month, item]));
+  const previous = new Map(before?.monthOverrides?.map(item => [item.month, item]));
+  for (const month of previous.keys()) {
+    if (!next.has(month)) await client.query('DELETE FROM olbia.expected_income_month_overrides WHERE income_id=$1 AND month=$2', [after.id, month]);
+  }
+  for (const entry of next.values()) {
+    const prior = previous.get(entry.month);
+    if (prior && prior.paymentDate === entry.paymentDate && prior.amountMxnMinor === entry.amountMxnMinor &&
+      prior.confidence === entry.confidence && prior.reason === entry.reason) continue;
+    await client.query(`INSERT INTO olbia.expected_income_month_overrides (income_id,month,payment_on,amount_mxn_minor,confidence,reason)
+      VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (income_id,month) DO UPDATE SET
+      payment_on=EXCLUDED.payment_on,amount_mxn_minor=EXCLUDED.amount_mxn_minor,confidence=EXCLUDED.confidence,reason=EXCLUDED.reason`,
+    [after.id, entry.month, entry.paymentDate, entry.amountMxnMinor, entry.confidence, entry.reason]);
+  }
 };
 const goalFrom = (row: Row): FinancialGoal => ({ id: String(row.id), name: String(row.name), originalBudgetMxnMinor: Number(row.original_budget_mxn_minor),
   totalBudgetMxnMinor: Number(row.total_budget_mxn_minor), targetDate: day(row.target_date), status: row.status as FinancialGoal['status'],

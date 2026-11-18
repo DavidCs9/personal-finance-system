@@ -1,6 +1,7 @@
 import { addCalendarMonths } from './msi.js';
 import { clampDayInMonth } from './card-cycle.js';
 import { payrollEmployerKey } from './payroll.js';
+import { mxBusinessDayOnOrBefore } from './mx-banking-calendar.js';
 
 export class FinancialPlanError extends Error {
   constructor(message: string, readonly reasonCode: 'invalid_request' | 'conflict' | 'not_found' | 'expired' = 'invalid_request') {
@@ -43,6 +44,18 @@ const oneOf = <T extends string>(value: unknown, choices: readonly T[], field: s
 };
 const nullableDay = (value: unknown) => value === null || value === undefined ? null : financialDay(value);
 
+export type IncomePaymentRule =
+  | { readonly kind: 'calendar_day' | 'previous_business_day'; readonly day: number }
+  | { readonly kind: 'last_business_day' };
+
+export interface IncomeMonthOverride {
+  readonly month: string;
+  readonly paymentDate: string | null;
+  readonly amountMxnMinor: number | null;
+  readonly confidence: 'estimated' | 'confirmed';
+  readonly reason: string;
+}
+
 export interface ExpectedIncome {
   readonly id: string;
   readonly name: string;
@@ -50,6 +63,9 @@ export interface ExpectedIncome {
   readonly amountMxnMinor: number;
   readonly frequency: 'monthly' | 'semimonthly' | 'one_time';
   readonly paymentDays: readonly number[];
+  readonly paymentRules?: readonly IncomePaymentRule[];
+  readonly withholdPartialMonths?: true;
+  readonly monthOverrides?: readonly IncomeMonthOverride[];
   readonly expectedPaymentDate: string | null;
   readonly startDate: string;
   readonly endDate: string | null;
@@ -64,8 +80,11 @@ export interface IncomeOccurrence {
   readonly occurrenceId: string;
   readonly name: string;
   readonly employer: string | null;
-  readonly paymentDate: string;
-  readonly amountMxnMinor: number;
+  readonly paymentDate: string | null;
+  readonly periodMonth: string;
+  readonly amountMxnMinor: number | null;
+  readonly scheduleBasis: 'regular' | 'partial_month_unknown' | 'month_override';
+  readonly calendarStatus?: 'cnbv_calendar_published' | 'cnbv_calendar_provisional';
   readonly confidence: ExpectedIncome['confidence'];
   readonly basis: 'configured_expectation_not_received_income';
   readonly reconciliationStatus: 'unreconciled' | 'possible_payroll_overlap';
@@ -78,12 +97,67 @@ export interface ActualIncomeReceipt {
   readonly netMxnMinor: number;
 }
 export interface IncomeTermination { readonly employer: string; readonly endedOn: string }
+export const incomeRuleDay = (rule: IncomePaymentRule) => rule.kind === 'last_business_day' ? 31 : rule.day;
+const parseIncomeRules = (value: unknown): IncomePaymentRule[] => {
+  if (!Array.isArray(value)) throw new FinancialPlanError('paymentRules debe ser una lista.');
+  return value.map(value => {
+    const rule = financialObject(value);
+    const kind = oneOf(rule.kind, ['calendar_day', 'previous_business_day', 'last_business_day'] as const, 'paymentRules.kind');
+    if (kind === 'last_business_day') {
+      if (rule.day !== undefined) throw new FinancialPlanError('last_business_day no acepta un día.');
+      return { kind };
+    }
+    if (!Number.isInteger(rule.day) || Number(rule.day) < 1 || Number(rule.day) > 31)
+      throw new FinancialPlanError('El día de la regla debe estar entre 1 y 31.');
+    return { kind, day: Number(rule.day) };
+  }).sort((left, right) => incomeRuleDay(left) - incomeRuleDay(right));
+};
+const parseIncomeOverrideMonth = (value: unknown) => {
+  if (typeof value !== 'string' || !/^[1-9][0-9]{3}-(0[1-9]|1[0-2])$/.test(value))
+    throw new FinancialPlanError('El mes de la excepción debe ser YYYY-MM.');
+  return value;
+};
+const incomeOverrides = (input: Record<string, unknown>, before: ExpectedIncome | null,
+  schedule: Pick<ExpectedIncome, 'frequency' | 'startDate' | 'endDate'>): readonly IncomeMonthOverride[] => {
+  const overrides = new Map(before?.monthOverrides?.map(item => [item.month, item]));
+  if (input.monthOverride !== undefined && input.clearMonthOverride !== undefined)
+    throw new FinancialPlanError('Configura o quita una excepción por operación.');
+  if (input.clearMonthOverride !== undefined) {
+    const month = parseIncomeOverrideMonth(input.clearMonthOverride);
+    if (!overrides.delete(month)) throw new FinancialPlanError('No hay excepción para ese mes.', 'not_found');
+  }
+  if (input.monthOverride !== undefined) {
+    const entry = financialObject(input.monthOverride);
+    const month = parseIncomeOverrideMonth(entry.month);
+    const paymentDate = nullableDay(entry.paymentDate);
+    const amountMxnMinor = entry.amountMxnMinor == null ? null : financialMinor(entry.amountMxnMinor, true);
+    if (Number(amountMxnMinor) > 0 && !paymentDate)
+      throw new FinancialPlanError('Indica la fecha exacta de la excepción cuando se conoce el importe positivo.');
+    if (amountMxnMinor === 0 && paymentDate)
+      throw new FinancialPlanError('Una excepción sin pago no lleva fecha.');
+    overrides.set(month, { month, paymentDate, amountMxnMinor,
+      confidence: oneOf(entry.confidence ?? 'estimated', ['estimated', 'confirmed'] as const, 'monthOverride.confidence'),
+      reason: financialText(entry.reason, 'monthOverride.reason') });
+  }
+  for (const entry of overrides.values()) {
+    if (schedule.frequency === 'one_time' || entry.month < schedule.startDate.slice(0, 7) ||
+      schedule.endDate && entry.month > schedule.endDate.slice(0, 7) ||
+      entry.paymentDate && (entry.paymentDate.slice(0, 7) !== entry.month || entry.paymentDate < schedule.startDate ||
+        schedule.endDate && entry.paymentDate > schedule.endDate)) {
+      throw new FinancialPlanError('La excepción debe pertenecer a un mes de un ingreso recurrente y su fecha a la vigencia del mismo mes.');
+    }
+  }
+  return [...overrides.values()].sort((a, b) => a.month.localeCompare(b.month));
+};
+
 export const proposeExpectedIncome = (input: Record<string, unknown>, before: ExpectedIncome | null,
   newId: string, at: string): ExpectedIncome => {
   const action = oneOf(input.action, ['create', 'update', 'archive', 'restore'] as const, 'action');
   if (action === 'create' ? before !== null : before === null) throw new FinancialPlanError('Ingreso no encontrado o ID ocupado.', 'not_found');
   if (before) financialRevision(input.expectedRevision, before.revision);
   if (action === 'archive' || action === 'restore') {
+    if (input.monthOverride !== undefined || input.clearMonthOverride !== undefined)
+      throw new FinancialPlanError('Usa update para modificar excepciones.');
     if (!before || before.status === (action === 'archive' ? 'archived' : 'active')) throw new FinancialPlanError('El ingreso ya tiene ese estado.');
     return { ...before, status: action === 'archive' ? 'archived' : 'active', revision: before.revision + 1, updatedAt: at };
   }
@@ -91,21 +165,35 @@ export const proposeExpectedIncome = (input: Record<string, unknown>, before: Ex
   if (input.clearEndDate === true && input.endDate != null) throw new FinancialPlanError('No combines endDate con clearEndDate.');
   const merged = { ...before, ...input, ...(input.clearEndDate === true ? { endDate: null } : {}), ...(input.clearEmployer === true ? { employer: null } : {}) };
   const frequency = oneOf(merged.frequency, ['monthly', 'semimonthly', 'one_time'] as const, 'frequency');
-  // Changing frequency never silently reuses an incompatible old schedule.
-  if (before && before.frequency !== frequency && input.paymentDays === undefined && input.expectedPaymentDate === undefined)
+  if (input.paymentDays !== undefined && input.paymentRules !== undefined)
+    throw new FinancialPlanError('Elige paymentDays o paymentRules.');
+  if (before && before.frequency !== frequency && input.paymentDays === undefined &&
+    input.paymentRules === undefined && input.expectedPaymentDate === undefined)
     throw new FinancialPlanError('Configura explícitamente el nuevo calendario.');
-  const days = frequency === 'one_time' ? [] : merged.paymentDays;
+  const rules = frequency === 'one_time' || input.paymentDays !== undefined ? undefined
+    : input.paymentRules !== undefined ? parseIncomeRules(input.paymentRules) : before?.paymentRules;
+  if (frequency === 'one_time' && input.paymentRules !== undefined)
+    throw new FinancialPlanError('Un ingreso único usa fecha exacta.');
+  const days = frequency === 'one_time' ? [] : rules ? rules.map(incomeRuleDay) : merged.paymentDays;
   if (!Array.isArray(days) || days.length !== (frequency === 'monthly' ? 1 : frequency === 'semimonthly' ? 2 : 0)
     || days.some(day => !Number.isInteger(day) || day < 1 || day > 31) || new Set(days).size !== days.length)
-    throw new FinancialPlanError('Configura un día mensual o dos días quincenales distintos (1–31). No se infieren días de pago.');
+    throw new FinancialPlanError('Configura un día mensual o dos días quincenales distintos (1–31).');
+  if (input.withholdPartialMonths !== undefined && typeof input.withholdPartialMonths !== 'boolean')
+    throw new FinancialPlanError('withholdPartialMonths debe ser booleano.');
+  const withholdPartial = frequency !== 'one_time' &&
+    (rules?.some(rule => rule.kind !== 'calendar_day') || (input.withholdPartialMonths ?? before?.withholdPartialMonths) === true);
   const startDate = financialDay(merged.startDate);
   const endDate = nullableDay(merged.endDate);
   const expectedPaymentDate = frequency === 'one_time' ? financialDay(merged.expectedPaymentDate) : null;
   if (endDate && endDate < startDate || expectedPaymentDate && (expectedPaymentDate < startDate || endDate && expectedPaymentDate > endDate))
     throw new FinancialPlanError('Las fechas del ingreso no corresponden a su vigencia.');
+  const monthOverrides = incomeOverrides(input, before, { frequency, startDate, endDate });
   return { id: before?.id ?? newId, name: financialText(merged.name, 'name'),
     employer: merged.employer === undefined || merged.employer === null ? null : financialText(merged.employer, 'employer'),
     amountMxnMinor: financialMinor(merged.amountMxnMinor), frequency, paymentDays: [...days].sort((a, b) => a - b),
+    ...(rules?.some(rule => rule.kind !== 'calendar_day') ? { paymentRules: rules } : {}),
+    ...(withholdPartial ? { withholdPartialMonths: true as const } : {}),
+    ...(monthOverrides.length ? { monthOverrides } : {}),
     expectedPaymentDate, startDate, endDate, confidence: oneOf(merged.confidence, ['estimated', 'confirmed'] as const, 'confidence'),
     status: 'active', revision: (before?.revision ?? 0) + 1, createdAt: before?.createdAt ?? at, updatedAt: at };
 };
@@ -116,19 +204,51 @@ export const incomeOccurrences = (source: ExpectedIncome, fromMonth: string, toM
   const employerKey = payrollEmployerKey(source.employer ?? undefined);
   const termination = employerKey ? terminations.filter(item => payrollEmployerKey(item.employer) === employerKey)
     .map(item => item.endedOn).sort()[0] : undefined;
+  const endDate = source.endDate && termination ? (source.endDate < termination ? source.endDate : termination)
+    : source.endDate ?? termination;
+  const rules = source.paymentRules ?? source.paymentDays.map(day => ({ kind: 'calendar_day' as const, day }));
   const result: IncomeOccurrence[] = [];
-  for (let month = fromMonth, index = 0; month <= toMonth && index < 24; month = addCalendarMonths(month, 1), index++) {
-    const dates = source.frequency === 'one_time'
-      ? source.expectedPaymentDate?.slice(0, 7) === month ? [source.expectedPaymentDate] : []
-      : source.paymentDays.map(day => `${month}-${String(clampDayInMonth(day, month)).padStart(2, '0')}`);
-    dates.forEach((paymentDate, slot) => {
-      if (paymentDate < source.startDate || source.endDate && paymentDate > source.endDate || termination && paymentDate > termination) return;
-      const overlap = actual.some(receipt => receipt.paymentDate.slice(0, 7) === month
+  // A business-day rule on the first may place next month's payment in this month.
+  const through = toMonth === '9999-12' ? toMonth : addCalendarMonths(toMonth, 1);
+  for (let month = fromMonth, index = 0; month <= through && index < 25; index++) {
+    const periodMonth = month;
+    const lastDay = `${month}-${String(clampDayInMonth(31, month)).padStart(2, '0')}`;
+    const inEmployment = lastDay >= source.startDate && (!endDate || `${month}-01` <= endDate && endDate >= source.startDate);
+    const push = (slot: number, paymentDate: string | null, amountMxnMinor: number | null, confidence: ExpectedIncome['confidence'],
+      scheduleBasis: IncomeOccurrence['scheduleBasis'], calendarStatus?: IncomeOccurrence['calendarStatus']) => {
+      const paymentMonth = paymentDate?.slice(0, 7) ?? periodMonth;
+      if (paymentMonth < fromMonth || paymentMonth > toMonth) return;
+      if (paymentDate && (paymentDate < source.startDate || endDate && paymentDate > endDate)) return;
+      const overlap = actual.some(receipt => receipt.paymentDate.slice(0, 7) === paymentMonth
         && (!employerKey || !payrollEmployerKey(receipt.employer ?? undefined) || payrollEmployerKey(receipt.employer ?? undefined) === employerKey));
-      result.push({ incomeId: source.id, occurrenceId: `${source.id}:${month}:${slot + 1}`, name: source.name,
-        employer: source.employer, paymentDate, amountMxnMinor: source.amountMxnMinor, confidence: source.confidence,
-        basis: 'configured_expectation_not_received_income', reconciliationStatus: overlap ? 'possible_payroll_overlap' : 'unreconciled' });
-    });
+      result.push({ incomeId: source.id, occurrenceId: `${source.id}:${periodMonth}:${slot}`, name: source.name,
+        employer: source.employer, periodMonth, paymentDate, amountMxnMinor, confidence, scheduleBasis,
+        ...(calendarStatus ? { calendarStatus } : {}), basis: 'configured_expectation_not_received_income',
+        reconciliationStatus: overlap && amountMxnMinor !== 0 ? 'possible_payroll_overlap' : 'unreconciled' });
+    };
+    const override = source.monthOverrides?.find(item => item.month === periodMonth);
+    if (inEmployment && override) {
+      if (override.paymentDate && endDate && override.paymentDate > endDate) {
+        // A later confirmed closure invalidates the configured date. Preserve uncertainty.
+        push(0, null, null, 'estimated', 'partial_month_unknown');
+      } else {
+        push(0, override.paymentDate, override.amountMxnMinor, override.confidence, 'month_override');
+      }
+    } else if (inEmployment && source.frequency === 'one_time') {
+      if (source.expectedPaymentDate?.slice(0, 7) === periodMonth)
+        push(1, source.expectedPaymentDate, source.amountMxnMinor, source.confidence, 'regular');
+    } else if (inEmployment && source.withholdPartialMonths && (source.startDate > `${month}-01` || endDate && endDate < lastDay)) {
+      push(0, null, null, 'estimated', 'partial_month_unknown');
+    } else if (inEmployment) {
+      rules.forEach((rule, slot) => {
+        const anchor = `${periodMonth}-${String(clampDayInMonth(incomeRuleDay(rule), periodMonth)).padStart(2, '0')}`;
+        const adjusted = rule.kind === 'calendar_day' ? { paymentDate: anchor } : mxBusinessDayOnOrBefore(anchor);
+        push(slot + 1, adjusted.paymentDate, source.amountMxnMinor, source.confidence, 'regular',
+          'calendarStatus' in adjusted ? adjusted.calendarStatus : undefined);
+      });
+    }
+    if (month === through) break;
+    month = addCalendarMonths(month, 1);
   }
   return result;
 };
