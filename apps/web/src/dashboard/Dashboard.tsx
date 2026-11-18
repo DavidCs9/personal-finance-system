@@ -44,7 +44,9 @@ import { AnalyticsView } from "../views/AnalyticsView";
 import { demoWealthOverview } from "../wealth-demo";
 import type { WealthOverview, WealthAccountView, WealthHistoryPoint, WealthLiabilityView } from "../wealth";
 import { withWealthTotals } from "../wealth";
-import { SANTANDER_CASH_ACCOUNT_ID, BITSO_ACCOUNT_ID, IBKR_ACCOUNT_ID, WEALTH_ACCOUNTS, dayKeyInZone, manualCashHolding, monthDashboardLiquidity, type ManualCashAccountId, type WealthAccountId, type WealthSnapshot } from "@finance/domain";
+import { SANTANDER_CASH_ACCOUNT_ID, BITSO_ACCOUNT_ID, IBKR_ACCOUNT_ID, WEALTH_ACCOUNTS, dayKeyInZone, manualCashHolding,
+  monthCashLiquidity, monthDashboardLiquidity, monthDashboardSpending, summarizePostedCredits,
+  type ManualCashAccountId, type WealthAccountId, type WealthSnapshot } from "@finance/domain";
 
 const reconcileDemoPayment = (plan: MonthlyPlan, paymentId: string, eventId: string | null,
   expectedEventId: string | null, expectedPayment: Pick<PlannedPayment, "name" | "amountMinor" | "dueDay">,
@@ -135,10 +137,17 @@ export function Dashboard({
       if (!demoMode) return ledgerApi.monthlyDashboard(selectedMonth, idToken);
       const demoPlan = queryClient.getQueryData<MonthlyPlan>(monthlyPlanQueryKey(selectedMonth)) ?? planFor(demoPlans, selectedMonth);
       const summary = mockMonthSummaryFor(selectedMonth, demoPlan, now);
+      const budget = demoBudgetStatus(selectedMonth, demoPlan, true);
       return Promise.resolve({
-        month: selectedMonth, generatedAt: now.toISOString(), summary,
-        budget: demoBudgetStatus(selectedMonth, demoPlan, true),
+        month: selectedMonth, generatedAt: now.toISOString(),
+        summary: { ...summary, remainingMinor: null, projectedRemainingMinor: null }, budget,
+        spending: monthDashboardSpending(summary, budget),
         liquidity: monthDashboardLiquidity(summary, demoPlan, true),
+        cash: monthCashLiquidity(selectedMonth, now, []),
+        postedCredits: summarizePostedCredits([]),
+        futureIncome: { status: summary.isFutureMonth || summary.isCurrentMonth ? "unconfigured" as const : "closed" as const,
+          scheduledMinor: null, knownUpcomingMinor: 0, unknownOccurrences: 0 },
+        payrollFundClosures: [],
       });
     },
   });
@@ -298,9 +307,7 @@ export function Dashboard({
   const billUpcomingMinor = summary?.billUpcomingMinor ?? 0;
   const remainingMinor = summary?.remainingMinor ?? 0;
   const projectedRemainingMinor = summary?.projectedRemainingMinor ?? 0;
-  const projectedSpendMinor =
-    summary?.projectedSpendMinor ??
-    (summary ? Math.max(summary.incomeMinor - summary.projectedRemainingMinor, 0) : 0);
+  const projectedSpendMinor = summary?.projectedSpendMinor ?? 0;
   const isCurrentMonth = summary?.isCurrentMonth ?? false;
   const msiSpentMinor = summary?.msiSpentMinor ?? 0;
   const msiCommittedMinor = summary?.msiCommittedMinor ?? 0;

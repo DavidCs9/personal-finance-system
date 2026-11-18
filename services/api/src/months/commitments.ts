@@ -27,7 +27,7 @@ export const commitmentsReadStatement = `WITH requested AS (
   FROM effective_plans e JOIN olbia.planned_payments p ON p.month=e.source_month
   WHERE NOT EXISTS (
     SELECT 1 FROM olbia.planned_payment_charges linked
-    JOIN olbia.ledger_movements charge ON charge.id=linked.movement_id
+    JOIN olbia.ledger_movements charge ON charge.id=linked.movement_id AND charge.event_type<>'bank_credit'
     WHERE linked.month=e.month AND linked.payment_id=p.id
       AND charge.status IN ('accepted','needs_review') AND charge.currency='MXN' AND charge.amount_minor>0
       AND to_char(COALESCE(charge.occurred_at,charge.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM')=e.month

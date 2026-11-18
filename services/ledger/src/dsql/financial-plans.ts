@@ -1,7 +1,7 @@
 import { FinancialPlanError, type ActualIncomeReceipt, type ExpectedIncome, type FinancialGoalState,
   type FinancialGoal, type GoalAllocation, type GoalPayment, type IncomeTermination, type IncomeMonthOverride, type IncomePaymentRule } from '@finance/domain';
 import type { SqlClient } from './projection.js';
-export type FinancialWriteKind = 'income' | 'goal' | 'manual_charge' | 'budget' | 'fixed_reconciliation' | 'msi_reconciliation';
+export type FinancialWriteKind = 'income' | 'goal' | 'manual_charge' | 'manual_credit' | 'budget' | 'fixed_reconciliation' | 'msi_reconciliation';
 export interface FinancialWriteOperation {
   readonly operationId: string; readonly owner: string; readonly kind: FinancialWriteKind; readonly action: string;
   readonly entityId: string; readonly createdAt: string; readonly expiresAt: string;
@@ -144,7 +144,7 @@ export const readGoalMovements = async (client: SqlClient, ids: readonly string[
     to_char(COALESCE(m.occurred_at,m.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM-DD') AS payment_date,
     EXISTS (SELECT 1 FROM olbia.installment_plans p WHERE p.movement_id=m.id) AS has_msi,
     (SELECT count(*) FROM olbia.ledger_revisions r WHERE r.movement_id=m.id) AS revision_count
-    FROM olbia.ledger_movements m WHERE m.id=ANY($1::uuid[])`, [[...ids]])).rows : [];
+    FROM olbia.ledger_movements m WHERE m.id=ANY($1::uuid[]) AND m.event_type<>'bank_credit'`, [[...ids]])).rows : [];
 export const readGoalMovement = async (client: SqlClient, id: string): Promise<Row | null> =>
   (await readGoalMovements(client, [id]))[0] ?? null;
 export const paymentMovementUsed = async (client: SqlClient, movementId: string, paymentId: string): Promise<boolean> =>

@@ -3,10 +3,12 @@ export const NATIVE_LEDGER_TABLES = [
   'ledger_movements', 'ledger_observations', 'ledger_movement_warnings', 'ledger_observation_warnings',
   'ledger_tags', 'ledger_bulk_operations', 'ledger_bulk_members', 'ledger_revisions',
   'installment_plans', 'installment_entries', 'installment_evidence_candidates', 'source_claims',
+  'ledger_credit_details',
 ] as const;
 
 const safeMoney = 'BETWEEN 0 AND 9007199254740991';
 const positiveMoney = 'BETWEEN 1 AND 9007199254740991';
+export const LEDGER_EVENT_TYPE_CHECK = "CHECK (event_type IN ('card_purchase','card_charge','outgoing_transfer','bank_credit'))";
 const captureKinds = "('email','apple_pay_shortcut','manual','santander_csv','amex_statement','amex_activity','santander_statement')";
 const accountColumns = `account_present boolean NOT NULL,
   account_id text, account_name text, account_institution text, account_last_four text,
@@ -17,7 +19,7 @@ export const NATIVE_LEDGER_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS olbia.ledger_movements (
     id uuid PRIMARY KEY, primary_observation_id uuid NOT NULL,
     institution text NOT NULL CHECK (length(institution)>0),
-    event_type text NOT NULL CHECK (event_type IN ('card_purchase','card_charge','outgoing_transfer')),
+    event_type text NOT NULL CONSTRAINT ledger_movements_credit_type_check ${LEDGER_EVENT_TYPE_CHECK},
     status text NOT NULL CHECK (status IN ('accepted','needs_review','rejected','deferred_msi','pending_foreign')),
     amount_minor bigint NOT NULL CHECK (amount_minor ${safeMoney}),
     currency text NOT NULL CHECK (currency ~ '^[A-Z]{3}$'),
@@ -39,7 +41,7 @@ export const NATIVE_LEDGER_SCHEMA_STATEMENTS = [
     capture_source text NOT NULL CHECK (capture_source IN ${captureKinds}),
     observed_at timestamptz NOT NULL, reconciliation_at timestamptz NOT NULL,
     institution text NOT NULL CHECK (length(institution)>0),
-    event_type text NOT NULL CHECK (event_type IN ('card_purchase','card_charge','outgoing_transfer')),
+    event_type text NOT NULL CONSTRAINT ledger_observations_credit_type_check ${LEDGER_EVENT_TYPE_CHECK},
     amount_minor bigint NOT NULL CHECK (amount_minor ${safeMoney}),
     currency text NOT NULL CHECK (currency ~ '^[A-Z]{3}$'),
     merchant_raw text NOT NULL, occurred_at timestamptz,
@@ -66,6 +68,19 @@ export const NATIVE_LEDGER_SCHEMA_STATEMENTS = [
     movement_id uuid NOT NULL REFERENCES olbia.ledger_movements(id),
     position integer NOT NULL CHECK (position>=0), tag text NOT NULL CHECK (length(tag)>0),
     PRIMARY KEY (movement_id,position), CONSTRAINT ledger_tags_value_key UNIQUE (movement_id,tag))`,
+  `CREATE TABLE IF NOT EXISTS olbia.ledger_credit_details (
+    movement_id uuid PRIMARY KEY REFERENCES olbia.ledger_movements(id),
+    posted_on date NOT NULL, kind text NOT NULL CHECK (kind IN ('income','refund','fund_release')),
+    account_kind text NOT NULL CHECK (account_kind IN ('cash','credit_card')),
+    income_type text CHECK (income_type IN ('finiquito','nomina','otro')),
+    fund_owner text, fund_employer_key text,
+    CONSTRAINT ledger_credit_fund_closure_fk FOREIGN KEY (fund_owner,fund_employer_key) REFERENCES olbia.payroll_closures(owner,employer_key),
+    CONSTRAINT ledger_credit_fund_closure_key UNIQUE (fund_owner,fund_employer_key),
+    CHECK ((kind='income' AND account_kind='cash' AND income_type IS NOT NULL)
+      OR (kind='refund' AND income_type IS NULL)
+      OR (kind='fund_release' AND account_kind='cash' AND income_type IS NULL)),
+    CHECK ((kind='fund_release' AND fund_owner IS NOT NULL AND fund_employer_key IS NOT NULL)
+      OR (kind<>'fund_release' AND fund_owner IS NULL AND fund_employer_key IS NULL)))`,
   `CREATE TABLE IF NOT EXISTS olbia.ledger_bulk_operations (
     id uuid PRIMARY KEY, owner text NOT NULL CHECK (length(owner)>0),
     status text NOT NULL CHECK (status IN ('pending','applied','undone')),

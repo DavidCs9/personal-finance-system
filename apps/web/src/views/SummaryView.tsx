@@ -46,6 +46,67 @@ export interface SummaryViewProps {
   readonly demoMode: boolean;
 }
 
+const captureDay = new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
+function MonthCashDetails({ dashboard }: { dashboard: MonthDashboard }) {
+  const { cash, postedCredits: credits, futureIncome } = dashboard;
+  const expectedIncome = {
+    unconfigured: "Sin programación",
+    unknown_amount_or_date: "Fecha o importe por confirmar",
+    reconciliation_needed: "Por conciliar",
+    scheduled: "Según calendario",
+    closed: "Mes cerrado",
+  }[futureIncome.status];
+  const closeReason = cash.closing.reasons.includes("period_end_balance_missing")
+    ? "Faltan saldos capturados el último día del mes."
+    : "Falta confirmar qué incluyen los saldos y cuándo se pagarán las tarjetas.";
+
+  return <>
+    <div className="summary-cash-balances">
+      <h3>Saldos de efectivo</h3>
+      {!cash.current.accounts.length && <p>Sin saldos capturados para este periodo.</p>}
+      {cash.current.status === "mixed_dates" && <p>Los saldos corresponden a días distintos.</p>}
+      <dl>
+        {cash.current.accounts.map(account => <div key={account.accountId}>
+          <dt>{account.name}<small>{captureDay.format(new Date(account.day))} · Captura manual{account.stale ? " · Saldo antiguo" : ""}</small></dt>
+          <dd><Amt>{money(account.amountMinor)}</Amt></dd>
+        </div>)}
+        {cash.current.totalMinor !== null && <div><dt>Total de la misma fecha</dt><dd><Amt>{money(cash.current.totalMinor)}</Amt></dd></div>}
+        <div><dt>{cash.closing.status === "recorded" ? "Efectivo al cierre" : "Liquidez al cierre"}</dt>
+          <dd>{cash.closing.amountMinor === null ? "Sin estimación" : <Amt>{money(cash.closing.amountMinor)}</Amt>}</dd></div>
+      </dl>
+      {cash.closing.status !== "recorded" && <p>{closeReason}</p>}
+    </div>
+    <div className="summary-cash-balances">
+      <h3>Abonos del mes</h3>
+      <dl>
+        <div><dt>Ingresos recibidos</dt><dd>{credits.incomeStatus === "recorded" ? <Amt>{money(credits.incomeMinor)}</Amt> : "Sin abonos registrados"}</dd></div>
+        {credits.cashRefundsMinor > 0 && <div><dt>Reembolsos a efectivo</dt><dd><Amt>{money(credits.cashRefundsMinor)}</Amt></dd></div>}
+        {credits.cardRefundsMinor > 0 && <div><dt>Reembolsos a tarjeta</dt><dd><Amt>{money(credits.cardRefundsMinor)}</Amt></dd></div>}
+        {futureIncome.status !== "closed" && <div><dt>Ingresos esperados</dt>
+          <dd>{futureIncome.scheduledMinor === null ? expectedIncome : <Amt>{money(futureIncome.scheduledMinor)}</Amt>}</dd></div>}
+      </dl>
+      {credits.credits.length > 0 && <details className="summary-support-details">
+        <summary>Ver abonos registrados</summary>
+        <dl>
+          {credits.credits.map(credit => <div key={credit.movementId}>
+            <dt>{credit.description}<small>{captureDay.format(new Date(credit.postedOn))} · {
+              credit.creditType === "income" ? "Ingreso recibido" : credit.accountKind === "cash" ? "Reembolso a efectivo" : "Reembolso a tarjeta"
+            }</small></dt>
+            <dd><Amt>{money(credit.amountMinor)}</Amt></dd>
+          </div>)}
+        </dl>
+      </details>}
+      {dashboard.payrollFundClosures.map(fund => <p key={fund.fundEmployerKey}>
+        Fondo de ahorro · {fund.bankReconciliationStatus === "unverified" ? "Importe bancario por conciliar."
+          : fund.bankReconciliationStatus === "matched" ? "Coincide con el abono bancario."
+            : fund.bankReconciliationStatus === "date_differs" ? "La fecha del abono difiere del cierre."
+              : <>Diferencia con el banco <Amt>{money(fund.differenceMinor!)}</Amt>.</>}
+      </p>)}
+    </div>
+  </>;
+}
+
 export function SummaryView(props: SummaryViewProps) {
   const liquidity = props.dashboard?.liquidity;
   const incomeMinor = liquidity ? liquidity.incomeMinor : props.plan.configured ? props.plan.incomeMinor : null;
@@ -259,24 +320,36 @@ export function SummaryView(props: SummaryViewProps) {
         {props.dashboard && liquidity ? <div className="summary-support">
           <section className="summary-budget-panel" aria-label="Gasto y liquidez del mes">
             <dl className="summary-observed-totals">
-              <div><dt>Gasto registrado</dt><dd><Amt>{money(props.dashboard.summary.spentMinor)}</Amt></dd></div>
-              <div><dt>Liquidez tras compromisos</dt>
-                <dd>{liquidity.remainingMinor === null ? "Por confirmar" : <Amt>{money(Math.max(liquidity.remainingMinor, 0))}</Amt>}</dd></div>
+              <div><dt>Gasto registrado</dt><dd><Amt>{money(props.dashboard.spending.recordedMinor)}</Amt></dd></div>
+              <div><dt>Gasto contado</dt><dd><Amt>{money(props.dashboard.spending.budgetCountedMinor)}</Amt></dd></div>
               <div>
                 <dt>{props.isCurrentMonth ? "Gasto estimado al cierre" : props.isFutureMonth ? "Compromisos conocidos" : "Gasto al cierre"}</dt>
-                <dd>{props.isCurrentMonth
-                  ? liquidity.projectedSpendMinor === null ? "Por confirmar" : <Amt>{money(liquidity.projectedSpendMinor)}</Amt>
-                  : <Amt>{money(props.isFutureMonth ? props.dashboard.summary.upcomingMinor : props.dashboard.summary.spentMinor)}</Amt>}</dd>
+                <dd>{props.isFutureMonth ? <Amt>{money(props.dashboard.spending.knownCommitmentsMinor)}</Amt>
+                  : props.dashboard.spending.closingSpendMinor === null ? "Faltan movimientos"
+                    : <Amt>{money(props.dashboard.spending.closingSpendMinor)}</Amt>}</dd>
               </div>
             </dl>
-            {(provisionalActive || estimatedMinor !== null) && <p>{provisionalActive ? "Liquidez provisional" : "Incluye nómina estimada"}</p>}
+            {props.dashboard.spending.status === "estimated" && <p>La estimación incluye fijos y MSI conocidos del mes.</p>}
             {props.uncertainMinor > 0 && <p>El gasto incluye <Amt>{money(props.uncertainMinor)}</Amt> por confirmar.</p>}
+            <MonthCashDetails dashboard={props.dashboard} />
           </section>
-          {hasIncome ? <details key={props.month} className="summary-support-details">
-            <summary>Ver liquidez, nómina y desglose</summary>
-            {supportContent}
-          </details> : supportContent}
-        </div> : supportContent}
+          <details key={props.month} className="summary-support-details">
+            <summary>Nómina y compromisos</summary>
+            <div className="summary-cash-balances">
+              <dl>
+                <div><dt>Fijos y MSI por conciliar</dt><dd><Amt>{money(props.dashboard.spending.knownCommitmentsMinor)}</Amt></dd></div>
+                {payslipCount > 0 && <div><dt>Nómina en CFDI</dt><dd><Amt>{money(liquidity.depositedMinor)}</Amt></dd></div>}
+              </dl>
+              <button type="button" className="text-button" onClick={payslipCount > 0 ? props.onOpenIncome : props.onUploadNomina}>
+                {payslipCount > 0 ? "Ver recibos de nómina" : "Añadir recibo de nómina"}
+              </button>
+            </div>
+          </details>
+        </div> : props.dashboardError ? (spendAvailable && <section className="summary-budget-panel">
+          <h2>Gasto registrado</h2>
+          <strong><Amt>{money(props.spentMinor)}</Amt></strong>
+          <p>No pudimos consultar los saldos de efectivo.</p>
+        </section>) : supportContent}
 
         <section className="summary-shortcuts" aria-label="Explora tu mes">
           <button type="button" className="summary-shortcut" onClick={props.onOpenPlanning}>

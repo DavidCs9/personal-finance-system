@@ -92,11 +92,11 @@ export const readLedgerMovementIdsByPrefix = async (client: SqlClient, prefixes:
   if (prefixes.length < 1 || prefixes.length > 49 || prefixes.some(prefix => !/^[a-f0-9]{8}$/.test(prefix))) {
     throw new Error('Invalid movement reference lookup');
   }
-  return (await client.query('SELECT id FROM olbia.ledger_movements WHERE id::text LIKE ANY($1::text[])',
+  return (await client.query("SELECT id FROM olbia.ledger_movements WHERE event_type<>'bank_credit' AND id::text LIKE ANY($1::text[])",
     [prefixes.map(prefix => `${prefix}%`)])).rows.map(row => String(row.id));
 };
 export const ledgerMovementReadStatement = `${nativeSelection}
-    WHERE ($1::uuid[] IS NULL OR m.id=ANY($1::uuid[])) AND ($2::text[] IS NULL OR
+    WHERE m.event_type<>'bank_credit' AND ($1::uuid[] IS NULL OR m.id=ANY($1::uuid[])) AND ($2::text[] IS NULL OR
       to_char(COALESCE(m.occurred_at,m.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM')=ANY($2::text[]) OR
       EXISTS(SELECT 1 FROM olbia.installment_entries i WHERE i.movement_id=m.id AND i.month=ANY($2::text[])))
     ORDER BY m.received_at,m.id`;
@@ -117,7 +117,7 @@ export const readLedgerDetail=async(client:SqlClient,id:string):Promise<Row|unde
         FROM olbia.ledger_observation_warnings w WHERE w.observation_id=o.id))
       ORDER BY o.reconciliation_at DESC,o.id DESC),'[]'::jsonb)
       FROM olbia.ledger_observations o WHERE o.movement_id=financial.id) AS observations
-    FROM (${nativeSelection} WHERE m.id=$1::uuid) financial`,[id])).rows[0];
+    FROM (${nativeSelection} WHERE m.id=$1::uuid AND m.event_type<>'bank_credit') financial`,[id])).rows[0];
   return row?{...movementFromNative(row),revisions:records(row.revisions).map(revisionFrom),
     observations:records(row.observations).map(observationFrom)}:undefined;
 };

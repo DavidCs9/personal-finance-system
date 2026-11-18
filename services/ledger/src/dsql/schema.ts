@@ -6,7 +6,7 @@ import { NATIVE_DELIVERY_SCHEMA_STATEMENTS, nativeDeliveryReadGrant, nativeDeliv
 import { NATIVE_PUSH_SCHEMA_STATEMENT, nativePushReadGrant, nativePushMetadataGrant, nativePushWriteGrants } from './push-schema.js';
 import type { SqlClient, TransactionPool } from './projection.js';
 import { isOCCError } from '@aws/aurora-dsql-node-postgres-connector';
-import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from './ledger-schema.js';
+import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT, LEDGER_EVENT_TYPE_CHECK } from './ledger-schema.js';
 import { NATIVE_WEALTH_SCHEMA_STATEMENTS, nativeWealthReadGrant, nativeWealthWriteGrants } from './wealth-schema.js';
 import { NATIVE_PLANNING_SCHEMA_STATEMENTS, NATIVE_PLANNING_TABLES } from './planning-schema.js';
 import { NATIVE_CATEGORY_SCHEMA_STATEMENTS, nativeCategoryReadGrant, nativeCategoryWriteGrants } from './category-schema.js';
@@ -130,7 +130,7 @@ export const SCHEMA_STATEMENTS = [
   `CREATE OR REPLACE VIEW olbia.movement_months AS
     SELECT id::text AS movement_id,
       to_char(COALESCE(occurred_at,received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM') AS month
-      FROM olbia.ledger_movements
+      FROM olbia.ledger_movements WHERE event_type<>'bank_credit'
     UNION SELECT movement_id::text,month FROM olbia.installment_entries`,
   ...NATIVE_WEALTH_SCHEMA_STATEMENTS,
   NATIVE_PUSH_SCHEMA_STATEMENT,
@@ -166,6 +166,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     { now, pause, waitMs: options.indexWaitMs });
   await ensureNativeControlConstraints({ query: (statement, params) => query('native-control', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   await ensureLedgerPrimaryObservation({ query: (statement, params) => query('ledger-primary', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
+  await ensureLedgerCreditTypes({ query: (statement, params) => query('ledger-credits', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   for (const [name, table, columns] of [
     ['payslips_paid_on_idx', 'payslips', 'paid_on,uuid'],
     ['ledger_revisions_movement_idx', 'ledger_revisions', 'movement_id,created_at,id'],
@@ -337,10 +338,10 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
       `GRANT SELECT ON olbia.runtime_state,olbia.schema_migrations,olbia.application_barrier TO ${role}`,
       `GRANT UPDATE (generation) ON olbia.application_barrier TO ${role}`,
       `GRANT SELECT (uuid,owner,paid_on,payroll_type,total_mxn_minor,employer_name) ON olbia.payslips TO ${role}`,
-      `GRANT SELECT (owner,employer_key,ended_on) ON olbia.payroll_closures TO ${role}`,
+      `GRANT SELECT (owner,employer_key,ended_on,fund_paid_on,fund_paid_mxn_minor) ON olbia.payroll_closures TO ${role}`,
       nativeLedgerReadGrant(role),
       `GRANT SELECT ON olbia.spend_categories,olbia.category_lifecycle,olbia.merchant_rules TO ${role}`,
-      `GRANT INSERT ON olbia.ledger_movements,olbia.ledger_observations,olbia.source_claims,olbia.ledger_movement_warnings,olbia.ledger_observation_warnings,olbia.ledger_tags,olbia.installment_plans,olbia.installment_entries,olbia.installment_evidence_candidates TO ${role}`,
+      `GRANT INSERT ON olbia.ledger_movements,olbia.ledger_observations,olbia.source_claims,olbia.ledger_movement_warnings,olbia.ledger_observation_warnings,olbia.ledger_tags,olbia.ledger_credit_details,olbia.installment_plans,olbia.installment_entries,olbia.installment_evidence_candidates TO ${role}`,
       `GRANT DELETE ON olbia.ledger_movement_warnings,olbia.installment_plans,olbia.installment_entries,olbia.installment_evidence_candidates TO ${role}`,
       `GRANT SELECT ON olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates TO ${role}`,
       `GRANT INSERT ON olbia.ledger_revisions TO ${role}`,
@@ -371,6 +372,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('financial-plans-complete','INSERT INTO olbia.schema_migrations VALUES (26,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('income-schedule-complete','INSERT INTO olbia.schema_migrations VALUES (28,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('reconciliation-tools-complete','INSERT INTO olbia.schema_migrations VALUES (29,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
+  await query('ledger-credits-complete','INSERT INTO olbia.schema_migrations VALUES (30,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('cash-and-payroll-closure-complete','INSERT INTO olbia.schema_migrations VALUES (25,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 };
 
@@ -469,6 +471,13 @@ export const ensureLedgerPrimaryObservation = (client: SqlClient, options: Param
   ensureValidatedConstraint(client, 'ledger_movements', 'ledger_movements_primary_observation_fk',
     LEDGER_PRIMARY_OBSERVATION_CONSTRAINT, 'ledger-primary', options);
 
+export const ensureLedgerCreditTypes = async (client: SqlClient, options: Parameters<typeof ensureValidatedConstraint>[5] = {}): Promise<void> => {
+  for (const table of ['ledger_movements', 'ledger_observations']) {
+    await ensureValidatedConstraint(client, table, `${table}_credit_type_check`, LEDGER_EVENT_TYPE_CHECK, 'ledger-credit-type', options);
+    await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_event_type_check`);
+  }
+};
+
 /** Expand and validate before removing old checks; resumable across deployment retries. */
 export const ensureBudgetSchema = async (client: SqlClient, options: Parameters<typeof ensureValidatedConstraint>[5] = {}): Promise<void> => {
   await client.query('ALTER TABLE olbia.financial_change_receipts ADD COLUMN IF NOT EXISTS budget_id uuid');
@@ -478,14 +487,16 @@ export const ensureBudgetSchema = async (client: SqlClient, options: Parameters<
   await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_budget_exclusion_fk',
     'FOREIGN KEY (budget_exclusion_id) REFERENCES olbia.budget_exclusions(id)', 'budget-exclusion-receipt-fk', options);
   for (const table of ['financial_write_operations', 'financial_change_receipts']) {
-    await ensureValidatedConstraint(client, table, `${table}_reconciliation_kind_check`, FINANCIAL_WRITE_KIND_CHECK, 'financial-write-kind', options);
+    await ensureValidatedConstraint(client, table, `${table}_credit_kind_check`, FINANCIAL_WRITE_KIND_CHECK, 'financial-write-kind', options);
     await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_kind_check`);
     await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_budget_kind_check`);
+    await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_reconciliation_kind_check`);
   }
-  await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_reconciliation_entity_check',
+  await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_credit_entity_check',
     FINANCIAL_RECEIPT_ENTITY_CHECK, 'financial-receipt-entity', options);
   await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_change_receipts_check');
   await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_receipts_budget_entity_check');
+  await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_receipts_reconciliation_entity_check');
   await client.query('INSERT INTO olbia.schema_migrations VALUES (27,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 };
 

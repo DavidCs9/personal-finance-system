@@ -23,7 +23,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'month_snapshot',
     description:
-      'Lee todo el Resumen de Olbia en una sola llamada, con los mismos datos que la web: presupuesto mensual, gasto registrado y contado, restante tras compromisos, ritmo diario frente al límite, categorías con sus límites y avisos, liquidez, fijos, MSI y estimación de cierre. Montos en centavos MXN. Usa liquidity para distinguir liquidez registrada, provisional, estimada o faltante y omite proyecciones nulas. La serie no inventa días para cuotas sin fecha; su importe sigue en el total. Los compromisos conocidos no acreditan pagos.',
+      'Lee todo el Resumen de Olbia como en la web. budget da límite, gasto contado, restante, ritmo y compromisos. spending da gasto registrado y estimado al cierre independientemente de la nómina. postedCredits separa ingresos bancarios y reembolsos; futureIncome es sólo programación. cash.current da saldos con fecha y fuente, y cash.closing da evidencia de cierre o causas de indisponibilidad. liquidity conserva CFDI y payrollFundClosures la evidencia del Fondo, separados de los ingresos bancarios y los saldos. Montos en centavos MXN. Preserva exclusiones explícitas, evita contar dos veces gastos y pagos de tarjeta y no inventes fechas para MSI o depósitos.',
     inputSchema: {
       type: 'object',
       properties: {

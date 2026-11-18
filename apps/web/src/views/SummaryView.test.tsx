@@ -2,7 +2,7 @@ import { Children, isValidElement, type ReactElement, type ReactNode } from "rea
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { buildMsiSchedule, computeBudgetStatus, computeMonthSummary, markInstallmentSpent,
-  monthDashboardLiquidity, type MonthSpendEvent } from "@finance/domain";
+  monthCashLiquidity, monthDashboardLiquidity, monthDashboardSpending, summarizePostedCredits, type MonthSpendEvent } from "@finance/domain";
 import { SummaryView, type SummaryViewProps } from "./SummaryView";
 
 const now = new Date("2026-08-04T12:00:00-06:00");
@@ -193,13 +193,27 @@ it("puts the shared budget and category alerts above liquidity and conceals its 
     exclusions: [], events: [{ id: "food", status: "accepted", currency: "MXN", amountMinor: 600_00, receivedAt: at, categoryId: "food" }],
     budget: { id: "budget", entityType: "budget", scope: "override", effectiveMonth: month, status: "active",
       createdAt: at, updatedAt: at, revision: 1, totalMxnMinor: 1_000_00, allocations: [{ categoryId: "food", amountMxnMinor: 500_00 }] } });
-  const props: SummaryViewProps = { ...propsFor(), onOpenBudget() {}, dashboard: { month, generatedAt: at, summary,
+  const props: SummaryViewProps = { ...propsFor(), onOpenBudget() {}, dashboard: { month, generatedAt: at,
+    summary: { ...summary, remainingMinor: null, projectedRemainingMinor: null },
     budget: { ...facts, generatedAt: at, categories: facts.categories.map(row => ({ ...row, label: "Comida" })) },
     liquidity: monthDashboardLiquidity(summary, {}, true),
+    spending: monthDashboardSpending(summary, facts),
+    cash: monthCashLiquidity(month, now, [{ accountId: "santander_cash", amountMinor: 199_899_00, name: "Santander",
+      day: "2026-08-02", capturedAt: "2026-08-02T18:00:00Z", source: "manual" }]),
+    postedCredits: summarizePostedCredits([]),
+    futureIncome: { status: "unknown_amount_or_date", scheduledMinor: null, knownUpcomingMinor: 0, unknownOccurrences: 1 },
+    payrollFundClosures: [],
   } };
   const html = renderToStaticMarkup(<SummaryView {...props} />);
   expect(html.indexOf("Presupuesto mensual")).toBeLessThan(html.indexOf("Ritmo de gasto"));
-  expect(html.indexOf("En qué se fue")).toBeLessThan(html.indexOf("Falta tu nómina"));
+  expect(html.indexOf("En qué se fue")).toBeLessThan(html.indexOf("Gasto estimado al cierre"));
+  expect(html).toContain("Gasto registrado");
+  expect(html).toContain("Gasto contado");
+  expect(html).toContain("199,899");
+  expect(html).toContain("Captura manual");
+  expect(html).toContain("Sin estimación");
+  expect(html).toContain("Fecha o importe por confirmar");
+  expect(html).not.toContain("Liquidez tras compromisos");
   expect(html).toContain("Cerca del límite");
   expect(html).toContain("Te pasaste");
   expect(html).toContain("<canvas");

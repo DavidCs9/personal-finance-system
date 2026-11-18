@@ -11,6 +11,7 @@ const operations = {
   preview_income_change: { kind: 'income', phase: 'preview' }, apply_income_change: { kind: 'income', phase: 'apply' },
   preview_financial_goal_change: { kind: 'goal', phase: 'preview' }, apply_financial_goal_change: { kind: 'goal', phase: 'apply' },
   preview_manual_charge: { kind: 'manual_charge', phase: 'preview' }, apply_manual_charge: { kind: 'manual_charge', phase: 'apply' },
+  preview_manual_credit: { kind: 'manual_credit', phase: 'preview' }, apply_manual_credit: { kind: 'manual_credit', phase: 'apply' },
 } as const satisfies Record<string, { kind: FinancialWriteKind; phase: 'preview' | 'apply' }>;
 export const runFinancialWriteTool = (owner: string, name: string, input: Record<string, unknown>): Promise<unknown> => {
   const operation = operations[name as keyof typeof operations];

@@ -37,6 +37,22 @@ export const previousManualCapture = async (client: SqlClient, fingerprint: stri
   return toPublicEvent(detail, detail.revisions as JsonObject[], detail.observations as JsonObject[]);
 };
 
+/** Reuse the original-evidence boundary for both manual ledger capture directions. */
+export const storeManualEvidence = async (owner: string, evidenceBody: string) => {
+  const sourceHash = createHash('sha256').update(evidenceBody, 'utf8').digest('hex');
+  const source = {
+    kind: 'manual_entry' as const, bucket: rawSourceBucketName,
+    key: manualEntrySourceKey(owner, sourceHash), sha256: sourceHash, contentType: 'application/json' as const,
+  };
+  try {
+    await s3.send(new PutObjectCommand({ Bucket: rawSourceBucketName, Key: source.key, Body: evidenceBody,
+      ContentType: 'application/json; charset=utf-8', IfNoneMatch: '*' }));
+  } catch (error) {
+    if (errorName(error) !== 'PreconditionFailed') throw error;
+  }
+  return source;
+};
+
 export const prepareManualEvent = async (body: string | undefined, owner: string, identity?: { movementId: string; observationId: string }): Promise<(client: SqlClient) => Promise<JsonObject>> => {
   const input = parseManualEntry(body);
   const appliedAt = new Date().toISOString();
@@ -49,17 +65,7 @@ export const prepareManualEvent = async (body: string | undefined, owner: string
     occurredOn: input.occurredOn, occurredAt: input.occurredAt, accountLastFour: input.accountLastFour,
     note: input.note, fingerprint,
   });
-  const sourceHash = createHash('sha256').update(evidenceBody, 'utf8').digest('hex');
-  const source = {
-    kind: 'manual_entry' as const, bucket: rawSourceBucketName,
-    key: manualEntrySourceKey(owner, sourceHash), sha256: sourceHash, contentType: 'application/json' as const,
-  };
-  try {
-    await s3.send(new PutObjectCommand({ Bucket: rawSourceBucketName, Key: source.key, Body: evidenceBody,
-      ContentType: 'application/json; charset=utf-8', IfNoneMatch: '*' }));
-  } catch (error) {
-    if (errorName(error) !== 'PreconditionFailed') throw error;
-  }
+  const source = await storeManualEvidence(owner, evidenceBody);
   const id = identity?.movementId ?? randomUUID();
   const observationId = identity?.observationId ?? randomUUID();
   const account = {

@@ -52,7 +52,7 @@ beforeAll(async () => {
 afterAll(() => sql.close());
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 beforeEach(async () => {
-  await sql.exec('TRUNCATE olbia.payroll_closures,olbia.payslip_lines,olbia.payslips');
+  await sql.exec('TRUNCATE olbia.ledger_credit_details,olbia.payroll_closures,olbia.payslip_lines,olbia.payslips');
   await sql.exec(`TRUNCATE ${NATIVE_WEALTH_TABLES.map(t => `olbia.${t}`).join(',')}`);
   await sql.query('DELETE FROM olbia.schema_migrations WHERE version=15');
   await sql.query('UPDATE olbia.card_profiles SET deleted_at=NULL');

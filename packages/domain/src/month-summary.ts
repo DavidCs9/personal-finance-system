@@ -69,6 +69,7 @@ export interface MonthMsiRow extends CommittedMsiRow {
 export interface MonthSummary {
   readonly month: string;
   readonly spentMinor: number;
+  readonly observedSpendEntries: number;
   readonly discretionarySpentMinor: number;
   readonly msiSpentMinor: number;
   readonly uncertainMinor: number;
@@ -98,6 +99,24 @@ export interface MonthSummary {
   };
 }
 
+const canEstimateClose = (summary: MonthSummary) => summary.isCurrentMonth && summary.observedSpendEntries > 0;
+
+export const monthDashboardSpending = (summary: MonthSummary, budget: {
+  readonly countedSpentMxnMinor: number;
+  readonly projectedCountedSpendMxnMinor: number;
+}) => {
+  const canEstimate = canEstimateClose(summary);
+  return {
+    status: summary.isFutureMonth ? 'known_commitments' : !summary.isCurrentMonth ? 'recorded'
+      : canEstimate ? 'estimated' : 'insufficient_spend',
+    recordedMinor: summary.spentMinor,
+    budgetCountedMinor: budget.countedSpentMxnMinor,
+    closingSpendMinor: summary.isFutureMonth || summary.isCurrentMonth && !canEstimate ? null : summary.projectedSpendMinor,
+    closingBudgetCountedMinor: summary.isFutureMonth || summary.isCurrentMonth && !canEstimate ? null : budget.projectedCountedSpendMxnMinor,
+    knownCommitmentsMinor: summary.upcomingMinor,
+  } as const;
+};
+
 export const monthDashboardLiquidity = (summary: MonthSummary, plan: {
   readonly depositedMinor?: number;
   readonly estimatedMinor?: number;
@@ -110,15 +129,16 @@ export const monthDashboardLiquidity = (summary: MonthSummary, plan: {
   const totalCommittedSpendMinor = summary.spentMinor + summary.upcomingMinor;
   return {
     status: !available ? 'missing' : plan.provisionalActive ? 'provisional' : plan.estimateActive ? 'estimated' : 'recorded',
+    statusBasis: 'payroll_only',
     incomeMinor: available ? summary.incomeMinor : null,
     depositedMinor: plan.depositedMinor ?? 0,
     estimatedMinor: plan.estimateActive ? plan.estimatedMinor ?? 0 : null,
     provisionalMinor: plan.provisionalActive ? plan.provisionalMinor ?? 0 : null,
     payslipCount: plan.payslips?.length ?? 0,
     fixedConfigured,
-    remainingMinor: available ? summary.remainingMinor : null,
-    projectedSpendMinor: available && summary.isCurrentMonth ? summary.projectedSpendMinor : null,
-    projectedRemainingMinor: available && summary.isCurrentMonth ? summary.projectedRemainingMinor : null,
+    remainingMinor: null,
+    projectedSpendMinor: canEstimateClose(summary) ? summary.projectedSpendMinor : null,
+    projectedRemainingMinor: null,
     totalCommittedSpendMinor,
     committedSpendPercent: available ? totalCommittedSpendMinor / summary.incomeMinor * 100 : null,
   } as const;
@@ -257,12 +277,14 @@ export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
   let msiSpentMinor = 0;
   let msiCommittedMinor = 0;
   let uncertainMinor = 0;
+  let observedSpendEntries = 0;
 
   for (const event of activeEvents) {
     if (event.msi) {
       for (const installment of event.msi.installments) {
         if (installment.month !== input.month) continue;
         if (installment.status === "spent") {
+          observedSpendEntries++;
           msiSpentMinor += installment.amountMinor;
           if (event.status === "needs_review") uncertainMinor += installment.amountMinor;
           recordSpendDay(installment.occurredOn, installment.amountMinor);
@@ -275,6 +297,7 @@ export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
     const day = byDay ? dayKeyInZone(new Date(event.occurredAt ?? event.receivedAt)) : undefined;
     if ((day?.slice(0, 7) ?? eventMonthKey(event)) !== input.month) continue;
     const amountMinor = personalSpendAmountMinor(event);
+    observedSpendEntries++;
     nonMsiSpentMinor += amountMinor;
     recordSpendDay(day, amountMinor);
     if (event.status === "needs_review") uncertainMinor += amountMinor;
@@ -315,6 +338,7 @@ export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
   return {
     month: input.month,
     spentMinor,
+    observedSpendEntries,
     discretionarySpentMinor,
     msiSpentMinor,
     uncertainMinor,
@@ -362,7 +386,8 @@ export const dailyBalancePushMessage = (
   if (!summary.incomeConfigured || summary.incomeMinor <= 0) {
     return {
       title: "Olbia · balance de hoy",
-      body: `Has gastado ${spent} este mes. Sube la nómina del mes para ver qué te queda.`,
+      body: `Has gastado ${spent} este mes.${canEstimateClose(summary)
+        ? ` El gasto estimado al cierre es ${formatMxnWhole(summary.projectedSpendMinor)}.` : ''}`,
       tag,
       navigate: navigateUrl,
     };
@@ -371,7 +396,7 @@ export const dailyBalancePushMessage = (
   const remaining = formatMxnWhole(Math.max(summary.remainingMinor, 0));
   const parts = [
     `Has gastado ${spent} este mes.`,
-    `Te quedan ${remaining} después de compromisos.`,
+    `Quedan ${remaining} frente a la nómina del mes, después de compromisos.`,
   ];
 
   if (summary.isCurrentMonth && summary.projectedRemainingMinor < 0) {

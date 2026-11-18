@@ -24,12 +24,14 @@ const requiredRelations = [
   'ledger_bulk_members_operation_id_fkey', 'ledger_bulk_members_movement_id_fkey',
   'installment_plans_movement_id_fkey', 'installment_entries_movement_id_fkey',
   'installment_entries_month_key', 'installment_entries_evidence_fk', 'source_claims_observation_fk',
+  'ledger_credit_details_movement_id_fkey',
+  'ledger_credit_fund_closure_fk',
 ] as const;
 
 /** Raw typed facts are a separate oracle from the product decoder. Frozen documents are recovery only. */
 export const verifyNativeLedgerState = async (client: ReadSqlClient, movements: readonly JsonObject[],
   readDetail: (id: string) => Promise<JsonObject | undefined>) => {
-  const [parents, observations, revisions, tags, warnings, observationWarnings, plans, entries, constraints] = await Promise.all([
+  const [parents, observations, revisions, tags, warnings, observationWarnings, plans, entries, constraints, creditIssues] = await Promise.all([
     client.query('SELECT * FROM olbia.ledger_movements ORDER BY id'),
     client.query('SELECT * FROM olbia.ledger_observations ORDER BY movement_id,position'),
     client.query('SELECT * FROM olbia.ledger_revisions ORDER BY movement_id,created_at DESC,id DESC'),
@@ -40,11 +42,21 @@ export const verifyNativeLedgerState = async (client: ReadSqlClient, movements: 
     client.query('SELECT * FROM olbia.installment_entries ORDER BY movement_id,installment_index'),
     client.query(`SELECT conname,convalidated FROM pg_constraint WHERE connamespace='olbia'::regnamespace
       AND conname=ANY($1::text[]) ORDER BY conname`, [[...requiredRelations]]),
+    client.query(`SELECT count(*) AS count FROM olbia.ledger_movements m
+      LEFT JOIN olbia.ledger_credit_details c ON c.movement_id=m.id
+      WHERE (m.event_type='bank_credit')<>(c.movement_id IS NOT NULL)
+        OR (m.event_type='bank_credit' AND (m.currency<>'MXN' OR m.amount_minor<=0 OR m.occurred_at IS NOT NULL
+          OR m.bank_transaction_id IS NULL OR m.category_id IS NOT NULL OR m.personal_amount_minor IS NOT NULL
+          OR EXISTS(SELECT 1 FROM olbia.installment_plans p WHERE p.movement_id=m.id)
+          OR NOT EXISTS(SELECT 1 FROM olbia.source_claims s WHERE s.movement_id=m.id
+            AND s.observation_id=m.primary_observation_id AND s.owner IS NOT NULL AND s.capture_source='manual')))`),
   ]);
   let mismatches = 0;
   const check = (a: unknown, b: unknown) => { mismatches += Number(!samePublicResult(a, b)); };
+  check(0, Number(creditIssues.rows[0]?.count));
   check([...requiredRelations].sort().map(conname => ({ conname, convalidated: true })), constraints.rows);
-  check(parents.rows.map(row => row.id), movements.map(row => row.id).sort());
+  const spendParents = parents.rows.filter(parent => parent.event_type !== 'bank_credit');
+  check(spendParents.map(row => row.id), movements.map(row => row.id).sort());
   const children = (rows: JsonObject[], field: string, id: unknown) => rows.filter(row => row[field] === id);
   const contiguous = (rows: JsonObject[]) => rows.every((row, position) => Number(row.position) === position);
   const observationFacts = (row: JsonObject): JsonObject => ({ id: row.id, eventId: row.movement_id,
@@ -63,6 +75,13 @@ export const verifyNativeLedgerState = async (client: ReadSqlClient, movements: 
     check(true, Boolean(primary) && contiguous(captures) && contiguous(movementTags) && contiguous(movementWarnings));
     for (const capture of captures) check(true, contiguous(children(observationWarnings.rows, 'observation_id', capture.id)));
     if (!primary) continue;
+    if (parent.event_type === 'bank_credit') {
+      check(true, captures.length === 1 && primary.event_type === 'bank_credit'
+        && primary.capture_source === 'manual' && primary.bank_transaction_id === parent.bank_transaction_id
+        && primary.amount_minor === parent.amount_minor && !movementTags.length);
+      check(undefined, await readDetail(String(parent.id)));
+      continue;
+    }
     const plan = plans.rows.find(row => row.movement_id === parent.id);
     const expectedPlan = plan ? { months: plan.months, principalMinor: number(plan.principal_minor), cuotaMinor: number(plan.cuota_minor),
       origin: plan.origin, status: plan.status, needsScheduleCompletion: plan.needs_schedule_completion ?? undefined,
@@ -123,7 +142,7 @@ export const verifyNativeMonthSummary = async (client: ReadSqlClient, month: str
     SELECT m.*,p.movement_id AS plan_id,p.needs_schedule_completion,
       to_char(COALESCE(m.occurred_at,m.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM') AS financial_month
     FROM olbia.ledger_movements m LEFT JOIN olbia.installment_plans p ON p.movement_id=m.id
-    WHERE m.status NOT IN ('rejected','deferred_msi','pending_foreign')
+    WHERE m.event_type<>'bank_credit' AND m.status NOT IN ('rejected','deferred_msi','pending_foreign')
   ), non_msi AS (
     SELECT COALESCE(sum(COALESCE(personal_amount_minor,amount_minor)),0) AS spent,
       COALESCE(sum(CASE WHEN status='needs_review' THEN COALESCE(personal_amount_minor,amount_minor) ELSE 0 END),0) AS uncertain
@@ -137,7 +156,7 @@ export const verifyNativeMonthSummary = async (client: ReadSqlClient, month: str
     SELECT month FROM olbia.month_plans WHERE owner=$2 AND month<=$1 ORDER BY month DESC LIMIT 1
   ), fixed_entries AS (
     SELECT payment.amount_mxn_minor,
-      (charge.status IN ('accepted','needs_review') AND charge.currency='MXN' AND charge.amount_minor>0 AND charge_plan.movement_id IS NULL
+      (charge.event_type<>'bank_credit' AND charge.status IN ('accepted','needs_review') AND charge.currency='MXN' AND charge.amount_minor>0 AND charge_plan.movement_id IS NULL
         AND to_char(COALESCE(charge.occurred_at,charge.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM')=$1) IS TRUE AS covered,
       COALESCE(charge.personal_amount_minor,charge.amount_minor,0) AS personal_minor
     FROM effective_plan plan JOIN olbia.planned_payments payment ON payment.month=plan.month
@@ -161,9 +180,9 @@ export const verifyNativeMonthSummary = async (client: ReadSqlClient, month: str
     spentMinor: Number(row.non_msi) + Number(row.msi_spent) };
   const membership = (await client.query(`SELECT m.id,
       to_char(COALESCE(m.occurred_at,m.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM') AS financial_month
-    FROM olbia.ledger_movements m WHERE
+    FROM olbia.ledger_movements m WHERE m.event_type<>'bank_credit' AND (
       to_char(COALESCE(m.occurred_at,m.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM')=$1 OR
-      EXISTS(SELECT 1 FROM olbia.installment_entries i WHERE i.movement_id=m.id AND i.month=$1)
+      EXISTS(SELECT 1 FROM olbia.installment_entries i WHERE i.movement_id=m.id AND i.month=$1))
     ORDER BY COALESCE(m.occurred_at,m.received_at) DESC,m.id DESC`, [month])).rows;
   const direct = membership.filter(row => row.financial_month === month).map(row => row.id);
   const related = membership.filter(row => row.financial_month !== month).sort((a, b) => {

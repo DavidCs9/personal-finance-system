@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { addCalendarMonths, dayKeyInZone, monthKeyInZone, FINANCE_TIME_ZONE, isValidMonth,
   FinancialPlanError, financialId, financialObject, financialSum, financialGoalFacts, incomeOccurrences,
   proposeExpectedIncome, proposeFinancialGoal, maybeAutoAmexMsi, payrollEmployerKey, MX_BANKING_CALENDAR_VERSION,
-  type ExpectedIncome, type FinancialGoalState, type GoalPayment } from '@finance/domain';
+  type ExpectedIncome, type FinancialGoalState, type GoalPayment, type MonthFutureIncome } from '@finance/domain';
 import { applicationSqlClient, withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { readExpectedIncome, listExpectedIncomeRows, readIncomeEvidence, writeExpectedIncome, readFinancialGoal,
   listFinancialGoalIds, writeFinancialGoal, readGoalMovement, readGoalMovements, paymentMovementUsed, insertFinancialOperation,
@@ -16,6 +16,7 @@ import { readExpectedIncome, listExpectedIncomeRows, readIncomeEvidence, writeEx
 import { readerPool, withLedgerReadSnapshot } from '../events/sql-reads.js';
 import { parseManualEntry, manualEntryFingerprint, type ManualEntryInput } from '../events/manual-entry-input.js';
 import { prepareManualEvent, previousManualCapture } from '../events/manual-entry.js';
+import { manualCreditFundEvidence, parseManualCredit, prepareManualCredit, previousManualCredit } from '../events/manual-credit.js';
 import type { SqlClient } from '@finance/ledger/native-ledger';
 
 const jsonObject = (value: unknown): Record<string, unknown> => JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
@@ -81,6 +82,23 @@ export const listExpectedIncome = async (owner: string, input: Record<string, un
     const sources = rows.slice(0, paging.limit);
     return { ...incomeFacts(sources, range, context), nextCursor: rows.length > paging.limit ? sources.at(-1)!.id : null };
   });
+};
+
+export const getMonthFutureIncome = async (owner: string, month: string, now: Date, observedIncome: boolean): Promise<MonthFutureIncome> => {
+  const today = dayKeyInZone(now);
+  if (month < today.slice(0, 7)) return { status: 'closed', scheduledMinor: null, knownUpcomingMinor: 0, unknownOccurrences: 0 };
+  const plan = await listExpectedIncome(owner, { fromMonth: month, toMonth: month }, now);
+  const occurrences = plan.occurrences;
+  const unknownOccurrences = occurrences.filter(item => item.amountMxnMinor === null
+    || item.paymentDate === null && item.amountMxnMinor !== 0).length;
+  const upcoming = occurrences.filter(item => item.paymentDate !== null && item.paymentDate > today);
+  const knownUpcomingMinor = financialSum(upcoming.flatMap(item => item.amountMxnMinor === null ? [] : [item.amountMxnMinor]));
+  const timingUnclear = occurrences.some(item => item.amountMxnMinor !== 0 && item.paymentDate !== null && item.paymentDate <= today
+    || item.reconciliationStatus === 'possible_payroll_overlap' || item.calendarStatus === 'cnbv_calendar_provisional');
+  const status = unknownOccurrences || plan.nextCursor ? 'unknown_amount_or_date'
+    : timingUnclear || observedIncome && occurrences.length ? 'reconciliation_needed'
+    : !occurrences.length ? 'unconfigured' : 'scheduled';
+  return { status, scheduledMinor: status === 'scheduled' ? knownUpcomingMinor : null, knownUpcomingMinor, unknownOccurrences };
 };
 export const getExpectedIncome = async (owner: string, incomeId: unknown, input: Record<string, unknown> = {}, now = new Date()) => {
   const id = financialId(incomeId), range = financialMonthRange(input, now);
@@ -217,6 +235,16 @@ export const previewFinancialChange = async (owner: string, kind: FinancialWrite
       evidencePreconditions = await linkedPreconditions(client, prior, proposed);
       preview = { before: prior ? await goalFacts(client, prior) : null, after: await goalFacts(client, proposed),
         reason: typeof input.reason === 'string' ? input.reason.trim() : null };
+    } else if (kind === 'manual_credit') {
+      const parsed = parseManualCredit(input, now);
+      const prior = await previousManualCredit(client, owner, parsed);
+      const fundReconciliation = await manualCreditFundEvidence(client, owner, parsed, prior);
+      if (prior) entityId = prior.movementId;
+      before = prior ? jsonObject(prior) : null;
+      after = jsonObject({ ...parsed, confirmedPosted: true });
+      preview = { before, after: { ...parsed, movementId: prior?.movementId ?? entityId },
+        effect: prior ? 'existing_idempotent_capture' : 'record_posted_bank_credit',
+        snapshotCoverage: 'unverified', modifiesCashSnapshots: false, modifiesBudget: false, fundReconciliation };
     } else {
       const parsed = parseManualEntry(JSON.stringify(input));
       before = await manualExisting(client, owner, parsed); after = jsonObject(parsed);
@@ -226,7 +254,8 @@ export const previewFinancialChange = async (owner: string, kind: FinancialWrite
         classification: 'registro_manual', effect: before ? 'existing_idempotent_capture' : 'create_observed_charge_with_canonical_accounting',
         warning: 'Esta operación registra un cobro observado; no uses un ingreso esperado ni un compromiso futuro como evidencia.' };
     }
-    const operation: FinancialWriteOperation = { operationId: randomUUID(), owner, kind, action: kind === 'manual_charge' ? 'register_manual_charge' : String(input.action),
+    const action = kind === 'manual_charge' ? 'register_manual_charge' : kind === 'manual_credit' ? 'register_manual_credit' : String(input.action);
+    const operation: FinancialWriteOperation = { operationId: randomUUID(), owner, kind, action,
       entityId, createdAt: at, expiresAt: new Date(now.getTime() + 15 * 60_000).toISOString(), status: 'pending', failureCode: null,
       before, after, preview: jsonObject(preview), evidencePreconditions };
     await insertFinancialOperation(client, operation);
@@ -241,6 +270,9 @@ export const applyFinancialChange = async (owner: string, operationId: unknown, 
   const manualApply = initial.kind === 'manual_charge'
     ? await prepareManualEvent(JSON.stringify(initial.after), owner, { movementId: initial.entityId, observationId: initial.operationId }) : undefined;
   try {
+    const creditApply = initial.kind === 'manual_credit'
+      ? await prepareManualCredit(parseManualCredit(initial.after, now), owner, { movementId: initial.entityId, observationId: initial.operationId })
+      : undefined;
     return await withSqlTransaction(async client => {
       const operation = validPending(await readFinancialOperation(client, owner, id), kind, new Date());
       if (operation.status === 'applied') return (await readFinancialReceipt(client, owner, id))!;
@@ -299,6 +331,11 @@ export const applyFinancialChange = async (owner: string, operationId: unknown, 
         await writeFinancialGoal(client, owner, before, after);
         result = { ok: true, operationId: id, kind: operation.kind, status: 'applied', appliedAt,
           goal: await goalFacts(client, (await readFinancialGoal(client, owner, operation.entityId))!) };
+      } else if (operation.kind === 'manual_credit') {
+        const captured = await creditApply!(client, appliedAt);
+        movementId = captured.credit.movementId;
+        result = { ok: true, operationId: id, kind: operation.kind, status: 'applied', appliedAt, ...captured,
+          snapshotCoverage: 'unverified', modifiesCashSnapshots: false, modifiesBudget: false };
       } else {
         const input = operation.after as unknown as ManualEntryInput;
         if (!same(await manualExisting(client, owner, input), operation.evidencePreconditions.previousCapture)) throw new FinancialPlanError('El cobro ya fue registrado o cambió después del preview; consulta antes de repetirlo.', 'conflict');
