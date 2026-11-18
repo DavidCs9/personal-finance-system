@@ -10,7 +10,7 @@ const demoNow = new Date("2026-07-12T18:00:00-06:00");
 const at = demoNow.toISOString();
 const linkedMovement = "evt_01J5A0A1";
 
-export function demoBudgetStatus(month: string): BudgetStatus {
+export function demoBudgetStatus(month: string, plan = planFor(demoPlans, month), includeSpendTimeline = false): BudgetStatus {
   const budget: SpendingBudget | null = month >= "2026-06" && month <= "2026-08" ? {
     id: "demo-budget", entityType: "budget", scope: "recurring", effectiveMonth: "2026-06",
     revision: 1, status: "active", createdAt: at, updatedAt: at, totalMxnMinor: 2_800_000,
@@ -23,7 +23,7 @@ export function demoBudgetStatus(month: string): BudgetStatus {
   const feed = mockFeedForMonth(month);
   const movements = new Map([...feed.events, ...feed.msiRelated].map(event => [event.id, event]));
   const status = computeBudgetStatus({
-    month, budget, now: demoNow, fixedPayments: planFor(demoPlans, month).upcomingPayments,
+    month, budget, now: demoNow, fixedPayments: plan.upcomingPayments, includeSpendTimeline,
     events: [...movements.values()].map(event => ({
       ...event, amountMinor: event.amount.amountMinor, currency: event.amount.currency,
     })),

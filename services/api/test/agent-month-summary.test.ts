@@ -4,9 +4,7 @@ import { computeMonthSummary } from '@finance/domain';
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-raw';
 const reads = vi.hoisted(() => ({ summary: vi.fn(), events: vi.fn(), snapshots: vi.fn() }));
 vi.mock('../src/months/summary.js', () => ({ getMonthSummary: reads.summary }));
-vi.mock('../src/events/sql-reads.js', () => ({ withLedgerReadSnapshot: async (callback: () => Promise<unknown>) => {
-  reads.snapshots(); return callback();
-} }));
+vi.mock('../src/months/dashboard.js', () => ({ getMonthDashboard: reads.snapshots }));
 vi.mock('../src/categories/service.js', () => ({ listCategories: async () => [] }));
 vi.mock('../src/analytics/events.js', () => ({ loadCategorizedMonthEvents: reads.events,
   loadCategorizedMonthsEvents: vi.fn(), loadCategorizedComparisonEvents: vi.fn() }));
@@ -22,12 +20,13 @@ const summary = computeMonthSummary({ events: [event], month: '2026-08', incomeM
 
 beforeEach(() => {
   vi.clearAllMocks(); reads.summary.mockResolvedValue(summary); reads.events.mockResolvedValue([event]);
+  reads.snapshots.mockResolvedValue({ month: '2026-08', summary, uncategorizedMinor: 200_00, uncategorizedEventCount: 1 });
 });
 
 describe('assistant canonical monthly amounts', () => {
   it('returns the same summary used by API and push while retaining observed category confidence', async () => {
     const result = await monthSnapshot('owner', '2026-08', now);
-    expect(reads.summary).toHaveBeenCalledWith('owner', '2026-08', now);
+    expect(reads.snapshots).toHaveBeenCalledWith('owner', '2026-08', now);
     expect(result.summary).toBe(summary);
     expect(result).toMatchObject({ uncategorizedMinor: 200_00, uncategorizedEventCount: 1 });
     expect(reads.snapshots).toHaveBeenCalledOnce();

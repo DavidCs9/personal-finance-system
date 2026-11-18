@@ -1,9 +1,10 @@
 import { withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { isLedgerMovementId } from '@finance/ledger/native-ledger';
-import { getMonthlyPlan, saveMonthlyPlan } from './service.js';
+import { getMonthlyPlan, writeMonthlyPayments } from './service.js';
 import { isValidMonth, InvalidMonthlyPlanError, type PlannedPaymentRecord } from './monthly-plan.js';
 import { readSqlPlanRecord, reconciliationFromRow, reconciliationMovementColumns } from './sql-reads.js';
 import { appendPaymentChargeRevision, readPaymentCharges } from './reconciliation-storage.js';
+import type { ReadSqlClient } from '../events/sql-reads.js';
 import type { JsonObject } from '../http/response.js';
 
 export class PaymentReconciliationConflictError extends Error {}
@@ -31,42 +32,51 @@ export const parsePaymentReconciliationInput = (body: string | undefined): Payme
     expectedPayment:{name:expected.name.trim(),amountMinor:Number(expected.amountMinor),dueDay:Number(expected.dueDay)} };
 };
 
-export const savePaymentReconciliation = async (owner: string, month: string, paymentId: string,
-  input: PaymentReconciliationInput): Promise<JsonObject> => {
-  if (!isValidMonth(month) || !paymentId || paymentId.length>128) throw new InvalidMonthlyPlanError('El mes o gasto fijo no es válido.');
-  // Validate direct domain callers as well as HTTP input.
-  const validated=parsePaymentReconciliationInput(JSON.stringify(input));
-  return withSqlTransaction(async client => {
-    const target=(await client.query('SELECT owner FROM olbia.month_plans WHERE month=$1',[month])).rows[0];
-    if (target && target.owner!==owner) throw new InvalidMonthlyPlanError('El gasto fijo ya no está disponible en este mes.');
-    const plan=await readSqlPlanRecord(owner,month,client);
-    const payment=plan?.upcomingPayments.find(item => item.id===paymentId);
-    if (!plan || !payment) throw new InvalidMonthlyPlanError('El gasto fijo ya no está disponible en este mes.');
-    const expected=validated.expectedPayment;
-    if (payment.name!==expected.name || payment.amountMinor!==expected.amountMinor || payment.dueDay!==expected.dueDay)
-      throw new PaymentReconciliationConflictError('La programación de este fijo cambió. Actualiza este mes antes de conciliar de nuevo.');
-    const current=(await readPaymentCharges(client,month)).find(link => link.payment_id===paymentId);
-    const previous=current?.movement_id ?? null;
-    if (previous!==validated.expectedEventId && previous!==validated.eventId)
-      throw new PaymentReconciliationConflictError('El vínculo cambió. Actualiza este mes antes de conciliar de nuevo.');
-    if (validated.eventId!==null) {
-      const row=(await client.query(`SELECT ${reconciliationMovementColumns} FROM olbia.ledger_movements m WHERE m.id=$1`,[validated.eventId])).rows[0];
-      const candidate=row && reconciliationFromRow(row,month);
-      if (!candidate || !candidate.valid) throw new InvalidMonthlyPlanError(candidate?.invalidReason ?? 'El movimiento elegido ya no está disponible.');
-      const used=(await client.query('SELECT month,payment_id FROM olbia.planned_payment_charges WHERE movement_id=$1',[validated.eventId])).rows[0];
-      if (used && (used.month!==month || used.payment_id!==paymentId))
-        throw new PaymentReconciliationConflictError('Ese movimiento ya está vinculado a otro gasto fijo.');
-    }
-    if (previous===validated.eventId) return getMonthlyPlan(owner,month);
-    // A confirmed relationship belongs only to this month, never to an inherited source month.
-    if (plan.month!==month) await saveMonthlyPlan(owner,month,{ currency:'MXN',upcomingPayments:plan.upcomingPayments });
-    const at=new Date().toISOString();
-    await client.query('DELETE FROM olbia.planned_payment_charges WHERE month=$1 AND payment_id=$2',[month,paymentId]);
-    if (validated.eventId!==null) await client.query(`INSERT INTO olbia.planned_payment_charges
-      (month,payment_id,movement_id,linked_at,linked_by) VALUES ($1,$2,$3,$4,$5)`,[month,paymentId,validated.eventId,at,owner]);
-    await appendPaymentChargeRevision(client,{ month,payment,changedBy:owner,createdAt:at,
-      reason: validated.eventId===null ? 'unlink' : 'link',previous,next:validated.eventId });
-    await client.query('UPDATE olbia.month_plans SET updated_at=$2 WHERE month=$1',[month,at]);
-    return getMonthlyPlan(owner,month);
-  });
+export const validatePaymentReconciliation = async (client: ReadSqlClient, owner: string, month: string,
+  paymentId: string, input: PaymentReconciliationInput) => {
+  if (!isValidMonth(month) || !paymentId || paymentId.length > 128) throw new InvalidMonthlyPlanError('El mes o gasto fijo no es válido.');
+  const validated = parsePaymentReconciliationInput(JSON.stringify(input));
+  const target = (await client.query('SELECT owner FROM olbia.month_plans WHERE month=$1', [month])).rows[0];
+  if (target && target.owner !== owner) throw new InvalidMonthlyPlanError('El gasto fijo ya no está disponible en este mes.');
+  const plan = await readSqlPlanRecord(owner, month, client);
+  const payment = plan?.upcomingPayments.find(item => item.id === paymentId);
+  if (!plan || !payment) throw new InvalidMonthlyPlanError('El gasto fijo ya no está disponible en este mes.');
+  const expected = validated.expectedPayment;
+  if (payment.name !== expected.name || payment.amountMinor !== expected.amountMinor || payment.dueDay !== expected.dueDay)
+    throw new PaymentReconciliationConflictError('La programación de este fijo cambió. Actualiza este mes antes de conciliar de nuevo.');
+  const current = (await readPaymentCharges(client, month)).find(link => link.payment_id === paymentId);
+  const previous = current?.movement_id ?? null;
+  if (previous !== validated.expectedEventId && previous !== validated.eventId)
+    throw new PaymentReconciliationConflictError('El vínculo cambió. Actualiza este mes antes de conciliar de nuevo.');
+  let candidate = null;
+  if (validated.eventId !== null) {
+    const row = (await client.query(`SELECT ${reconciliationMovementColumns} FROM olbia.ledger_movements m WHERE m.id=$1`, [validated.eventId])).rows[0];
+    candidate = row ? reconciliationFromRow(row, month) : undefined;
+    if (!candidate?.valid) throw new InvalidMonthlyPlanError(candidate?.invalidReason ?? 'El movimiento elegido ya no está disponible.');
+    const used = (await client.query('SELECT month,payment_id FROM olbia.planned_payment_charges WHERE movement_id=$1', [validated.eventId])).rows[0];
+    if (used && (used.month !== month || used.payment_id !== paymentId))
+      throw new PaymentReconciliationConflictError('Ese movimiento ya está vinculado a otro gasto fijo.');
+  }
+  return { plan, payment, previous, candidate, next: validated.eventId, linkedAt: current?.linked_at ?? null };
 };
+
+export const writePaymentReconciliation = async (client: ReadSqlClient, owner: string, month: string,
+  validated: Awaited<ReturnType<typeof validatePaymentReconciliation>>, at: string): Promise<void> => {
+  const { plan, payment, previous, next } = validated;
+  if (previous === next) return;
+  // A confirmed relationship belongs only to this month, never to an inherited source month.
+  if (plan.month !== month) await writeMonthlyPayments(client, owner, month, { currency: 'MXN', upcomingPayments: plan.upcomingPayments }, at);
+  await client.query('DELETE FROM olbia.planned_payment_charges WHERE month=$1 AND payment_id=$2', [month, payment.id]);
+  if (next !== null) await client.query(`INSERT INTO olbia.planned_payment_charges
+    (month,payment_id,movement_id,linked_at,linked_by) VALUES ($1,$2,$3,$4,$5)`, [month, payment.id, next, at, owner]);
+  await appendPaymentChargeRevision(client, { month, payment, changedBy: owner, createdAt: at,
+    reason: next === null ? 'unlink' : 'link', previous, next });
+  await client.query('UPDATE olbia.month_plans SET updated_at=$2 WHERE month=$1', [month, at]);
+};
+
+export const savePaymentReconciliation = (owner: string, month: string, paymentId: string,
+  input: PaymentReconciliationInput): Promise<JsonObject> => withSqlTransaction(async client => {
+  const checked = await validatePaymentReconciliation(client, owner, month, paymentId, input);
+  await writePaymentReconciliation(client, owner, month, checked, new Date().toISOString());
+  return getMonthlyPlan(owner, month);
+});

@@ -110,7 +110,7 @@ html.private-mode .hero-amount .amt {
 .eyebrow { color: var(--muted); margin: 0 0 8px; font-size: 9px; font-weight: 700; letter-spacing: .14em; }
 .spend-hero { padding: 30px 0 27px; border-bottom: 1px solid var(--line); }
 .spend-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
-.spend-heading h1, .setup-card h1, .movements-heading h1 { margin: 0; font: 600 28px/1.05 "Fraunces", serif; letter-spacing: -.035em; }
+.spend-heading h2, .setup-card h1, .movements-heading h1 { margin: 0; font: 600 28px/1.05 "Fraunces", serif; letter-spacing: -.035em; }
 .income-button { display: grid; justify-items: end; gap: 1px; border: 0; border-bottom: 1px dashed #aaa197; color: var(--ink); background: transparent; padding: 1px 0 4px; }
 .income-button span { color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .income-button strong { font-size: 12px; }

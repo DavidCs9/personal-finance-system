@@ -1,4 +1,4 @@
-import type { BudgetHistory, BudgetStatus, GoalDetail, GoalPage, IncomeSchedule } from "./planning-types";
+import type { BudgetHistory, BudgetStatus, GoalDetail, GoalPage, IncomeSchedule, MonthDashboard } from "./planning-types";
 import { MAX_STATEMENT_PDF_BYTES, type StatementUploadTarget, type StatementCatalog, type StatementProvider } from '@finance/domain';
 import type {
   AmexImportPreview,
@@ -358,6 +358,9 @@ export const ledgerApi = {
   },
   async monthlySummary(month: string, idToken: string): Promise<MonthSummary> {
     return request<MonthSummary>(`/months/${encodeURIComponent(month)}/summary`, idToken);
+  },
+  monthlyDashboard(month: string, idToken: string): Promise<MonthDashboard> {
+    return request<MonthDashboard>(`/agent/month-snapshot?${new URLSearchParams({ month })}`, idToken, { cache: "no-store" });
   },
   async analytics(month: string, idToken: string): Promise<SpendingAnalytics> {
     return request<SpendingAnalytics>(`/analytics?month=${encodeURIComponent(month)}`, idToken);

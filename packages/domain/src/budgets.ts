@@ -84,17 +84,19 @@ export const proposeBudget = (input: Record<string, unknown>, before: BudgetEnti
 export const budgetWarning = (spent: number, limit: number) => spent >= limit ? '100' : BigInt(spent) * 10n >= BigInt(limit) * 9n ? '90' : BigInt(spent) * 10n >= BigInt(limit) * 7n ? '70' : 'normal';
 export interface BudgetSpendEvent extends MonthSpendEvent { readonly id: string; readonly categoryId?: string | null }
 export const computeBudgetStatus = (input: { month: string; budget: SpendingBudget | null; events: readonly BudgetSpendEvent[];
-  fixedPayments: readonly MonthFixedPayment[]; exclusions: readonly BudgetExclusion[]; now: Date; missingFixedConfiguration?: boolean; additionalIncompleteMovementIds?: readonly string[] }) => {
+  fixedPayments: readonly MonthFixedPayment[]; exclusions: readonly BudgetExclusion[]; now: Date; missingFixedConfiguration?: boolean;
+  additionalIncompleteMovementIds?: readonly string[]; includeSpendTimeline?: boolean }) => {
   const { month, budget, fixedPayments, now } = input;
   const events = input.events.filter(event => event.currency === 'MXN');
   const excluded = new Set(input.exclusions.filter(item => item.status === 'active' && item.month === month).map(item => item.movementId));
-  const summary = (values: readonly BudgetSpendEvent[], fixed: readonly MonthFixedPayment[]) => computeMonthSummary({
-    month, events: values, fixedPayments: fixed, incomeMinor: 0, incomeConfigured: false, upcomingPaymentsMinor: 0, now });
+  const summary = (values: readonly BudgetSpendEvent[], fixed: readonly MonthFixedPayment[], includeSpendTimeline?: boolean) => computeMonthSummary({
+    month, events: values, fixedPayments: fixed, incomeMinor: 0, incomeConfigured: false, upcomingPaymentsMinor: 0, now, includeSpendTimeline });
   const gross = summary(events, fixedPayments);
   // An excluded effective linked charge excludes the whole occurrence too; it must not reappear as unlinked programming.
   const linkedExcluded = new Set(fixedPayments.filter(payment => payment.reconciliation?.valid && excluded.has(payment.reconciliation.eventId))
     .map(payment => payment.reconciliation!.eventId));
-  const counted = summary(events.filter(event => !excluded.has(event.id)), fixedPayments.filter(payment => !payment.reconciliation?.valid || !linkedExcluded.has(payment.reconciliation.eventId)));
+  const counted = summary(events.filter(event => !excluded.has(event.id)),
+    fixedPayments.filter(payment => !payment.reconciliation?.valid || !linkedExcluded.has(payment.reconciliation.eventId)), input.includeSpendTimeline);
   for (const value of [gross.spentMinor, counted.spentMinor, counted.upcomingMinor, counted.projectedSpendMinor])
     if (!Number.isSafeInteger(value)) throw new FinancialPlanError('El total excede la precisión monetaria soportada.');
   const invalidFixedLinks = fixedPayments.filter(payment => payment.reconciliation && !payment.reconciliation.valid).map(payment => payment.id);
@@ -102,9 +104,15 @@ export const computeBudgetStatus = (input: { month: string; budget: SpendingBudg
   const remainingDays = month < current ? 0 : month > current ? days : days - elapsed + 1;
   const active = budget?.status === 'active' ? budget : null;
   const upcoming = month < current ? 0 : counted.upcomingMinor;
+  const withCommitments = counted.spentMinor + upcoming;
   const remaining = active ? active.totalMxnMinor - counted.spentMinor : null;
   const discretionary = remaining === null ? null : remaining - upcoming;
-  if (discretionary !== null && !Number.isSafeInteger(discretionary)) throw new FinancialPlanError('El total excede la precisión monetaria soportada.');
+  const reference = active && active.totalMxnMinor > 0 && elapsed > 0
+    ? Number((BigInt(active.totalMxnMinor) * BigInt(elapsed) + BigInt(Math.floor(days / 2))) / BigInt(days))
+    : null;
+  const paceVariance = reference === null ? null : counted.spentMinor - reference;
+  if ([withCommitments, discretionary, paceVariance].some(value => value !== null && !Number.isSafeInteger(value)))
+    throw new FinancialPlanError('El total excede la precisión monetaria soportada.');
   const utilization = (spent: number, limit: number) => limit > 0 ? spent / limit * 100 : null;
   const categoryIds = [...new Set([...events.map(event => event.categoryId ?? null), ...(active?.allocations.map(item => item.categoryId) ?? [])])];
   const categories = categoryIds.map(categoryId => {
@@ -124,10 +132,20 @@ export const computeBudgetStatus = (input: { month: string; budget: SpendingBudg
   return { month, currency: 'MXN', timeZone: 'America/Chihuahua', budget, configured: !!active,
     grossSpentMxnMinor: gross.spentMinor, countedSpentMxnMinor: counted.spentMinor, excludedSpentMxnMinor: gross.spentMinor - counted.spentMinor,
     uncertainMxnMinor: counted.uncertainMinor, upcomingCommitmentsMxnMinor: upcoming, remainingMxnMinor: remaining,
+    countedFixedSpendMxnMinor: counted.fixedSpentMinor,
+    reconciledFixedProgrammingMxnMinor: counted.billScheduledMinor - counted.billUpcomingMinor,
+    countedMsiSpendMxnMinor: counted.msiSpentMinor,
+    upcomingFixedMxnMinor: month < current ? 0 : counted.billUpcomingMinor,
+    upcomingMsiMxnMinor: month < current ? 0 : counted.msiCommittedMinor,
     overspentMxnMinor: remaining === null ? null : Math.max(0, -remaining), remainingDiscretionaryMxnMinor: discretionary,
     unallocatedMxnMinor: active ? active.totalMxnMinor - allocationTotal! : null,
     utilizationPercent: active ? utilization(counted.spentMinor, active.totalMxnMinor) : null,
     warning: active ? budgetWarning(counted.spentMinor, active.totalMxnMinor) : null,
+    utilizationWithCommitmentsPercent: active ? utilization(withCommitments, active.totalMxnMinor) : null,
+    warningWithCommitments: active ? budgetWarning(withCommitments, active.totalMxnMinor) : null,
+    referenceSpendMxnMinor: reference,
+    paceVarianceMxnMinor: paceVariance,
+    ...(counted.spendTimeline && { spendTimeline: counted.spendTimeline }),
     elapsedPercent: elapsed / days * 100, elapsedDays: elapsed, daysInMonth: days, remainingDays,
     paceRatio: active && active.totalMxnMinor > 0 && elapsed > 0 ? (counted.spentMinor / active.totalMxnMinor) / (elapsed / days) : null,
     projectedCountedSpendMxnMinor: counted.projectedSpendMinor,

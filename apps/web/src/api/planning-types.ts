@@ -1,5 +1,6 @@
 import type {
   ActualIncomeReceipt, computeBudgetStatus, ExpectedIncome, FinancialGoalView, IncomeOccurrence,
+  MonthSummary, monthDashboardLiquidity,
 } from "@finance/domain";
 
 type BudgetFacts = ReturnType<typeof computeBudgetStatus>;
@@ -8,6 +9,13 @@ export type BudgetStatus = Omit<BudgetFacts, "categories"> & {
   readonly categories: readonly BudgetCategory[];
   readonly generatedAt: string;
 };
+export interface MonthDashboard {
+  readonly month: string;
+  readonly generatedAt: string;
+  readonly summary: MonthSummary;
+  readonly budget: BudgetStatus;
+  readonly liquidity: ReturnType<typeof monthDashboardLiquidity>;
+}
 export interface BudgetHistory {
   readonly months: readonly (BudgetStatus & {
     readonly periodStatus: "closed" | "partial" | "future";

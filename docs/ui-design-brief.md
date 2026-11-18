@@ -10,15 +10,11 @@ Decisión explícita de David del **2026-10-25**: cuatro tabs en este orden, **R
 
 Cada lista completa tiene una ubicación principal. Resumen conserva cifras, alertas, análisis y accesos compactos; Movimientos reúne cobros y su revisión; Planificación reúne programación y fechas; Patrimonio conserva activos, deudas y neto.
 
-**Resumen** responde cuánto has gastado y qué significa para el resto del mes. Orden:
+**Resumen** abre con **Presupuesto mensual**, la cifra dominante del diseño «Presupuesto al frente» aprobado por David el 2026-11-18. El límite, el gasto contado, los compromisos conocidos y el margen firmado aparecen en la primera tarjeta. Al 70% el aviso anticipa el límite, al 90% el rojo de aviso destaca la cercanía y al 100% o más indica si se alcanzó o cuánto se rebasó. La barra separa gasto contado de compromisos y el aviso identifica la base de su porcentaje.
 
-1. **Has gastado**, cifra dominante. En el mismo bloque, **Con fijos y MSI pendientes** muestra el total de gasto y compromisos, con su porcentaje de liquidez y **Ver cómo se compone**: gasto registrado, fijos sin cobro vinculado y MSI pendientes separados. Las cuotas MSI registradas ya forman parte de Has gastado. El detalle aclara la programación por conciliar y que los cobros vinculados ya están incluidos en Has gastado. El porcentaje acompaña al total combinado; no presentar dos porcentajes compitiendo.
-2. **A este ritmo**, proyección al cierre del mes actual. En un mes cerrado, **Gastaste** usa gasto observado; en un mes futuro se declara programación conocida.
-3. **Te quedan**, después de compromisos.
-4. **Incluye por confirmar**, incertidumbre dentro del total.
-5. Accesos compactos a **Presupuesto del mes** y **Planificación**. El primero muestra el restante del límite cuando existe y abre su detalle sin salir de Resumen.
-6. **En qué se fue**, entrada compacta al análisis y a su evidencia.
-7. Preferencias de avisos, con prioridad visual secundaria.
+**Ritmo de gasto** y **En qué se fue** aparecen inmediatamente después, en una columna en móvil. Ritmo traza el gasto contado acumulado por día frente al ritmo lineal del límite y declara la diferencia al corte. El gasto sin día graficable sigue en el total y se señala junto a la serie. En qué se fue compara gasto contado y límite por categoría, prioriza los avisos y conserva acceso a todas las categorías, al análisis y a los movimientos. Si falta el límite, muestra gasto registrado por categoría y el acceso al historial.
+
+El gasto registrado, la liquidez y el cierre quedan debajo de las gráficas. **Con fijos y MSI pendientes** muestra el total combinado y su porcentaje de liquidez. **Ver cómo se compone** conserva el desglose de gasto, fijos sin cobro vinculado y MSI pendientes. **A este ritmo** es el cierre estimado del mes actual. **Gastaste** usa gasto observado para meses cerrados y un mes futuro declara sólo programación conocida. Mantén visibles la incertidumbre y los accesos a Planificación y a preferencias de avisos.
 
 **Te quedan** indica «según tu gasto y compromisos del mes». **A este ritmo** declara que incluye fijos y MSI del mes. El total combinado no sustituye gasto observado, categorías ni cierre mensual; sigue las [reglas del resumen](financial-rules.md#resumen-del-mes). No mostrar porcentaje, disponibilidad o proyección válidos sin liquidez válida; mantener visibles provisionales e importes por confirmar. El desglose usa expansión nativa, conserva modo privado y se cierra al cambiar de mes.
 

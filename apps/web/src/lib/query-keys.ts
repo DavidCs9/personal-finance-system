@@ -5,6 +5,7 @@ export const monthlyPlanQueryKey = (month: string) => ["monthly-plan", month] as
 export const monthlyPlanQueryRoot = ["monthly-plan"] as const;
 export const monthlySummaryQueryKey = (month: string) => ["monthly-summary", month] as const;
 export const monthlySummaryQueryRoot = ["monthly-summary"] as const;
+export const monthDashboardQueryKey = (month: string) => [...monthlySummaryQueryKey(month), "dashboard"] as const;
 export const analyticsQueryKey = (month: string) => ["analytics", month] as const;
 export const analyticsQueryRoot = ["analytics"] as const;
 export const cardsQueryKey = ["cards"] as const;
