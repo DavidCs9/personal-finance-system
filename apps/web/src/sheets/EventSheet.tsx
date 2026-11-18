@@ -41,6 +41,7 @@ export function EventSheet({
     ((event.msi?.cuotaMinor ?? defaultCuotaMinor(event.amount.amountMinor, event.msi?.months ?? 3)) / 100).toFixed(2),
   );
   const [categoryId, setCategoryId] = useState(event.categoryId ?? "");
+  const [usingSuggestedCategory, setUsingSuggestedCategory] = useState(false);
   const [tags, setTags] = useState((event.tags ?? []).join(", "));
   const [personalAmount, setPersonalAmount] = useState(
     event.personalAmountMinor === undefined ? "" : (event.personalAmountMinor / 100).toFixed(2),
@@ -88,6 +89,7 @@ export function EventSheet({
       ).toFixed(2),
     );
     setCategoryId(event.categoryId ?? "");
+    setUsingSuggestedCategory(false);
     setTags((event.tags ?? []).join(", "));
     setPersonalAmount(
       event.personalAmountMinor === undefined ? "" : (event.personalAmountMinor / 100).toFixed(2),
@@ -198,11 +200,21 @@ export function EventSheet({
     onSuccess: updateCache,
   });
 
+  const classificationMutation = useMutation({
+    mutationFn: (id: string) => ledgerApi.suggestEventClassification(id, idToken),
+  });
+  const classification = classificationMutation.variables === event.id ? classificationMutation.data : undefined;
+  const suggestion = classification?.status === "suggested" ? classification.suggestion : undefined;
+  const suggestedCategory = suggestion?.category?.id === event.categoryId ? undefined : suggestion?.category;
+  const suggestedTags = suggestion?.addTags.filter(tag => !event.tags?.includes(tag)) ?? [];
+  const maySuggest = !demoMode && event.status === "accepted" && event.amount.currency === "MXN"
+    && event.amount.amountMinor > 0 && (event.eventType === "card_purchase" || event.eventType === "card_charge");
+
   const categoryMutation = useMutation({
     mutationFn: async () => {
       const next = categoryId.trim() ? categoryId.trim() : null;
       if (demoMode) return { ...event, categoryId: next };
-      return ledgerApi.setEventCategory(event.id, { categoryId: next, updateRule: true }, idToken);
+      return ledgerApi.setEventCategory(event.id, { categoryId: next, updateRule: !usingSuggestedCategory }, idToken);
     },
     onSuccess: (updated) => {
       updateCache(updated);
@@ -473,8 +485,30 @@ export function EventSheet({
               <h3>Clasificación del gasto</h3>
             </div>
           </div>
+          {maySuggest && (
+            <button type="button" className="secondary-button" disabled={classificationMutation.isPending}
+              onClick={() => classificationMutation.mutate(event.id)}>
+              {classificationMutation.isPending ? "Buscando sugerencia…" : "Sugerir clasificación"}
+            </button>
+          )}
+          {classificationMutation.variables === event.id
+            && (classificationMutation.isError || classification?.status === "unavailable")
+            && <p role="status">La sugerencia no está disponible. Puedes editar la clasificación aquí.</p>}
+          {classification && ["classified", "reviewed", "no_suggestion"].includes(classification.status)
+            && <p role="status">No hay cambios sugeridos.</p>}
+          {suggestedCategory && suggestedCategory.id !== categoryId && (
+            <button type="button" className="secondary-button" onClick={() => {
+              setCategoryId(suggestedCategory.id);
+              setUsingSuggestedCategory(true);
+            }}>
+              Usar {suggestedCategory.name} como categoría
+            </button>
+          )}
           <Field label="Categoría">
-            <select value={categoryId} disabled={categoriesQuery.isPending || categoriesQuery.isError} onChange={(change) => setCategoryId(change.target.value)}>
+            <select value={categoryId} disabled={categoriesQuery.isPending || categoriesQuery.isError} onChange={(change) => {
+              setCategoryId(change.target.value);
+              setUsingSuggestedCategory(false);
+            }}>
               <option value="">Sin categoría</option>
               {categories.filter((category) => !category.archived || category.id === event.categoryId).map((category) => (
                 <option key={category.id} value={category.id} disabled={category.archived}>
@@ -503,6 +537,14 @@ export function EventSheet({
               <h3>Contexto del movimiento</h3>
             </div>
           </div>
+          {suggestedTags.length > 0 && (
+            <button type="button" className="secondary-button" onClick={() => {
+              const draft = tags.split(",").map(tag => tag.trim()).filter(Boolean);
+              setTags([...new Set([...draft, ...suggestedTags])].join(", "));
+            }}>
+              Usar tags sugeridos ({suggestedTags.join(", ")})
+            </button>
+          )}
           <Field label="Tags separados por coma">
             <input
               value={tags}

@@ -28,6 +28,8 @@ Categorías son excluyentes y suman Has gastado; NULL significa **Sin categoría
 
 Tags son contextos superpuestos: no cambian gasto, MSI, conciliación ni patrimonio. Sus totales no se suman como partes exclusivas. Máximo 20 tags normalizados por movimiento, 48 caracteres, minúsculas, formato nombre o namespace:valor, sin duplicados/vacíos.
 
+Al registrar un cargo positivo aceptado en MXN, el Ledger puede completar categoría y tags que la captura dejó sin especificar. Usa reglas activas y correcciones confirmadas del mismo comercio normalizado. Una regla exacta confirmada tiene prioridad. Para aprender una categoría o tag hacen falta dos movimientos y dos ediciones independientes. Las categorías discordantes o retiradas requieren revisión. Una retirada confirmada detiene la repetición automática de un tag. Sólo se aprenden tags descriptivos de los espacios `auto:` y `tipo:`. Cada asignación automática lleva revisión y conserva el original observado. Las sugerencias y las ediciones individuales no reclasifican el historial.
+
 Analytics compara el mes actual con los mismos días calendario transcurridos del anterior; meses terminados pueden compararse completos. Si una cuota histórica sólo tiene precisión mensual, excluirla de comparación por días y declarar su importe, sin inventar fecha. Mantener visibles importes sin categoría y por confirmar, con acceso a evidencia.
 
 ## MSI y estados de cuenta

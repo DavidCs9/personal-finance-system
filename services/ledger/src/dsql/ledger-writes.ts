@@ -2,6 +2,7 @@ import { normalizeEventTags, type MsiPlan } from '@finance/domain';
 import type { CaptureSource,ObservedEventInput } from '../observed-events.js';
 import type { SqlClient } from './projection.js';
 import { ledgerMutationBudgetActive, reserveLedgerMutations } from './ledger-budget.js';
+import { canClassifyMovement, classifyMerchant } from './merchant-classification.js';
 
 type Row=Record<string,unknown>;
 export class InvalidLedgerWriteError extends Error {}
@@ -58,6 +59,11 @@ export const insertLedgerMovement=async(client:SqlClient,event:ObservedEventInpu
     'primaryObservationId','hasRawEmail']);
   known(event.amount,['amountMinor','currency']);
   assertMoney(event.amount.amountMinor);warnings(event.parseWarnings);
+  const classification = (event.categoryId === undefined || event.tags === undefined) && canClassifyMovement(event)
+    ? await classifyMerchant(client, event.merchantRaw) : undefined;
+  const category = event.categoryId === undefined ? classification?.category : undefined;
+  const automaticTags = event.tags === undefined ? classification?.tags ?? [] : [];
+  const tags = event.tags === undefined ? automaticTags : normalizeEventTags(event.tags as readonly string[]);
   reserveLedgerMutations(1);
   await client.query(`INSERT INTO olbia.ledger_movements
     (id,primary_observation_id,institution,event_type,status,amount_minor,currency,merchant_raw,occurred_at,
@@ -68,13 +74,24 @@ export const insertLedgerMovement=async(client:SqlClient,event:ObservedEventInpu
     VALUES (${Array.from({length:31},(_,n)=>`$${n+1}`).join(',')})`,[
     event.id,primaryObservationId,event.institution,event.eventType,event.status,event.amount.amountMinor,event.amount.currency,
     event.merchantRaw,optional(event.occurredAt),event.receivedAt,event.ingestedAt,reconciliationAt,optional(event.reconciledAt),
-    ...accountValues(event.account),optional(event.categoryId),optional(event.personalAmountMinor),optional(event.bankTransactionId),
+    ...accountValues(event.account),optional(event.categoryId ?? category?.id),optional(event.personalAmountMinor),optional(event.bankTransactionId),
     optional(event.sourceMessageId),optional(event.counterparty),optional(event.trackingKey),optional(event.folio),optional(event.reference),
     optional(event.transferType),optional(event.counterpartyInstitution),optional(event.counterpartyAccountLastFour),
     optional(event.billingPeriod),optional(event.paymentMethodLastFour)]);
   await replaceMovementWarnings(client,event.id,event.parseWarnings);
-  if(event.tags!==undefined)await replaceMovementTags(client,event.id,normalizeEventTags(event.tags as readonly string[]));
+  reserveLedgerMutations(tags.length);
+  await insertMovementTags(client,event.id,tags);
   if(event.msi!==undefined)await replaceInstallmentPlan(client,event.id,event.msi as MsiPlan,evidence);
+  if (category || automaticTags.length) {
+    await insertLedgerRevision(client, {
+      id: `${event.id}-automatic-classification`, movementId: event.id, createdAt: event.ingestedAt,
+      source: 'automatic_classification', changedBy: 'olbia', reason: category?.source ?? 'history',
+      changes: {
+        ...(category ? { categoryId: { previous: null, next: category.id } } : {}),
+        ...(automaticTags.length ? { tags: { previous: [], next: automaticTags } } : {}),
+      },
+    });
+  }
 };
 
 export const appendLedgerObservation=async(client:SqlClient,input:NativeObservationInput):Promise<void>=>{
@@ -110,6 +127,9 @@ export const replaceMovementTags=async(client:SqlClient,id:string,values:readonl
   if(ledgerMutationBudgetActive())reserveLedgerMutations(tags.length+Number((await client.query(
     'SELECT count(*) AS count FROM olbia.ledger_tags WHERE movement_id=$1',[id])).rows[0].count));
   await client.query('DELETE FROM olbia.ledger_tags WHERE movement_id=$1',[id]);
+  await insertMovementTags(client,id,tags);
+};
+const insertMovementTags=async(client:SqlClient,id:string,tags:readonly string[]):Promise<void>=>{
   for(const [position,tag] of tags.entries())await client.query('INSERT INTO olbia.ledger_tags VALUES ($1,$2,$3)',[id,position,tag]);
 };
 export const setMovementCategory=async(client:SqlClient,id:string,categoryId:string|null):Promise<void>=>{

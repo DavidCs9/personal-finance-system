@@ -286,7 +286,14 @@ export class PersonalFinanceV1Stack extends Stack {
     ingestionQueue.grantConsumeMessages(ingestionFunction);
     bedrockFallbackQueue.grantSendMessages(ingestionFunction);
 
-    const bedrockEmailModelId = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+    const haikuModelId = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+    const grantHaikuInference = (fn: NodejsFunction) => fn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:InvokeModel'],
+      resources: [
+        `arn:${cdk.Aws.PARTITION}:bedrock:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:inference-profile/${haikuModelId}`,
+        `arn:${cdk.Aws.PARTITION}:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0`,
+      ],
+    }));
     const bedrockEmailFallbackFunction = new NodejsFunction(this, 'BedrockEmailFallbackFunction', {
       ...lambdaDefaults,
       functionName: 'personal-finance-v1-bedrock-email-fallback',
@@ -299,7 +306,7 @@ export class PersonalFinanceV1Stack extends Stack {
       environment: {
         ...dataStorageEnvironment,
         INGESTION_QUEUE_URL: ingestionQueue.queueUrl,
-        BEDROCK_EMAIL_MODEL_ID: bedrockEmailModelId,
+        BEDROCK_EMAIL_MODEL_ID: haikuModelId,
       },
     });
     rawEmailBucket.grantRead(bedrockEmailFallbackFunction);
@@ -310,13 +317,7 @@ export class PersonalFinanceV1Stack extends Stack {
       batchSize: 1,
       reportBatchItemFailures: true,
     });
-    bedrockEmailFallbackFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['bedrock:InvokeModel'],
-      resources: [
-        `arn:${cdk.Aws.PARTITION}:bedrock:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:inference-profile/${bedrockEmailModelId}`,
-        `arn:${cdk.Aws.PARTITION}:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0`,
-      ],
-    }));
+    grantHaikuInference(bedrockEmailFallbackFunction);
 
     const retryDispatcherFunction = new NodejsFunction(this, 'RetryDispatcherFunction', {
       ...lambdaDefaults,
@@ -444,8 +445,9 @@ export class PersonalFinanceV1Stack extends Stack {
       entry: path.join(__dirname, '..', 'lambda', 'api.ts'),
       handler: 'handler',
       description: 'Authenticated API placeholder for the personal-finance UI.',
-      environment: dataStorageEnvironment,
+      environment: { ...dataStorageEnvironment, MOVEMENT_CLASSIFICATION_MODEL_ID: haikuModelId },
     });
+    grantHaikuInference(apiFunction);
     rawEmailBucket.grantRead(apiFunction);
     rawEmailBucket.grantPut(apiFunction);
     // Financial readers use the native ledger directly.
@@ -494,8 +496,10 @@ export class PersonalFinanceV1Stack extends Stack {
       environment: {
         ...dataStorageEnvironment,
         AGENT_OWNER: agentOwnerSub.valueAsString,
+        MOVEMENT_CLASSIFICATION_MODEL_ID: haikuModelId,
       },
     });
+    grantHaikuInference(agentToolsFunction);
     dsqlProjection.grantReader(agentToolsFunction);
 
     const agentTagMutationFunction = new NodejsFunction(this, 'AgentTagMutationFunction', {
@@ -1454,6 +1458,7 @@ export class PersonalFinanceV1Stack extends Stack {
       'DELETE /exceptions/{exceptionId}',
       'GET /events/{eventId}',
       'GET /events/{eventId}/raw',
+      'GET /events/{eventId}/classification-suggestion',
       'PATCH /events/{eventId}',
       'GET /months/{month}',
       'GET /months/{month}/summary',
