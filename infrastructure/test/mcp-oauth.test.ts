@@ -19,7 +19,8 @@ it('uses the existing private pool with a separate code-only read client and kee
     AllowedOAuthScopes: Match.arrayWith(['openid', 'email', 'phone', 'profile']),
   });
   template.hasResourceProperties('AWS::Cognito::UserPoolResourceServer', {
-    Identifier: { Ref: 'McpOAuthResourceUrl' }, Scopes: [{ ScopeName: 'read', ScopeDescription: 'Read personal financial data' }],
+    Identifier: { Ref: 'McpOAuthResourceUrl' }, Name: 'Olbia Finance MCP',
+    Scopes: [{ ScopeName: 'read', ScopeDescription: 'Read personal financial data' }],
   });
   const client = Object.values(template.findResources('AWS::Cognito::UserPoolClient'))[0] as { Properties: Record<string, unknown> };
   expect(client.Properties.AllowedOAuthScopes).toContainEqual({

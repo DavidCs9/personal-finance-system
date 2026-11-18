@@ -27,6 +27,7 @@ export const financeMcpOAuth = (scope: Construct, userPool: cognito.UserPool) =>
   const readScope = new cognito.ResourceServerScope({ scopeName: 'read', scopeDescription: 'Read personal financial data' });
   const resource = userPool.addResourceServer('FinanceMcpResource', {
     identifier: resourceUrl,
+    userPoolResourceServerName: 'Olbia Finance MCP',
     scopes: [readScope],
   });
   const readOAuthScope = cognito.OAuthScope.resourceServer(resource, readScope);
