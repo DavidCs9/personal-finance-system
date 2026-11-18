@@ -196,6 +196,7 @@ describe('independent ledger provenance and immutable recovery assertions', () =
   });
 
   it('releases the provenance snapshot before object IO and publishes aggregate counts without source assertions', async () => {
+    for (const statement of NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS) await fixture.sql.query(statement);
     vi.stubEnv('AGENT_OWNER_SUB', 'owner');
     await fixture.create();
     const evidence = await import('../src/events/evidence-verification.js');
