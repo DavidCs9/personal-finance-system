@@ -1,3 +1,4 @@
+import { FinancialPlanError } from '@finance/domain';
 import type { Context } from 'aws-lambda';
 import { runAgentTool, TOOL_DEFINITIONS } from './tools.js';
 import { InvalidAgentQueryError } from './aggregates.js';
@@ -22,7 +23,7 @@ export const handler = async (
   try {
     return await runAgentTool(owner, toolName, args);
   } catch (error) {
-    if (error instanceof InvalidAgentQueryError) return rejectedToolRequest(error.message, toolName);
+    if (error instanceof InvalidAgentQueryError || error instanceof FinancialPlanError) return rejectedToolRequest(error.message, toolName);
     throw error;
   }
 };

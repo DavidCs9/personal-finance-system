@@ -1,3 +1,4 @@
+import { NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS, nativeFinancialPlanReadGrant, nativeFinancialPlanWriteGrants } from './financial-plan-schema.js';
 import { NATIVE_EXCEPTION_SCHEMA_STATEMENTS,nativeExceptionReadGrant,nativeExceptionWriteGrants } from './exception-schema.js';
 import { NATIVE_THREAD_SCHEMA_STATEMENTS, nativeThreadReadGrant, nativeThreadWriteGrants } from './thread-schema.js';
 import { NATIVE_DELIVERY_SCHEMA_STATEMENTS, nativeDeliveryReadGrant, nativeDeliveryWriteGrant } from './delivery-schema.js';
@@ -136,10 +137,11 @@ export const SCHEMA_STATEMENTS = [
   ...NATIVE_THREAD_SCHEMA_STATEMENTS,
   ...NATIVE_EXCEPTION_SCHEMA_STATEMENTS,
   ...NATIVE_CATEGORY_SCHEMA_STATEMENTS,
+  ...NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS,
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
-  transactionPool?: TransactionPool; now?: () => number; pause?: (ms: number) => Promise<void>; indexWaitMs?: number; readerRoleArns?: readonly string[]; operationalVerifierRoleArns?: readonly string[]; applicationRoleArns?: readonly string[]; storeReaderRoleArns?: readonly string[]; cutoverRoleArns?: readonly string[];
+  transactionPool?: TransactionPool; now?: () => number; pause?: (ms: number) => Promise<void>; indexWaitMs?: number; readerRoleArns?: readonly string[]; operationalVerifierRoleArns?: readonly string[]; applicationRoleArns?: readonly string[]; storeReaderRoleArns?: readonly string[]; cutoverRoleArns?: readonly string[]; financialPlanRoleArns?: readonly string[];
 } = {}): Promise<void> => {
   const now = options.now ?? Date.now;
   const pause = options.pause ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -164,6 +166,12 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     ['payslips_paid_on_idx', 'payslips', 'paid_on,uuid'],
     ['ledger_revisions_movement_idx', 'ledger_revisions', 'movement_id,created_at,id'],
     ['installment_entries_month_idx', 'installment_entries', 'month,movement_id'],
+    ['expected_income_owner_idx', 'expected_income', 'owner,id'],
+    ['financial_goals_owner_idx', 'financial_goals', 'owner,id'],
+    ['goal_allocations_goal_idx', 'goal_allocations', 'goal_id,id'],
+    ['goal_payments_allocation_idx', 'goal_payments', 'allocation_id,id'],
+    ['financial_receipts_income_idx', 'financial_change_receipts', 'income_id,applied_at'],
+    ['financial_receipts_goal_idx', 'financial_change_receipts', 'goal_id,applied_at'],
   ]) {
     await query(`index-create-${name}`, `CREATE INDEX ASYNC IF NOT EXISTS ${name} ON olbia.${table} (${columns})`);
     const deadline = now() + (options.indexWaitMs ?? 180_000);
@@ -185,6 +193,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('read-grant', 'GRANT SELECT ON olbia.schema_migrations,olbia.movement_months,olbia.runtime_state TO olbia_projector');
   await query('catalog-projector-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_projector');
   await query('category-projector-read', nativeCategoryReadGrant('olbia_projector'));
+  await query('financial-plans-projector-read', nativeFinancialPlanReadGrant('olbia_projector'));
   await query('plans-projector-read', 'GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO olbia_projector');
   await query('planning-links-projector-read', `GRANT SELECT ON ${NATIVE_PLANNING_TABLES.map(t => `olbia.${t}`).join(',')} TO olbia_projector`);
   await query('payroll-projector-read', 'GRANT SELECT ON olbia.payslips,olbia.payslip_lines,olbia.payroll_closures TO olbia_projector');
@@ -216,6 +225,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query('reader-migration-read', 'GRANT SELECT ON olbia.schema_migrations TO olbia_reader');
     await query('catalog-reader-read', 'GRANT SELECT ON olbia.spend_categories TO olbia_reader');
     await query('category-reader-read', nativeCategoryReadGrant('olbia_reader'));
+    await query('financial-plans-reader-read', nativeFinancialPlanReadGrant('olbia_reader'));
     await query('plans-reader-read', 'GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO olbia_reader');
     await query('planning-links-reader-read', `GRANT SELECT ON ${NATIVE_PLANNING_TABLES.map(t => `olbia.${t}`).join(',')} TO olbia_reader`);
     await query('payroll-reader-read', 'GRANT SELECT ON olbia.payslips,olbia.payslip_lines,olbia.payroll_closures TO olbia_reader');
@@ -236,6 +246,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     await query('wealth-verifier-read', nativeWealthReadGrant(role));
     await query('exceptions-verifier-read',nativeExceptionReadGrant(role));
     await query('category-verifier-read', nativeCategoryReadGrant(role));
+    await query('financial-plans-verifier-read', nativeFinancialPlanReadGrant(role));
     await query('threads-verifier-read', nativeThreadReadGrant(role));
     await query('delivery-verifier-read', nativeDeliveryReadGrant(role));
     await query('push-verifier-read', nativePushReadGrant(role));
@@ -277,6 +288,9 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (writer) await query(`view-${role}`,`GRANT SELECT ON olbia.movement_months TO ${role}`);
     await query(`catalog-read-${role}`, `GRANT SELECT ON olbia.spend_categories TO ${role}`);
     await query(`category-read-${role}`, nativeCategoryReadGrant(role));
+    await query(`financial-plans-read-${role}`, nativeFinancialPlanReadGrant(role));
+    if (writer) for (const [index, statement] of nativeFinancialPlanWriteGrants(role).entries())
+      await query(`financial-plans-write-${role}-${index}`, statement);
     if (writer) for (const [index, statement] of nativeCategoryWriteGrants(role).entries())
       await query(`category-write-${role}-${index}`, statement);
     await query(`plans-read-${role}`, `GRANT SELECT ON olbia.month_plans,olbia.planned_payments TO ${role}`);
@@ -308,6 +322,26 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
       await query(`iam-${role}`,`AWS IAM GRANT ${role} TO '${arn}'`);
     }
   }
+  if (options.financialPlanRoleArns?.length) {
+    const role = 'olbia_financial_plans_writer';
+    if (!(await query('financial-writer-lookup','SELECT rolname FROM pg_roles WHERE rolname=$1',[role])).rows.length)
+      await query('financial-writer-create',`CREATE ROLE ${role} WITH LOGIN`);
+    for (const [index,statement] of [
+      `GRANT USAGE ON SCHEMA olbia TO ${role}`,
+      nativeFinancialPlanReadGrant(role), ...nativeFinancialPlanWriteGrants(role),
+      `GRANT SELECT ON olbia.runtime_state,olbia.schema_migrations,olbia.application_barrier TO ${role}`,
+      `GRANT UPDATE (generation) ON olbia.application_barrier TO ${role}`,
+      `GRANT SELECT (uuid,owner,paid_on,payroll_type,total_mxn_minor,employer_name) ON olbia.payslips TO ${role}`,
+      `GRANT SELECT (owner,employer_key,ended_on) ON olbia.payroll_closures TO ${role}`,
+      nativeLedgerReadGrant(role),
+      `GRANT INSERT ON olbia.ledger_movements,olbia.ledger_observations,olbia.source_claims,olbia.ledger_movement_warnings,olbia.ledger_observation_warnings,olbia.installment_plans,olbia.installment_entries,olbia.installment_evidence_candidates TO ${role}`,
+      `GRANT DELETE ON olbia.ledger_movement_warnings,olbia.installment_plans,olbia.installment_entries,olbia.installment_evidence_candidates TO ${role}`,
+    ].entries()) await query(`financial-writer-grant-${index}`,statement);
+    for (const arn of options.financialPlanRoleArns) {
+      if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid financial writer ARN');
+      await query('financial-writer-iam',`AWS IAM GRANT ${role} TO '${arn}'`);
+    }
+  }
   // Revoke still-present migration copies during this deployment. After cleanup
   // the empty catalog makes future bootstraps independent of those relations.
   const frozen = (await query('migration-evidence-lookup',
@@ -321,6 +355,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('native-control-complete','INSERT INTO olbia.schema_migrations VALUES (20,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('native-payment-reconciliation-complete','INSERT INTO olbia.schema_migrations VALUES (22,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('category-catalog-complete','INSERT INTO olbia.schema_migrations VALUES (24,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
+  await query('financial-plans-complete','INSERT INTO olbia.schema_migrations VALUES (26,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('cash-and-payroll-closure-complete','INSERT INTO olbia.schema_migrations VALUES (25,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 };
 

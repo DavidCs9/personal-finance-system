@@ -20,7 +20,9 @@
     "./agent-tag-mutation-tool-definitions": "./src/agent/tag-mutation-tool-definitions.ts",
     "./agent-tool-definitions": "./src/agent/tool-definitions.ts",
     "./agentcore-provisioner": "./src/agent/provisioner.ts",
-    "./dsql-read-verification": "./src/events/read-verification.ts"
+    "./dsql-read-verification": "./src/events/read-verification.ts",
+    "./agent-financial-write-tools": "./src/agent/financial-write-tools-handler.ts",
+    "./agent-financial-tool-definitions": "./src/agent/financial-tool-definitions.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

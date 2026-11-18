@@ -67,6 +67,15 @@ export class DsqlProjection extends Construct {
     (fn.node.defaultChild as CfnResource).addDependency(this.bootstrap.node.defaultChild as CfnResource);
   }
 
+  grantFinancialPlanWriter(fn: NodejsFunction): void {
+    fn.addEnvironment('DSQL_ENDPOINT', this.cluster.attrEndpoint);
+    fn.addEnvironment('OLBIA_SQL_ROLE', 'olbia_financial_plans_writer');
+    fn.addToRolePolicy(new iam.PolicyStatement({ actions: ['dsql:DbConnect'], resources: [this.cluster.attrResourceArn] }));
+    (this.bootstrap.node.defaultChild as CfnResource).addPropertyOverride('FinancialPlanRoleArns', [fn.role!.roleArn]);
+    this.bootstrap.node.addDependency(fn.role!);
+    (fn.node.defaultChild as CfnResource).addDependency(this.bootstrap.node.defaultChild as CfnResource);
+  }
+
   constructor(scope: Construct, id: string, props: {
     table: dynamodb.ITable; encryptionKey: kms.IKey; alertRecipientEmail: string;
   }) {
@@ -118,7 +127,7 @@ export class DsqlProjection extends Construct {
     });
     const bootstrap = new CustomResource(this, 'Bootstrap', {
       serviceToken: provider.serviceToken,
-      properties: { Version: 28, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
+      properties: { Version: 29, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
     });
     this.bootstrap = bootstrap;
     // IAM policies must be installed before the bootstrap handler connects.

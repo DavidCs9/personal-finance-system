@@ -8,6 +8,8 @@ Before planning, implementing or reviewing a UI change, read these binding guide
 
 Design for David alone and his real data. Follow the navigation, screen responsibilities and hierarchy in the UI guide, including David's October 25, 2026 organization decision. Follow the guides for MSI, liquidity/estimates, Mi parte, rejected/foreign/deferred states, category/tag semantics, capture freshness and monthly total versus daily account history. Do not reproduce those contracts here or infer new product decisions from implementation details. An explicit personality change updates this file and UI direction together.
 
+Follow the binding [MCP-first direction](../../docs/product-north-star.md#mcp-first-chatgpt-como-interfaz-principal): ChatGPT is the primary interface, and the web app complements it for review, imports and dashboards. Ordinary financial management must be available through the single Olbia MCP connection without requiring a web form. Web and MCP call the same shared domain services; never put a second financial engine or authoritative client-only state in the UI.
+
 ## Implement and review
 
 - Verify a narrow mobile viewport first, safe areas, readable primary state without horizontal scroll, comfortable touch targets and reachable actions. Desktop adapts the same contained experience.

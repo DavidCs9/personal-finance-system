@@ -28,7 +28,7 @@ const institutionDisplayName = (institution: ManualEntryInput['institution'], la
   return lastFour ? `${base} terminada en ${lastFour}` : `${base} (registro manual)`;
 };
 
-const previousManualCapture = async (client: SqlClient, fingerprint: string): Promise<JsonObject | undefined> => {
+export const previousManualCapture = async (client: SqlClient, fingerprint: string): Promise<JsonObject | undefined> => {
   const claim = await readSourceClaim(client, 'manual', fingerprint);
   if (!claim) return undefined;
   if (claim.outcome !== 'linked' || !claim.movement_id) throw new SourceClaimUnavailableError(String(claim.outcome));
@@ -37,12 +37,12 @@ const previousManualCapture = async (client: SqlClient, fingerprint: string): Pr
   return toPublicEvent(detail, detail.revisions as JsonObject[], detail.observations as JsonObject[]);
 };
 
-export const createManualEvent = async (body: string | undefined, owner: string): Promise<JsonObject> => {
+export const prepareManualEvent = async (body: string | undefined, owner: string, identity?: { movementId: string; observationId: string }): Promise<(client: SqlClient) => Promise<JsonObject>> => {
   const input = parseManualEntry(body);
   const appliedAt = new Date().toISOString();
   const fingerprint = manualEntryFingerprint(owner, input);
   const existing = await previousManualCapture(applicationSqlClient(), fingerprint);
-  if (existing) return existing;
+  if (existing) return async () => existing;
   const evidenceBody = JSON.stringify({
     kind: 'manual_entry', createdAt: appliedAt, owner, institution: input.institution,
     merchantRaw: input.merchantRaw, amountMinor: input.amountMinor, currency: input.currency,
@@ -60,8 +60,8 @@ export const createManualEvent = async (body: string | undefined, owner: string)
   } catch (error) {
     if (errorName(error) !== 'PreconditionFailed') throw error;
   }
-  const id = randomUUID();
-  const observationId = randomUUID();
+  const id = identity?.movementId ?? randomUUID();
+  const observationId = identity?.observationId ?? randomUUID();
   const account = {
     institution: input.institution,
     accountId: input.accountLastFour ? `${input.institution}:manual:${input.accountLastFour}` : `${input.institution}:manual`,
@@ -76,7 +76,7 @@ export const createManualEvent = async (body: string | undefined, owner: string)
     occurredAt: input.occurredAt, receivedAt: appliedAt, ingestedAt: appliedAt, source,
     parserVersion: 'manual-entry-v1', parseWarnings: [], ...(autoMsi ? { msi: autoMsi } : {}),
   };
-  return withSqlTransaction(async client => {
+  return async client => {
     const prior = await previousManualCapture(client, fingerprint);
     if (prior) return prior;
     await insertLedgerMovement(client, purchase, observationId, input.occurredAt);
@@ -89,5 +89,11 @@ export const createManualEvent = async (body: string | undefined, owner: string)
     const detail = await readLedgerDetail(client, id);
     if (!detail) throw new Error('Manual capture was not created');
     return toPublicEvent(detail, detail.revisions as JsonObject[], detail.observations as JsonObject[]);
-  });
+  };
+};
+
+/** Evidence/provider IO happens once before the retryable shared domain transaction. */
+export const createManualEvent = async (body: string | undefined, owner: string): Promise<JsonObject> => {
+  const apply = await prepareManualEvent(body, owner);
+  return withSqlTransaction(apply);
 };

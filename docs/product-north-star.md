@@ -6,6 +6,14 @@ Debe permitirle entender ingresos, gasto, liquidez, compromisos, activos, invers
 
 Resumen, Movimientos, Planificación y Patrimonio son vistas complementarias; su organización se define en la [dirección de UI](ui-design-brief.md#navegación-y-jerarquía). Asistente, reportes y automatizaciones sirven al mismo propósito.
 
+## MCP-first: ChatGPT como interfaz principal
+
+Decisión explícita de David del **2026-11-17**: **Olbia es MCP-first y ChatGPT es su interfaz principal para consultar y gestionar sus finanzas mediante lenguaje natural. Olbia conserva la verdad financiera.** Toda nueva capacidad financiera debe nacer como un servicio de dominio compartido accesible mediante MCP, con permisos de lectura/escritura adecuados, validación determinista, revisiones y auditoría. La conversación no sustituye esos controles ni autoriza adivinar datos.
+
+Una sola conexión de Olbia en ChatGPT utiliza el Gateway y endpoint OAuth existentes. Lecturas y escrituras acotadas comparten esa entrada, con límites de autorización confiables en servidor y targets separados cuando corresponda. Un permiso de sólo lectura nunca autoriza una mutación; si no se puede garantizar ese límite, se bloquea la exposición insegura. No crear otro servidor, Gateway o conector para eludirlo.
+
+La web complementa este recorrido para revisar movimientos, importar documentos financieros e inspeccionar dashboards y evidencia. No debe ser un paso obligatorio para configurar ingresos esperados, metas o compromisos ordinarios. MCP, REST y web usan los mismos servicios y registros SQL; ninguna interfaz mantiene una segunda implementación de reglas o saldos. [Arquitectura](architecture.md) y [asistente](ai-assistant.md) definen sus contratos.
+
 ## Restricciones de producto
 
 Diseñar para sus cuentas, fuentes, hábitos y prioridades reales. No añadir registro público, otros usuarios, organizaciones, colaboración, roles de clientes ni configuración multitenant sin una nueva decisión explícita de David. Los campos owner, Cognito sub e IAM protegen su acceso y sus integraciones; no implican otro público.

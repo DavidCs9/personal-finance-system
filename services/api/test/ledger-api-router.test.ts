@@ -4,6 +4,7 @@ process.env.METADATA_TABLE_NAME ??= 'test-metadata-table';
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-raw-bucket';
 
 const { handler } = await import('../src/http/ledger-api.js');
+const financialPlans = await import('../src/financial-plans/service.js');
 const statements = await import('../src/imports/statement-catalog.js');
 const uploads = await import('../src/imports/statement-upload.js');
 const reconciliations = await import('../src/months/reconciliation.js');
@@ -184,4 +185,20 @@ describe('ledger API Powertools router', () => {
     expect(result.statusCode).toBe(404);
     expect(JSON.parse(String(result.body))).toEqual({ message: 'Route not found.' });
   });
+});
+
+it('routes expected-income/goals reads and preview/apply through shared services with the authenticated owner', async () => {
+  const list = vi.spyOn(financialPlans, 'listExpectedIncome').mockResolvedValue({ sources: [] } as never);
+  const income = await handler(httpEvent('GET', '/expected-income', { fromMonth: '2026-12', toMonth: '2027-06', owner: 'forged' }), context);
+  expect(income.statusCode).toBe(200);
+  expect(list).toHaveBeenCalledWith('owner-1', expect.objectContaining({ fromMonth: '2026-12', toMonth: '2027-06' }));
+  const preview = vi.spyOn(financialPlans, 'previewFinancialChange').mockResolvedValue({ operationId: 'frozen' } as never);
+  expect((await handler({ ...httpEvent('POST', '/financial-goals/preview'), body: JSON.stringify({ action: 'create_goal', name: 'Owner goal', owner: 'forged' }) }, context)).statusCode).toBe(200);
+  expect(preview).toHaveBeenCalledWith('owner-1', 'goal', expect.objectContaining({ action: 'create_goal', name: 'Owner goal' }));
+  const apply = vi.spyOn(financialPlans, 'applyFinancialChange').mockResolvedValue({ status: 'applied' });
+  expect((await handler(httpEvent('POST', '/financial-writes/exact-operation/apply'), context)).statusCode).toBe(200);
+  expect(apply).toHaveBeenCalledWith('owner-1', 'exact-operation');
+  const goal = vi.spyOn(financialPlans, 'getFinancialGoal').mockResolvedValue({ id: 'goal' } as never);
+  expect((await handler(httpEvent('GET', '/financial-goals/goal'), context)).statusCode).toBe(200);
+  expect(goal).toHaveBeenCalledWith('owner-1', 'goal');
 });

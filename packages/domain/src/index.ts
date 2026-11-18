@@ -282,3 +282,5 @@ export {
   type StatementAccountCoverage,
   type StatementCatalog,
 } from './statement-catalog.js';
+
+export * from './financial-plans.js';

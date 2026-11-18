@@ -1,3 +1,4 @@
+import { FINANCIAL_WRITE_TOOL_DEFINITIONS } from '@finance/api/agent-financial-tool-definitions';
 import { SQL_AUTHORITY } from './storage-cutover';
 import { managedPromptTextParameters } from './managed-prompt-parameters';
 import { financeMcpOAuth, financeMcpGateway } from './mcp-oauth';
@@ -512,6 +513,17 @@ export class PersonalFinanceV1Stack extends Stack {
       },
     });
 
+    const financialWriteFunction = new NodejsFunction(this, 'FinancialWriteFunction', {
+      ...lambdaDefaults, functionName: 'personal-finance-v1-financial-write-tools',
+      logGroup: this.createLogGroup('FinancialWriteLogGroup', 'personal-finance-v1-financial-write-tools'),
+      entry: path.join(__dirname, '..', 'lambda', 'financial-write-tools.ts'), handler: 'handler',
+      description: 'Bounded income, goals and manual-charge preview/apply through the single scoped MCP Gateway.',
+      timeout: Duration.seconds(29), memorySize: 512,
+      environment: { ...dataStorageEnvironment, AGENT_OWNER: agentOwnerSub.valueAsString, RAW_EMAIL_BUCKET_NAME: rawEmailBucket.bucketName },
+    });
+    dsqlProjection.grantFinancialPlanWriter(financialWriteFunction);
+    rawEmailBucket.grantPut(financialWriteFunction, `manual-entries/${agentOwnerSub.valueAsString}/*`);
+
     const gatewayRole = new iam.Role(this, 'AgentCoreGatewayRole', {
       roleName: 'personal-finance-v1-agentcore-gateway',
       assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com'),
@@ -845,7 +857,12 @@ export class PersonalFinanceV1Stack extends Stack {
     // wait until the role's separately managed IAM policy is fully attached.
     agentcoreResources.node.addDependency(memoryModelPolicy);
     agentcoreResources.node.addDependency(tagMutationPermit);
-    financeMcpGateway(this, { oauth: mcpOAuth, ownerSub: agentOwnerSub.valueAsString, tools: agentToolsFunction });
+    financeMcpGateway(this, { oauth: mcpOAuth, ownerSub: agentOwnerSub.valueAsString, tools: agentToolsFunction,
+      writeTargets: [
+        { id: 'FinanceMcpFinancialWriteTarget', name: 'olbia-financial-writes', tools: financialWriteFunction, definitions: FINANCIAL_WRITE_TOOL_DEFINITIONS },
+        { id: 'FinanceMcpClassificationWriteTarget', name: 'olbia-classification-writes', tools: agentTagMutationFunction, definitions: TAG_MUTATION_TOOL_DEFINITIONS },
+      ],
+    });
     const harnessArn = agentcoreResources.getAttString('HarnessArn');
     const agentMemoryId = agentcoreResources.getAttString('MemoryId');
 
@@ -1416,6 +1433,14 @@ export class PersonalFinanceV1Stack extends Stack {
     const applePayCaptureIntegration = new HttpLambdaIntegration('ApplePayCaptureIntegration', applePayCaptureFunction);
     const agentChatIntegration = new HttpLambdaIntegration('AgentChatBufferedIntegration', agentChatBufferedFunction);
     for (const route of [
+      'GET /expected-income',
+      'GET /expected-income/{incomeId}',
+      'POST /expected-income/preview',
+      'GET /financial-goals',
+      'GET /financial-goals/{goalId}',
+      'POST /financial-goals/preview',
+      'GET /financial-writes/{operationId}',
+      'POST /financial-writes/{operationId}/apply',
       'GET /events',
       'POST /events/manual',
       'GET /exceptions',
