@@ -198,7 +198,7 @@ it("puts the shared budget and category alerts above liquidity and conceals its 
     budget: { ...facts, generatedAt: at, categories: facts.categories.map(row => ({ ...row, label: "Comida" })) },
     liquidity: monthDashboardLiquidity(summary, {}, true),
     spending: monthDashboardSpending(summary, facts),
-    cash: monthCashLiquidity(month, now, [{ accountId: "santander_cash", amountMinor: 199_899_00, name: "Santander",
+    cash: monthCashLiquidity(month, now, [{ accountId: "santander_cash", amountMinor: 152_438_20, name: "Santander",
       day: "2026-08-02", capturedAt: "2026-08-02T18:00:00Z", source: "manual" }]),
     postedCredits: summarizePostedCredits([]),
     futureIncome: { status: "unknown_amount_or_date", scheduledMinor: null, knownUpcomingMinor: 0, unknownOccurrences: 1 },
@@ -209,7 +209,7 @@ it("puts the shared budget and category alerts above liquidity and conceals its 
   expect(html.indexOf("En qué se fue")).toBeLessThan(html.indexOf("Gasto estimado al cierre"));
   expect(html).toContain("Gasto registrado");
   expect(html).toContain("Gasto contado");
-  expect(html).toContain("199,899");
+  expect(html).toContain("152,438");
   expect(html).toContain("Captura manual");
   expect(html).toContain("Sin estimación");
   expect(html).toContain("Fecha o importe por confirmar");
