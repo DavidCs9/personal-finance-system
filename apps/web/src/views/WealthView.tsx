@@ -1,27 +1,29 @@
 import {
   BITSO_ACCOUNT_ID,
-  CAJITA_ACCOUNT_ID,
   CAJITA_STALE_DAYS,
   CARD_LIABILITY_STALE_DAYS,
   FONDO_AHORRO_ACCOUNT_ID,
   isWealthSnapshotStale,
+  isManualCashAccountId,
   wealthSnapshotAgeDays,
+  type ManualCashAccountId,
   type WealthAccountId,
 } from "@finance/domain";
 import { Amt } from "../components/Amt";
 import { WealthSparkline } from "../components/WealthSparkline";
-import { money } from "../lib/format";
+import { exactMxn, money } from "../lib/format";
 import type { WealthAccountView, WealthHistoryPoint, WealthLiabilityView, WealthOverview } from "../wealth";
 
 const accountRoleLabel = (role: WealthAccountView["role"]): string => {
   if (role === "emergency_fund") return "Emergencia";
+  if (role === "cash") return "Efectivo";
   if (role === "payroll_savings") return "Illíquido";
   if (role === "crypto") return "Crypto";
   return "Broker";
 };
 
 const pendingCopy = (account: WealthAccountView): string => {
-  if (account.id === CAJITA_ACCOUNT_ID) return "Sin saldo";
+  if (isManualCashAccountId(account.id)) return "Saldo por capturar";
   if (account.id === FONDO_AHORRO_ACCOUNT_ID) return "Sin nóminas";
   if (account.id === BITSO_ACCOUNT_ID) return "Sin sync";
   return "Pendiente";
@@ -53,7 +55,8 @@ export function WealthView(props: {
   readonly onRetry: () => void;
   readonly selectedAccountId: WealthAccountId | "all";
   readonly onSelectAccount: (accountId: WealthAccountId | "all") => void;
-  readonly onRegisterCajita: () => void;
+  readonly onRegisterCash: (id: ManualCashAccountId) => void;
+  readonly onClosePayroll: () => void;
   readonly onRegisterLiability: (liability: WealthLiabilityView) => void;
   readonly onSyncRemote: () => void;
   readonly syncingRemote: boolean;
@@ -76,20 +79,22 @@ export function WealthView(props: {
       : (props.overview.history.byAccount[props.selectedAccountId] ?? []);
 
   const historyNewestFirst = [...history].reverse();
-  const cajita = props.overview.accounts.find((account) => account.id === CAJITA_ACCOUNT_ID);
-  const cajitaStale =
-    cajita?.latestSnapshot &&
-    isWealthSnapshotStale(cajita.latestSnapshot.day, props.now, CAJITA_STALE_DAYS);
-  const cajitaAge = cajita?.latestSnapshot
-    ? wealthSnapshotAgeDays(cajita.latestSnapshot.day, props.now)
-    : undefined;
+  const cashAccounts = props.overview.accounts.filter(account => isManualCashAccountId(account.id));
+  const visibleCashAccounts = cashAccounts.filter(account => !selectedAccount || selectedAccount.id === account.id);
+  const staleCashAccounts = visibleCashAccounts.filter(account => account.latestSnapshot
+    && isWealthSnapshotStale(account.latestSnapshot.day, props.now, CAJITA_STALE_DAYS));
+  const missingCashAccounts = visibleCashAccounts.filter(account => !account.latestSnapshot);
+  const selectedCashId = selectedAccount && isManualCashAccountId(selectedAccount.id) ? selectedAccount.id : undefined;
+  const payrollClosures = props.overview.payrollClosures ?? [];
+  const latestClosure = payrollClosures.at(-1);
+  const fondoCaption = (amount: number) => amount === 0 && latestClosure
+    ? `Liquidado el ${formatDay(latestClosure.fundPaidOn)}`
+    : "Illíquido · derivado de nómina";
   const staleLiabilities = props.overview.liabilities.filter(
     (liability) =>
       liability.latestSnapshot &&
       isWealthSnapshotStale(liability.latestSnapshot.day, props.now, CARD_LIABILITY_STALE_DAYS),
   );
-  const showCajitaStart =
-    !cajita?.latestSnapshot && (props.selectedAccountId === "all" || props.selectedAccountId === CAJITA_ACCOUNT_ID);
   const showBitsoHoldings =
     selectedAccount?.id === BITSO_ACCOUNT_ID && Boolean(selectedAccount.latestSnapshot);
   const showBitsoEmpty =
@@ -148,13 +153,15 @@ export function WealthView(props: {
                 )}
               </div>
               <strong className="hero-amount">
-                <Amt>{money(heroAmount)}</Amt>
+                {selectedCashId && !selectedAccount?.latestSnapshot
+                  ? "—"
+                  : <Amt>{selectedCashId ? exactMxn(heroAmount) : money(heroAmount)}</Amt>}
               </strong>
               <div className="spend-meta">
                 <span>
                   {selectedAccount
                     ? selectedAccount.id === FONDO_AHORRO_ACCOUNT_ID
-                      ? "Illíquido · se entrega en diciembre"
+                      ? fondoCaption(heroAmount)
                       : selectedAccount.name
                     : (
                       <>
@@ -177,18 +184,20 @@ export function WealthView(props: {
                   <span className="note-copy">Incluye fondo de ahorro illíquido hasta diciembre</span>
                 </p>
               )}
-              {cajitaStale &&
-                cajitaAge !== undefined &&
-                props.selectedAccountId !== "bitso" &&
-                props.selectedAccountId !== "ibkr" &&
-                props.selectedAccountId !== FONDO_AHORRO_ACCOUNT_ID && (
-                <p className="uncertain-note wealth-stale-note">
+              {staleCashAccounts.map(account => (
+                <p key={account.id} className="uncertain-note wealth-stale-note">
                   <span className="note-icon" aria-hidden="true">
                     !
                   </span>
                   <span className="note-copy">
-                    Cajita sin actualizar hace <Amt>{cajitaAge}</Amt> días
+                    {account.name} sin actualizar hace <Amt>{wealthSnapshotAgeDays(account.latestSnapshot!.day, props.now)}</Amt> días
                   </span>
+                </p>
+              ))}
+              {!selectedAccount && missingCashAccounts.length > 0 && (
+                <p className="uncertain-note wealth-stale-note">
+                  <span className="note-icon" aria-hidden="true">!</span>
+                  <span className="note-copy">Saldo por capturar en {missingCashAccounts.map(account => account.name).join(", ")}</span>
                 </p>
               )}
               {showDebes &&
@@ -234,8 +243,8 @@ export function WealthView(props: {
                 {props.overview.accounts.map((account) => {
                   const active = props.selectedAccountId === account.id;
                   const amount = account.latestSnapshot?.totalMxnMinor ?? 0;
-                  const stale =
-                    account.id === CAJITA_ACCOUNT_ID &&
+                    const stale =
+                      isManualCashAccountId(account.id) &&
                     account.latestSnapshot &&
                     isWealthSnapshotStale(account.latestSnapshot.day, props.now);
                   return (
@@ -252,7 +261,7 @@ export function WealthView(props: {
                         <strong>{account.name}</strong>
                         <small>
                           {account.id === FONDO_AHORRO_ACCOUNT_ID && account.latestSnapshot
-                            ? "Illíquido · se entrega en diciembre"
+                            ? fondoCaption(amount)
                             : account.latestSnapshot
                               ? `${accountRoleLabel(account.role)} · ${formatDay(account.latestSnapshot.day)}`
                               : `${accountRoleLabel(account.role)} · ${pendingCopy(account)}`}
@@ -331,20 +340,30 @@ export function WealthView(props: {
               </section>
             )}
 
-            {selectedAccount?.id === FONDO_AHORRO_ACCOUNT_ID && selectedAccount.latestSnapshot && (
+            {selectedAccount?.id === FONDO_AHORRO_ACCOUNT_ID && (
               <section className="wealth-detail">
                 <div className="section-heading">
                   <div>
                     <p className="eyebrow">FONDO DE AHORRO</p>
                     <h2>Nómina</h2>
                     <p className="section-lede">
-                      Acumulado del año a partir de retenciones CFDI (SAT 004). Illíquido · se entrega en
-                      diciembre.
+                      Saldo derivado de las retenciones de nómina.
                     </p>
                   </div>
                 </div>
                 <div className="payment-list">
-                  {selectedAccount.latestSnapshot.holdings.map((holding) => (
+                  {payrollClosures.map(closure => (
+                    <div key={closure.employerName} className="payment-row wealth-holding-row">
+                      <span className="payment-dot wealth-role-payroll_savings" aria-hidden="true" />
+                      <span className="payment-name">
+                        <strong>{closure.employerName}</strong>
+                        <small>Liquidado el {formatDay(closure.fundPaidOn)}</small>
+                      </span>
+                      <strong className="payment-amount"><Amt>{exactMxn(closure.fundPaidMinor)}</Amt></strong>
+                      <span aria-hidden="true" />
+                    </div>
+                  ))}
+                  {selectedAccount.latestSnapshot?.holdings.filter(holding => holding.valueMxnMinor > 0).map((holding) => (
                     <div key={holding.id} className="payment-row wealth-holding-row">
                       <span className="payment-dot wealth-role-payroll_savings" aria-hidden="true" />
                       <span className="payment-name">
@@ -357,47 +376,55 @@ export function WealthView(props: {
                       <span aria-hidden="true" />
                     </div>
                   ))}
-                  <div className="payment-total">
+                  {selectedAccount.latestSnapshot && selectedAccount.latestSnapshot.totalMxnMinor > 0 && <div className="payment-total">
                     <span>Derivado de nóminas</span>
                     <strong>{formatDay(selectedAccount.latestSnapshot.day)}</strong>
-                  </div>
+                  </div>}
                 </div>
+                {props.overview.payrollCloseCandidate && (
+                  <button className="empty-action" type="button" onClick={props.onClosePayroll}>
+                    <span>+</span>
+                    <div><strong>Cerrar nómina y fondo</strong><small>{props.overview.payrollCloseCandidate.employerName}</small></div>
+                  </button>
+                )}
               </section>
             )}
 
-            {showCajitaStart && (
-              <section className="wealth-detail wealth-start">
-                <button className="empty-action" type="button" onClick={props.onRegisterCajita}>
+            {missingCashAccounts.map(account => (
+              <section className="wealth-detail wealth-start" key={account.id}>
+                <button className="empty-action" type="button" onClick={() => {
+                  if (isManualCashAccountId(account.id)) props.onRegisterCash(account.id);
+                }}>
                   <span>+</span>
                   <div>
-                    <strong>Registrar saldo de Cajita</strong>
-                    <small>Fondo de emergencia en MXN. La fecha la pone Olbia.</small>
+                    <strong>Registrar saldo · {account.name}</strong>
+                    <small>Saldo actual en MXN</small>
                   </div>
                 </button>
               </section>
-            )}
+            ))}
 
-            {selectedAccount?.id === CAJITA_ACCOUNT_ID && selectedAccount.latestSnapshot && (
+            {selectedCashId && selectedAccount?.latestSnapshot && (
               <section className="wealth-detail">
                 <div className="section-heading">
                   <div>
-                    <p className="eyebrow">CAJITA NU</p>
-                    <h2>Emergencia</h2>
+                    <p className="eyebrow">{selectedAccount.name}</p>
+                    <h2>Saldo en cuenta</h2>
                   </div>
-                  <button className="add-button" onClick={props.onRegisterCajita} aria-label="Registrar saldo">
+                  <button className="add-button" onClick={() => props.onRegisterCash(selectedCashId)} aria-label="Registrar saldo">
                     +
                   </button>
                 </div>
                 <div className="payment-list">
                   {selectedAccount.latestSnapshot.holdings.map((holding) => (
                     <div key={holding.id} className="payment-row wealth-holding-row">
-                      <span className="payment-dot wealth-role-emergency_fund" aria-hidden="true" />
+                      <span className={`payment-dot wealth-role-${selectedAccount.role}`} aria-hidden="true" />
                       <span className="payment-name">
                         <strong>{holding.name}</strong>
                         <small>MXN</small>
                       </span>
                       <strong className="payment-amount">
-                        <Amt>{money(holding.valueMxnMinor)}</Amt>
+                        <Amt>{exactMxn(holding.valueMxnMinor)}</Amt>
                       </strong>
                       <span aria-hidden="true" />
                     </div>

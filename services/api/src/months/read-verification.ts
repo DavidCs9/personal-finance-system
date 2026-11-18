@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
-import { addCalendarMonths, monthKeyInZone, deriveMonthCompensation, runningFondoAhorroByDay, sumFondoAhorroDeduccionesMinor } from '@finance/domain';
+import { addCalendarMonths, monthKeyInZone, deriveMonthCompensation, payrollEmployerKey, runningFondoAhorroByDay, sumFondoAhorroDeduccionesMinor } from '@finance/domain';
 import { s3 } from '../http/clients.js';
 import type { JsonObject } from '../http/response.js';
 import { samePublicResult } from '../events/read-selection.js';
@@ -102,6 +102,23 @@ export const verifyPlanningReads = async (owner: string, movementPayloads: JsonO
     // receipt/line to that evidence without requiring a migration-table copy.
     try { mismatches += Number(!samePublicResult(parseCfdiNominaXml(Buffer.from(bytes).toString('utf8')), record.payslip)); }
     catch { mismatches++; }
+  }
+  const payrollClosures = (await client.query(`SELECT employer_key,source_payslip_uuid::text,ended_on::text,
+    fund_paid_on::text,fund_paid_mxn_minor,evidence_bucket,evidence_key,evidence_sha256
+    FROM olbia.payroll_closures WHERE owner=$1`, [owner])).rows;
+  for (const row of payrollClosures) {
+    const slip = nativePayroll.find(record => record.payslip.uuid.toLowerCase() === row.source_payslip_uuid)?.payslip;
+    if (slip?.tipoNomina !== 'O' || payrollEmployerKey(slip.employerName) !== row.employer_key) mismatches++;
+    const original = await s3.send(new GetObjectCommand({ Bucket: String(row.evidence_bucket), Key: String(row.evidence_key) }));
+    const bytes = await original.Body!.transformToByteArray();
+    mismatches += Number(createHash('sha256').update(bytes).digest('hex') !== row.evidence_sha256);
+    evidenceFiles++;
+    try {
+      mismatches += Number(!samePublicResult(JSON.parse(Buffer.from(bytes).toString('utf8')), {
+        kind: 'payroll_fund_closure', owner, payslipUuid: row.source_payslip_uuid,
+        endedOn: row.ended_on, fundPaidOn: row.fund_paid_on, fundPaidMinor: Number(row.fund_paid_mxn_minor),
+      }));
+    } catch { mismatches++; }
   }
   const missing = '__dsql_missing_payroll__';
   mismatches += Number(await getPayslipSql(owner,'1900-01',missing)!==undefined);

@@ -53,8 +53,8 @@ import { getMonthSummary } from '../months/summary.js';
 import { getFutureCommitments } from '../months/commitments.js';
 import { InvalidWealthSnapshotError } from '../wealth/input.js';
 import {
-  assertCajitaAccountParam,
-  createCajitaSnapshot,
+  createManualCashSnapshot,
+  closePayrollAndFund,
   createCardLiabilitySnapshot,
   getWealthOverview,
 } from '../wealth/service.js';
@@ -360,11 +360,15 @@ app.get('/wealth', async ({ event }) =>
 
 app.post('/wealth/accounts/:accountId/snapshots', async ({ event, params }) => {
   const gatewayEvent = asHttpEvent(event);
-  assertCajitaAccountParam(params.accountId);
   return json(
     HttpStatusCodes.CREATED,
-    await createCajitaSnapshot(requestBody(gatewayEvent), ownerOf(gatewayEvent)),
+    await createManualCashSnapshot(params.accountId, requestBody(gatewayEvent), ownerOf(gatewayEvent)),
   );
+});
+
+app.post('/wealth/payroll-closures', async ({ event }) => {
+  const gatewayEvent = asHttpEvent(event);
+  return json(HttpStatusCodes.CREATED, await closePayrollAndFund(requestBody(gatewayEvent), ownerOf(gatewayEvent)));
 });
 
 app.post('/wealth/liabilities/:cardId/snapshots', async ({ event, params }) => {

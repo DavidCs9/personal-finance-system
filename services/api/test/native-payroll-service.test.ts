@@ -21,7 +21,7 @@ beforeAll(async () => { sql=new PGlite();for(const statement of SCHEMA_STATEMENT
 afterAll(()=>sql.close());
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllEnvs();});
 beforeEach(async () => {
-  await sql.exec('TRUNCATE olbia.payslips,olbia.payslip_lines');
+  await sql.exec('TRUNCATE olbia.payroll_closures,olbia.payslips,olbia.payslip_lines');
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
   vi.stubEnv('OLBIA_SQL_STORE_ENABLED','true');
   vi.spyOn(connection,'createPool').mockReturnValue({query:(s:string,v?:unknown[])=>sql.query(s,v),

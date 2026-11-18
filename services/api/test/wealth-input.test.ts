@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
   InvalidWealthSnapshotError,
-  parseCajitaSnapshot,
+  parseCashSnapshot,
   parseCardLiabilitySnapshot,
 } from '../src/wealth/input.js';
 
-describe('parseCajitaSnapshot', () => {
+describe('parseCashSnapshot', () => {
   it('accepts a positive MXN amount in minor units', () => {
-    expect(parseCajitaSnapshot(JSON.stringify({ amountMinor: 12_500 }))).toEqual({
+    expect(parseCashSnapshot(JSON.stringify({ amountMinor: 12_500 }), false)).toEqual({
       amountMinor: 12_500,
     });
   });
 
   it('rejects non-positive amounts', () => {
-    expect(() => parseCajitaSnapshot(JSON.stringify({ amountMinor: 0 }))).toThrow(InvalidWealthSnapshotError);
+    expect(() => parseCashSnapshot(JSON.stringify({ amountMinor: 0 }), false)).toThrow(InvalidWealthSnapshotError);
   });
 });
 

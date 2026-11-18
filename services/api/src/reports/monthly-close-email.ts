@@ -129,7 +129,7 @@ const wealthTable = (facts: MonthlyCloseFacts): string => `<table role="presenta
   ${facts.wealth.accounts.map((account) => row({
     label: account.name,
     meta: account.id === 'fondo_ahorro'
-      ? 'Illíquido · se entrega en diciembre'
+      ? account.settledOn ? `Liquidado el ${formatDay(account.settledOn)}` : 'Illíquido · derivado de nómina'
       : account.snapshotDay ? `${percent(account.shareBasisPoints)} de activos · corte ${formatDay(account.snapshotDay)}` : 'Sin captura',
     amount: account.snapshotDay ? formatMxnWhole(account.amountMinor) : '—',
     ...(facts.wealth.comparable && account.deltaMinor !== null
@@ -178,7 +178,7 @@ export const renderMonthlyCloseEmail = (
   const againstLabel = compactMonthLabel(facts.againstMonth);
   const signals = selectedSignals(facts, analysis);
   const spendingDelta = signedMoney(facts.spending.deltaMinor);
-  const wealthDelta = facts.wealth.netDeltaMinor === null ? 'Primer cierre comparable' : signedMoney(facts.wealth.netDeltaMinor);
+  const wealthDelta = facts.wealth.netDeltaMinor === null ? 'Sin cierre previo comparable' : signedMoney(facts.wealth.netDeltaMinor);
   const safeUrl = html(webAppUrl.endsWith('/') ? webAppUrl : `${webAppUrl}/`);
   const subject = `Tu cierre de ${monthLabel(facts.month).split(' de ')[0] ?? facts.month} · lectura de Olbia`;
   const emailHtml = `<!doctype html>

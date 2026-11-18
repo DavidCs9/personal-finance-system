@@ -1,4 +1,4 @@
-import { FINANCE_TIME_ZONE, monthKeyInZone } from "./month-summary.js";
+import { dayKeyInZone, FINANCE_TIME_ZONE, monthKeyInZone } from "./month-summary.js";
 
 const isValidMonth = (month: string): boolean => /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
 
@@ -31,6 +31,21 @@ export interface PayslipSummary {
   readonly fechaInicialPago?: string;
   readonly fechaFinalPago?: string;
 }
+
+export interface PayrollClosure {
+  readonly employerName: string;
+  readonly endedOn: string;
+  readonly fundPaidOn: string;
+  readonly fundPaidMinor: number;
+}
+
+export interface PayrollCloseCandidate {
+  readonly payslipUuid: string;
+  readonly employerName: string;
+}
+
+export const payrollEmployerKey = (name: string | undefined): string =>
+  (name ?? "").normalize("NFD").replace(/\p{M}/gu, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
 export interface MonthIncomeDerivation {
   readonly configured: boolean;
@@ -143,6 +158,38 @@ export const runningFondoAhorroByDay = (
     .map(([day, totalMxnMinor]) => ({ day, totalMxnMinor }));
 };
 
+/** A confirmed payout clears that employer's balance on its actual payout day. */
+export const runningFondoBalanceByDay = (
+  payslips: readonly Pick<PayslipSummary, "fechaPago" | "employerName" | "lines">[],
+  closures: readonly PayrollClosure[],
+  asOfDay: string,
+): readonly { readonly day: string; readonly totalMxnMinor: number }[] => {
+  const days = new Map<string, number>();
+  const settlementByEmployer = new Map(closures.map(closure => [payrollEmployerKey(closure.employerName), closure.fundPaidOn]));
+  const countedByEmployer = new Map<string, number>();
+  const add = (day: string, amount: number) => days.set(day, (days.get(day) ?? 0) + amount);
+  for (const slip of payslips) {
+    if (slip.fechaPago > asOfDay) continue;
+    const employer = payrollEmployerKey(slip.employerName);
+    const settlement = settlementByEmployer.get(employer);
+    if (settlement && slip.fechaPago >= settlement) continue;
+    const amount = payslipFondoDeduccionesMinor(slip);
+    if (amount <= 0) continue;
+    add(slip.fechaPago, amount);
+    countedByEmployer.set(employer, (countedByEmployer.get(employer) ?? 0) + amount);
+  }
+  for (const [employer, paidOn] of settlementByEmployer) {
+    if (paidOn <= asOfDay && paidOn.slice(0, 4) === asOfDay.slice(0, 4)) {
+      add(paidOn, -(countedByEmployer.get(employer) ?? 0));
+    }
+  }
+  let running = 0;
+  return [...days].sort(([left], [right]) => left.localeCompare(right)).map(([day, delta]) => {
+    running += delta;
+    return { day, totalMxnMinor: running };
+  });
+};
+
 export const previousCalendarMonth = (month: string): string | undefined => {
   if (!isValidMonth(month)) return undefined;
   const year = Number(month.slice(0, 4));
@@ -183,11 +230,12 @@ const emptyDerivation = (): MonthIncomeDerivation => ({
  * Past months never keep an estimate or provisional. Extraordinarias never pair.
  */
 export const deriveMonthIncome = (input: {
-  readonly payslips: readonly Pick<PayslipSummary, "tipoNomina" | "totalMinor">[];
+  readonly payslips: readonly Pick<PayslipSummary, "tipoNomina" | "totalMinor" | "employerName">[];
   readonly month: string;
   readonly now: Date;
   readonly timeZone?: string;
-  readonly priorOrdinaryPayslips?: readonly Pick<PayslipSummary, "totalMinor" | "fechaPago" | "tipoNomina">[];
+  readonly priorOrdinaryPayslips?: readonly Pick<PayslipSummary, "totalMinor" | "fechaPago" | "tipoNomina" | "employerName">[];
+  readonly closures?: readonly PayrollClosure[];
 }): MonthIncomeDerivation => {
   if (!isValidMonth(input.month)) return emptyDerivation();
 
@@ -196,11 +244,16 @@ export const deriveMonthIncome = (input: {
   const ordinaryCount = ordinary.length;
   const currentMonth = monthKeyInZone(input.now, input.timeZone ?? FINANCE_TIME_ZONE);
   const monthIsCurrent = input.month === currentMonth;
+  const today = dayKeyInZone(input.now, input.timeZone ?? FINANCE_TIME_ZONE);
+  const closedEmployers = new Set((input.closures ?? [])
+    .filter(closure => closure.endedOn <= today).map(closure => payrollEmployerKey(closure.employerName)));
+  const canEstimate = (slip: Pick<PayslipSummary, "employerName">): boolean =>
+    !closedEmployers.has(payrollEmployerKey(slip.employerName));
 
   if (input.payslips.length === 0) {
     if (!monthIsCurrent) return emptyDerivation();
     const priorOrdinary = (input.priorOrdinaryPayslips ?? []).filter((slip) =>
-      isOrdinaryNomina(slip.tipoNomina),
+      isOrdinaryNomina(slip.tipoNomina) && canEstimate(slip),
     );
     const provisionalMinor = provisionalIncomeFromPriorOrdinaries(priorOrdinary);
     if (provisionalMinor <= 0) return emptyDerivation();
@@ -218,7 +271,7 @@ export const deriveMonthIncome = (input: {
 
   let estimatedMinor = 0;
   let estimateActive = false;
-  if (monthIsCurrent && ordinaryCount === 1) {
+  if (monthIsCurrent && ordinaryCount === 1 && canEstimate(ordinary[0]!)) {
     estimatedMinor = ordinary[0]!.totalMinor;
     estimateActive = true;
   }

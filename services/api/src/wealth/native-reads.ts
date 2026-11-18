@@ -1,18 +1,20 @@
 import {
   FONDO_AHORRO_ACCOUNT_ID, WEALTH_ACCOUNTS,
-  type CardLiabilitySnapshot, type WealthAccountDefinition, type WealthAccountId, type WealthHolding, type WealthSnapshot,
+  type CardLiabilitySnapshot, type PayrollClosure, type WealthAccountDefinition, type WealthAccountId, type WealthHolding, type WealthSnapshot,
 } from '@finance/domain';
 import { toNativeHolding, toNativeAssetSnapshot, toNativeLiabilitySnapshot } from '@finance/ledger/native-wealth';
 import { cardReadStatement, toNativeCardRecord } from '../cards/sql-reads.js';
 import type { CardRecord } from '../cards/cards.js';
 import type { JsonObject } from '../http/response.js';
 import { readerPool, withLedgerReadSnapshot, type ReadSqlClient } from '../events/sql-reads.js';
+import { readPayrollClosures } from '../imports/payroll-closures.js';
 
 export interface NativeWealthInputs {
   readonly accounts: readonly WealthAccountDefinition[];
   readonly snapshots: readonly WealthSnapshot[];
   readonly liabilitySnapshots: readonly CardLiabilitySnapshot[];
   readonly cards: readonly CardRecord[];
+  readonly payrollClosures?: readonly PayrollClosure[];
 }
 export type NativeWealthInputsReader = (owner: string) => Promise<NativeWealthInputs>;
 export type NativeWealthAudit = {
@@ -54,9 +56,10 @@ const groupHoldings = async (client: ReadSqlClient, assets: readonly JsonObject[
 };
 
 const readInputs = async (owner: string, client: ReadSqlClient): Promise<NativeWealthInputs> => {
-  const [accounts, assets, liabilities, cards] = await Promise.all([
+  const [accounts, assets, liabilities, cards, payrollClosures] = await Promise.all([
     client.query('SELECT * FROM olbia.asset_accounts ORDER BY position'), client.query(nativeAssetReadStatement, [owner]),
     client.query(nativeLiabilityReadStatement, [owner]), client.query(cardReadStatement, [owner]),
+    readPayrollClosures(owner, client),
   ]);
   const accountIds = accounts.rows.map(row => row.id);
   const expectedIds = ['nu_cajita_emergencia', 'bitso', 'ibkr'];
@@ -68,7 +71,7 @@ const readInputs = async (owner: string, client: ReadSqlClient): Promise<NativeW
     institution: String(row.institution), role: row.role as WealthAccountDefinition['role'], sync: row.sync as WealthAccountDefinition['sync'] }));
   // Fondo has no persisted capture; its established display position and payroll-derived meaning stay intact.
   definitions.splice(1, 0, WEALTH_ACCOUNTS.find(account => account.id === FONDO_AHORRO_ACCOUNT_ID)!);
-  return { accounts: definitions,
+  return { accounts: definitions, payrollClosures,
     snapshots: assets.rows.map(row => toNativeAssetSnapshot(row, holdings.get(String(row.id)) ?? []))
       .sort((a, b) => a.day.localeCompare(b.day) || a.accountId.localeCompare(b.accountId)),
     liabilitySnapshots: liabilities.rows.map(toNativeLiabilitySnapshot),

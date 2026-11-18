@@ -141,14 +141,14 @@ export const renderMonthEndBalanceReminder = (
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${html(subject)}</title>
 <style>@media only screen and (max-width:620px){.olbia-wrap{width:100%!important}.olbia-pad{padding-left:20px!important;padding-right:20px!important}.olbia-title{font-size:34px!important}}</style></head>
 <body style="margin:0;padding:0;background:#eee8dd;color:#25251f;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${html(pendingLabel)}. Actualiza Cajita y cada tarjeta hoy para cerrar ${html(reportLabel)} con cifras correctas.</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${html(pendingLabel)}. Actualiza tus cuentas de efectivo y cada tarjeta hoy para cerrar ${html(reportLabel)} con cifras correctas.</div>
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background:#eee8dd;"><tr><td align="center" style="padding:24px 10px;">
 <table class="olbia-wrap" role="presentation" width="620" cellspacing="0" cellpadding="0" style="width:620px;max-width:100%;border-collapse:separate;border-spacing:0;background:#f4efe5;border:1px solid #d7cfc1;border-radius:18px;overflow:hidden;">
 <tr><td class="olbia-pad" style="padding:32px 36px 26px;">
   <table role="presentation" width="100%"><tr><td style="color:#1d1e1b;font:22px/1 Georgia,serif;letter-spacing:.07em;">OLBIA</td><td align="right" style="color:#756e62;font:bold 10px/1.3 Arial,sans-serif;letter-spacing:.14em;text-transform:uppercase;">Precierre</td></tr></table>
   <p style="margin:32px 0 10px;color:#756e62;font:bold 11px/1.3 Arial,sans-serif;letter-spacing:.15em;text-transform:uppercase;">${html(reportLabel)}</p>
   <h1 class="olbia-title" style="margin:0 0 16px;color:#1d1e1b;font:normal 44px/1.06 Georgia,serif;letter-spacing:-.025em;">Deja el mes cerrado</h1>
-  <p style="margin:0;color:#4d4a42;font:15px/1.62 Arial,sans-serif;">Actualiza Cajita y el saldo pendiente total de cada tarjeta antes de terminar hoy.</p>
+  <p style="margin:0;color:#4d4a42;font:15px/1.62 Arial,sans-serif;">Actualiza tus cuentas de efectivo y el saldo pendiente total de cada tarjeta antes de terminar hoy.</p>
 </td></tr>
 <tr><td class="olbia-pad" style="padding:0 36px 28px;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:#1d1e1b;border-radius:14px;color:#fbf8f1;"><tr><td style="padding:25px 26px;">
@@ -212,7 +212,7 @@ export const renderMonthEndBalanceReminder = (
     'DEJA EL MES CERRADO',
     pendingLabel,
     progressLabel,
-    `Actualiza Cajita y el saldo pendiente total de cada tarjeta antes de terminar hoy. Lo que no captures se arrastrará al cierre con la última cifra disponible al ${closeDayLabel}.`,
+    `Actualiza tus cuentas de efectivo y el saldo pendiente total de cada tarjeta antes de terminar hoy. Lo que no captures se arrastrará al cierre con la última cifra disponible al ${closeDayLabel}.`,
     '',
     'SALDOS MANUALES',
     ...(manualTextRows.length > 0 ? manualTextRows : ['- No hay saldos manuales configurados.']),

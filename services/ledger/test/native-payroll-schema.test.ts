@@ -23,7 +23,7 @@ beforeAll(async () => {
 },30_000);
 afterAll(() => sql.close());
 beforeEach(async () => {
-  await sql.exec('TRUNCATE olbia.payslips,olbia.payslip_lines,olbia.payroll,olbia.dedupe_claims,olbia.projection_state');
+  await sql.exec('TRUNCATE olbia.payroll_closures,olbia.payslips,olbia.payslip_lines,olbia.payroll,olbia.dedupe_claims,olbia.projection_state');
   await sql.query('DELETE FROM olbia.schema_migrations WHERE version=12');
   for (const Item of [claim,receipt]) await store.send(new PutCommand({ TableName: 'metadata',Item }));
 });
@@ -75,7 +75,7 @@ describe('native immutable payroll migration', () => {
     await migratePayroll(pool);
     expect((await sql.query('SELECT * FROM olbia.payslips')).rows).toHaveLength(1);
     expect((await sql.query('SELECT * FROM olbia.payslip_lines')).rows).toHaveLength(0);
-    await sql.exec('TRUNCATE olbia.payslips,olbia.payslip_lines');
+    await sql.exec('TRUNCATE olbia.payroll_closures,olbia.payslips,olbia.payslip_lines');
     await sql.query('DELETE FROM olbia.schema_migrations WHERE version=12');
     await sql.query('UPDATE olbia.payroll SET payload=$1',[JSON.stringify({...receipt.payload,lines:Array.from({length:3000},()=>receipt.payload.lines[0])})]);
     await expect(migratePayroll(pool)).rejects.toThrow('payroll-copy');

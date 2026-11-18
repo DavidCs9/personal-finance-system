@@ -13,6 +13,7 @@ import type { SqlClient, TransactionPool } from '../../src/dsql/projection.js';
 import { isOCCError } from '@aws/aurora-dsql-node-postgres-connector';
 import { DEFAULT_SPEND_CATEGORIES } from '@finance/domain';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../../src/dsql/ledger-schema.js';
+import { PAYROLL_CLOSURES_SCHEMA } from '../../src/dsql/payroll-schema.js';
 import { NATIVE_WEALTH_SCHEMA_STATEMENTS, nativeWealthReadGrant, nativeWealthWriteGrants } from '../../src/dsql/wealth-schema.js';
 import { migrateWealth } from '../../src/dsql/wealth-copy.js';
 import { migrateLedger } from '../../src/dsql/ledger-copy.js';
@@ -174,6 +175,7 @@ export const SCHEMA_STATEMENTS = [
       FROM olbia.ledger_movements
     UNION SELECT movement_id::text,month FROM olbia.installment_entries`,
   ...NATIVE_WEALTH_SCHEMA_STATEMENTS,
+  PAYROLL_CLOSURES_SCHEMA,
   NATIVE_PUSH_SCHEMA_STATEMENT,
   ...NATIVE_DELIVERY_SCHEMA_STATEMENTS,
   ...NATIVE_THREAD_SCHEMA_STATEMENTS,

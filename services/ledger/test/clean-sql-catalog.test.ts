@@ -16,6 +16,7 @@ beforeEach(async () => {
   await sql.query('INSERT INTO olbia.schema_migrations VALUES (20,CURRENT_TIMESTAMP)');
   await sql.query("INSERT INTO olbia.cards (source_pk,source_sk,row_id,payload) VALUES ('old','old','old','{}')");
   await sql.query("INSERT INTO olbia.month_plans VALUES ('2026-10','owner',CURRENT_TIMESTAMP)");
+  await sql.query("INSERT INTO olbia.asset_accounts VALUES ('santander_cash','Santander','Santander','cash','manual',3)");
 }, 30_000);
 afterEach(() => sql.close());
 const snapshot = async () => Object.fromEntries(await Promise.all(CURRENT_SQL_TABLES.filter(table => table !== 'schema_migrations')
@@ -25,11 +26,11 @@ it('removes exactly the 26 explicit migration tables, keeps every native row, an
   const before = await snapshot(), recovery = vi.fn(async () => {});
   expect((await inspectNativeCatalog(sql)).frozen).toHaveLength(26);
   expect(await retireMigrationEvidence(sql, recovery)).toMatchObject({ verified: true, removedTables: 26,
-    remainingTables: 45, domainTables: 42, controlTables: 3, migrationEvidenceTables: 0 });
+    remainingTables: 46, domainTables: 43, controlTables: 3, migrationEvidenceTables: 0 });
   expect(await snapshot()).toEqual(before);
   expect(recovery).toHaveBeenCalledOnce();
   expect((await sql.query('SELECT version FROM olbia.schema_migrations WHERE version=21')).rows).toEqual([{ version: 21 }]);
-  expect(await retireMigrationEvidence(sql, recovery)).toMatchObject({ removedTables: 0, remainingTables: 45 });
+  expect(await retireMigrationEvidence(sql, recovery)).toMatchObject({ removedTables: 0, remainingTables: 46 });
   expect(recovery).toHaveBeenCalledOnce();
   const client: SqlClient = { query: async (s, v) => {
     if (s.startsWith('AWS IAM GRANT')) return { rows: [] };
@@ -78,7 +79,7 @@ it('orders retired child tables before parents and resumes an interrupted sequen
   await expect(retireMigrationEvidence(client, async () => {})).rejects.toThrow('Interrupted DDL');
   expect(drops.join()).not.toContain('CASCADE');
   expect((await sql.query('SELECT version FROM olbia.schema_migrations WHERE version=21')).rows).toEqual([]);
-  expect(await retireMigrationEvidence(sql, async () => {})).toMatchObject({ verified: true, remainingTables: 45 });
+  expect(await retireMigrationEvidence(sql, async () => {})).toMatchObject({ verified: true, remainingTables: 46 });
   expect(await snapshot()).toEqual(before);
   const names = drops.map(s => s.match(/olbia\.(\w+)/)![1]);
   expect(names).toContain('cards'); expect(names).not.toContain('movements');

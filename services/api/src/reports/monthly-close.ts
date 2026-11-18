@@ -5,6 +5,7 @@ import {
   daysInCalendarMonth,
   formatMxnWhole,
   previousCalendarMonth,
+  SANTANDER_CASH_ACCOUNT_ID,
   WEALTH_TOTAL_HISTORY_START_MONTH,
   type CategorizedSpendEvent,
   type SpendBucket,
@@ -56,6 +57,7 @@ export interface MonthlyCloseAccountFact {
   readonly ageDays: number | null;
   readonly stale: boolean;
   readonly role: string;
+  readonly settledOn?: string;
 }
 
 export interface MonthlyCloseLiabilityFact {
@@ -179,6 +181,8 @@ const accountFacts = (
     const amountMinor = account.latestSnapshot?.totalMxnMinor ?? 0;
     const prior = priorById.get(account.id)?.latestSnapshot?.totalMxnMinor;
     const ageDays = dayAge(account.latestSnapshot?.day ?? null, current.asOfDay);
+    const settledOn = account.id === 'fondo_ahorro' && amountMinor === 0
+      ? current.payrollClosures?.at(-1)?.fundPaidOn : undefined;
     return {
       id: account.id,
       name: account.name,
@@ -190,6 +194,7 @@ const accountFacts = (
       snapshotDay: account.latestSnapshot?.day ?? null,
       ageDays,
       stale: ageDays === null || ageDays >= 7,
+      ...(settledOn ? { settledOn } : {}),
     };
   });
 };
@@ -387,7 +392,9 @@ export const buildMonthlyCloseFacts = async (
   }));
   const accounts = accountFacts(currentWealth, previousWealth);
   const liabilities = liabilityFacts(currentWealth, previousWealth);
-  const hasComparableWealth = comparableWealth && Boolean(previousWealth)
+  const santander = accounts.find(account => account.id === SANTANDER_CASH_ACCOUNT_ID);
+  const addedCashCoverage = Boolean(santander?.snapshotDay && santander.priorAmountMinor === null);
+  const hasComparableWealth = comparableWealth && Boolean(previousWealth) && !addedCashCoverage
     && (previousWealth!.assetsMxnMinor > 0 || previousWealth!.liabilitiesMxnMinor > 0);
   const netDeltaMinor = hasComparableWealth ? currentWealth.netMxnMinor - previousWealth!.netMxnMinor : null;
   const signals = signalFacts({

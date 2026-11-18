@@ -46,7 +46,7 @@ La revisión de un **estado de cuenta PDF** explica las acciones que Olbia ya re
 
 Si un candidato es una captura manual aún sin identidad bancaria probada, la revisión puede ofrecer vincular esa misma compra una vez, mostrando los datos manuales y los del PDF antes de aplicar. La confirmación conserva el plan existente y explica la corrección; las cuotas de los siguientes estados reutilizan la identidad guardada. No presentar esa confirmación inicial como una tarea mensual.
 
-**Patrimonio** responde cuánto tienes en neto hoy. Orden: **Neto → Dónde está → Debes → Historial → Holdings**. No mezclar gasto mensual ni Te quedan. El total usa tendencia mensual desde agosto 2026; una cuenta usa historial diario. Mostrar lista numérica, con sparkline mínima de apoyo. El selector global de mes sigue usable, sin convertir el patrimonio actual en un corte mensual. Actualizar total refresca Bitso e IBKR; Fondo muestra su condición ilíquida hasta diciembre.
+**Patrimonio** responde cuánto tienes en neto hoy. Orden: **Neto → Dónde está → Debes → Historial → Holdings**. No mezclar gasto mensual ni Te quedan. El total usa tendencia mensual desde agosto 2026; una cuenta usa historial diario. Mostrar lista numérica, con sparkline mínima de apoyo. El selector global de mes sigue usable, sin convertir el patrimonio actual en un corte mensual. Actualizar total refresca Bitso e IBKR; Santander usa la misma captura de saldo manual que Cajita. Fondo muestra el saldo ilíquido o su liquidación confirmada. Desde su detalle se puede cerrar nómina y fondo del empleador identificado por un CFDI, con fecha de salida, fecha del depósito e importe recibido.
 
 ## Voz y sistema visual
 
@@ -62,7 +62,7 @@ El asistente es un sheet global del topbar, accesible desde las cuatro tabs. Con
 
 Una instrucción explícita de tags/categoría autoriza el cambio acotado descrito en [asistente](ai-assistant.md#mutations): sin segunda confirmación UI; recibo factual por operación y undo por chat. Las categorías del asistente no crean reglas de comercio.
 
-**Precierre** pone primero Cajita y deudas manuales con importe/fecha y captura pendiente; Fondo derivado y Bitso/IBKR automáticos. **Cierre mensual** tiene dos capítulos: **Tu mes / Dónde se fue** y **Tu patrimonio / Qué cambió**. Conservar voz/paleta, declarar tags superpuestos y no atribuir causalidad entre gasto y variación patrimonial.
+**Precierre** pone primero saldos de efectivo y deudas manuales con importe/fecha y captura pendiente; Fondo derivado y Bitso/IBKR automáticos. **Cierre mensual** tiene dos capítulos: **Tu mes / Dónde se fue** y **Tu patrimonio / Qué cambió**. Conservar voz/paleta, declarar tags superpuestos y no atribuir causalidad entre gasto y variación patrimonial.
 
 ## Verificación visual
 

@@ -15,7 +15,7 @@ import type {
 import type { MonthlyPlan, PlannedPayment } from "../monthly-plan";
 import type { CardCycle } from "../card-cycle";
 import type { CardLiabilitySnapshot, WealthOverview } from "../wealth";
-import { CAJITA_ACCOUNT_ID, type FutureCommitments, type MonthSummary, type SpendingAnalytics, type WealthSnapshot } from "@finance/domain";
+import { type FutureCommitments, type ManualCashAccountId, type MonthSummary, type PayrollClosure, type SpendingAnalytics, type WealthSnapshot } from "@finance/domain";
 
 interface LedgerRuntimeConfig {
   readonly apiBaseUrl: string;
@@ -456,9 +456,9 @@ export const ledgerApi = {
   async wealth(idToken: string): Promise<WealthOverview> {
     return request<WealthOverview>("/wealth", idToken);
   },
-  async createCajitaSnapshot(amountMinor: number, idToken: string): Promise<WealthSnapshot> {
+  async createCashSnapshot(accountId: ManualCashAccountId, amountMinor: number, idToken: string): Promise<WealthSnapshot> {
     return request<WealthSnapshot>(
-      `/wealth/accounts/${encodeURIComponent(CAJITA_ACCOUNT_ID)}/snapshots`,
+      `/wealth/accounts/${encodeURIComponent(accountId)}/snapshots`,
       idToken,
       {
         method: "POST",
@@ -466,6 +466,13 @@ export const ledgerApi = {
         body: JSON.stringify({ amountMinor, currency: "MXN" }),
       },
     );
+  },
+  async closePayroll(input: Omit<PayrollClosure, "employerName"> & { payslipUuid: string }, idToken: string): Promise<PayrollClosure> {
+    return request("/wealth/payroll-closures", idToken, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
   },
   async createCardLiabilitySnapshot(
     cardId: string,

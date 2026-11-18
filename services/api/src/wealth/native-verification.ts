@@ -26,7 +26,7 @@ const requiredRelations = [
 
 /** Independent typed-row oracle. No product decoder, projection or document reader selects these balances. */
 export const readIndependentWealthState = async (owner: string, client: ReadSqlClient) => {
-  const [accounts, assets, holdings, assetDays, assetEdges, liabilities, liabilityDays, liabilityEdges, cards, constraints] = await Promise.all([
+  const [accounts, assets, holdings, assetDays, assetEdges, liabilities, liabilityDays, liabilityEdges, cards, constraints, closures, payrollIssuers] = await Promise.all([
     client.query('SELECT * FROM olbia.asset_accounts ORDER BY position'),
     client.query('SELECT * FROM olbia.asset_captures WHERE owner=$1 ORDER BY id', [owner]),
     client.query('SELECT h.* FROM olbia.asset_holdings h JOIN olbia.asset_captures c ON c.id=h.capture_id WHERE c.owner=$1 ORDER BY h.capture_id,h.position', [owner]),
@@ -37,6 +37,8 @@ export const readIndependentWealthState = async (owner: string, client: ReadSqlC
     client.query('SELECT r.* FROM olbia.liability_capture_replacements r JOIN olbia.liability_captures c ON c.id=r.previous_capture_id WHERE c.owner=$1', [owner]),
     client.query('SELECT * FROM olbia.card_profiles WHERE owner=$1 AND deleted_at IS NULL', [owner]),
     client.query("SELECT conname,convalidated FROM pg_constraint WHERE connamespace='olbia'::regnamespace AND conname=ANY($1::text[]) ORDER BY conname", [[...requiredRelations]]),
+    client.query('SELECT * FROM olbia.payroll_closures WHERE owner=$1 ORDER BY fund_paid_on,employer_key', [owner]),
+    client.query('SELECT uuid,employer_name FROM olbia.payslips WHERE owner=$1', [owner]),
   ]);
   let mismatches = 0;
   const check = (expected: unknown, actual: unknown) => { mismatches += Number(!samePublicResult(expected, actual)); };
@@ -85,7 +87,14 @@ export const readIndependentWealthState = async (owner: string, client: ReadSqlC
   const definitions: WealthAccountDefinition[] = accounts.rows.map(r => ({ id: r.id as WealthAccountDefinition['id'], name: String(r.name),
     institution: String(r.institution), role: r.role as WealthAccountDefinition['role'], sync: r.sync as WealthAccountDefinition['sync'] }));
   definitions.splice(1, 0, WEALTH_ACCOUNTS.find(a => a.id === FONDO_AHORRO_ACCOUNT_ID)!);
-  const inputs: NativeWealthInputs = { accounts: definitions,
+  const issuerByReceipt = new Map(payrollIssuers.rows.map(row => [row.uuid, row.employer_name]));
+  const payrollClosures = closures.rows.map(row => {
+    const employerName = issuerByReceipt.get(row.source_payslip_uuid);
+    check(true, typeof employerName === 'string' && employerName.length > 0);
+    return { employerName: String(employerName), endedOn: day(row.ended_on), fundPaidOn: day(row.fund_paid_on),
+      fundPaidMinor: money(row.fund_paid_mxn_minor) };
+  });
+  const inputs: NativeWealthInputs = { accounts: definitions, payrollClosures,
     snapshots: assetDays.rows.map(r => assetFacts.get(String(r.capture_id))!).sort((a, b) => a.day.localeCompare(b.day) || a.accountId.localeCompare(b.accountId)),
     liabilitySnapshots: liabilityDays.rows.map(r => liabilityFacts.get(String(r.capture_id))!).sort((a, b) => a.day.localeCompare(b.day) || a.cardId.localeCompare(b.cardId)),
     cards: cards.rows.map(r => ({ id: String(r.id), name: String(r.name), cutOffDay: Number(r.cut_off_day), paymentDueDay: Number(r.payment_due_day),

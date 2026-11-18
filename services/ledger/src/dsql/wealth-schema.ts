@@ -25,11 +25,11 @@ const evidence = `evidence_bucket text NOT NULL CHECK (length(evidence_bucket)>0
 
 export const NATIVE_WEALTH_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS olbia.asset_accounts (
-    id text PRIMARY KEY CHECK (id IN ('nu_cajita_emergencia','bitso','ibkr')),
+    id text PRIMARY KEY CONSTRAINT asset_accounts_supported_id CHECK (id IN ('nu_cajita_emergencia','bitso','ibkr','santander_cash')),
     name text NOT NULL CHECK (length(name)>0), institution text NOT NULL CHECK (length(institution)>0),
-    role text NOT NULL CHECK (role IN ('emergency_fund','crypto','brokerage')),
+    role text NOT NULL CONSTRAINT asset_accounts_supported_role CHECK (role IN ('emergency_fund','crypto','brokerage','cash')),
     sync text NOT NULL CHECK (sync IN ('manual','api','flex')),
-    position integer NOT NULL UNIQUE CHECK (position BETWEEN 0 AND 2))`,
+    position integer NOT NULL UNIQUE CONSTRAINT asset_accounts_supported_position CHECK (position BETWEEN 0 AND 3))`,
   `CREATE TABLE IF NOT EXISTS olbia.asset_captures (
     id uuid PRIMARY KEY, account_id text NOT NULL REFERENCES olbia.asset_accounts(id),
     owner text NOT NULL CHECK (length(owner)>0), day date NOT NULL, captured_at timestamptz NOT NULL,
