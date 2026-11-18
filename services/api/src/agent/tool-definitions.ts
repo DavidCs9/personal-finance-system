@@ -14,6 +14,13 @@ export const TOOL_DEFINITIONS = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
+    name: 'suggest_movement_classification',
+    description: 'Consulta una sugerencia para un único cargo. Usa la referencia de list_movements y consulta sólo cuando David esté revisando ese cargo. Primero resuelve con las reglas y correcciones confirmadas. Haiku sólo sugiere para un cargo aún sin categoría y sin regla concluyente. Muestra la propuesta a David y usa preview_category_edit o preview_tag_edit para preparar los cambios que él apruebe. Esta consulta no modifica movimientos, reglas, tags ni presupuestos.',
+    inputSchema: { type: 'object', properties: {
+      movementRef: { type: 'string', description: 'UUID o referencia única de ocho caracteres devuelta por list_movements.' },
+    }, required: ['movementRef'] },
+  },
+  {
     name: 'month_snapshot',
     description:
       'Lee todo el Resumen de Olbia en una sola llamada, con los mismos datos que la web: presupuesto mensual, gasto registrado y contado, restante tras compromisos, ritmo diario frente al límite, categorías con sus límites y avisos, liquidez, fijos, MSI y estimación de cierre. Montos en centavos MXN. Usa liquidity para distinguir liquidez registrada, provisional, estimada o faltante y omite proyecciones nulas. La serie no inventa días para cuotas sin fecha; su importe sigue en el total. Los compromisos conocidos no acreditan pagos.',

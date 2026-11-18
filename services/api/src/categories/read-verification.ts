@@ -1,7 +1,7 @@
 import { aggregateSpendByCategory, aggregateSpendByMerchant, resolveCategoryId, daysInCalendarMonth,
   cardRemindersForDay, cardCyclePushMessage, dailyBalancePushMessage, addCalendarMonths, type PayslipSummary } from '@finance/domain';
 import type { JsonObject } from '../http/response.js';
-import { readLedgerMovements } from '@finance/ledger/native-ledger';
+import { classifyMerchant, readLedgerMovements } from '@finance/ledger/native-ledger';
 import { readerPool } from '../events/sql-reads.js';
 import { samePublicResult } from '../events/read-selection.js';
 import { feedFromMovements } from '../events/month-feed.js';
@@ -79,6 +79,12 @@ export const verifyDomainReads = async (owner: string, movements: readonly JsonO
   const merchants = new Set([...movements.map(m => String(m.merchantRaw)), ...rules.map(r => r.merchantKey),
     ...rules.filter(r => r.pattern).map(r => `prefix ${r.pattern} suffix`)]);
   for (const merchant of merchants) check(resolveCategoryId(merchant, rules), resolveCategoryId(merchant, sqlRules));
+  const activeCategories = new Set(categories.filter(category => !category.archived).map(category => category.id));
+  const confirmedExact = rules.find(rule => (rule.source === 'human' || rule.source === 'agent_confirmed')
+    && activeCategories.has(rule.categoryId));
+  // Exercise the same SQL as capture under the deployed verifier, without creating any test movements.
+  const classified = await classifyMerchant(client, confirmedExact?.merchantKey ?? 'c3527ad509ccb1c89d0df91f');
+  if (confirmedExact) check(confirmedExact.categoryId, classified.category?.id);
   const sourceWealth = (await readIndependentWealthState(owner, client)).inputs, sqlWealth = await readNativeWealthInputs(owner, client);
   const sqlCards = sqlWealth.cards; check(cards, sqlCards);
   const sourceReader: NativeWealthInputsReader = async () => sourceWealth, sqlReader: NativeWealthInputsReader = async () => sqlWealth;

@@ -9,6 +9,21 @@ export interface SpendCategory {
   readonly revision?: number;
 }
 
+type MovementClassificationState = {
+  readonly movementId: string;
+  readonly categoryId: string | null;
+  readonly tags: readonly string[];
+};
+
+export type MovementClassificationSuggestionResult =
+  | { readonly status: "not_found" | "invalid_reference" | "ambiguous_reference" }
+  | (MovementClassificationState & { readonly status: "ineligible" | "classified" | "reviewed" | "no_suggestion" | "unavailable" })
+  | (MovementClassificationState & {
+    readonly status: "suggested";
+    readonly source: "rule" | "history" | "haiku";
+    readonly suggestion: { readonly category: Pick<SpendCategory, "id" | "name"> | null; readonly addTags: readonly string[] };
+  });
+
 export interface MerchantCategoryRule {
   readonly id: string;
   /** Normalized merchant key (see normalizeMerchantKey). */

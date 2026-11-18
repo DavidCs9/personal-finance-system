@@ -1,5 +1,6 @@
 import type { BudgetHistory, BudgetStatus, GoalDetail, GoalPage, IncomeSchedule, MonthDashboard } from "./planning-types";
-import { MAX_STATEMENT_PDF_BYTES, type StatementUploadTarget, type StatementCatalog, type StatementProvider } from '@finance/domain';
+import { MAX_STATEMENT_PDF_BYTES, type StatementUploadTarget, type StatementCatalog, type StatementProvider,
+  type MovementClassificationSuggestionResult } from '@finance/domain';
 import type {
   AmexImportPreview,
   AmexImportResult,
@@ -585,6 +586,9 @@ export const ledgerApi = {
   },
   async listCategories(idToken: string): Promise<{ categories: readonly { id: string; name: string; sortOrder: number; archived?: boolean; revision?: number }[] }> {
     return request("/categories", idToken);
+  },
+  async suggestEventClassification(eventId: string, idToken: string): Promise<MovementClassificationSuggestionResult> {
+    return request(`/events/${encodeURIComponent(eventId)}/classification-suggestion`, idToken);
   },
   async setEventCategory(
     eventId: string,

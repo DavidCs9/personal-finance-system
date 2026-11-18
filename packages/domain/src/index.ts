@@ -246,6 +246,7 @@ export {
   resolveCategoryId,
   suggestCategoryIdFromMerchant,
   type MerchantCategoryRule,
+  type MovementClassificationSuggestionResult,
   type SpendCategory,
 } from "./categories.js";
 

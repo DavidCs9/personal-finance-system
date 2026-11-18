@@ -15,6 +15,7 @@ import {
 import { TOOL_DEFINITIONS, type AgentToolName } from './tool-definitions.js';
 import type { SpendingRange } from './spending-range.js';
 import { listAgentCategories } from '../categories/control-plane.js';
+import { suggestMovementClassification } from '../categories/suggestions.js';
 import { editOperationStatus } from './edit-status.js';
 import { creditCardCyclesForAgent, futureCommitmentsForAgent, monthDetailsForAgent, wealthHistoryForAgent } from './financial-capabilities.js';
 
@@ -40,6 +41,8 @@ export const runAgentTool = async (
       return editOperationStatus(owner, input.operationId);
     case 'list_categories':
       return listAgentCategories();
+    case 'suggest_movement_classification':
+      return suggestMovementClassification(input.movementRef);
     case 'month_snapshot':
       return monthSnapshot(owner, String(input.month));
     case 'plan_month_scenario':

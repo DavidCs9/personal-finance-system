@@ -25,6 +25,7 @@ import {
 import { InvalidManualEntryError } from '../events/manual-entry-input.js';
 import { createManualEvent } from '../events/manual-entry.js';
 import { getEventDetail, listEventsForMonth, readRawEmail } from '../events/queries.js';
+import { suggestMovementClassification } from '../categories/suggestions.js';
 import { InvalidMsiError, patchEvent } from '../events/mutations.js';
 import { discardException, listExceptions, readExceptionRawEmail, requestRetry } from '../exceptions/service.js';
 import { applySantanderImport, previewSantanderImport } from '../imports/santander-csv-flow.js';
@@ -315,6 +316,11 @@ app.get('/events', async ({ event }) => {
 app.get('/events/:eventId/raw', async ({ params }) =>
   json(HttpStatusCodes.OK, { rawEmail: await readRawEmail(params.eventId) }),
 );
+
+app.get('/events/:eventId/classification-suggestion', async ({ params }) => {
+  const result = await suggestMovementClassification(params.eventId);
+  return statementResponse('movementId' in result ? HttpStatusCodes.OK : HttpStatusCodes.NOT_FOUND, result);
+});
 
 app.get('/events/:eventId', async ({ params }) => {
   const detail = await getEventDetail(params.eventId);
