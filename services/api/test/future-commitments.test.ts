@@ -1,7 +1,8 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nativeFixture } from './fixtures/native-ledger.js';
 import { readFutureCommitments } from '../src/months/commitments.js';
 import { InvalidMonthlyPlanError } from '../src/months/monthly-plan.js';
+import { withSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
 
 let fixture: Awaited<ReturnType<typeof nativeFixture>>;
 const now = new Date('2026-10-04T18:00:00Z');
@@ -27,6 +28,24 @@ const msi = async (status='accepted', currency='MXN', incomplete=false) => {
 };
 
 describe('SQL future commitments', () => {
+  it('dispatches the MCP tool to the canonical read-only schedule and its continuation unchanged', async () => {
+    process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-evidence';
+    const { runAgentTool } = await import('../src/agent/tools.js');
+    await plan('2026-09', 12345);
+    await msi('needs_review');
+    await msi('accepted', 'MXN', true);
+    const before = await fixture.snapshot();
+    vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now);
+    try {
+      const expected = await readFutureCommitments('owner', undefined, now, fixture.pool);
+      expect(await withSqlClient(fixture.pool, () => runAgentTool('owner', 'get_future_commitments', {}))).toEqual(expected);
+      const continuation = await readFutureCommitments('owner', expected.nextStartMonth, now, fixture.pool);
+      expect(await withSqlClient(fixture.pool, () => runAgentTool('owner', 'get_future_commitments',
+        { startMonth: expected.nextStartMonth }))).toEqual(continuation);
+      expect(await fixture.snapshot()).toEqual(before);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('combines pending MSI and inherited fixed payments without multiplying either source', async () => {
     await plan('2026-09',12345);
     await fixture.sql.query("INSERT INTO olbia.planned_payments VALUES ('2026-09','internet','Internet',6789,18,1)");

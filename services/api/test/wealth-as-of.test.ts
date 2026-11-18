@@ -90,4 +90,23 @@ describe('historical wealth overview', () => {
       ],
     });
   });
+
+  it('exposes canonical net history and historical components without claiming carried snapshots are new captures', async () => {
+    const { wealthHistoryForAgent } = await import('../src/agent/financial-capabilities.js');
+    const now = new Date('2026-09-06T18:00:00-06:00');
+    const original = structuredClone(await readNativeWealthInputs());
+    const canonical = await getWealthOverview('owner-1', now);
+    const result = await wealthHistoryForAgent('owner-1', { fromMonth: '2026-07', toMonth: '2026-09' }, now);
+    expect(result.months.map(point => point.netMxnMinor)).toEqual(canonical.history.all.map(point => point.totalMxnMinor));
+    expect(result.months[0]).toMatchObject({ month: '2026-08', asOfDay: '2026-08-31', netMxnMinor: 145_000_00,
+      componentsStatus: 'available', components: { assetsMxnMinor: 155_000_00, liabilitiesMxnMinor: 10_000_00,
+        accounts: expect.arrayContaining([
+          expect.objectContaining({ accountId: 'ibkr', snapshotAsOfDay: '2026-08-30', carriedForward: true, ageDays: 1 }),
+          expect.objectContaining({ accountId: 'fondo_ahorro', source: 'derived', capturedAt: null,
+            ageDays: null, freshness: 'payroll_derived_as_of_cutoff' }),
+        ]) } });
+    expect(result.months[1]).toMatchObject({ month: '2026-09', asOfDay: '2026-09-06', periodStatus: 'in_progress', netMxnMinor: 162_000_00 });
+    expect(result.omittedMonths).toEqual([{ month: '2026-07', reason: 'before_history_coverage' }]);
+    expect(await readNativeWealthInputs()).toEqual(original);
+  });
 });

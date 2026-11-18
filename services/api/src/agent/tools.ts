@@ -13,6 +13,7 @@ import { TOOL_DEFINITIONS, type AgentToolName } from './tool-definitions.js';
 import type { SpendingRange } from './spending-range.js';
 import { listAgentCategories } from '../categories/control-plane.js';
 import { editOperationStatus } from './edit-status.js';
+import { creditCardCyclesForAgent, futureCommitmentsForAgent, monthDetailsForAgent, wealthHistoryForAgent } from './financial-capabilities.js';
 
 export { TOOL_DEFINITIONS, type AgentToolName };
 
@@ -55,6 +56,14 @@ export const runAgentTool = async (
       );
     case 'wealth_snapshot':
       return wealthSnapshotForAgent(owner);
+    case 'get_future_commitments':
+      return futureCommitmentsForAgent(owner, input);
+    case 'get_month_details':
+      return monthDetailsForAgent(owner, input);
+    case 'get_credit_card_cycles':
+      return creditCardCyclesForAgent(owner);
+    case 'get_wealth_history':
+      return wealthHistoryForAgent(owner, input);
     case 'investment_history':
       try {
         return await investmentHistory(owner, input);

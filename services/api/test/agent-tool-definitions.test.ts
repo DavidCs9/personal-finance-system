@@ -3,6 +3,19 @@ import { TOOL_DEFINITIONS } from '../src/agent/tool-definitions.js';
 import { TAG_MUTATION_TOOL_DEFINITIONS } from '../src/agent/tag-mutation-tool-definitions.js';
 
 describe('AgentCore finance tool definitions', () => {
+  it('exposes the four read-only P0 contracts with calendar month schemas', () => {
+    const byName = new Map(TOOL_DEFINITIONS.map(tool => [tool.name, tool]));
+    expect(byName.get('get_month_details')?.inputSchema).toMatchObject({ required: ['month'],
+      properties: { month: { type: 'string', pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$' } } });
+    for (const name of ['get_future_commitments', 'get_credit_card_cycles', 'get_wealth_history'] as const) {
+      expect(byName.get(name)?.inputSchema).not.toHaveProperty('required');
+    }
+    expect(byName.get('get_future_commitments')?.inputSchema.properties).toHaveProperty('startMonth');
+    expect(byName.get('get_credit_card_cycles')?.inputSchema.properties).toEqual({});
+    expect(byName.get('get_wealth_history')?.inputSchema.properties).toHaveProperty('fromMonth');
+    expect(byName.get('get_wealth_history')?.inputSchema.properties).toHaveProperty('toMonth');
+  });
+
   it('exposes list_movements date ranges without requiring a month', () => {
     const tool = TOOL_DEFINITIONS.find((definition) => definition.name === 'list_movements');
     expect(tool).toBeDefined();
