@@ -70,6 +70,8 @@ it('uses native lifecycle, denies bootstrap tool exposure, and binds read tools 
   expect(target.Condition).toBe('FinanceMcpAudienceBound');
   expect(target.Properties.TargetConfiguration.Mcp.Lambda.LambdaArn).toEqual(stack.resolve(tools.functionArn));
   expect(target.Properties.TargetConfiguration.Mcp.Lambda.ToolSchema.InlinePayload.map((t: { Name: string }) => t.Name)).toEqual(TOOL_DEFINITIONS.map(t => t.name));
+  expect(target.Properties.TargetConfiguration.Mcp.Lambda.ToolSchema.InlinePayload.map((t: { Name: string }) => t.Name))
+    .toEqual(expect.arrayContaining(['get_future_commitments', 'get_month_details', 'get_credit_card_cycles', 'get_wealth_history']));
   expect(JSON.stringify(json)).not.toContain('Custom::FinanceMcpOAuth');
   const policies = JSON.stringify(template.findResources('AWS::IAM::Policy'));
   expect(policies).toContain('lambda:InvokeFunction');

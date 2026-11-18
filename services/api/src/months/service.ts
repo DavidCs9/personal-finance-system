@@ -7,7 +7,7 @@ import { assertPaymentChargeMembership, readPaymentCharges, replaceMonthlyPaymen
 
 export const getMonthlyPlanFromReads = async (owner: string, month: string,
   readRecord: (owner: string, month: string) => Promise<MonthlyPlanRecord | undefined>,
-  readIncome: typeof incomeFieldsForMonth): Promise<JsonObject> => {
+  readIncome: typeof incomeFieldsForMonth) => {
   const [plan, income] = await Promise.all([readRecord(owner, month), readIncome(owner, month)]);
   const sourceMonth = plan?.month;
   const upcomingPayments = plan?.upcomingPayments ?? [];
@@ -41,7 +41,7 @@ export const getMonthlyPlanFromReads = async (owner: string, month: string,
   };
 };
 
-export const getMonthlyPlan = (owner: string, month: string): Promise<JsonObject> =>
+export const getMonthlyPlan = (owner: string, month: string) =>
   getMonthlyPlanFromReads(owner, month, readSqlPlanRecord, incomeFieldsForMonth);
 
 export const saveMonthlyPlan = async (owner: string, month: string, input: MonthlyPlanInput): Promise<JsonObject> => {

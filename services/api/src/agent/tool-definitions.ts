@@ -129,6 +129,33 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'get_future_commitments',
+    description: 'Sólo lectura. Calendario canónico de 12 meses de gastos fijos y cuotas MSI pendientes en centavos MXN, con detalle, días ajustados, i/N, incertidumbre y planes incompletos excluidos. startMonth es opcional (mes actual Chihuahua); continúa con nextStartMonth. No acredita cobros ni ingresos/disponibilidad futura. No sumes saldos de tarjeta: ya incluyen deuda MSI.',
+    inputSchema: { type: 'object', properties: {
+      startMonth: { type: 'string', pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$', description: 'YYYY-MM actual o futuro, hasta diez años; nextStartMonth para continuar.' },
+    } },
+  },
+  {
+    name: 'get_month_details',
+    description: 'Sólo lectura. Nómina depositada separada de ingresos estimados/provisionales y sus flags; resúmenes de empleador, fecha de pago, tipo y neto sin líneas SAT. Fijos individuales con importe en centavos MXN, día programado/ajustado, vínculo efectivo o por revisar y mes fuente heredado. Un fijo sin vínculo no prueba deuda ni falta de cobro; estimado/provisional no es depósito verificado.',
+    inputSchema: { type: 'object', properties: {
+      month: { type: 'string', pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$', description: 'Mes financiero YYYY-MM en Chihuahua.' },
+    }, required: ['month'] },
+  },
+  {
+    name: 'get_credit_card_cycles',
+    description: 'Sólo lectura. Perfiles activos de tarjetas: ID, nombre, institución, días configurados de corte/pago y último saldo de deuda total en centavos MXN con fecha/frescura. Los días configurados no son fechas reales del estado ni pagos confirmados. Saldo incluye MSI, no equivale al pago del mes y no acredita inclusión de una compra individual. Estado de cuenta, mínimo, pago sin intereses, pago confirmado y mapeo tarjeta-cuotas no están soportados (null/status); nunca inferirlos.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_wealth_history',
+    description: 'Sólo lectura. Historial canónico mensual de Neto desde agosto 2026 y componentes de activos/deuda cuando coinciden con ese historial. fromMonth/toMonth opcionales YYYY-MM; máximo 24 meses inclusivos, default últimos 24 hasta mes actual Chihuahua. Mes actual en curso, anteriores al cierre. Devuelve cobertura, huecos y fechas/antigüedad de componentes al corte; carry-forward no es captura nueva. Sin interpolar ni inventar prehistoria. Deuda incluye MSI: no restar cuotas otra vez. Variación patrimonial no es rendimiento ni gasto.',
+    inputSchema: { type: 'object', properties: {
+      fromMonth: { type: 'string', pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$', description: 'Inicio inclusivo; default 23 meses antes de toMonth.' },
+      toMonth: { type: 'string', pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$', description: 'Fin inclusivo; default mes actual Chihuahua.' },
+    } },
+  },
+  {
     name: 'investment_history',
     description:
       'Historial de inversiones de mercado desde snapshots diarios; no es el Patrimonio completo. Sin accountId ni symbol consulta Bitso + IBKR y el default es all-time; úsalo para preguntas globales o de mínimo/máximo sin periodo. Para cuánto había en una fecha usa asOfDay, que devuelve el último snapshot conocido en o antes de esa fecha. Para un periodo usa range o custom con fechas; para cambios de hoy/ayer usa periodChange, porque summary compara sólo observaciones dentro del rango. summary y periodChange son variaciones de valor observado en MXN, no rendimientos ajustados por aportaciones; incluyen FX. Con symbol, unitPriceChangePercent aproxima el cambio del precio unitario en MXN y también incluye FX. Revisa status, accountCoverage, mixedAsOf, limitations y lifecycle antes de responder. accountId solo acepta bitso o ibkr; no uses palabras como inversiones como accountId. Si ok=false, explica message como error de consulta o falta de datos, no como una falla del Gateway.',

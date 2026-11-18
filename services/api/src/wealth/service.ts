@@ -23,6 +23,7 @@ import {
   type WealthHolding,
   type WealthSnapshot,
   type WealthSnapshotSource,
+  type WealthHistoryPoint,
 } from '@finance/domain';
 import { isValidCardId } from '../cards/cards.js';
 import type { CardRecord } from '../cards/cards.js';
@@ -71,6 +72,13 @@ export interface WealthBalanceOverview {
   readonly accounts: readonly WealthBalanceAccount[];
   readonly liabilities: readonly WealthBalanceLiability[];
   readonly payrollClosures?: readonly PayrollClosure[];
+}
+
+export interface WealthOverview extends WealthBalanceOverview {
+  readonly history: {
+    readonly all: readonly WealthHistoryPoint[];
+    readonly byAccount: Readonly<Record<string, readonly WealthHistoryPoint[]>>;
+  };
 }
 
 export const listWealthSnapshots = async (owner: string): Promise<readonly WealthSnapshot[]> =>
@@ -270,7 +278,7 @@ export const getWealthOverview = async (
   now: Date = new Date(),
   readPayrollYear: typeof listPayslipsForYear = listPayslipsForYear,
   readInputs: NativeWealthInputsReader = readNativeWealthInputs,
-): Promise<WealthBalanceOverview & JsonObject> => {
+): Promise<WealthOverview & JsonObject> => {
   const year = dayKeyInZone(now, FINANCE_TIME_ZONE).slice(0, 4);
   const [inputs, yearPayslips] = await Promise.all([readInputs(owner), readPayrollYear(owner, year)]);
   const { accounts, snapshots, cards, liabilitySnapshots } = inputs;
