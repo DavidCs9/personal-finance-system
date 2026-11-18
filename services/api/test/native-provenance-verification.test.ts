@@ -1,3 +1,4 @@
+import { NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS } from '../../ledger/src/dsql/financial-plan-schema.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nativeFixture } from './fixtures/native-ledger.js';
@@ -57,6 +58,7 @@ describe('independent ledger provenance and immutable recovery assertions', () =
     // Roll back the catalog change so historical fixture cases remain independent.
     const rollback = new Error('ROLLBACK_NATIVE_CATALOG_TEST');
     await expect(fixture.sql.transaction(async client => {
+      for (const statement of NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS) await client.query(statement);
       await client.query('INSERT INTO olbia.schema_migrations VALUES (20,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING');
       await retireMigrationEvidence(client, async () => {});
       expect(await verifyNativeLedgerProvenance(client)).toMatchObject({ bankClaims: 1, linkedClaimsWithoutObservation: 1, mismatches: 0 });

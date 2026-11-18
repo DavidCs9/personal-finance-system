@@ -1,3 +1,5 @@
+import { FinancialPlanError } from '@finance/domain';
+import { listExpectedIncome, getExpectedIncome, listFinancialGoals, getFinancialGoal, previewFinancialChange, applyFinancialChange, getFinancialWriteStatus } from '../financial-plans/service.js';
 import { getStatementCatalog, getStatementSource } from '../imports/statement-catalog.js';
 import { createStatementUpload } from '../imports/statement-upload.js';
 import { createAmexActivityUpload } from '../imports/amex-activity-source.js';
@@ -108,6 +110,7 @@ const ownerOf = (event: APIGatewayProxyEventV2): string => principal(event);
 const asHttpEvent = (event: unknown): APIGatewayProxyEventV2 => event as APIGatewayProxyEventV2;
 
 const clientErrors = [
+  FinancialPlanError,
   InvalidMonthlyPlanError,
   InvalidSantanderCsvError,
   BankImportError,
@@ -128,7 +131,7 @@ const clientErrors = [
 ] as const;
 
 app.errorHandler([...clientErrors], async (error) =>
-  json(HttpStatusCodes.BAD_REQUEST, { message: error.message }),
+  json(error instanceof FinancialPlanError && error.reasonCode === 'conflict' ? 409 : error instanceof FinancialPlanError && error.reasonCode === 'not_found' ? 404 : HttpStatusCodes.BAD_REQUEST, { message: error.message }),
 );
 
 app.errorHandler(PaymentReconciliationConflictError, async (error) =>
@@ -159,6 +162,34 @@ app.get('/statements/:provider/:importId/source', async ({ event, params }) => {
   const source = await getStatementSource(params.provider, params.importId, ownerOf(asHttpEvent(event)));
   return source ? statementResponse(HttpStatusCodes.OK, source) : statementResponse(HttpStatusCodes.NOT_FOUND, { message: 'Estado de cuenta no encontrado.' });
 });
+
+app.get('/expected-income', async ({ event }) => {
+  const e = asHttpEvent(event);
+  return json(200, await listExpectedIncome(ownerOf(e), { ...e.queryStringParameters,
+    ...(e.queryStringParameters?.limit !== undefined ? { limit: Number(e.queryStringParameters.limit) } : {}) }));
+});
+app.get('/expected-income/:incomeId', async ({ event, params }) =>
+  json(200, await getExpectedIncome(ownerOf(asHttpEvent(event)), params.incomeId, asHttpEvent(event).queryStringParameters ?? {})));
+app.get('/financial-goals', async ({ event }) => {
+  const e = asHttpEvent(event);
+  return json(200, await listFinancialGoals(ownerOf(e), { ...e.queryStringParameters,
+    ...(e.queryStringParameters?.limit !== undefined ? { limit: Number(e.queryStringParameters.limit) } : {}) }));
+});
+app.get('/financial-goals/:goalId', async ({ event, params }) =>
+  json(200, await getFinancialGoal(ownerOf(asHttpEvent(event)), params.goalId)));
+app.get('/financial-writes/:operationId', async ({ event, params }) =>
+  json(200, await getFinancialWriteStatus(ownerOf(asHttpEvent(event)), params.operationId)));
+for (const [path, kind] of [['/expected-income/preview', 'income'], ['/financial-goals/preview', 'goal']] as const) {
+  app.post(path, async ({ event }) => {
+    const e = asHttpEvent(event);
+    let input: unknown;
+    try { input = JSON.parse(requestBody(e) ?? ''); } catch { throw new FinancialPlanError('Se requiere JSON válido.'); }
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new FinancialPlanError('Se requiere un objeto.');
+    return json(200, await previewFinancialChange(ownerOf(e), kind, input as Record<string, unknown>));
+  });
+}
+app.post('/financial-writes/:operationId/apply', async ({ event, params }) =>
+  json(200, await applyFinancialChange(ownerOf(asHttpEvent(event)), params.operationId)));
 
 app.get('/cards', async ({ event }) => {
   const cards = await listCards(ownerOf(asHttpEvent(event)));

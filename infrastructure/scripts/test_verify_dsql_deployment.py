@@ -31,9 +31,9 @@ elif operation == ['stepfunctions', 'describe-execution']:
 elif operation == ['lambda', 'invoke']:
     payload = json.loads(a[a.index('--payload') + 1])
     action = payload.get('action', 'read')
-    response = {'mode': os.environ.get('AUTHORITY', 'sql')} if action == 'status' else {'verified': True, 'rolledBack': True, 'nativeLedger': True, 'nativeWealth': True, 'nativePush': True, 'nativeDeliveries': True, 'nativeThreads': True, 'nativeExceptions': True} if action == 'smoke' else {'verified': True, 'mode': 'native-sql', 'mismatches': 0, 'provenance': {'mismatches': 0}, 'evidence': {'mismatches': 0}}
+    response = {'mode': os.environ.get('AUTHORITY', 'sql')} if action == 'status' else {'verified': True, 'rolledBack': True, 'nativeLedger': True, 'nativeWealth': True, 'nativePush': True, 'nativeDeliveries': True, 'nativeThreads': True, 'nativeExceptions': True, 'nativeFinancialPlans': True} if action == 'smoke' else {'verified': True, 'mode': 'native-sql', 'mismatches': 0, 'provenance': {'mismatches': 0}, 'evidence': {'mismatches': 0}}
     if action == 'retire-migration-evidence':
-        response = {'verified': True, 'mode': 'native-sql', 'remainingTables': json.loads(os.environ.get('REMAINING_TABLES', '46')), 'domainTables': json.loads(os.environ.get('DOMAIN_TABLES', '43')), 'controlTables': 3, 'migrationEvidenceTables': 0, 'removedTables': json.loads(os.environ.get('REMOVED_TABLES', '0'))}
+        response = {'verified': True, 'mode': 'native-sql', 'remainingTables': json.loads(os.environ.get('REMAINING_TABLES', '52')), 'domainTables': json.loads(os.environ.get('DOMAIN_TABLES', '49')), 'controlTables': 3, 'migrationEvidenceTables': 0, 'removedTables': json.loads(os.environ.get('REMOVED_TABLES', '0'))}
         if os.environ.get('OMIT_REMOVED_TABLES'):
             response.pop('removedTables')
     if os.environ.get('FAIL_GATE') == action:

@@ -1,3 +1,4 @@
+import { listExpectedIncome, getExpectedIncome, listFinancialGoals, getFinancialGoal, getFinancialWriteStatus } from '../financial-plans/service.js';
 import {
   compareMonths,
   InvalidAgentQueryError,
@@ -23,6 +24,11 @@ export const runAgentTool = async (
   input: Record<string, unknown>,
 ): Promise<unknown> => {
   switch (name as AgentToolName | string) {
+    case 'list_expected_income': return listExpectedIncome(owner, input);
+    case 'get_expected_income': return getExpectedIncome(owner, input.incomeId, input);
+    case 'list_financial_goals': return listFinancialGoals(owner, input);
+    case 'get_financial_goal': return getFinancialGoal(owner, input.goalId);
+    case 'get_financial_write_status': return getFinancialWriteStatus(owner, input.operationId);
     case 'edit_operation_status':
       return editOperationStatus(owner, input.operationId);
     case 'list_categories':

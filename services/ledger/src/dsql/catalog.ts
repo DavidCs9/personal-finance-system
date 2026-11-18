@@ -1,3 +1,4 @@
+import { NATIVE_FINANCIAL_PLAN_TABLES } from './financial-plan-schema.js';
 import { NATIVE_LEDGER_TABLES } from './ledger-schema.js';
 import { NATIVE_WEALTH_TABLES } from './wealth-schema.js';
 import { NATIVE_THREAD_TABLES } from './thread-schema.js';
@@ -8,7 +9,7 @@ import { NATIVE_CATEGORY_TABLES } from './category-schema.js';
 export const NATIVE_DOMAIN_TABLES = [
   ...NATIVE_LEDGER_TABLES, ...NATIVE_WEALTH_TABLES, ...NATIVE_THREAD_TABLES,
   ...NATIVE_PLANNING_TABLES,
-  ...NATIVE_CATEGORY_TABLES,
+  ...NATIVE_CATEGORY_TABLES, ...NATIVE_FINANCIAL_PLAN_TABLES,
   'spend_categories', 'merchant_rules', 'card_profiles', 'month_plans', 'planned_payments',
   'payslips', 'payslip_lines', 'payroll_closures', 'bank_imports', 'bank_import_rows', 'bank_import_candidates',
   'web_push_subscriptions', 'monthly_email_preparations', 'monthly_email_receipts',

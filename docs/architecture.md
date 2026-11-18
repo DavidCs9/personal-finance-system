@@ -2,6 +2,10 @@
 
 Olbia serves David alone under the binding [product north star](product-north-star.md). **Aurora DSQL is the sole product persistence authority.** All active domains use domain keys, typed columns, native constraints, direct SQL and transactional operations. Financial contracts live in [financial rules](financial-rules.md); release/recovery steps in [operations](operations.md).
 
+## MCP-first boundary
+
+Follow the binding [product direction](product-north-star.md#mcp-first-chatgpt-como-interfaz-principal): ChatGPT is the primary interface, through the existing single Olbia Gateway endpoint and OAuth connection. Separate read and bounded-write targets call shared API/domain services and native SQL repositories. The web and authenticated REST operations use those same services. No MCP-specific financial engine, second connector or direct client database access is allowed. Read authorization must remain compatible; writes require a trusted per-tool server-side boundary and least-privilege IAM/SQL authority. The web complements this path for transaction review, financial document imports and dashboards.
+
 ## System map
 
 ```mermaid
@@ -24,8 +28,11 @@ flowchart LR
   Sync --> Evidence
   Ingest --> Evidence
   Chat --> Harness[AgentCore Harness · Gateways]
-  ChatGPT[Private ChatGPT plugin] --> OAuth[Cognito OAuth · native read-only Gateway]
+  ChatGPT[ChatGPT · primary interface] --> OAuth[Cognito OAuth · single MCP Gateway]
   OAuth --> Tools
+  OAuth --> BoundedWrites[Scoped bounded-write targets]
+  BoundedWrites --> Domain[Shared domain services]
+  Domain --> SQL
   Harness --> Tools[Read tools · bounded mutation tools]
   Tools --> SQL
   Harness --> Memory[AgentCore Memory · transcripts]
@@ -66,6 +73,7 @@ The [versioned bootstrap](../services/ledger/src/dsql/schema.ts) and adjacent `*
 - Bank imports use provider kind/content hash plus ordered rows/candidates. Retained selected/candidate movement IDs are historical assertions, not proof of current relationships. Typed provenance links actual rows where proven and preserves ambiguity otherwise.
 - Assets/liabilities own immutable capture headers, holdings, daily selections and replacement relationships. Totals derive from holdings; Fondo remains payroll-derived, with an immutable, evidence-backed closure linked to a real payslip. Schema version 25 adds that closure and the manual Santander asset.
 - Push owns native subscription identity/transport keys. Public readers select metadata only; transport readers have the scoped secrets/keys they need.
+- Expected income, financial goals, allocations and payments have native typed current records. `financial_write_operations` retains authenticated expiring intent; append-only `financial_change_receipts` retains before/after assertions and results. Preview snapshots are history, never current financial authority. A dedicated financial writer SQL role can change those entities and perform canonical manual captures, without payroll, wealth or catalog writes.
 - Monthly email preparations and provider receipts are separate append-only relations; their relationship determines sent state.
 - Conversation metadata and the single personal active selection live in SQL with a real FK. AgentCore owns transcript events, session discovery and provider retention.
 - Review exceptions, proven suppression claims and request-time retry attempts are relational. Completion links the exact attempt to a movement in the same financial transaction; absent historical UUIDs remain absent.
@@ -82,7 +90,7 @@ Provider acceptance and SQL cannot commit together. SES acceptance before receip
 
 ## Recovery boundary and schema changes
 
-The October 4 cleanup is deployed and independently accepted ([#207](https://github.com/DavidCs9/personal-finance-system/pull/207)). The current catalog has 43 native domain tables and three operational controls; schema version 22 adds the current fixed-payment links and their immutable decisions; version 24 adds category lifecycle and immutable catalog changes. David's explicit 2026-10-04 decision removed all migration copies from DSQL: 24 frozen domain relations plus `projection_state` and `command_receipts`. No archive schema, recreated copy or verifier dependency is allowed. Retained DynamoDB is pre-cutover recovery; native DSQL backups protect current finances and S3 retains originals. Product reads/writes never fall back to DynamoDB. Current controls `schema_migrations`, `runtime_state` and `application_barrier` remain operational, with validated identities/modes and scoped mutable columns; they are not migration copies.
+The October 4 cleanup is deployed and independently accepted ([#207](https://github.com/DavidCs9/personal-finance-system/pull/207)). The current catalog has 49 native domain tables and three operational controls; schema version 22 adds the current fixed-payment links and their immutable decisions; version 24 adds category lifecycle and immutable catalog changes; version 26 adds income assumptions, financial goals/payments and financial operation receipts. David's explicit 2026-10-04 decision removed all migration copies from DSQL: 24 frozen domain relations plus `projection_state` and `command_receipts`. No archive schema, recreated copy or verifier dependency is allowed. Retained DynamoDB is pre-cutover recovery; native DSQL backups protect current finances and S3 retains originals. Product reads/writes never fall back to DynamoDB. Current controls `schema_migrations`, `runtime_state` and `application_barrier` remain operational, with validated identities/modes and scoped mutable columns; they are not migration copies.
 
 Keep original observations, payroll, wealth captures, revisions and replacement evidence immutable under scoped grants. Do not impose current-catalog FKs on historical before/after assertions or manufacture missing claim parents/card mappings. Normalization acceptance does not certify every historical bank charge or justify deleting evidence.
 

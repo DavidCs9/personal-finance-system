@@ -51,7 +51,7 @@ while (( SECONDS < deadline )); do
       aws lambda invoke --function-name "$operator_function" --cli-binary-format raw-in-base64-out \
         --payload '{"action":"smoke"}' --cli-read-timeout 180 "$response_file" > "$metadata_file"
       jq -e '.StatusCode == 200 and .FunctionError == null' "$metadata_file" > /dev/null || { echo 'Native SQL write smoke failed' >&2; exit 1; }
-      jq -e '.verified == true and .rolledBack == true and .nativeLedger == true and .nativeWealth == true and .nativePush == true and .nativeDeliveries == true and .nativeThreads == true and .nativeExceptions == true' "$response_file" > /dev/null || { echo 'Native SQL rollback verification failed' >&2; exit 1; }
+      jq -e '.verified == true and .rolledBack == true and .nativeLedger == true and .nativeWealth == true and .nativePush == true and .nativeDeliveries == true and .nativeThreads == true and .nativeExceptions == true and .nativeFinancialPlans == true' "$response_file" > /dev/null || { echo 'Native SQL rollback verification failed' >&2; exit 1; }
       cat "$response_file"
       # Destructive schema cleanup belongs exclusively to this reviewed deployment,
       # after every updated native reader and writer has passed its real gate.
@@ -62,7 +62,7 @@ while (( SECONDS < deadline )); do
       aws lambda invoke --function-name "$schema_function" --cli-binary-format raw-in-base64-out \
         --payload '{"action":"retire-migration-evidence"}' --cli-read-timeout 900 "$response_file" > "$metadata_file"
       jq -e '.StatusCode == 200 and .FunctionError == null' "$metadata_file" > /dev/null || { echo 'SQL catalog cleanup invocation failed' >&2; exit 1; }
-      jq -e '.verified == true and .mode == "native-sql" and .remainingTables == 46 and .domainTables == 43 and .controlTables == 3 and .migrationEvidenceTables == 0
+      jq -e '.verified == true and .mode == "native-sql" and .remainingTables == 52 and .domainTables == 49 and .controlTables == 3 and .migrationEvidenceTables == 0
         and (.removedTables | type) == "number" and .removedTables >= 0 and .removedTables <= 26
         and (.removedTables | floor) == .removedTables' "$response_file" > /dev/null || { echo 'SQL catalog cleanup failed' >&2; exit 1; }
       cat "$response_file"
@@ -84,7 +84,7 @@ while (( SECONDS < deadline )); do
       aws lambda invoke --function-name "$operator_function" --cli-binary-format raw-in-base64-out \
         --payload '{"action":"smoke"}' --cli-read-timeout 180 "$response_file" > "$metadata_file"
       jq -e '.StatusCode == 200 and .FunctionError == null' "$metadata_file" > /dev/null || { echo 'Clean SQL write smoke invocation failed' >&2; exit 1; }
-      jq -e '.verified == true and .rolledBack == true and .nativeLedger == true and .nativeWealth == true and .nativePush == true and .nativeDeliveries == true and .nativeThreads == true and .nativeExceptions == true' "$response_file" > /dev/null || { echo 'Clean SQL rollback verification failed' >&2; exit 1; }
+      jq -e '.verified == true and .rolledBack == true and .nativeLedger == true and .nativeWealth == true and .nativePush == true and .nativeDeliveries == true and .nativeThreads == true and .nativeExceptions == true and .nativeFinancialPlans == true' "$response_file" > /dev/null || { echo 'Clean SQL rollback verification failed' >&2; exit 1; }
       cat "$response_file"
       exit 0 ;;
     FAILED|TIMED_OUT|ABORTED)

@@ -2,6 +2,8 @@
 
 Guía vinculante para cualquier cambio visible, incluidos reportes y mensajes fuera del frontend. Sigue el [norte del producto](product-north-star.md) y las [reglas financieras](financial-rules.md). Las instrucciones de implementación están en [AGENTS web](../apps/web/AGENTS.md).
 
+ChatGPT es la interfaz principal de Olbia según la [decisión MCP-first](product-north-star.md#mcp-first-chatgpt-como-interfaz-principal). La web complementa la conversación para revisar movimientos, importar documentos e inspeccionar dashboards y evidencia. La configuración financiera ordinaria debe poder completarse por MCP sin pasar por una pantalla web; la web refleja los mismos registros y reglas del dominio. La jerarquía siguiente organiza las superficies web complementarias.
+
 ## Navegación y jerarquía
 
 Decisión explícita de David del **2026-10-25**: cuatro tabs en este orden, **Resumen / Movimientos / Planificación / Patrimonio**. Primero organizar la aplicación y sus listas; después abordar la confiabilidad financiera en un trabajo separado. La reorganización reutiliza datos y cálculos existentes, sin corregir conciliaciones ni introducir fórmulas nuevas. Diseñar primero para móvil: al menos 95% del uso esperado. En escritorio mantener el mismo recorrido con ancho de lectura contenido.
@@ -58,7 +60,7 @@ Priorizar cifras, porcentajes y comparaciones. Una gráfica debe explicar una re
 
 ## Consultas y correo
 
-Las consultas conversacionales se hacen en ChatGPT con la [integración de Olbia de sólo lectura](operations.md#private-chatgpt-mcp-connection). La web de Olbia conserva sus cuatro tabs y las acciones de edición de movimientos y categorías.
+ChatGPT es la interfaz principal para consultas y gestión financiera mediante la [única conexión MCP de Olbia](operations.md#private-chatgpt-mcp-connection), con permisos explícitos de lectura y escritura acotada. La web conserva sus cuatro tabs, revisión de movimientos/categorías, importaciones y dashboards; refleja los mismos registros del dominio y no es un paso obligatorio para la configuración ordinaria.
 
 **Precierre** pone primero saldos de efectivo y deudas manuales con importe/fecha y captura pendiente; Fondo derivado y Bitso/IBKR automáticos. **Cierre mensual** tiene dos capítulos: **Tu mes / Dónde se fue** y **Tu patrimonio / Qué cambió**. Conservar voz/paleta, declarar tags superpuestos y no atribuir causalidad entre gasto y variación patrimonial.
 

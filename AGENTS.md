@@ -12,6 +12,8 @@ Before planning, implementing or reviewing any user-facing change, read [UI dire
 
 When autonomous or long-running work is authorized, read [autonomous run rules](AUTONOMOUS_RUN_RULES.md) completely and follow them throughout the run.
 
+**MCP-first is binding. ChatGPT is David's primary interface to Olbia.** Follow the [product direction](docs/product-north-star.md#mcp-first-chatgpt-como-interfaz-principal) for every financial capability: shared authoritative domain services, accessible through the existing single MCP Gateway/ChatGPT connection with appropriate read/write authorization and financial safeguards. The web app complements MCP for transaction review, document imports and dashboards; ordinary financial configuration must not require web interaction. Never duplicate business logic in MCP or create a second Gateway/connector to bypass authorization constraints. [Architecture](docs/architecture.md) and [assistant contracts](docs/ai-assistant.md) own implementation/security details.
+
 ## Autonomous development feedback
 
 David confirmed on 2026-10-04 that Olbia's development is primarily driven by autonomous AI agents. Follow the [development north star and confirmed latency targets](docs/product-north-star.md#norte-del-desarrollo-autónomo). Prioritize actionable feedback in seconds and complete required PR validation within two minutes; measure queue-inclusive timings and accumulated agent wait. Preserve all financial correctness, evidence, recovery and production release gates. A fast-check success does not replace the required quality verdict. Report measured results separately from targets and do not claim p50/p90 attainment from one run.

@@ -75,3 +75,9 @@ describe('manual entry input', () => {
     expect(manualEntryFingerprint('owner-1', input)).not.toBe(manualEntryFingerprint('owner-2', input));
   });
 });
+
+it('rejects a future observed charge and contradictory financial dates before capture', () => {
+  const body = { institution: 'santander_mx', merchantRaw: 'Observed', amountMinor: 100 };
+  expect(() => parseManualEntry(JSON.stringify({ ...body, occurredOn: '9999-01-01' }))).toThrow(/future date/);
+  expect(() => parseManualEntry(JSON.stringify({ ...body, occurredOn: '2026-08-02', occurredAt: '2026-08-02T01:30:00Z' }))).toThrow(/America\/Chihuahua/);
+});

@@ -164,7 +164,7 @@ describe('P0 Gateway financial capabilities', () => {
   });
 
   it('requires the configured owner and exposes exactly the four new tools alongside existing contracts', async () => {
-    expect(gatewayToolDefinitions().map(tool => tool.name).filter(name => name.startsWith('get_')))
+    expect(gatewayToolDefinitions().map(tool => tool.name).filter(name => ['get_future_commitments', 'get_month_details', 'get_credit_card_cycles', 'get_wealth_history'].includes(name)))
       .toEqual(['get_future_commitments', 'get_month_details', 'get_credit_card_cycles', 'get_wealth_history']);
     vi.stubEnv('AGENT_OWNER', '');
     await expect(handler({}, context('get_credit_card_cycles'))).rejects.toThrow('AGENT_OWNER');

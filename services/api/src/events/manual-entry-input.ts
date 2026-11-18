@@ -105,6 +105,12 @@ export const parseManualEntry = (rawBody: string | undefined): ManualEntryInput 
   if (!resolvedOccurredOn) {
     throw new InvalidManualEntryError('occurredAt must resolve to a valid calendar date.');
   }
+  if (localCalendarDate(occurredAt) !== resolvedOccurredOn) {
+    throw new InvalidManualEntryError('occurredOn must match occurredAt in America/Chihuahua.');
+  }
+  if (resolvedOccurredOn > localCalendarDate(new Date().toISOString())!) {
+    throw new InvalidManualEntryError('A recorded observed charge cannot have a future date.');
+  }
   return {
     institution: body.institution,
     merchantRaw: requiredText(body, 'merchantRaw', 200),
