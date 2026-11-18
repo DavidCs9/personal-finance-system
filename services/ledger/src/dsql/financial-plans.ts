@@ -1,7 +1,7 @@
 import { FinancialPlanError, type ActualIncomeReceipt, type ExpectedIncome, type FinancialGoalState,
   type FinancialGoal, type GoalAllocation, type GoalPayment, type IncomeTermination } from '@finance/domain';
 import type { SqlClient } from './projection.js';
-export type FinancialWriteKind = 'income' | 'goal' | 'manual_charge';
+export type FinancialWriteKind = 'income' | 'goal' | 'manual_charge' | 'budget';
 export interface FinancialWriteOperation {
   readonly operationId: string; readonly owner: string; readonly kind: FinancialWriteKind; readonly action: string;
   readonly entityId: string; readonly createdAt: string; readonly expiresAt: string;
@@ -119,9 +119,10 @@ export const readFinancialReceipt = async (client: SqlClient, owner: string, id:
   ((await client.query('SELECT result FROM olbia.financial_change_receipts WHERE operation_id=$1::uuid AND owner=$2', [id, owner])).rows[0]?.result as Record<string, unknown>) ?? null;
 export const appendFinancialReceipt = async (client: SqlClient, operation: FinancialWriteOperation, result: Record<string, unknown>, appliedAt: string,
   movementId?: string): Promise<void> => {
-  await client.query(`INSERT INTO olbia.financial_change_receipts (operation_id,owner,kind,income_id,goal_id,movement_id,applied_at,before_state,after_state,result)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb)`, [operation.operationId, operation.owner, operation.kind,
-    operation.kind === 'income' ? operation.entityId : null, operation.kind === 'goal' ? operation.entityId : null, movementId ?? null, appliedAt,
+  await client.query(`INSERT INTO olbia.financial_change_receipts (operation_id,owner,kind,income_id,goal_id,movement_id,budget_id,budget_exclusion_id,applied_at,before_state,after_state,result)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb)`, [operation.operationId, operation.owner, operation.kind,
+    operation.kind === 'income' ? operation.entityId : null, operation.kind === 'goal' ? operation.entityId : null, movementId ?? null, operation.kind === 'budget' && operation.after.entityType === 'budget' ? operation.entityId : null,
+    operation.kind === 'budget' && operation.after.entityType === 'exclusion' ? operation.entityId : null, appliedAt,
     operation.before === null ? null : JSON.stringify(operation.before), JSON.stringify(operation.after), JSON.stringify(result)]);
   if (!(await client.query("UPDATE olbia.financial_write_operations SET status='applied' WHERE operation_id=$1 AND owner=$2 AND status='pending' RETURNING operation_id",
     [operation.operationId, operation.owner])).rows.length) throw new FinancialPlanError('La operación cambió; consulta su estado.', 'conflict');

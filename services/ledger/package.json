@@ -16,6 +16,7 @@
     "./native-threads": "./src/dsql/thread.ts",
     "./native-exceptions": "./src/dsql/exception.ts",
     "./sql-runtime": "./src/dsql/sql-runtime.ts",
+    "./native-budgets": "./src/dsql/budgets.ts",
     "./native-financial-plans": "./src/dsql/financial-plans.ts"
   },
   "scripts": {

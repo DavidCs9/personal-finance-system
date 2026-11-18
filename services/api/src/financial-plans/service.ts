@@ -1,3 +1,6 @@
+import { proposeBudgetChange, readBudgetEntity, budgetEvidence, assertBudgetSlotAvailable } from './budgets.js';
+import { type BudgetEntity } from '@finance/domain';
+import { writeBudgetEntity } from '@finance/ledger/native-budgets';
 import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { addCalendarMonths, dayKeyInZone, monthKeyInZone, FINANCE_TIME_ZONE, isValidMonth,
@@ -147,12 +150,19 @@ const validPending = (operation: FinancialWriteOperation | null, kind?: Financia
 };
 export const previewFinancialChange = async (owner: string, kind: FinancialWriteKind, input: Record<string, unknown>, now = new Date()) => {
   if (!owner.trim()) throw new FinancialPlanError('Falta el dueño autenticado.');
-  const at = now.toISOString(), today = dayKeyInZone(now), entityId = kind === 'income' && input.action !== 'create'
+  const at = now.toISOString(), today = dayKeyInZone(now);
+  let entityId = kind === 'budget' && input.entityId !== undefined ? financialId(input.entityId) : kind === 'income' && input.action !== 'create'
     ? financialId(input.incomeId) : kind === 'goal' && input.action !== 'create_goal' ? financialId(input.goalId) : randomUUID();
   // Writes only an authentic preview record. Current domain records are unchanged.
   return withSqlTransaction(async client => {
     let before: Record<string, unknown> | null = null, after: Record<string, unknown>, preview: Record<string, unknown>, evidencePreconditions: Record<string, unknown> = {};
-    if (kind === 'income') {
+    if (kind === 'budget') {
+      const proposed = await proposeBudgetChange(client, owner, input, entityId, at);
+      entityId = proposed.after.id;
+      before = proposed.prior ? jsonObject(proposed.prior) : null; after = jsonObject(proposed.after);
+      evidencePreconditions = jsonObject(proposed.evidence);
+      preview = { before, after, inheritedSourceBudget: proposed.evidence.sourceBudget ?? null, effect: 'budget_configuration_only; ledger_actuals_unchanged' };
+    } else if (kind === 'income') {
       const prior = input.action === 'create' ? null : await readExpectedIncome(client, owner, entityId);
       const proposed = proposeExpectedIncome(input, prior, entityId, at);
       const range = financialMonthRange({ fromMonth: monthKeyInZone(now), toMonth: addCalendarMonths(monthKeyInZone(now), 23) }, now);
@@ -206,7 +216,20 @@ export const applyFinancialChange = async (owner: string, operationId: unknown, 
       if (operation.status === 'applied') return (await readFinancialReceipt(client, owner, id))!;
       let result: Record<string, unknown>, movementId: string | undefined;
       const appliedAt = new Date().toISOString();
-      if (operation.kind === 'income') {
+      if (operation.kind === 'budget') {
+        const before = await readBudgetEntity(client, owner, operation.entityId);
+        if (!same(before, operation.before)) throw new FinancialPlanError('El presupuesto/exclusión cambió después del preview.', 'conflict');
+        const after = operation.after as unknown as BudgetEntity;
+        const effectiveMonth = after.entityType === 'budget' ? after.effectiveMonth : after.month;
+        if (effectiveMonth < monthKeyInZone(new Date(appliedAt))) throw new FinancialPlanError('El mes del preview ya está cerrado.', 'conflict');
+        const evidence = await budgetEvidence(client, before, after);
+        const source = operation.evidencePreconditions.sourceBudget as BudgetEntity | undefined;
+        const currentEvidence = { ...evidence, ...(source ? { sourceBudget: await readBudgetEntity(client, owner, source.id) } : {}) };
+        if (!same(currentEvidence, operation.evidencePreconditions)) throw new FinancialPlanError('La categoría o movimiento cambió después del preview.', 'conflict');
+        if (!before) await assertBudgetSlotAvailable(client, owner, after);
+        await writeBudgetEntity(client, owner, before, after);
+        result = { ok: true, operationId: id, kind: 'budget', status: 'applied', appliedAt, budgetEntity: await readBudgetEntity(client, owner, operation.entityId) };
+      } else if (operation.kind === 'income') {
         const before = await readExpectedIncome(client, owner, operation.entityId);
         if (!same(before, operation.before)) throw new FinancialPlanError('El ingreso cambió después del preview.', 'conflict');
         // Use the financial preview horizon (not a UTC-derived month) stored in its facts.
@@ -252,7 +275,7 @@ export const getFinancialWriteStatus = async (owner: string, operationId: unknow
     const status = result ? 'applied' : operation.failureCode === 'expired' || operation.status === 'pending' && operation.expiresAt <= now.toISOString() ? 'expired' : operation.status;
     return { ok: true, operationId: id, kind: operation.kind, action: operation.action, status, expiresAt: operation.expiresAt,
       result, failureCode: operation.failureCode,
-      recovery: status === 'applied' ? 'Consulta el ingreso/meta/movimiento para verificar el estado actual; el recibo acredita esta operación histórica.'
+      recovery: status === 'applied' ? 'Consulta el ingreso/meta/movimiento/presupuesto para verificar el estado actual; el recibo acredita esta operación histórica.'
         : status === 'pending' ? 'Aplica sólo este operationId si la instrucción explícita sigue vigente.' : 'Vuelve a consultar y crea otro preview; no repitas este apply.' };
   });
 };

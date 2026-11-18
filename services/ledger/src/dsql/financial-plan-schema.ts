@@ -1,6 +1,7 @@
+import { NATIVE_BUDGET_TABLES, NATIVE_BUDGET_SCHEMA_STATEMENTS, nativeBudgetWriteGrants } from './budget-schema.js';
 /** Typed current plans; JSON is limited to frozen preview intent and immutable receipts. */
 export const NATIVE_FINANCIAL_PLAN_TABLES = ['expected_income', 'financial_goals', 'goal_allocations', 'goal_payments',
-  'financial_write_operations', 'financial_change_receipts'] as const;
+  'financial_write_operations', 'financial_change_receipts', ...NATIVE_BUDGET_TABLES] as const;
 const money = 'BETWEEN 1 AND 9007199254740991';
 export const NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS olbia.expected_income (
@@ -35,9 +36,10 @@ export const NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS = [
     status text NOT NULL CHECK (status IN ('active','voided')), revision integer NOT NULL CHECK (revision>0),
     recorded_by text NOT NULL CHECK (length(recorded_by)>0), created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
     CHECK ((source='manual_attestation' AND ledger_movement_id IS NULL) OR (source='linked_ledger_movement' AND ledger_movement_id IS NOT NULL)))`,
+  ...NATIVE_BUDGET_SCHEMA_STATEMENTS,
   `CREATE TABLE IF NOT EXISTS olbia.financial_write_operations (
     operation_id uuid PRIMARY KEY, owner text NOT NULL CHECK (length(owner)>0),
-    kind text NOT NULL CHECK (kind IN ('income','goal','manual_charge')), action text NOT NULL CHECK (length(action)>0),
+    kind text NOT NULL CHECK (kind IN ('income','goal','manual_charge','budget')), action text NOT NULL CHECK (length(action)>0),
     entity_id uuid NOT NULL, created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL CHECK (expires_at>created_at),
     status text NOT NULL CHECK (status IN ('pending','applied','failed')), failure_code text,
     before_state jsonb, after_state jsonb NOT NULL CHECK (jsonb_typeof(after_state)='object'),
@@ -47,19 +49,22 @@ export const NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS = [
     CHECK ((status='failed')=(failure_code IS NOT NULL)))`,
   `CREATE TABLE IF NOT EXISTS olbia.financial_change_receipts (
     operation_id uuid PRIMARY KEY REFERENCES olbia.financial_write_operations(operation_id),
-    owner text NOT NULL CHECK (length(owner)>0), kind text NOT NULL CHECK (kind IN ('income','goal','manual_charge')),
+    owner text NOT NULL CHECK (length(owner)>0), kind text NOT NULL CHECK (kind IN ('income','goal','manual_charge','budget')),
     income_id uuid REFERENCES olbia.expected_income(id), goal_id uuid REFERENCES olbia.financial_goals(id),
-    movement_id uuid REFERENCES olbia.ledger_movements(id), applied_at timestamptz NOT NULL,
+    movement_id uuid REFERENCES olbia.ledger_movements(id), budget_id uuid CONSTRAINT financial_receipts_budget_fk REFERENCES olbia.spending_budgets(id),
+    budget_exclusion_id uuid CONSTRAINT financial_receipts_budget_exclusion_fk REFERENCES olbia.budget_exclusions(id), applied_at timestamptz NOT NULL,
     before_state jsonb, after_state jsonb NOT NULL CHECK (jsonb_typeof(after_state)='object'),
     result jsonb NOT NULL CHECK (jsonb_typeof(result)='object'),
     CHECK (before_state IS NULL OR jsonb_typeof(before_state)='object'),
-    CHECK ((kind='income' AND income_id IS NOT NULL AND goal_id IS NULL AND movement_id IS NULL) OR
-      (kind='goal' AND goal_id IS NOT NULL AND income_id IS NULL AND movement_id IS NULL) OR
-      (kind='manual_charge' AND movement_id IS NOT NULL AND income_id IS NULL AND goal_id IS NULL)))`,
+    CHECK ((kind='income' AND income_id IS NOT NULL AND goal_id IS NULL AND movement_id IS NULL AND budget_id IS NULL AND budget_exclusion_id IS NULL) OR
+      (kind='goal' AND goal_id IS NOT NULL AND income_id IS NULL AND movement_id IS NULL AND budget_id IS NULL AND budget_exclusion_id IS NULL) OR
+      (kind='manual_charge' AND movement_id IS NOT NULL AND income_id IS NULL AND goal_id IS NULL AND budget_id IS NULL AND budget_exclusion_id IS NULL) OR
+      (kind='budget' AND income_id IS NULL AND goal_id IS NULL AND movement_id IS NULL AND ((budget_id IS NOT NULL AND budget_exclusion_id IS NULL) OR (budget_id IS NULL AND budget_exclusion_id IS NOT NULL)))))`,
 ] as const;
 export const nativeFinancialPlanReadGrant = (role: string) =>
   `GRANT SELECT ON ${NATIVE_FINANCIAL_PLAN_TABLES.map(table => `olbia.${table}`).join(',')} TO ${role}`;
 export const nativeFinancialPlanWriteGrants = (role: string) => [
+  ...nativeBudgetWriteGrants(role),
   `GRANT INSERT ON ${NATIVE_FINANCIAL_PLAN_TABLES.map(table => `olbia.${table}`).join(',')} TO ${role}`,
   `GRANT UPDATE (name,employer,amount_mxn_minor,frequency,payment_day_1,payment_day_2,expected_on,start_date,end_date,confidence,status,revision,updated_at) ON olbia.expected_income TO ${role}`,
   `GRANT UPDATE (name,total_budget_mxn_minor,target_date,status,revision,updated_at) ON olbia.financial_goals TO ${role}`,
