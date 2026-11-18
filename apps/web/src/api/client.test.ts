@@ -25,27 +25,10 @@ const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringif
   headers: { "Content-Type": "application/json" },
 });
 
-const sseResponse = (events: readonly unknown[], status = 200) => {
-  const payload = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
-  const midpoint = Math.max(1, Math.floor(payload.length / 2));
-  const encoder = new TextEncoder();
-  return new Response(new ReadableStream({
-    start(controller) {
-      controller.enqueue(encoder.encode(payload.slice(0, midpoint)));
-      controller.enqueue(encoder.encode(payload.slice(midpoint)));
-      controller.close();
-    },
-  }), {
-    status,
-    headers: { "Content-Type": "text/event-stream; charset=utf-8" },
-  });
-};
-
 beforeEach(() => {
   const browserWindow = new EventTarget() as EventTarget & { __LEDGER_CONFIG__: Record<string, string> };
   browserWindow.__LEDGER_CONFIG__ = {
     apiBaseUrl: "https://api.example.test",
-    agentChatUrl: "https://chat.example.test/prod/agent/chat",
     cognitoUserPoolId: "pool",
     cognitoUserPoolClientId: "client",
     region: "us-east-2",
@@ -138,26 +121,6 @@ describe("iOS web app session recovery", () => {
   });
 });
 
-describe("assistant conversation history API", () => {
-  it("loads threads and explicitly clears the active conversation", async () => {
-    const idToken = token(Date.now() + 10 * 60 * 1000, "user");
-    ledgerApi.saveSession({ idToken, refreshToken: "refresh-token" });
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(jsonResponse({ threads: [], activeThreadId: undefined }))
-      .mockResolvedValueOnce(jsonResponse({ activeThreadId: null }));
-
-    await expect(ledgerApi.listAssistantThreads(idToken)).resolves.toEqual({ threads: [] });
-    await expect(ledgerApi.setActiveAssistantThread(undefined, idToken)).resolves.toBeUndefined();
-
-    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe("https://api.example.test/agent/threads");
-    expect(vi.mocked(fetch).mock.calls[1]?.[0]).toBe("https://api.example.test/agent/threads/active");
-    expect(vi.mocked(fetch).mock.calls[1]?.[1]).toMatchObject({
-      method: "PUT",
-      body: JSON.stringify({ threadId: null }),
-    });
-  });
-});
-
 describe("spending analytics API", () => {
   it("loads the selected month from the authenticated analytics route", async () => {
     const idToken = token(Date.now() + 10 * 60 * 1000, "user");
@@ -239,78 +202,6 @@ describe("direct statement PDF uploads", () => {
       await expect(ledgerApi.previewAmexStatement(file, "token")).rejects.toThrow();
     }
     expect(fetch).not.toHaveBeenCalled();
-  });
-});
-
-describe("streamAgentChat REST SSE", () => {
-  it("posts to the REST SSE endpoint and fans out chunks in order", async () => {
-    const idToken = token(Date.now() + 10 * 60 * 1000, "user");
-    ledgerApi.saveSession({ idToken, refreshToken: "refresh-token" });
-    const onEvent = vi.fn();
-    vi.mocked(fetch).mockResolvedValueOnce(sseResponse([
-      { type: "reasoning_start", reasoningId: "reasoning-1", label: "Analizando contexto y restricciones" },
-      { type: "reasoning_complete", reasoningId: "reasoning-1", durationMs: 1200 },
-      { type: "token", text: "Hola" },
-      { type: "tool_start", toolUseId: "t1", name: "month_snapshot", label: "Revisando el resumen del mes", attempt: 1 },
-      { type: "tool_complete", toolUseId: "t1", name: "month_snapshot", label: "Revisando el resumen del mes", attempt: 1, durationMs: 180, summary: "Resumen de 2026-08 consultado.", material: true },
-      { type: "done", requestId: "r1", sessionId: "11111111-1111-1111-1111-111111111111" },
-    ]));
-
-    await expect(ledgerApi.streamAgentChat(
-      { message: "hola", month: "2026-08" },
-      idToken,
-      onEvent,
-    )).resolves.toBe("11111111-1111-1111-1111-111111111111");
-
-    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe("https://chat.example.test/prod/agent/chat");
-    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
-      method: "POST",
-      headers: expect.objectContaining({
-        Authorization: `Bearer ${idToken}`,
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-      }),
-    });
-    expect(onEvent).toHaveBeenCalledTimes(6);
-    expect(onEvent).toHaveBeenNthCalledWith(1, {
-      type: "reasoning_start",
-      reasoningId: "reasoning-1",
-      label: "Analizando contexto y restricciones",
-    });
-    expect(onEvent).toHaveBeenNthCalledWith(2, {
-      type: "reasoning_complete",
-      reasoningId: "reasoning-1",
-      durationMs: 1200,
-    });
-    expect(onEvent).toHaveBeenNthCalledWith(3, { type: "token", text: "Hola" });
-    expect(onEvent).toHaveBeenNthCalledWith(4, {
-      type: "tool_start",
-      toolUseId: "t1",
-      name: "month_snapshot",
-      label: "Revisando el resumen del mes",
-      attempt: 1,
-    });
-  });
-
-  it("renews once after 401 on agent chat", async () => {
-    const oldToken = token(Date.now() + 60 * 60 * 1000, "old");
-    const newToken = token(Date.now() + 60 * 60 * 1000, "new");
-    ledgerApi.saveSession({ idToken: oldToken, refreshToken: "refresh-token" });
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(jsonResponse({ message: "Unauthorized" }, 401))
-      .mockResolvedValueOnce(jsonResponse({ AuthenticationResult: { IdToken: newToken } }))
-      .mockResolvedValueOnce(sseResponse([
-        { type: "done", requestId: "r1", sessionId: "11111111-1111-1111-1111-111111111111" },
-      ]));
-
-    await expect(ledgerApi.streamAgentChat(
-      { message: "hola", month: "2026-08" },
-      oldToken,
-      vi.fn(),
-    )).resolves.toBe("11111111-1111-1111-1111-111111111111");
-    expect(vi.mocked(fetch).mock.calls[2]?.[1]?.headers).toMatchObject({
-      Authorization: `Bearer ${newToken}`,
-    });
   });
 });
 

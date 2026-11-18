@@ -6,7 +6,6 @@ export function Topbar({
   onRefresh,
   privateMode,
   onTogglePrivateMode,
-  onOpenAssistant,
   demoMode,
   showSignOut,
   onSignOut,
@@ -16,7 +15,6 @@ export function Topbar({
   onRefresh(): void;
   privateMode: boolean;
   onTogglePrivateMode(): void;
-  onOpenAssistant(): void;
   demoMode: boolean;
   showSignOut: boolean;
   onSignOut(): void;
@@ -35,15 +33,6 @@ export function Topbar({
             {syncing ? "Sincronizando" : "Al día"}
           </span>
         )}
-        <button
-          className="icon-button"
-          type="button"
-          onClick={onOpenAssistant}
-          aria-label="Abrir asistente"
-          title="Asistente"
-        >
-          <AssistantIcon />
-        </button>
         <button
           className={`icon-button${privateMode ? " active" : ""}`}
           type="button"
@@ -77,19 +66,6 @@ export function Topbar({
         )}
       </div>
     </header>
-  );
-}
-
-function AssistantIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7A2.5 2.5 0 0 1 17.5 16H9l-4 3.5V6.5Z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-    </svg>
   );
 }
 

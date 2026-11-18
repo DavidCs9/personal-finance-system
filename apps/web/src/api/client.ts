@@ -19,8 +19,6 @@ import { type FutureCommitments, type ManualCashAccountId, type MonthSummary, ty
 
 interface LedgerRuntimeConfig {
   readonly apiBaseUrl: string;
-  /** Native API Gateway REST SSE endpoint for assistant chat. */
-  readonly agentChatUrl?: string;
   readonly cognitoUserPoolId: string;
   readonly cognitoUserPoolClientId: string;
   readonly region: string;
@@ -55,27 +53,6 @@ export interface NominaUploadResponse {
   readonly created: number;
   readonly duplicates: number;
   readonly failed: number;
-}
-
-export interface AssistantMemory {
-  readonly id: string;
-  readonly text: string;
-  readonly createdAt: string;
-}
-
-export interface AssistantThread {
-  readonly id: string;
-  readonly title: string;
-  readonly firstMonth: string;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
-
-export interface AssistantThreadMessage {
-  readonly id: string;
-  readonly role: "user" | "assistant";
-  readonly text: string;
-  readonly createdAt: string;
 }
 
 declare global {
@@ -281,34 +258,6 @@ export const ledgerApi = {
   },
   async commitments(idToken: string, startMonth?: string): Promise<FutureCommitments> {
     return request(`/commitments${startMonth ? `?startMonth=${encodeURIComponent(startMonth)}` : ""}`, idToken);
-  },
-  async listAssistantMemories(idToken: string): Promise<{ memories: readonly AssistantMemory[] }> {
-    return request<{ memories: readonly AssistantMemory[] }>("/agent/memories", idToken);
-  },
-  async deleteAssistantMemory(memoryId: string, idToken: string): Promise<void> {
-    await request(`/agent/memories/${encodeURIComponent(memoryId)}`, idToken, { method: "DELETE" });
-  },
-  async listAssistantThreads(idToken: string): Promise<{
-    readonly threads: readonly AssistantThread[];
-    readonly activeThreadId?: string;
-  }> {
-    return request("/agent/threads", idToken);
-  },
-  async getAssistantThread(threadId: string, idToken: string): Promise<{
-    readonly thread: AssistantThread;
-    readonly messages: readonly AssistantThreadMessage[];
-  }> {
-    return request(`/agent/threads/${encodeURIComponent(threadId)}`, idToken);
-  },
-  async setActiveAssistantThread(threadId: string | undefined, idToken: string): Promise<void> {
-    await request("/agent/threads/active", idToken, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ threadId: threadId ?? null }),
-    });
-  },
-  async deleteAssistantThread(threadId: string, idToken: string): Promise<void> {
-    await request(`/agent/threads/${encodeURIComponent(threadId)}`, idToken, { method: "DELETE" });
   },
   async listExceptions(idToken: string): Promise<{ exceptions: readonly IngestionException[] }> {
     return request<{ exceptions: readonly IngestionException[] }>("/exceptions", idToken);
@@ -632,107 +581,7 @@ export const ledgerApi = {
       body: JSON.stringify({ action: "set_tags", tags }),
     });
   },
-  async streamAgentChat(
-    input: { readonly message: string; readonly month: string; readonly sessionId?: string },
-    idToken: string,
-    onEvent: (event: AgentChatEvent) => void,
-  ): Promise<string | undefined> {
-    const storedToken = localStorage.getItem(idTokenKey);
-    let requestToken = isTokenFresh(storedToken)
-      ? storedToken
-      : isTokenFresh(idToken)
-        ? idToken
-        : await refreshSession();
-    if (!requestToken) throw endedSessionError();
-
-    const chatUrl = config().agentChatUrl?.trim();
-    if (!chatUrl) throw new Error("El streaming del asistente no está configurado.");
-
-    const execute = (token: string) => fetch(chatUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-      },
-      body: JSON.stringify(input),
-    });
-
-    let response: Response;
-    try {
-      response = await execute(requestToken);
-    } catch {
-      throw new Error("No pude consultar tus datos. Reintenta.");
-    }
-    if (response.status === 401) {
-      requestToken = await refreshSession();
-      if (!requestToken) throw endedSessionError();
-      try {
-        response = await execute(requestToken);
-      } catch {
-        throw new Error("No pude consultar tus datos. Reintenta.");
-      }
-    }
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({ message: "No pude consultar tus datos." })) as {
-        message?: string;
-        requestId?: string;
-      };
-      throw new Error(body.message ?? "No pude consultar tus datos.");
-    }
-
-    if (!response.body) {
-      throw new Error("Tu navegador no pudo abrir el streaming del asistente. Reintenta.");
-    }
-
-    let sessionId: string | undefined = input.sessionId;
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    const consumeBlock = (block: string) => {
-      const data = block
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trim())
-        .join("\n");
-      if (!data) return;
-      try {
-        const event = JSON.parse(data) as AgentChatEvent;
-        onEvent(event);
-        if (event.type === "done") sessionId = event.sessionId;
-      } catch {
-        // Ignore a malformed event without discarding a healthy stream.
-      }
-    };
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const blocks = buffer.split(/\r?\n\r?\n/);
-        buffer = blocks.pop() ?? "";
-        blocks.forEach(consumeBlock);
-      }
-      buffer += decoder.decode();
-      if (buffer.trim()) consumeBlock(buffer);
-    } finally {
-      reader.releaseLock();
-    }
-    return sessionId;
-  },
 };
-
-export type AgentChatEvent =
-  | { readonly type: "token"; readonly text: string }
-  | { readonly type: "reasoning_start"; readonly reasoningId: string; readonly label: string }
-  | { readonly type: "reasoning_complete"; readonly reasoningId: string; readonly durationMs: number }
-  | { readonly type: "tool_start"; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number }
-  | { readonly type: "tool_complete"; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly summary?: string; readonly material: boolean }
-  | { readonly type: "tool_failed"; readonly toolUseId: string; readonly name: string; readonly label: string; readonly attempt: number; readonly durationMs: number; readonly message: string }
-  | { readonly type: "citation"; readonly kind: string; readonly id?: string; readonly label: string }
-  | { readonly type: "mutation"; readonly kind: "tag_edit" | "category_edit" | "category_catalog"; readonly action: "applied" | "undone"; readonly operationId: string; readonly movementCount: number; readonly amountMinor: number; readonly fromDay: string; readonly toDay: string; readonly change: { readonly addTags?: readonly string[]; readonly removeTags?: readonly string[]; readonly categoryId?: string | null; readonly action?: string; readonly name?: string; readonly archived?: boolean } }
-  | { readonly type: "done"; readonly requestId: string; readonly sessionId: string }
-  | { readonly type: "error"; readonly message: string; readonly requestId: string };
 
 const request = async <T>(path: string, idToken: string, init?: RequestInit): Promise<T> => {
   const storedToken = localStorage.getItem(idTokenKey);

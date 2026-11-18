@@ -17,7 +17,6 @@ import { demoCards } from "../card-cycle-demo";
 import type { CardCycle } from "../card-cycle";
 import { CommitmentsSheet } from "../sheets/CommitmentsSheet";
 import { EventSheet } from "../sheets/EventSheet";
-import { AssistantSheet } from "../sheets/AssistantSheet";
 import { MonthIncomeSheet } from "../sheets/MonthIncomeSheet";
 import { NominaUploadSheet } from "../sheets/NominaUploadSheet";
 import { PayslipSheet } from "../sheets/PayslipSheet";
@@ -91,7 +90,6 @@ export function Dashboard({
   useEffect(() => { setEditingPayment(undefined); }, [selectedMonth]);
   const [editingCard, setEditingCard] = useState<CardCycle | null | undefined>();
   const [activeEvent, setActiveEvent] = useState<PurchaseEvent>();
-  const [assistantOpen, setAssistantOpen] = useState(false);
   const [movementSort, setMovementSort] = useState<"recent" | "largest">("recent");
   const [commitmentsOpen, setCommitmentsOpen] = useState(false);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
@@ -469,7 +467,6 @@ export function Dashboard({
         onRefresh={refresh}
         privateMode={privateMode}
         onTogglePrivateMode={togglePrivateMode}
-        onOpenAssistant={() => setAssistantOpen(true)}
         demoMode={demoMode}
         showSignOut={!demoMode}
         onSignOut={
@@ -754,22 +751,6 @@ export function Dashboard({
             if (!event) throw new Error("Compra no disponible.");
             setCommitmentsOpen(false);
             setActiveEvent(event);
-          }}
-        />
-      )}
-      {assistantOpen && (
-        <AssistantSheet
-          month={selectedMonth}
-          idToken={idToken}
-          demoMode={demoMode}
-          onClose={() => setAssistantOpen(false)}
-          onMutated={() => {
-            void queryClient.invalidateQueries({ queryKey: ["categories"] });
-            void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
-            void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
-            void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot });
-            void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
-            void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
           }}
         />
       )}
