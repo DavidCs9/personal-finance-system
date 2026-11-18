@@ -7,13 +7,17 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { TOOL_DEFINITIONS } from '@finance/api/agent-tool-definitions';
 import type { Construct } from 'constructs';
 
-export const MCP_READ_SCOPE = 'olbia-finance/read';
 export const CHATGPT_BOOTSTRAP_CALLBACK = 'https://chatgpt.com/connector_platform_oauth_redirect';
 export const MCP_BOOTSTRAP_AUDIENCE = 'https://unconfigured.invalid/mcp';
 
 /** Native login for the existing owner; independent of the SPA's SRP client. */
 export const financeMcpOAuth = (scope: Construct, userPool: cognito.UserPool) => {
   const stack = Stack.of(scope);
+  const resourceUrl = new CfnParameter(scope, 'McpOAuthResourceUrl', {
+    type: 'String', default: MCP_BOOTSTRAP_AUDIENCE,
+    allowedPattern: '^https://(unconfigured\\.invalid/mcp|olbiachatgptread-[a-z0-9]+\\.gateway\\.bedrock-agentcore\\.[a-z0-9-]+\\.amazonaws\\.com/mcp)$',
+    description: 'Native Gateway URL. deploy-production binds this before exposing tools.',
+  }).valueAsString;
   const callbacks = new CfnParameter(scope, 'McpOAuthCallbackUrls', {
     type: 'CommaDelimitedList',
     default: CHATGPT_BOOTSTRAP_CALLBACK,
@@ -22,9 +26,10 @@ export const financeMcpOAuth = (scope: Construct, userPool: cognito.UserPool) =>
   });
   const readScope = new cognito.ResourceServerScope({ scopeName: 'read', scopeDescription: 'Read personal financial data' });
   const resource = userPool.addResourceServer('FinanceMcpResource', {
-    identifier: 'olbia-finance',
+    identifier: resourceUrl,
     scopes: [readScope],
   });
+  const readOAuthScope = cognito.OAuthScope.resourceServer(resource, readScope);
   const domain = userPool.addDomain('FinanceMcpLogin', {
     cognitoDomain: { domainPrefix: `olbia-finance-${stack.account}-${stack.region}` },
     managedLoginVersion: cognito.ManagedLoginVersion.NEWER_MANAGED_LOGIN,
@@ -41,7 +46,7 @@ export const financeMcpOAuth = (scope: Construct, userPool: cognito.UserPool) =>
       // Cognito advertises these OIDC scopes in discovery; ChatGPT requests them.
       scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL,
         cognito.OAuthScope.PHONE, cognito.OAuthScope.PROFILE,
-        cognito.OAuthScope.resourceServer(resource, readScope)],
+        readOAuthScope],
     },
     accessTokenValidity: Duration.hours(1),
     idTokenValidity: Duration.hours(1),
@@ -64,7 +69,7 @@ export const financeMcpOAuth = (scope: Construct, userPool: cognito.UserPool) =>
   new CfnOutput(scope, 'McpOAuthClientId', { value: client.userPoolClientId });
   new CfnOutput(scope, 'McpOAuthCredentialsSecretArn', { value: credentials.secretArn });
   new CfnOutput(scope, 'McpOAuthLoginUrl', { value: domain.baseUrl() });
-  return { client, domain, resource, credentials,
+  return { client, domain, resource, credentials, resourceUrl, readOAuthScope,
     discoveryUrl: `https://cognito-idp.${stack.region}.${stack.urlSuffix}/${userPool.userPoolId}/.well-known/openid-configuration` };
 };
 
@@ -72,13 +77,8 @@ export const financeMcpOAuth = (scope: Construct, userPool: cognito.UserPool) =>
 export const financeMcpGateway = (scope: Construct, props: {
   oauth: ReturnType<typeof financeMcpOAuth>; ownerSub: string; tools: IFunction;
 }) => {
-  const audience = new CfnParameter(scope, 'McpOAuthResourceUrl', {
-    type: 'String', default: MCP_BOOTSTRAP_AUDIENCE,
-    allowedPattern: '^https://(unconfigured\\.invalid/mcp|olbiachatgptread-[a-z0-9]+\\.gateway\\.bedrock-agentcore\\.[a-z0-9-]+\\.amazonaws\\.com/mcp)$',
-    description: 'Native Gateway URL. deploy-production binds this before exposing tools.',
-  });
   const bound = new CfnCondition(scope, 'FinanceMcpAudienceBound', {
-    expression: Fn.conditionNot(Fn.conditionEquals(audience.valueAsString, MCP_BOOTSTRAP_AUDIENCE)),
+    expression: Fn.conditionNot(Fn.conditionEquals(props.oauth.resourceUrl, MCP_BOOTSTRAP_AUDIENCE)),
   });
   const role = new iam.Role(scope, 'FinanceMcpGatewayRole', {
     assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com'),
@@ -90,7 +90,7 @@ export const financeMcpGateway = (scope: Construct, props: {
     protocolConfiguration: { mcp: { supportedVersions: ['2025-03-26', '2025-06-18', '2025-11-25', '2026-07-28'] } },
     authorizerConfiguration: { customJwtAuthorizer: {
       discoveryUrl: props.oauth.discoveryUrl, allowedClients: [props.oauth.client.userPoolClientId],
-      allowedAudience: [audience.valueAsString], allowedScopes: [MCP_READ_SCOPE],
+      allowedAudience: [props.oauth.resourceUrl], allowedScopes: [props.oauth.readOAuthScope.scopeName],
       customClaims: [['sub', props.ownerSub], ['token_use', 'access']].map(([name, value]) => ({
         inboundTokenClaimName: name!, inboundTokenClaimValueType: 'STRING',
         authorizingClaimMatchValue: { claimMatchOperator: 'EQUALS', claimMatchValue: { matchValueString: value! } },

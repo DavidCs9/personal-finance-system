@@ -9,7 +9,7 @@ import { TOOL_DEFINITIONS } from '@finance/api/agent-tool-definitions';
 it('uses the existing private pool with a separate code-only read client and keeps the secret out of outputs', () => {
   const stack = new Stack(new App(), 'McpAuth', { env: { account: '123456789012', region: 'us-east-2' } });
   const pool = new UserPool(stack, 'ExistingPool', { selfSignUpEnabled: false });
-  financeMcpOAuth(stack, pool);
+  const oauth = financeMcpOAuth(stack, pool);
   const template = Template.fromStack(stack);
   template.resourceCountIs('AWS::Cognito::UserPool', 1);
   template.hasResourceProperties('AWS::Cognito::UserPoolDomain', { ManagedLoginVersion: 2 });
@@ -19,10 +19,12 @@ it('uses the existing private pool with a separate code-only read client and kee
     AllowedOAuthScopes: Match.arrayWith(['openid', 'email', 'phone', 'profile']),
   });
   template.hasResourceProperties('AWS::Cognito::UserPoolResourceServer', {
-    Identifier: 'olbia-finance', Scopes: [{ ScopeName: 'read', ScopeDescription: 'Read personal financial data' }],
+    Identifier: { Ref: 'McpOAuthResourceUrl' }, Scopes: [{ ScopeName: 'read', ScopeDescription: 'Read personal financial data' }],
   });
   const client = Object.values(template.findResources('AWS::Cognito::UserPoolClient'))[0] as { Properties: Record<string, unknown> };
-  expect(client.Properties.AllowedOAuthScopes).toContainEqual(expect.objectContaining({ 'Fn::Join': expect.any(Array) }));
+  expect(client.Properties.AllowedOAuthScopes).toContainEqual({
+    'Fn::Join': ['', [stack.resolve(oauth.resource.userPoolResourceServerId), '/read']],
+  });
   expect(client.Properties.ExplicitAuthFlows).not.toContain('ALLOW_USER_PASSWORD_AUTH');
   expect(client.Properties.ExplicitAuthFlows).not.toContain('ALLOW_USER_SRP_AUTH');
   expect(JSON.stringify(template.toJSON().Outputs)).not.toContain('ClientSecret');
@@ -50,7 +52,8 @@ it('uses native lifecycle, denies bootstrap tool exposure, and binds read tools 
     ProtocolConfiguration: { Mcp: { SupportedVersions: ['2025-03-26', '2025-06-18', '2025-11-25', '2026-07-28'] } },
     AuthorizerConfiguration: { CustomJWTAuthorizer: {
       AllowedAudience: [{ Ref: 'McpOAuthResourceUrl' }], AllowedClients: [stack.resolve(oauth.client.userPoolClientId)],
-      AllowedScopes: ['olbia-finance/read'], DiscoveryUrl: stack.resolve(oauth.discoveryUrl),
+      AllowedScopes: [{ 'Fn::Join': ['', [stack.resolve(oauth.resource.userPoolResourceServerId), '/read']] }],
+      DiscoveryUrl: stack.resolve(oauth.discoveryUrl),
       CustomClaims: [
         { InboundTokenClaimName: 'sub', InboundTokenClaimValueType: 'STRING',
           AuthorizingClaimMatchValue: { ClaimMatchOperator: 'EQUALS', ClaimMatchValue: { MatchValueString: '11111111-2222-3333-4444-555555555555' } } },
