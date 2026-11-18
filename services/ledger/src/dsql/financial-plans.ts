@@ -43,8 +43,8 @@ export const writeExpectedIncome = async (client: SqlClient, owner: string, befo
     (id,owner,name,employer,amount_mxn_minor,frequency,payment_day_1,payment_day_2,expected_on,start_date,end_date,confidence,status,revision,created_at,updated_at)
     VALUES (${values.map((_, index) => `$${index + 1}`).join(',')})`, values);
   else if (!(await client.query(`UPDATE olbia.expected_income SET name=$3,employer=$4,amount_mxn_minor=$5,frequency=$6,
-    payment_day_1=$7,payment_day_2=$8,expected_on=$9,start_date=$10,end_date=$11,confidence=$12,status=$13,revision=$14,updated_at=$16
-    WHERE id=$1 AND owner=$2 AND revision=$17 RETURNING id`, [...values, before.revision])).rows.length)
+    payment_day_1=$7,payment_day_2=$8,expected_on=$9,start_date=$10,end_date=$11,confidence=$12,status=$13,revision=$14,updated_at=$15
+    WHERE id=$1 AND owner=$2 AND revision=$16 RETURNING id`, [...values.slice(0, 14), after.updatedAt, before.revision])).rows.length)
     throw new FinancialPlanError('El ingreso cambió; crea otro preview.', 'conflict');
 };
 const goalFrom = (row: Row): FinancialGoal => ({ id: String(row.id), name: String(row.name), originalBudgetMxnMinor: Number(row.original_budget_mxn_minor),

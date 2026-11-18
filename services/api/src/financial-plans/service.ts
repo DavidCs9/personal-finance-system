@@ -4,7 +4,7 @@ import { addCalendarMonths, dayKeyInZone, monthKeyInZone, FINANCE_TIME_ZONE, isV
   FinancialPlanError, financialId, financialObject, financialSum, financialGoalFacts, incomeOccurrences,
   proposeExpectedIncome, proposeFinancialGoal, maybeAutoAmexMsi, payrollEmployerKey,
   type ExpectedIncome, type FinancialGoalState, type GoalPayment } from '@finance/domain';
-import { withSqlTransaction } from '@finance/ledger/sql-runtime';
+import { applicationSqlClient, withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { readExpectedIncome, listExpectedIncomeRows, readIncomeEvidence, writeExpectedIncome, readFinancialGoal,
   listFinancialGoalIds, writeFinancialGoal, readGoalMovement, readGoalMovements, paymentMovementUsed, insertFinancialOperation,
   readFinancialOperation, readFinancialReceipt, appendFinancialReceipt, failFinancialOperation, financialHistory,
@@ -196,8 +196,8 @@ export const previewFinancialChange = async (owner: string, kind: FinancialWrite
 export const applyFinancialChange = async (owner: string, operationId: unknown, kind?: FinancialWriteKind, now = new Date()) => {
   const id = financialId(operationId);
   // Prepare originals outside SQL retry callbacks. No business mutation can occur here.
-  const initial = validPending(await readFinancialOperation(readerPool(), owner, id), kind, now);
-  if (initial.status === 'applied') return (await readFinancialReceipt(readerPool(), owner, id))!;
+  const initial = validPending(await readFinancialOperation(applicationSqlClient(), owner, id), kind, now);
+  if (initial.status === 'applied') return (await readFinancialReceipt(applicationSqlClient(), owner, id))!;
   const manualApply = initial.kind === 'manual_charge'
     ? await prepareManualEvent(JSON.stringify(initial.after), owner, { movementId: initial.entityId, observationId: initial.operationId }) : undefined;
   try {

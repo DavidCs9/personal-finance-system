@@ -50,7 +50,7 @@ beforeEach(async () => {
   vi.clearAllMocks(); harness.s3.mockResolvedValue({}); failBeforeCommit = false; failAfterCommit = false;
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now); vi.stubEnv('AGENT_OWNER', 'owner');
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe('shared SQL financial planning service', () => {
   it('previews without business mutations; applies authentic income once, then reads the same record through MCP', async () => {
@@ -190,4 +190,29 @@ describe('shared SQL financial planning service', () => {
     expect(new Set([...first.sources, ...second.sources].map(item => item.id)).size).toBe(3);
     expect(first).toMatchObject({ expectedTotalsScope: 'returned_sources', actualPayrollScope: 'owner_month_range_do_not_sum_across_pages' });
   });
+});
+
+it('modifies expected salary/calendar and archives/restores through actual SQL with immutable receipts', async () => {
+  const created = await preview('income', salary); const first = await apply(created.operationId);
+  const income = first.income as { id: string; revision: number };
+  const update = await preview('income', { action: 'update', incomeId: income.id, expectedRevision: 1,
+    amountMxnMinor: 35000_00, frequency: 'semimonthly', paymentDays: [15, 30], endDate: '2027-06-30' });
+  await apply(update.operationId);
+  expect(await service.getExpectedIncome('owner', income.id, { fromMonth: '2027-02', toMonth: '2027-02' }))
+    .toMatchObject({ sources: [{ amountMxnMinor: 35000_00, frequency: 'semimonthly', revision: 2 }],
+      occurrences: [{ paymentDate: '2027-02-15' }, { paymentDate: '2027-02-28' }] });
+  const archive = await preview('income', { action: 'archive', incomeId: income.id, expectedRevision: 2 });
+  await apply(archive.operationId);
+  expect(await service.getExpectedIncome('owner', income.id)).toMatchObject({ sources: [{ status: 'archived', revision: 3 }], occurrences: [] });
+  const restore = await preview('income', { action: 'restore', incomeId: income.id, expectedRevision: 3 });
+  await apply(restore.operationId);
+  expect(await service.getExpectedIncome('owner', income.id)).toMatchObject({ sources: [{ status: 'active', revision: 4 }], history: expect.any(Array) });
+});
+
+it('applies using its granted writer role without requiring olbia_reader membership', async () => {
+  const readers = await import('../src/events/sql-reads.js');
+  const op = await preview('income', salary);
+  vi.spyOn(readers, 'readerPool').mockImplementation(() => { throw new Error('No reader-role grant on bounded writer'); });
+  expect(await apply(op.operationId)).toMatchObject({ status: 'applied' });
+  expect(await apply(op.operationId)).toMatchObject({ status: 'applied' });
 });
