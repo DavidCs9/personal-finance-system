@@ -79,7 +79,7 @@ it('gives the deployed verifier read-only access to every supported evidence fam
   expect(schema.Properties.Environment.Variables.RAW_EMAIL_BUCKET_NAME).toEqual({Ref:rawBucket});
   expect(schemaStatements.flatMap(actions).some(a=>/^s3:(?:Put|Delete|\*)/.test(a))).toBe(false);
   expect(schemaStatements.flatMap(actions)).toContain('kms:Decrypt');
-  const bootstrap=Object.values(template.findResources('AWS::CloudFormation::CustomResource')).find(r=>r.Properties.Version===28)!;
+  const bootstrap=Object.values(template.findResources('AWS::CloudFormation::CustomResource')).find(r=>r.Properties.Version===29)!;
   const schemaPolicy=Object.keys(template.findResources('AWS::IAM::Policy')).find(id=>id.startsWith('DsqlProjectionSchemaServiceRoleDefaultPolicy'))!;
   expect(bootstrap.DependsOn).toContain(schemaPolicy);
   const functions=template.findResources('AWS::Lambda::Function');
@@ -98,7 +98,7 @@ it('gives the deployed verifier read-only access to every supported evidence fam
     // Retained disabled stream mapping uses provider-managed stream reads, never table data access.
     expect(functionActions.filter(action=>/^dynamodb:(GetItem|BatchGetItem|Query|Scan|PutItem|UpdateItem|DeleteItem|BatchWriteItem|\*)$/.test(action))).toEqual([]);
   }
-  expect(nativeFunctions).toBe(17);
+  expect(nativeFunctions).toBe(18);
   const fallback=Object.values(functions).find(resource=>resource.Properties.FunctionName==='personal-finance-v1-bedrock-email-fallback')!;
   expect(fallback.Properties.Environment.Variables.DSQL_ENDPOINT).toBeDefined();
   expect(fallback.Properties.Environment.Variables.OLBIA_SQL_ROLE).toBe('olbia_store_reader');

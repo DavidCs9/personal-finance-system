@@ -30,7 +30,7 @@ export const readIncomeEvidence = async (client: SqlClient, owner: string, fromD
   const actual = (await client.query(`SELECT uuid::text,employer_name,paid_on::text,payroll_type,total_mxn_minor FROM olbia.payslips
     WHERE owner=$1 AND paid_on>=$2::date AND paid_on<$3::date ORDER BY paid_on,uuid LIMIT 2001`, [owner, fromDay, untilDay])).rows;
   if (actual.length > 2000) throw new FinancialPlanError('Demasiados recibos en el rango; consulta un periodo menor.');
-  const terminations = (await client.query('SELECT employer_key,ended_on::text FROM olbia.payroll_closures WHERE owner=$1 ORDER BY ended_on', [owner])).rows;
+  const terminations = (await client.query('SELECT employer_key,ended_on::text FROM olbia.payroll_closures WHERE owner=$1 ORDER BY ended_on,employer_key', [owner])).rows;
   return { actual: actual.map(row => ({ id: String(row.uuid), employer: row.employer_name == null ? null : String(row.employer_name),
     paymentDate: String(row.paid_on), payrollType: String(row.payroll_type), netMxnMinor: Number(row.total_mxn_minor) })),
   terminations: terminations.map(row => ({ employer: String(row.employer_key), endedOn: String(row.ended_on) })) };
