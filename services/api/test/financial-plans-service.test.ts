@@ -216,3 +216,36 @@ it('applies using its granted writer role without requiring olbia_reader members
   expect(await apply(op.operationId)).toMatchObject({ status: 'applied' });
   expect(await apply(op.operationId)).toMatchObject({ status: 'applied' });
 });
+
+it('previews and applies business-day payroll and audited monthly exceptions through the existing MCP tools', async () => {
+  const { paymentDays: _legacyDays, ...base } = salary;
+  const args = { ...base, amountMxnMinor: 25000_00, frequency: 'semimonthly',
+    paymentRules: [{ kind: 'previous_business_day', day: 15 }, { kind: 'last_business_day' }] };
+  const call = (name: string, arguments_: Record<string, unknown>) => writeHandler({ toolName: name, arguments: arguments_ }, {} as never);
+  const draft = await call('preview_income_change', args) as Awaited<ReturnType<typeof service.previewFinancialChange>>;
+  expect(await takeSnapshot()).toMatchObject({ expected_income: [], expected_income_month_overrides: [] });
+  const saved = await call('apply_income_change', { operationId: draft.operationId }) as Awaited<ReturnType<typeof service.applyFinancialChange>>;
+  const income = saved.income as { id: string; revision: number };
+  expect(await call('apply_income_change', { operationId: draft.operationId })).toEqual(saved);
+  const read = () => runAgentTool('owner', 'get_expected_income', { incomeId: income.id, fromMonth: '2026-11', toMonth: '2026-12' });
+  expect(await read()).toMatchObject({
+    occurrences: [{ periodMonth: '2026-11', paymentDate: null, amountMxnMinor: null },
+      { paymentDate: '2026-12-15', amountMxnMinor: 25000_00 }, { paymentDate: '2026-12-31', amountMxnMinor: 25000_00 }],
+    actualPayroll: [],
+    monthlyTotals: [{ month: '2026-11', expectedScheduledMxnMinor: null, unknownExpectedOccurrences: 1, remainingExpectedMxnMinor: null },
+      { month: '2026-12', expectedScheduledMxnMinor: 50000_00, unknownExpectedOccurrences: 0 }],
+  });
+  const update = { action: 'update', incomeId: income.id, expectedRevision: income.revision };
+  const override = await preview('income', { ...update,
+    monthOverride: { month: '2026-11', paymentDate: '2026-11-27', amountMxnMinor: 12000_00, reason: 'Employer estimate' } });
+  const stale = await preview('income', { ...update, monthOverride: { month: '2026-11', amountMxnMinor: 0, reason: 'No payment' } });
+  expect((await fixture.sql.query('SELECT * FROM olbia.expected_income_month_overrides')).rows).toEqual([]);
+  await apply(override.operationId);
+  await expect(apply(stale.operationId)).rejects.toThrow(/cambió/);
+  await expect(service.getExpectedIncome('other-owner', income.id)).rejects.toThrow(/no encontrado/);
+  expect(await read()).toMatchObject({ actualPayroll: [], history: expect.arrayContaining([{ operationId: override.operationId, action: 'update', appliedAt: expect.any(String) }]),
+    monthlyTotals: [{ month: '2026-11', expectedScheduledMxnMinor: 12000_00 }, { month: '2026-12', expectedScheduledMxnMinor: 50000_00 }] });
+  const clear = await preview('income', { ...update, expectedRevision: 2, clearMonthOverride: '2026-11' });
+  await apply(clear.operationId);
+  expect(await read()).toMatchObject({ monthlyTotals: [{ expectedScheduledMxnMinor: null }, { expectedScheduledMxnMinor: 50000_00 }] });
+});

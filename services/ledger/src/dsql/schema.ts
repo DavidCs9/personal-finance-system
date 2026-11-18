@@ -1,4 +1,4 @@
-import { NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS, nativeFinancialPlanReadGrant, nativeFinancialPlanWriteGrants } from './financial-plan-schema.js';
+import { INCOME_SCHEDULE_CHECK, NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS, nativeFinancialPlanReadGrant, nativeFinancialPlanWriteGrants } from './financial-plan-schema.js';
 import { NATIVE_EXCEPTION_SCHEMA_STATEMENTS,nativeExceptionReadGrant,nativeExceptionWriteGrants } from './exception-schema.js';
 import { NATIVE_THREAD_SCHEMA_STATEMENTS, nativeThreadReadGrant, nativeThreadWriteGrants } from './thread-schema.js';
 import { NATIVE_DELIVERY_SCHEMA_STATEMENTS, nativeDeliveryReadGrant, nativeDeliveryWriteGrant } from './delivery-schema.js';
@@ -157,6 +157,8 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   };
   if (!(await query('native-baseline', 'SELECT version FROM olbia.schema_migrations WHERE version=20')).rows.length) throw new BootstrapFailure('native-baseline');
   for (const [index, statement] of SCHEMA_STATEMENTS.entries()) await query(`schema-statement-${index + 1}`, statement);
+  const migrationOptions = { now, pause, waitMs: options.indexWaitMs };
+  await ensureIncomeScheduleSchema({ query: (statement, params) => query('income-schedule-schema', statement, params) }, migrationOptions);
   await ensureBudgetSchema({ query: (statement, params) => query('budget-schema', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   await ensureAmexActivitySchema({ query: (statement, params) => query('amex-activity-schema', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   await ensureSantanderAccount({ query: (statement, params) => query('santander-account', statement, params) },
@@ -359,6 +361,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('native-payment-reconciliation-complete','INSERT INTO olbia.schema_migrations VALUES (22,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('category-catalog-complete','INSERT INTO olbia.schema_migrations VALUES (24,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('financial-plans-complete','INSERT INTO olbia.schema_migrations VALUES (26,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
+  await query('income-schedule-complete','INSERT INTO olbia.schema_migrations VALUES (28,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('cash-and-payroll-closure-complete','INSERT INTO olbia.schema_migrations VALUES (25,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 };
 
@@ -477,4 +480,11 @@ export const ensureBudgetSchema = async (client: SqlClient, options: Parameters<
       ((budget_id IS NOT NULL AND budget_exclusion_id IS NULL) OR (budget_id IS NULL AND budget_exclusion_id IS NOT NULL))))`, 'budget-receipt', options);
   await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_change_receipts_check');
   await client.query('INSERT INTO olbia.schema_migrations VALUES (27,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
+};
+
+export const ensureIncomeScheduleSchema = async (client: SqlClient, options: Parameters<typeof ensureValidatedConstraint>[5] = {}): Promise<void> => {
+  await client.query('ALTER TABLE olbia.expected_income ADD COLUMN IF NOT EXISTS payment_rule_1 text');
+  await client.query('ALTER TABLE olbia.expected_income ADD COLUMN IF NOT EXISTS payment_rule_2 text');
+  await client.query('ALTER TABLE olbia.expected_income ADD COLUMN IF NOT EXISTS withhold_partial_months boolean');
+  await ensureValidatedConstraint(client, 'expected_income', 'expected_income_payment_rules_check', INCOME_SCHEDULE_CHECK, 'income-schedule', options);
 };

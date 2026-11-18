@@ -1,7 +1,7 @@
 import { readSpendingBudget, writeBudgetEntity, resolveSpendingBudget } from './budgets.js';
 import { proposeBudget, monthKeyInZone, type SpendingBudget } from '@finance/domain';
 import { randomUUID } from 'node:crypto';
-import { financialGoalFacts, proposeExpectedIncome, proposeFinancialGoal } from '@finance/domain';
+import { financialGoalFacts, incomeOccurrences, proposeExpectedIncome, proposeFinancialGoal } from '@finance/domain';
 import { readExpectedIncome, writeExpectedIncome, readFinancialGoal, writeFinancialGoal,
   insertFinancialOperation, appendFinancialReceipt, readFinancialReceipt, type FinancialWriteOperation } from './financial-plans.js';
 import type { SqlClient } from './projection.js';
@@ -25,8 +25,25 @@ export const smokeNativeFinancialPlans = async (client: SqlClient, owner: string
   await writeExpectedIncome(client, owner, null, income);
   if ((await readExpectedIncome(client, owner, incomeId))?.amountMxnMinor !== 101 || await readExpectedIncome(client, `${owner}-other`, incomeId))
     throw new Error('Native expected-income ownership/read failed');
-  const updated = proposeExpectedIncome({ action: 'update', expectedRevision: 1, amountMxnMinor: 102 }, income, incomeId, now);
-  await writeExpectedIncome(client, owner, income, updated);
+  const adjusted = proposeExpectedIncome({ action: 'update', expectedRevision: 1, amountMxnMinor: 102,
+    paymentRules: [{ kind: 'previous_business_day', day: 16 }, { kind: 'last_business_day' }],
+    startDate: '2026-04-21' }, income, incomeId, now);
+  await writeExpectedIncome(client, owner, income, adjusted);
+  const read = await readExpectedIncome(client, owner, incomeId);
+  const dates = read && incomeOccurrences(read, '2026-04', '2026-05', [], []);
+  if (!dates || dates.length !== 3 || dates[0]?.scheduleBasis !== 'partial_month_unknown' ||
+    dates[0]?.amountMxnMinor !== null || dates[1]?.paymentDate !== '2026-05-15' ||
+    dates[2]?.paymentDate !== '2026-05-29' || dates[2]?.amountMxnMinor !== 102)
+    throw new Error('Native business-day income schedule failed');
+  const exception = proposeExpectedIncome({ action: 'update', expectedRevision: 2, monthOverride: {
+    month: '2026-04', paymentDate: '2026-04-29', amountMxnMinor: 37, reason: 'SQL verification',
+  } }, read, incomeId, now);
+  await writeExpectedIncome(client, owner, read, exception);
+  const overridden = await readExpectedIncome(client, owner, incomeId);
+  const actualOverride = overridden && incomeOccurrences(overridden, '2026-04', '2026-04', [], []);
+  if (!actualOverride || actualOverride.length !== 1 || actualOverride[0]?.paymentDate !== '2026-04-29' ||
+    actualOverride[0]?.amountMxnMinor !== 37 || actualOverride[0]?.scheduleBasis !== 'month_override')
+    throw new Error('Native monthly income override failed');
   const initial = proposeFinancialGoal({ action: 'create_goal', name: 'SQL verification', totalBudgetMxnMinor: 100,
     allocations: [{ name: 'SQL allocation', allocatedMxnMinor: 100 }] }, null, randomUUID, now, '2026-01-02');
   await writeFinancialGoal(client, owner, null, initial);

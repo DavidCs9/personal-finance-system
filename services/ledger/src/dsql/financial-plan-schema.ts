@@ -1,8 +1,15 @@
 import { NATIVE_BUDGET_TABLES, NATIVE_BUDGET_SCHEMA_STATEMENTS, nativeBudgetWriteGrants } from './budget-schema.js';
 /** Typed current plans; JSON is limited to frozen preview intent and immutable receipts. */
 export const NATIVE_FINANCIAL_PLAN_TABLES = ['expected_income', 'financial_goals', 'goal_allocations', 'goal_payments',
-  'financial_write_operations', 'financial_change_receipts', ...NATIVE_BUDGET_TABLES] as const;
+  'financial_write_operations', 'financial_change_receipts', 'expected_income_month_overrides', ...NATIVE_BUDGET_TABLES] as const;
 const money = 'BETWEEN 1 AND 9007199254740991';
+export const INCOME_SCHEDULE_CHECK = `CHECK (
+  (payment_rule_1 IS NULL OR (payment_day_1 IS NOT NULL AND
+    (payment_rule_1='previous_business_day' OR (payment_rule_1='last_business_day' AND payment_day_1=31))))
+  AND (payment_rule_2 IS NULL OR (payment_day_2 IS NOT NULL AND
+    (payment_rule_2='previous_business_day' OR (payment_rule_2='last_business_day' AND payment_day_2=31))))
+  AND ((payment_rule_1 IS NULL AND payment_rule_2 IS NULL) OR withhold_partial_months IS TRUE)
+  AND (frequency<>'one_time' OR withhold_partial_months IS NULL))`;
 export const NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS olbia.expected_income (
     id uuid PRIMARY KEY, owner text NOT NULL CHECK (length(owner)>0),
@@ -10,13 +17,26 @@ export const NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS = [
     amount_mxn_minor bigint NOT NULL CHECK (amount_mxn_minor ${money}),
     frequency text NOT NULL CHECK (frequency IN ('monthly','semimonthly','one_time')),
     payment_day_1 integer CHECK (payment_day_1 BETWEEN 1 AND 31), payment_day_2 integer CHECK (payment_day_2 BETWEEN 1 AND 31),
+    payment_rule_1 text, payment_rule_2 text, withhold_partial_months boolean,
     expected_on date, start_date date NOT NULL, end_date date CHECK (end_date>=start_date),
     confidence text NOT NULL CHECK (confidence IN ('estimated','confirmed')),
     status text NOT NULL CHECK (status IN ('active','archived')), revision integer NOT NULL CHECK (revision>0),
     created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
+    CONSTRAINT expected_income_payment_rules_check ${INCOME_SCHEDULE_CHECK},
     CHECK ((frequency='monthly' AND payment_day_1 IS NOT NULL AND payment_day_2 IS NULL AND expected_on IS NULL) OR
       (frequency='semimonthly' AND payment_day_1 IS NOT NULL AND payment_day_2 IS NOT NULL AND payment_day_1<payment_day_2 AND expected_on IS NULL) OR
       (frequency='one_time' AND payment_day_1 IS NULL AND payment_day_2 IS NULL AND expected_on IS NOT NULL AND expected_on>=start_date AND (end_date IS NULL OR expected_on<=end_date))))`,
+  `CREATE TABLE IF NOT EXISTS olbia.expected_income_month_overrides (
+    income_id uuid NOT NULL REFERENCES olbia.expected_income(id),
+    month text NOT NULL CHECK (month ~ '^[1-9][0-9]{3}-(0[1-9]|1[0-2])$'),
+    payment_on date, amount_mxn_minor bigint CHECK (amount_mxn_minor BETWEEN 0 AND 9007199254740991),
+    confidence text NOT NULL CHECK (confidence IN ('estimated','confirmed')),
+    reason text NOT NULL CHECK (length(trim(reason)) BETWEEN 1 AND 200),
+    PRIMARY KEY (income_id,month),
+    CHECK (payment_on IS NULL OR (
+      EXTRACT(YEAR FROM payment_on)=substring(month,1,4)::integer AND
+      EXTRACT(MONTH FROM payment_on)=substring(month,6,2)::integer)),
+    CHECK (amount_mxn_minor IS NULL OR (amount_mxn_minor=0 AND payment_on IS NULL) OR (amount_mxn_minor>0 AND payment_on IS NOT NULL)))`,
   `CREATE TABLE IF NOT EXISTS olbia.financial_goals (
     id uuid PRIMARY KEY, owner text NOT NULL CHECK (length(owner)>0), name text NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 200),
     original_budget_mxn_minor bigint NOT NULL CHECK (original_budget_mxn_minor ${money}),
@@ -66,7 +86,9 @@ export const nativeFinancialPlanReadGrant = (role: string) =>
 export const nativeFinancialPlanWriteGrants = (role: string) => [
   ...nativeBudgetWriteGrants(role),
   `GRANT INSERT ON ${NATIVE_FINANCIAL_PLAN_TABLES.map(table => `olbia.${table}`).join(',')} TO ${role}`,
-  `GRANT UPDATE (name,employer,amount_mxn_minor,frequency,payment_day_1,payment_day_2,expected_on,start_date,end_date,confidence,status,revision,updated_at) ON olbia.expected_income TO ${role}`,
+  `GRANT UPDATE (name,employer,amount_mxn_minor,frequency,payment_day_1,payment_day_2,payment_rule_1,payment_rule_2,withhold_partial_months,expected_on,start_date,end_date,confidence,status,revision,updated_at) ON olbia.expected_income TO ${role}`,
+  `GRANT UPDATE (payment_on,amount_mxn_minor,confidence,reason) ON olbia.expected_income_month_overrides TO ${role}`,
+  `GRANT DELETE ON olbia.expected_income_month_overrides TO ${role}`,
   `GRANT UPDATE (name,total_budget_mxn_minor,target_date,status,revision,updated_at) ON olbia.financial_goals TO ${role}`,
   `GRANT UPDATE (name,allocated_mxn_minor,expected_payment_date,status,revision) ON olbia.goal_allocations TO ${role}`,
   `GRANT UPDATE (allocation_id,amount_mxn_minor,payment_date,source,ledger_movement_id,status,revision,updated_at) ON olbia.goal_payments TO ${role}`,

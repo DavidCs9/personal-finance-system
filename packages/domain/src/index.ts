@@ -286,3 +286,5 @@ export {
 export * from './financial-plans.js';
 
 export * from './budgets.js';
+
+export { MX_BANKING_CALENDAR_VERSION } from './mx-banking-calendar.js';

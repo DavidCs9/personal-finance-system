@@ -128,3 +128,43 @@ it('can transfer a full allocation down to zero without calling it paid or chang
   expect(financialGoalFacts(next)).toMatchObject({ allocatedMxnMinor: 400000_00,
     allocations: [{ allocatedMxnMinor: 0, paidMxnMinor: 0, paymentStatus: 'no_recorded_payment' }, {}, {}, {}] });
 });
+
+describe('business-day payroll', () => {
+  const rules = [{ kind: 'previous_business_day', day: 15 }, { kind: 'last_business_day' }];
+  const businessSalary = (changes = {}) => salary({ paymentDays: undefined, paymentRules: rules, frequency: 'semimonthly',
+    amountMxnMinor: 25000_00, ...changes });
+
+  it('keeps the partial employment month unknown and estimates both dates in the regular months', () => {
+    const rows = incomeOccurrences(businessSalary(), '2026-11', '2027-01', [], []);
+    expect(rows).toMatchObject([
+      { periodMonth: '2026-11', paymentDate: null, amountMxnMinor: null, scheduleBasis: 'partial_month_unknown' },
+      { paymentDate: '2026-12-15', amountMxnMinor: 25000_00, calendarStatus: 'cnbv_calendar_published' },
+      { paymentDate: '2026-12-31', amountMxnMinor: 25000_00, calendarStatus: 'cnbv_calendar_published' },
+      { paymentDate: '2027-01-15', amountMxnMinor: 25000_00, calendarStatus: 'cnbv_calendar_provisional' },
+      { paymentDate: '2027-01-29', amountMxnMinor: 25000_00, calendarStatus: 'cnbv_calendar_provisional' },
+    ]);
+  });
+
+  it('skips published Mexican banking holidays and weekends, including a shift across months', () => {
+    const business = (day: number) => businessSalary({ frequency: 'monthly',
+      paymentRules: [{ kind: 'previous_business_day', day }], startDate: '2026-01-01' });
+    const dates = (source: ExpectedIncome, month: string) => incomeOccurrences(source, month, month, [], []).map(row => row.paymentDate);
+    expect(dates(business(3), '2026-04')).toEqual(['2026-04-01', '2026-04-30']); // Holy Thursday and Good Friday.
+    expect(dates(business(16), '2026-11')).toEqual(['2026-11-13']); // Revolution Day on Monday.
+    expect(dates(business(25), '2026-12')).toEqual(['2026-12-24']);
+    expect(dates(business(15), '2026-11')).toEqual(['2026-11-13']); // Sunday.
+    expect(dates(business(1), '2026-04')).toEqual(['2026-04-01', '2026-04-30']); // May 1 bank closure.
+    expect(dates(business(1), '2026-05')).toEqual([]); // June 1 is open.
+  });
+
+  it('replaces an exceptional month and preserves termination and payroll separation', () => {
+    const source = businessSalary({ monthOverride: { month: '2026-11', paymentDate: '2026-11-30', amountMxnMinor: 1234_00, reason: 'Employer estimate' } });
+    const payroll = [{ id: id(), employer: 'Employer', paymentDate: '2026-11-30', payrollType: 'O', netMxnMinor: 1250_00 }];
+    const rows = incomeOccurrences(source, '2026-11', '2026-12', payroll, [{ employer: 'Employer', endedOn: '2026-12-20' }]);
+    expect(rows).toMatchObject([
+      { paymentDate: '2026-11-30', amountMxnMinor: 1234_00, scheduleBasis: 'month_override', reconciliationStatus: 'possible_payroll_overlap' },
+      { periodMonth: '2026-12', paymentDate: null, amountMxnMinor: null, scheduleBasis: 'partial_month_unknown' },
+    ]);
+    expect(() => businessSalary({ monthOverride: { month: '2026-11', paymentDate: '2026-11-22', amountMxnMinor: 100, reason: 'Too early' } })).toThrow(/vigencia/);
+  });
+});

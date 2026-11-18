@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { addCalendarMonths, dayKeyInZone, monthKeyInZone, FINANCE_TIME_ZONE, isValidMonth,
   FinancialPlanError, financialId, financialObject, financialSum, financialGoalFacts, incomeOccurrences,
-  proposeExpectedIncome, proposeFinancialGoal, maybeAutoAmexMsi, payrollEmployerKey,
+  proposeExpectedIncome, proposeFinancialGoal, maybeAutoAmexMsi, payrollEmployerKey, MX_BANKING_CALENDAR_VERSION,
   type ExpectedIncome, type FinancialGoalState, type GoalPayment } from '@finance/domain';
 import { applicationSqlClient, withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { readExpectedIncome, listExpectedIncomeRows, readIncomeEvidence, writeExpectedIncome, readFinancialGoal,
@@ -43,21 +43,32 @@ const incomeFacts = (sources: readonly ExpectedIncome[], range: ReturnType<typeo
     occurrences, actualPayroll: context.actual,
     expectedTotalsScope: 'returned_sources', actualPayrollScope: 'owner_month_range_do_not_sum_across_pages',
     monthlyTotals: range.months.map(month => {
-      const scheduled = occurrences.filter(item => item.paymentDate.slice(0, 7) === month);
+      const scheduled = occurrences.filter(item => (item.paymentDate?.slice(0, 7) ?? item.periodMonth) === month);
       const actual = context.actual.filter(item => item.paymentDate.slice(0, 7) === month);
       const overlap = scheduled.some(item => item.reconciliationStatus === 'possible_payroll_overlap');
-      return { month, expectedScheduledMxnMinor: financialSum(scheduled.map(item => item.amountMxnMinor)),
-        estimatedExpectedMxnMinor: financialSum(scheduled.filter(item => item.confidence === 'estimated').map(item => item.amountMxnMinor)),
-        confirmedExpectedMxnMinor: financialSum(scheduled.filter(item => item.confidence === 'confirmed').map(item => item.amountMxnMinor)),
+      const unknownAmount = scheduled.some(item => item.amountMxnMinor === null);
+      const sumKnown = (confidence?: ExpectedIncome['confidence']) => financialSum(scheduled
+        .filter(item => confidence === undefined || item.confidence === confidence)
+        .flatMap(item => item.amountMxnMinor === null ? [] : [item.amountMxnMinor]));
+      const byConfidence = (confidence: ExpectedIncome['confidence']) =>
+        scheduled.some(item => item.confidence === confidence && item.amountMxnMinor === null) ? null : sumKnown(confidence);
+      const expectedKnownMxnMinor = sumKnown();
+      return { month, expectedScheduledMxnMinor: unknownAmount ? null : expectedKnownMxnMinor, expectedKnownMxnMinor,
+        unknownExpectedOccurrences: scheduled.filter(item => item.amountMxnMinor === null).length,
+        provisionalCalendarOccurrences: scheduled.filter(item => item.calendarStatus === 'cnbv_calendar_provisional').length,
+        estimatedExpectedMxnMinor: byConfidence('estimated'),
+        confirmedExpectedMxnMinor: byConfidence('confirmed'),
         actualPayrollMxnMinor: financialSum(actual.map(item => item.netMxnMinor)), actualPayslipCount: actual.length,
         overlapStatus: overlap ? 'unresolved_payroll_overlap' : 'no_overlap_identified_not_reconciled',
-        remainingExpectedMxnMinor: overlap ? null : financialSum(scheduled.map(item => item.amountMxnMinor)),
+        remainingExpectedMxnMinor: overlap || unknownAmount ? null : expectedKnownMxnMinor,
         combinedActualAndExpectedMxnMinor: null };
     }),
     limitations: ['Expected income is a configured expectation, including when confirmed; it is not money received.',
       'No automatic payroll reconciliation. Same-employer or unidentified-employer payroll is an unresolved overlap, never an additional verified deposit.',
       'Actual payroll and expected schedules are separate totals; never add unresolved expectations to actual income.',
-      'Configured amounts are per occurrence, without partial-month prorating. Confirmed employment termination caps future occurrences.'],
+      'Configured amounts are per occurrence. A partial month without an explicit override can have an unknown net amount and date.',
+      'CNBV business-day dates outside published calendar coverage are provisional. The employer may use an explicit month override.',
+      'Confirmed employment termination caps future occurrences.'],
   };
 };
 export const listExpectedIncome = async (owner: string, input: Record<string, unknown> = {}, now = new Date()) => {
@@ -165,10 +176,15 @@ export const previewFinancialChange = async (owner: string, kind: FinancialWrite
     } else if (kind === 'income') {
       const prior = input.action === 'create' ? null : await readExpectedIncome(client, owner, entityId);
       const proposed = proposeExpectedIncome(input, prior, entityId, at);
-      const range = financialMonthRange({ fromMonth: monthKeyInZone(now), toMonth: addCalendarMonths(monthKeyInZone(now), 23) }, now);
+      const currentMonth = monthKeyInZone(now);
+      const overrideMonth = input.monthOverride === undefined ? input.clearMonthOverride : financialObject(input.monthOverride).month;
+      const fromMonth = typeof overrideMonth === 'string' ? overrideMonth
+        : input.action === 'create' && proposed.startDate.slice(0, 7) < currentMonth ? proposed.startDate.slice(0, 7) : currentMonth;
+      const toMonth = fromMonth > '9998-01' ? '9999-12' : addCalendarMonths(fromMonth, 23);
+      const range = financialMonthRange({ fromMonth, toMonth }, now);
       const context = await readIncomeEvidence(client, owner, `${range.fromMonth}-01`, `${addCalendarMonths(range.toMonth, 1)}-01`);
       before = prior ? jsonObject(prior) : null; after = jsonObject(proposed);
-      evidencePreconditions = jsonObject(context);
+      evidencePreconditions = jsonObject({ ...context, calendarVersion: MX_BANKING_CALENDAR_VERSION });
       preview = { before: prior, after: proposed, affectedPaymentOccurrences: {
         fromMonth: range.fromMonth, toMonth: range.toMonth,
         before: prior ? incomeOccurrences(prior, range.fromMonth, range.toMonth, context.actual, context.terminations) : [],
@@ -235,7 +251,9 @@ export const applyFinancialChange = async (owner: string, operationId: unknown, 
         // Use the financial preview horizon (not a UTC-derived month) stored in its facts.
         const coverage = financialObject(operation.preview.affectedPaymentOccurrences);
         const context = await readIncomeEvidence(client, owner, `${String(coverage.fromMonth)}-01`, `${addCalendarMonths(String(coverage.toMonth), 1)}-01`);
-        if (!same(context, operation.evidencePreconditions)) throw new FinancialPlanError('La nómina o la salida laboral cambió después del preview.', 'conflict');
+        const expected = operation.evidencePreconditions;
+        const current = expected.calendarVersion === undefined ? context : { ...context, calendarVersion: MX_BANKING_CALENDAR_VERSION };
+        if (!same(current, expected)) throw new FinancialPlanError('La nómina, la salida laboral o el calendario bancario cambió después del preview.', 'conflict');
         const after = operation.after as unknown as ExpectedIncome;
         await writeExpectedIncome(client, owner, before, after);
         result = { ok: true, operationId: id, kind: operation.kind, status: 'applied', appliedAt, income: await readExpectedIncome(client, owner, operation.entityId) };
