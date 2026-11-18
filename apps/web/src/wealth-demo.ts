@@ -32,6 +32,15 @@ export const demoWealthOverview: WealthOverview = withWealthTotals({
       },
     },
     {
+      id: "santander_cash",
+      name: "Santander",
+      institution: "Santander",
+      role: "cash",
+      sync: "manual",
+      connected: false,
+      latestSnapshot: null,
+    },
+    {
       id: "fondo_ahorro",
       name: "Fondo de ahorro",
       institution: "Nómina",

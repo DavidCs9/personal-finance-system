@@ -70,7 +70,7 @@ afterAll(async () => { await sql.close(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 beforeEach(async () => {
   records = new Map();
-  await sql.exec(`TRUNCATE olbia.projection_state,olbia.month_plans,olbia.planned_payments,olbia.payslips,olbia.payslip_lines,${[...TABLE_NAMES,...NATIVE_LEDGER_TABLES,...NATIVE_PLANNING_TABLES,'ingestion_retry_attempts',...NATIVE_WEALTH_TABLES,'bank_imports','bank_import_rows','bank_import_candidates'].map(table => `olbia.${table}`).join(',')}`);
+  await sql.exec(`TRUNCATE olbia.projection_state,olbia.month_plans,olbia.planned_payments,olbia.payroll_closures,olbia.payslips,olbia.payslip_lines,${[...TABLE_NAMES,...NATIVE_LEDGER_TABLES,...NATIVE_PLANNING_TABLES,'ingestion_retry_attempts',...NATIVE_WEALTH_TABLES,'bank_imports','bank_import_rows','bank_import_candidates'].map(table => `olbia.${table}`).join(',')}`);
   vi.stubEnv('OLBIA_SQL_STORE_ENABLED','true');
   await prepareNativeWealthFixture(sql);
   await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
@@ -193,7 +193,7 @@ describe('DSQL planning and payroll contracts', () => {
     expect(runningFondoAhorroByDay(year)).toEqual([{ day: '2026-09-15', totalMxnMinor: 1141800 }, { day: '2026-10-15', totalMxnMinor: 1712700 }]);
     expect(await getWealthOverviewAsOf(owner, '2026-09-30')).toMatchObject({ assetsMxnMinor: 1141800, netMxnMinor: 1141800 });
     const sqlWealth = await getWealthOverview(owner, now, readSqlPayslipsForYear);
-    expect(sqlWealth).toMatchObject({ assetsMxnMinor: 1712700 });
+    expect(sqlWealth).toMatchObject({ assetsMxnMinor: 1141800 }); // The October pay date is still ahead of now.
     expect(await readSqlPayslipsForYear(owner, '2025', sql)).toHaveLength(1);
     expect(await readSqlPayslipsForYear(owner, "2026' OR '1'='1", sql)).toEqual([]);
   });

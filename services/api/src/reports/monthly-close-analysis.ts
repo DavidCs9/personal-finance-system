@@ -181,7 +181,7 @@ export const fallbackMonthlyCloseAnalysis = (facts: MonthlyCloseFacts): MonthlyC
     : 'El gasto no superó el mes anterior. Las categorías y contextos principales muestran cómo se distribuyó el cierre.',
   wealthNarrative: facts.wealth.comparable
     ? 'El patrimonio usa el último saldo conocido de cada cuenta al cierre. Los cambios de inversión describen valor observado y no rendimiento ajustado.'
-    : 'Este es el primer cierre patrimonial comparable de Olbia. Cada cuenta usa el último saldo conocido disponible al final del mes.',
+    : 'Este cierre muestra el último saldo conocido de cada cuenta al final del mes.',
   selectedSignalIds: facts.signals.slice(0, 3).map((signal) => signal.id),
 });
 

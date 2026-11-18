@@ -62,7 +62,7 @@ Desde el primer corte registrado de cada cuenta, estimar cortes mensuales usando
 
 Ingreso del mes deriva de CFDI nómina XML: neto Total por FechaPago. UUID único; importación duplicada no cambia fecha, valores, evidencia ni líneas. Conservar totales fuente y líneas SAT en orden, incluidas repetidas/cero. Estimados, liquidez, compensación y Fondo son derivados, no saldos autoritativos paralelos.
 
-Con una nómina ordinaria en el mes actual, estimar segunda quincena; retirar estimado al llegar segunda ordinaria o cerrar mes. Sin nóminas actuales, liquidez provisional usa últimas 1–2 ordinarias: doble de última o suma de dos recientes. Al subir primera del mes, aplicar lógica normal. Mes pasado sin nóminas queda sin configurar.
+Con una nómina ordinaria en el mes actual, estimar segunda quincena; retirar estimado al llegar segunda ordinaria o cerrar mes. Sin nóminas actuales, liquidez provisional usa últimas 1–2 ordinarias: doble de última o suma de dos recientes. Al subir primera del mes, aplicar lógica normal. Mes pasado sin nóminas queda sin configurar. Desde la salida confirmada de un empleador, sus CFDI históricos conservan el neto real y dejan de servir para estimar nómina pendiente o provisional.
 
 Compensación = liquidez + aportaciones Fondo SAT 004, con fondo gemelo cuando aplica estimado de segunda quincena. Resumen y porcentaje gastado usan liquidez, nunca compensación.
 
@@ -84,15 +84,15 @@ El mes actual combina MSI aún pendiente y fijos sin cobro vinculado efectivo. L
 
 ## Patrimonio
 
-**Neto = activos − saldos pendientes de tarjeta**, en MXN; separado de gasto/Te quedan. Activos: Cajita Nu, Fondo de ahorro, Bitso e Interactive Brokers. Holdings conservan moneda/valores/cantidades nativos y evidencia de FX; total de captura de activos deriva de holdings SQL.
+**Neto = activos − saldos pendientes de tarjeta**, en MXN; separado de gasto/Te quedan. Activos: Cajita Nu, Santander, Fondo de ahorro, Bitso e Interactive Brokers. Holdings conservan moneda/valores/cantidades nativos y evidencia de FX; total de captura de activos deriva de holdings SQL.
 
-Cajita captura saldo manual positivo. Hasta tres perfiles activos permiten capturar manualmente deuda total de tarjeta, incluido MSI; cero es válido para pagada. Perfiles contienen corte/pago, no montos mensuales. Borrado desactiva perfil, oculta sus ciclos/pasivos del producto y conserva identidad/capturas; reactivar mismo ID respeta límite activo y comportamiento existente.
+Cajita captura saldo manual positivo y Santander permite saldo cero. Capturar el saldo efectivo de la cuenta, no un importe de depósito. Hasta tres perfiles activos permiten capturar manualmente deuda total de tarjeta, incluido MSI; cero es válido para pagada. Perfiles contienen corte/pago, no montos mensuales. Borrado desactiva perfil, oculta sus ciclos/pasivos del producto y conserva identidad/capturas; reactivar mismo ID respeta límite activo y comportamiento existente.
 
-Capturas y holdings son inmutables, sin TTL financiero. Selección canónica por cuenta o tarjeta/día Chihuahua: reemplazo cambia puntero y conserva ambas capturas con relación de sucesión, incluso si medición tiene hora igual/anterior. Cajita y cada deuda se marcan antiguas tras siete días.
+Capturas y holdings son inmutables, sin TTL financiero. Selección canónica por cuenta o tarjeta/día Chihuahua: reemplazo cambia puntero y conserva ambas capturas con relación de sucesión, incluso si medición tiene hora igual/anterior. Cajita, Santander y cada deuda se marcan antiguos tras siete días.
 
 Bitso sincroniza balances y tickers MXN. IBKR usa Flex Query, posiciones/cash USD y Banxico FIX SF43718; posiciones no-USD se omiten según contrato actual. Conservar cantidades/cash con signo y precisión provider. Fallo mantiene última captura buena y expone error; alerta por push/email. Sync manual y programado usan misma operación.
 
-Fondo deriva de deducciones SAT 004 del año calendario, empleado y empleador. Cuenta completo como activo ilíquido hasta diciembre; no inventar reset de liquidación sin XML que pruebe esa operación.
+Fondo deriva de deducciones SAT 004 del año calendario, empleado y empleador. Cuenta como activo ilíquido hasta la liquidación confirmada. El cierre manual identifica al empleador por un CFDI ordinario, conserva su evidencia y distingue fecha de salida, fecha de depósito e importe recibido. A partir de la fecha de depósito se retira del patrimonio el saldo derivado de ese empleador; las contribuciones y cierres anteriores se conservan. El pago no crea nómina ni un saldo bancario estimado.
 
 Patrimonio actual no cambia de significado al elegir otro mes. Historial total: cierres mensuales de Neto desde **2026-08**, omitiendo prehistoria incompleta. Historial por cuenta: diario. Carry-forward usa última captura disponible en o antes de fecha de corte. El asistente distingue inversiones de mercado Bitso+IBKR de Neto: ese scope excluye Cajita, Fondo y tarjetas. Variación observada MXN incluye FX y no es rendimiento ajustado por flujos/costo base/dividendos.
 

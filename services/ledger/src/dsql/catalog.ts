@@ -10,7 +10,7 @@ export const NATIVE_DOMAIN_TABLES = [
   ...NATIVE_PLANNING_TABLES,
   ...NATIVE_CATEGORY_TABLES,
   'spend_categories', 'merchant_rules', 'card_profiles', 'month_plans', 'planned_payments',
-  'payslips', 'payslip_lines', 'bank_imports', 'bank_import_rows', 'bank_import_candidates',
+  'payslips', 'payslip_lines', 'payroll_closures', 'bank_imports', 'bank_import_rows', 'bank_import_candidates',
   'web_push_subscriptions', 'monthly_email_preparations', 'monthly_email_receipts',
   'ingestion_review_exceptions', 'ingestion_review_claims', 'ingestion_retry_attempts',
 ] as const;

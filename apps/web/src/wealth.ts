@@ -1,5 +1,7 @@
 import type {
   CardLiabilitySnapshot,
+  PayrollClosure,
+  PayrollCloseCandidate,
   WealthAccountDefinition,
   WealthAccountId,
   WealthHolding,
@@ -32,6 +34,8 @@ export interface WealthOverview {
   readonly netMxnMinor: number;
   readonly accounts: readonly WealthAccountView[];
   readonly liabilities: readonly WealthLiabilityView[];
+  readonly payrollClosures?: readonly PayrollClosure[];
+  readonly payrollCloseCandidate?: PayrollCloseCandidate;
   readonly history: {
     readonly all: readonly WealthHistoryPoint[];
     readonly byAccount: Readonly<Partial<Record<WealthAccountId, readonly WealthHistoryPoint[]>>>;

@@ -12,7 +12,8 @@ import { readNativeWealthInputs, readNativeWealthAudit } from '../src/wealth/nat
 
 process.env.METADATA_TABLE_NAME ??= 'test';
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-evidence';
-const { createCajitaSnapshot, createCardLiabilitySnapshot, persistWealthSnapshot } = await import('../src/wealth/service.js');
+const { closePayrollAndFund, createManualCashSnapshot, createCardLiabilitySnapshot, getWealthOverviewAsOf, persistWealthSnapshot } = await import('../src/wealth/service.js');
+const { incomeFieldsForMonth } = await import('../src/imports/cfdi-nomina-flow.js');
 const { syncBitsoAccount } = await import('../src/wealth/bitso-sync.js');
 const { syncIbkrAccount } = await import('../src/wealth/ibkr-sync.js');
 
@@ -51,6 +52,7 @@ beforeAll(async () => {
 afterAll(() => sql.close());
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 beforeEach(async () => {
+  await sql.exec('TRUNCATE olbia.payroll_closures,olbia.payslip_lines,olbia.payslips');
   await sql.exec(`TRUNCATE ${NATIVE_WEALTH_TABLES.map(t => `olbia.${t}`).join(',')}`);
   await sql.query('DELETE FROM olbia.schema_migrations WHERE version=15');
   await sql.query('UPDATE olbia.card_profiles SET deleted_at=NULL');
@@ -62,6 +64,33 @@ beforeEach(async () => {
 });
 
 describe('native Patrimonio mutations', () => {
+  it('captures Santander cash independently and settles only the selected employer on the payout date', async () => {
+    await sql.query("INSERT INTO olbia.asset_accounts VALUES ('santander_cash','Santander','Santander','cash','manual',3)");
+    await createManualCashSnapshot('santander_cash', '{"amountMinor":145000}', 'owner');
+    expect((await getWealthOverviewAsOf('owner', '2026-09-30')).assetsMxnMinor).toBe(145000);
+    await createManualCashSnapshot('santander_cash', '{"amountMinor":0}', 'owner');
+    expect((await readNativeWealthInputs('owner', sql)).snapshots).toMatchObject([{ accountId: 'santander_cash', totalMxnMinor: 0 }]);
+    expect(await readNativeWealthAudit('owner', sql)).toMatchObject([{ snapshot: { accountId: 'santander_cash', totalMxnMinor: 145000 } }]);
+
+    const payslipUuid = 'aaaaaaaa-0000-4000-8000-000000000001';
+    await sql.query(`INSERT INTO olbia.payslips
+      (uuid,owner,paid_on,payroll_type,total_mxn_minor,perceptions_mxn_minor,deductions_mxn_minor,
+       other_payments_mxn_minor,employer_name,ingested_at,evidence_bucket,evidence_key,evidence_sha256,evidence_content_type)
+      VALUES ($1,'owner','2026-09-14','O',250000,300000,50000,0,'Prior employer',$2,'bucket','xml',repeat('a',64),'application/xml')`,
+    [payslipUuid, now]);
+    await sql.query("INSERT INTO olbia.payslip_lines VALUES ($1,0,'deduccion','004','004','Fondo',50000)", [payslipUuid]);
+    const body = JSON.stringify({ payslipUuid, endedOn: '2026-09-15', fundPaidOn: '2026-09-17', fundPaidMinor: 65000 });
+    const current = new Date(now);
+    expect(await incomeFieldsForMonth('owner', '2026-09', current)).toMatchObject({ incomeMinor: 500000, estimateActive: true });
+    await expect(closePayrollAndFund(body, 'someone-else')).rejects.toThrow('nómina elegida');
+    expect(await closePayrollAndFund(body, 'owner')).toMatchObject({ fundPaidMinor: 65000 });
+    await closePayrollAndFund(body, 'owner');
+    expect((await sql.query('SELECT * FROM olbia.payroll_closures')).rows).toHaveLength(1);
+    expect(await incomeFieldsForMonth('owner', '2026-09', current)).toMatchObject({ incomeMinor: 250000, estimateActive: false });
+    expect(await incomeFieldsForMonth('owner', '2026-10', new Date('2026-10-02T12:00:00Z'))).toMatchObject({ provisionalActive: false });
+    expect((await getWealthOverviewAsOf('owner', '2026-09-16')).assetsMxnMinor).toBe(50000);
+    expect((await getWealthOverviewAsOf('owner', '2026-09-17')).assetsMxnMinor).toBe(0);
+  });
   it('persists successful Bitso and IBKR syncs directly, keeping signed provider cash and prior captures on failures', async () => {
     const bitso = vi.fn(async () => new Response(JSON.stringify({ success: true, payload: {
       balances: [{ currency: 'mxn', total: '100.5', locked: '0', available: '100.5' }],
@@ -92,7 +121,7 @@ describe('native Patrimonio mutations', () => {
     const second = await providerCapture(200);
     expect(first).toMatchObject({ day: '2026-09-30', totalMxnMinor: -100, holdings: [holding(-100)] });
     expect(second).toMatchObject({ day: '2026-09-30', totalMxnMinor: 200, fxRate: 17.123456789123456 });
-    await createCajitaSnapshot('{"amountMinor":1000}', 'owner');
+    await createManualCashSnapshot('nu_cajita_emergencia', '{"amountMinor":1000}', 'owner');
     await createCardLiabilitySnapshot('amex', '{"amountMinor":500}', 'owner');
     await createCardLiabilitySnapshot('amex', '{"amountMinor":0}', 'owner');
     const inputs = await readNativeWealthInputs('owner', sql), audit = await readNativeWealthAudit('owner', sql);

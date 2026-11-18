@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { deriveMonthIncome, isOrdinaryNomina, previousCalendarMonth, type PayslipSummary } from "@finance/domain";
+import { deriveMonthIncome, isOrdinaryNomina, monthKeyInZone, previousCalendarMonth, type PayslipSummary } from "@finance/domain";
 import { rawSourceBucketName, s3 } from "../http/clients.js";
 import type { JsonObject } from "../http/response.js";
 import { InvalidCfdiNominaError, parseCfdiNominaXml } from "./cfdi-nomina.js";
+import { readPayrollClosures } from "./payroll-closures.js";
 
 import { readSqlPayslipsForMonth,readSqlPayslipsForYear,readSqlPayslipRecord,payslipExists,insertPayslip,MAX_PAYSLIP_LINES,toPublicPayslip,type PayrollEvidence } from './payroll-sql.js';
 export { toPublicPayslip } from './payroll-sql.js';
@@ -76,10 +77,12 @@ const incomeFieldsForMonthFromReads = async (
   readonly provisionalMinor: number;
   readonly payslips: readonly PayslipSummary[];
 }> => {
+  const currentMonth = monthKeyInZone(now);
   const payslips = await readMonth(owner, month);
+  const closures = month === currentMonth ? await readPayrollClosures(owner) : [];
   const priorOrdinaryPayslips =
-    payslips.length === 0 ? await listPriorOrdinaryPayslips(owner, month, 2, readMonth) : [];
-  const derived = deriveMonthIncome({ payslips, month, now, priorOrdinaryPayslips });
+    payslips.length === 0 && month === currentMonth ? await listPriorOrdinaryPayslips(owner, month, 2, readMonth) : [];
+  const derived = deriveMonthIncome({ payslips, month, now, priorOrdinaryPayslips, closures });
   return {
     configured: derived.configured,
     incomeMinor: derived.incomeMinor,

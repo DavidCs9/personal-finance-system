@@ -22,7 +22,8 @@ import { MonthIncomeSheet } from "../sheets/MonthIncomeSheet";
 import { NominaUploadSheet } from "../sheets/NominaUploadSheet";
 import { PayslipSheet } from "../sheets/PayslipSheet";
 import type { Payslip } from "../monthly-plan";
-import { CajitaSheet } from "../sheets/CajitaSheet";
+import { CashBalanceSheet } from "../sheets/CashBalanceSheet";
+import { PayrollClosureSheet } from "../sheets/PayrollClosureSheet";
 import { CardLiabilitySheet } from "../sheets/CardLiabilitySheet";
 import { ManualEntrySheet } from "../sheets/ManualEntrySheet";
 import { PaymentSheet } from "../sheets/PaymentSheet";
@@ -40,7 +41,7 @@ import { AnalyticsView } from "../views/AnalyticsView";
 import { demoWealthOverview } from "../wealth-demo";
 import type { WealthOverview, WealthAccountView, WealthHistoryPoint, WealthLiabilityView } from "../wealth";
 import { withWealthTotals } from "../wealth";
-import { CAJITA_ACCOUNT_ID, BITSO_ACCOUNT_ID, IBKR_ACCOUNT_ID, WEALTH_ACCOUNTS, dayKeyInZone, type WealthAccountId, type WealthSnapshot } from "@finance/domain";
+import { SANTANDER_CASH_ACCOUNT_ID, BITSO_ACCOUNT_ID, IBKR_ACCOUNT_ID, WEALTH_ACCOUNTS, dayKeyInZone, manualCashHolding, type ManualCashAccountId, type WealthAccountId, type WealthSnapshot } from "@finance/domain";
 
 const reconcileDemoPayment = (plan: MonthlyPlan, paymentId: string, eventId: string | null,
   expectedEventId: string | null, expectedPayment: Pick<PlannedPayment, "name" | "amountMinor" | "dueDay">,
@@ -106,7 +107,8 @@ export function Dashboard({
   const [amexActivityOpen, setAmexActivityOpen] = useState(false);
   const [santanderStatementOpen, setSantanderStatementOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
-  const [cajitaOpen, setCajitaOpen] = useState(false);
+  const [cashAccount, setCashAccount] = useState<ManualCashAccountId>();
+  const [payrollCloseOpen, setPayrollCloseOpen] = useState(false);
   const [liabilityCard, setLiabilityCard] = useState<WealthLiabilityView>();
   const [selectedWealthAccount, setSelectedWealthAccount] = useState<WealthAccountId | "all">("all");
   const { privateMode, togglePrivateMode } = usePrivateMode();
@@ -582,7 +584,8 @@ export function Dashboard({
             }}
             selectedAccountId={selectedWealthAccount}
             onSelectAccount={setSelectedWealthAccount}
-            onRegisterCajita={() => setCajitaOpen(true)}
+            onRegisterCash={setCashAccount}
+            onClosePayroll={() => setPayrollCloseOpen(true)}
             onRegisterLiability={(liability) => setLiabilityCard(liability)}
             onSyncRemote={() => {
               bitsoSyncMutation.reset();
@@ -896,67 +899,79 @@ export function Dashboard({
           }}
         />
       )}
-      {cajitaOpen && (
-        <CajitaSheet
+      {cashAccount && (
+        <CashBalanceSheet
+          accountName={WEALTH_ACCOUNTS.find(account => account.id === cashAccount)!.name}
+          allowsZero={cashAccount === SANTANDER_CASH_ACCOUNT_ID}
           currentMinor={
-            wealth?.accounts.find((account) => account.id === CAJITA_ACCOUNT_ID)?.latestSnapshot
+            wealth?.accounts.find((account) => account.id === cashAccount)?.latestSnapshot
               ?.totalMxnMinor
           }
-          onClose={() => setCajitaOpen(false)}
+          onClose={() => setCashAccount(undefined)}
           onSave={async (amountMinor) => {
             if (demoMode) {
               const day = dayKeyInZone(now);
               const snapshot = {
-                accountId: CAJITA_ACCOUNT_ID,
+                accountId: cashAccount,
                 day,
                 capturedAt: now.toISOString(),
                 source: "manual" as const,
                 currency: "MXN" as const,
                 totalMxnMinor: amountMinor,
-                holdings: [
-                  {
-                    id: "emergency_fund",
-                    symbol: "MXN",
-                    name: "Fondo de emergencia",
-                    quantity: amountMinor / 100,
-                    currency: "MXN",
-                    valueNativeMinor: amountMinor,
-                    valueMxnMinor: amountMinor,
-                  },
-                ],
+                holdings: [manualCashHolding(cashAccount, amountMinor)],
               };
               queryClient.setQueryData<WealthOverview>(wealthQueryKey, (current) => {
                 const base: WealthOverview = current ?? demoWealthOverview;
                 const accounts: WealthAccountView[] = base.accounts.map((account: WealthAccountView) =>
-                  account.id === CAJITA_ACCOUNT_ID
+                  account.id === cashAccount
                     ? { ...account, connected: true, latestSnapshot: snapshot }
                     : account,
                 );
                 const previous: readonly WealthHistoryPoint[] =
-                  base.history.byAccount.nu_cajita_emergencia ?? [];
-                const cajitaHistory: WealthHistoryPoint[] = [
+                  base.history.byAccount[cashAccount] ?? [];
+                const cashHistory: WealthHistoryPoint[] = [
                   ...previous.filter((point: WealthHistoryPoint) => point.day !== day),
                   { day, totalMxnMinor: amountMinor },
                 ].sort((left, right) => left.day.localeCompare(right.day));
-                return withWealthTotals({
+                const updated = withWealthTotals({
                   accounts,
                   liabilities: base.liabilities,
                   history: {
-                    all: cajitaHistory,
+                    all: base.history.all,
                     byAccount: {
                       ...base.history.byAccount,
-                      nu_cajita_emergencia: cajitaHistory,
+                      [cashAccount]: cashHistory,
                     },
                   },
                 });
+                return { ...updated, history: { ...updated.history, all: [
+                  ...base.history.all.filter(point => point.day.slice(0, 7) !== day.slice(0, 7)),
+                  { day: `${day.slice(0, 7)}-01`, totalMxnMinor: updated.netMxnMinor },
+                ] } };
               });
             } else {
-              await ledgerApi.createCajitaSnapshot(amountMinor, idToken);
+              await ledgerApi.createCashSnapshot(cashAccount, amountMinor, idToken);
               await queryClient.invalidateQueries({ queryKey: wealthQueryKey });
             }
-            setCajitaOpen(false);
-            setSelectedWealthAccount(CAJITA_ACCOUNT_ID);
+            setCashAccount(undefined);
+            setSelectedWealthAccount(cashAccount);
             setTab("wealth");
+          }}
+        />
+      )}
+      {payrollCloseOpen && wealth?.payrollCloseCandidate && (
+        <PayrollClosureSheet
+          candidate={wealth.payrollCloseCandidate}
+          today={dayKeyInZone(now)}
+          onClose={() => setPayrollCloseOpen(false)}
+          onSave={async input => {
+            await ledgerApi.closePayroll(input, idToken);
+            setPayrollCloseOpen(false);
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: wealthQueryKey }),
+              queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot }),
+              queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot }),
+            ]);
           }}
         />
       )}

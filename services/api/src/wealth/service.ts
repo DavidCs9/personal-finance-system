@@ -3,18 +3,21 @@ import { createHash, randomUUID } from 'node:crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import {
   CAJITA_ACCOUNT_ID,
-  cajitaEmergencyHolding,
+  isManualCashAccountId,
+  manualCashHolding,
   dayKeyInZone,
   FINANCE_TIME_ZONE,
   FONDO_AHORRO_ACCOUNT_ID,
   fondoAhorroHolding,
   liabilitiesAsOfDay,
   netWorthMxnMinor,
-  runningFondoAhorroByDay,
-  sumFondoAhorroDeduccionesMinor,
+  runningFondoBalanceByDay,
+  payrollEmployerKey,
+  isOrdinaryNomina,
   WEALTH_ACCOUNTS,
   wealthTotalMonthlyHistory,
   type CardLiabilitySnapshot,
+  type PayrollClosure,
   type WealthAccountId,
   type WealthAccountDefinition,
   type WealthHolding,
@@ -27,7 +30,7 @@ import { rawSourceBucketName, s3 } from '../http/clients.js';
 import { errorName, type JsonObject } from '../http/response.js';
 import { listPayslipsForYear } from '../imports/cfdi-nomina-flow.js';
 import { readNativeWealthInputs, type NativeWealthInputsReader } from './native-reads.js';
-import { InvalidWealthSnapshotError, parseCajitaSnapshot, parseCardLiabilitySnapshot } from './input.js';
+import { InvalidWealthSnapshotError, parseCashSnapshot, parseCardLiabilitySnapshot, parsePayrollClosure } from './input.js';
 import { insertNativeAssetCapture, insertNativeLiabilityCapture, validateAssetHoldings } from '@finance/ledger/native-wealth';
 const evidenceObjectKey = (kind: 'manual' | 'api', owner: string, sha256: string): string =>
   kind === 'manual' ? `wealth-manual/${owner}/${sha256}.json` : `wealth-api/${owner}/${sha256}.json`;
@@ -67,6 +70,7 @@ export interface WealthBalanceOverview {
   readonly netMxnMinor: number;
   readonly accounts: readonly WealthBalanceAccount[];
   readonly liabilities: readonly WealthBalanceLiability[];
+  readonly payrollClosures?: readonly PayrollClosure[];
 }
 
 export const listWealthSnapshots = async (owner: string): Promise<readonly WealthSnapshot[]> =>
@@ -173,8 +177,9 @@ const derivedFondoSnapshot = (
   totalMxnMinor: number,
   day: string,
   capturedAt: string,
+  settled: boolean,
 ): WealthSnapshot | undefined => {
-  if (totalMxnMinor <= 0) return undefined;
+  if (totalMxnMinor <= 0 && !settled) return undefined;
   return {
     accountId: FONDO_AHORRO_ACCOUNT_ID,
     day,
@@ -192,13 +197,15 @@ const wealthBalanceOverview = (input: {
   readonly liabilitySnapshots: readonly CardLiabilitySnapshot[];
   readonly cards: readonly CardRecord[];
   readonly fondoTotalMinor: number;
+  readonly payrollClosures?: readonly PayrollClosure[];
   readonly asOfDay: string;
   readonly capturedAt: string;
 }): WealthBalanceOverview => {
   const eligibleSnapshots = input.snapshots.filter((snapshot) => snapshot.day <= input.asOfDay);
   const eligibleLiabilities = input.liabilitySnapshots.filter((snapshot) => snapshot.day <= input.asOfDay);
   const latest = new Map(latestByAccount(eligibleSnapshots));
-  const fondoSnapshot = derivedFondoSnapshot(input.fondoTotalMinor, input.asOfDay, input.capturedAt);
+  const closures = (input.payrollClosures ?? []).filter(closure => closure.fundPaidOn <= input.asOfDay);
+  const fondoSnapshot = derivedFondoSnapshot(input.fondoTotalMinor, input.asOfDay, input.capturedAt, closures.length > 0);
   if (fondoSnapshot) latest.set(FONDO_AHORRO_ACCOUNT_ID, fondoSnapshot);
 
   const accounts: readonly WealthBalanceAccount[] = input.accounts.map((account) => {
@@ -229,6 +236,7 @@ const wealthBalanceOverview = (input: {
     netMxnMinor: netWorthMxnMinor(assetsMxnMinor, liabilitiesMxnMinor),
     accounts,
     liabilities,
+    ...(closures.length ? { payrollClosures: closures } : {}),
   };
 };
 
@@ -243,13 +251,15 @@ export const getWealthOverviewAsOf = async (
   const year = asOfDay.slice(0, 4);
   const [inputs, yearPayslips] = await Promise.all([readInputs(owner), readPayrollYear(owner, year)]);
   const { accounts, snapshots, cards, liabilitySnapshots } = inputs;
-  const eligiblePayslips = yearPayslips.filter((payslip) => payslip.fechaPago <= asOfDay);
+  const closures = inputs.payrollClosures ?? [];
+  const fondoTotalMinor = runningFondoBalanceByDay(yearPayslips, closures, asOfDay).at(-1)?.totalMxnMinor ?? 0;
   return wealthBalanceOverview({
     accounts,
     snapshots,
     liabilitySnapshots,
     cards,
-    fondoTotalMinor: sumFondoAhorroDeduccionesMinor(eligiblePayslips),
+    fondoTotalMinor,
+    payrollClosures: closures,
     asOfDay,
     capturedAt: `${asOfDay}T12:00:00.000Z`,
   });
@@ -264,15 +274,20 @@ export const getWealthOverview = async (
   const year = dayKeyInZone(now, FINANCE_TIME_ZONE).slice(0, 4);
   const [inputs, yearPayslips] = await Promise.all([readInputs(owner), readPayrollYear(owner, year)]);
   const { accounts, snapshots, cards, liabilitySnapshots } = inputs;
-  const fondoTotal = sumFondoAhorroDeduccionesMinor(yearPayslips);
-  const fondoRunning = runningFondoAhorroByDay(yearPayslips);
   const today = dayKeyInZone(now, FINANCE_TIME_ZONE);
+  const closures = inputs.payrollClosures ?? [];
+  const fondoRunning = runningFondoBalanceByDay(yearPayslips, closures, today);
+  const closedEmployers = new Set(closures.map(closure => payrollEmployerKey(closure.employerName)));
+  const candidate = [...yearPayslips].reverse().find(slip => slip.fechaPago <= today
+    && isOrdinaryNomina(slip.tipoNomina) && payrollEmployerKey(slip.employerName)
+    && !closedEmployers.has(payrollEmployerKey(slip.employerName)));
   const balance = wealthBalanceOverview({
     accounts,
     snapshots,
     liabilitySnapshots,
     cards,
-    fondoTotalMinor: fondoTotal,
+    fondoTotalMinor: fondoRunning.at(-1)?.totalMxnMinor ?? 0,
+    payrollClosures: closures,
     asOfDay: today,
     capturedAt: now.toISOString(),
   });
@@ -284,6 +299,7 @@ export const getWealthOverview = async (
   });
   return {
     ...balance,
+    ...(candidate?.employerName ? { payrollCloseCandidate: { payslipUuid: candidate.uuid, employerName: candidate.employerName } } : {}),
     history: {
       all: historyAll,
       byAccount: Object.fromEntries(
@@ -355,16 +371,19 @@ export const persistWealthSnapshot = async (input: {
   return withSqlTransaction(client => insertNativeAssetCapture(client, { id, owner: input.owner, snapshot }));
 };
 
-export const createCajitaSnapshot = async (body: string | undefined, owner: string): Promise<JsonObject> => {
-  const input = parseCajitaSnapshot(body);
-  const holdings = [cajitaEmergencyHolding(input.amountMinor)];
+export const createManualCashSnapshot = async (accountId: string, body: string | undefined, owner: string): Promise<JsonObject> => {
+  if (!isManualCashAccountId(accountId)) {
+    throw new InvalidWealthSnapshotError('Only nu_cajita_emergencia and santander_cash accept manual snapshots.');
+  }
+  const input = parseCashSnapshot(body, accountId !== CAJITA_ACCOUNT_ID);
+  const holdings = [manualCashHolding(accountId, input.amountMinor)];
   const capturedAt = new Date().toISOString();
   const day = dayKeyInZone(new Date(capturedAt), FINANCE_TIME_ZONE);
   const evidenceBody = JSON.stringify({
     kind: 'wealth_manual_snapshot',
     createdAt: capturedAt,
     owner,
-    accountId: CAJITA_ACCOUNT_ID,
+    accountId,
     day,
     amountMinor: input.amountMinor,
     currency: 'MXN',
@@ -372,13 +391,41 @@ export const createCajitaSnapshot = async (body: string | undefined, owner: stri
   });
   const snapshot = await persistWealthSnapshot({
     owner,
-    accountId: CAJITA_ACCOUNT_ID,
+    accountId,
     source: 'manual',
     holdings,
     evidenceKind: 'manual',
     evidenceBody,
   });
   return snapshot as unknown as JsonObject;
+};
+
+export const closePayrollAndFund = async (body: string | undefined, owner: string): Promise<JsonObject> => {
+  const now = new Date();
+  const input = parsePayrollClosure(body, dayKeyInZone(now, FINANCE_TIME_ZONE));
+  const evidenceBody = JSON.stringify({ kind: 'payroll_fund_closure', owner, ...input });
+  const sha256 = createHash('sha256').update(evidenceBody, 'utf8').digest('hex');
+  const key = evidenceObjectKey('manual', owner, sha256);
+  await storeOriginalEvidence(key, evidenceBody);
+  return withSqlTransaction(async client => {
+    const receipt = (await client.query(`SELECT employer_name, COALESCE(pay_period_end, paid_on)::text AS period_end
+      FROM olbia.payslips WHERE uuid=$1::uuid AND owner=$2 AND payroll_type='O'`, [input.payslipUuid, owner])).rows[0];
+    const employerName = typeof receipt?.employer_name === 'string' ? receipt.employer_name : '';
+    const employerKey = payrollEmployerKey(employerName);
+    if (!employerKey || String(receipt?.period_end) > input.endedOn) {
+      throw new InvalidWealthSnapshotError('La nómina elegida debe corresponder al trabajo que terminó.');
+    }
+    await client.query(`INSERT INTO olbia.payroll_closures
+      (owner,employer_key,source_payslip_uuid,ended_on,fund_paid_on,fund_paid_mxn_minor,recorded_at,evidence_bucket,evidence_key,evidence_sha256)
+      VALUES ($1,$2,$3::uuid,$4::date,$5::date,$6,$7,$8,$9,$10) ON CONFLICT (owner,employer_key) DO NOTHING`,
+    [owner, employerKey, input.payslipUuid, input.endedOn, input.fundPaidOn, input.fundPaidMinor, now.toISOString(), rawSourceBucketName, key, sha256]);
+    const saved = (await client.query(`SELECT evidence_sha256 FROM olbia.payroll_closures
+      WHERE owner=$1 AND employer_key=$2`, [owner, employerKey])).rows[0];
+    if (saved?.evidence_sha256 !== sha256) {
+      throw new InvalidWealthSnapshotError('Ya existe un cierre para este empleador. Actualiza Patrimonio para verlo.');
+    }
+    return { employerName, endedOn: input.endedOn, fundPaidOn: input.fundPaidOn, fundPaidMinor: input.fundPaidMinor };
+  });
 };
 
 export const createCardLiabilitySnapshot = async (
@@ -422,12 +469,4 @@ export const createCardLiabilitySnapshot = async (
   };
   return withSqlTransaction(async client =>
     await insertNativeLiabilityCapture(client, { id, owner, snapshot }) as unknown as JsonObject);
-};
-
-export const assertCajitaAccountParam = (accountId: string): void => {
-  if (accountId !== CAJITA_ACCOUNT_ID) {
-    throw new InvalidWealthSnapshotError(
-      `Only ${CAJITA_ACCOUNT_ID} accepts manual snapshots in this phase.`,
-    );
-  }
 };

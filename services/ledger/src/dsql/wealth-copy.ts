@@ -32,7 +32,8 @@ const identity = (kind: string, id: unknown, day: unknown, at: unknown) => JSON.
 /** Compatibility decoding is confined to this one-time conversion, never runtime wealth operations. */
 export const prepareWealthCopy = (input: RetainedWealth, allocateId: () => string = randomUUID): WealthCopy => {
   const rows = Object.fromEntries(NATIVE_WEALTH_TABLES.map(table => [table, []])) as unknown as Record<Table, Row[]>;
-  rows.asset_accounts = WEALTH_ACCOUNTS.filter(a => a.sync !== 'derived').map((account, position) => ({ ...account, position }));
+  rows.asset_accounts = WEALTH_ACCOUNTS.filter(a => a.sync !== 'derived' && a.id !== 'santander_cash')
+    .map((account, position) => ({ ...account, position }));
   const originals: { kind: 'asset' | 'liability'; version: boolean; source: Row; id: string }[] = [];
   const captureIds = new Map<string, string>(), ids = new Set<string>(), owners = new Set<string>();
   for (const [table, group, kind, version] of [

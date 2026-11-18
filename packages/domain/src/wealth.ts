@@ -5,11 +5,12 @@ export const WEALTH_ACCOUNT_IDS = [
   "fondo_ahorro",
   "bitso",
   "ibkr",
+  "santander_cash",
 ] as const;
 
 export type WealthAccountId = (typeof WEALTH_ACCOUNT_IDS)[number];
 
-export type WealthAccountRole = "emergency_fund" | "payroll_savings" | "crypto" | "brokerage";
+export type WealthAccountRole = "emergency_fund" | "payroll_savings" | "crypto" | "brokerage" | "cash";
 
 export type WealthSnapshotSource = "manual" | "api" | "flex" | "derived";
 
@@ -17,6 +18,10 @@ export const CAJITA_STALE_DAYS = 7;
 export const CARD_LIABILITY_STALE_DAYS = 7;
 
 export const CAJITA_ACCOUNT_ID: WealthAccountId = "nu_cajita_emergencia";
+export const SANTANDER_CASH_ACCOUNT_ID = "santander_cash";
+export type ManualCashAccountId = "nu_cajita_emergencia" | typeof SANTANDER_CASH_ACCOUNT_ID;
+export const isManualCashAccountId = (id: string): id is ManualCashAccountId =>
+  id === CAJITA_ACCOUNT_ID || id === SANTANDER_CASH_ACCOUNT_ID;
 export const FONDO_AHORRO_ACCOUNT_ID: WealthAccountId = "fondo_ahorro";
 export const BITSO_ACCOUNT_ID: WealthAccountId = "bitso";
 export const IBKR_ACCOUNT_ID: WealthAccountId = "ibkr";
@@ -98,6 +103,13 @@ export const WEALTH_ACCOUNTS: readonly WealthAccountDefinition[] = [
     role: "brokerage",
     sync: "flex",
   },
+  {
+    id: SANTANDER_CASH_ACCOUNT_ID,
+    name: "Santander",
+    institution: "Santander",
+    role: "cash",
+    sync: "manual",
+  },
 ];
 
 export const isWealthAccountId = (value: string): value is WealthAccountId =>
@@ -175,6 +187,13 @@ export const cajitaEmergencyHolding = (amountMinor: number): WealthHolding => ({
   valueNativeMinor: amountMinor,
   valueMxnMinor: amountMinor,
 });
+
+export const manualCashHolding = (accountId: ManualCashAccountId, amountMinor: number): WealthHolding =>
+  accountId === CAJITA_ACCOUNT_ID ? cajitaEmergencyHolding(amountMinor) : {
+    ...cajitaEmergencyHolding(amountMinor),
+    id: "cash",
+    name: "Saldo en cuenta",
+  };
 
 export const fondoAhorroHolding = (amountMinor: number): WealthHolding => ({
   id: "payroll_savings",
