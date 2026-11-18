@@ -41,8 +41,10 @@ export const readIndependentWealthState = async (owner: string, client: ReadSqlC
   let mismatches = 0;
   const check = (expected: unknown, actual: unknown) => { mismatches += Number(!samePublicResult(expected, actual)); };
   check([...requiredRelations].sort().map(conname => ({ conname, convalidated: true })), constraints.rows);
-  check(['nu_cajita_emergencia', 'bitso', 'ibkr'], accounts.rows.map(r => r.id));
-  check([0, 1, 2], accounts.rows.map(r => Number(r.position)));
+  const expectedAccounts = ['nu_cajita_emergencia', 'bitso', 'ibkr'];
+  if (accounts.rows.length === 4) expectedAccounts.push('santander_cash');
+  check(expectedAccounts, accounts.rows.map(r => r.id));
+  check(expectedAccounts.map((_, index) => index), accounts.rows.map(r => Number(r.position)));
   const evidence = (r: JsonObject) => ({ bucket: String(r.evidence_bucket), key: String(r.evidence_key),
     sha256: String(r.evidence_sha256), contentType: 'application/json' as const });
   const assetFacts = new Map<string, WealthSnapshot>();

@@ -58,7 +58,11 @@ const readInputs = async (owner: string, client: ReadSqlClient): Promise<NativeW
     client.query('SELECT * FROM olbia.asset_accounts ORDER BY position'), client.query(nativeAssetReadStatement, [owner]),
     client.query(nativeLiabilityReadStatement, [owner]), client.query(cardReadStatement, [owner]),
   ]);
-  if (accounts.rows.length !== 3 || accounts.rows.some((row, index) => Number(row.position) !== index)) invalid();
+  const accountIds = accounts.rows.map(row => row.id);
+  const expectedIds = ['nu_cajita_emergencia', 'bitso', 'ibkr'];
+  if (accountIds.length === 4) expectedIds.push('santander_cash');
+  if (accountIds.length !== expectedIds.length
+    || accounts.rows.some((row, index) => row.id !== expectedIds[index] || Number(row.position) !== index)) invalid();
   const holdings = await groupHoldings(client, assets.rows);
   const definitions: WealthAccountDefinition[] = accounts.rows.map(row => ({ id: row.id as WealthAccountId, name: String(row.name),
     institution: String(row.institution), role: row.role as WealthAccountDefinition['role'], sync: row.sync as WealthAccountDefinition['sync'] }));
