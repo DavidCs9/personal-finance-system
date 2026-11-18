@@ -15,7 +15,7 @@ Design for David alone and his real data. Follow the navigation, screen responsi
 - Preserve numeric hierarchy, aligned/tabular money, ivory/charcoal palette and meaningful red. Copy stays direct, precise and useful without shame or celebration.
 - Verify honest loading, missing income, uncertainty, empty, failure, stale manual balances and negative projection states against persisted facts. Evidence remains reachable.
 - Use the [API client](src/api/client.ts) boundary instead of direct component fetch calls; refresh affected queries after a mutation. Preserve resume/session renewal and network-only financial reads.
-- Private mode protects amounts, assistant receipts and restored conversation text/titles. Never expose private reasoning or raw tool payloads.
+- Private mode protects amounts. Never expose private reasoning or raw tool payloads.
 - Inspect current domain/API contracts when fields or financial meaning change. Run meaningful existing checks; do not invent mirrored tests for reversible presentation edits.
 
-The [web README](README.md) describes local development and demo limitations. [Assistant](../../docs/ai-assistant.md) governs conversation continuity, citations, bounded edits and prompt preservation.
+The [web README](README.md) describes local development and demo limitations. The [UI direction](../../docs/ui-design-brief.md#consultas-y-correo) defines where conversational queries happen.

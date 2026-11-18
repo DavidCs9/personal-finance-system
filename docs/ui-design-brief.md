@@ -56,11 +56,9 @@ Fondo marfil, superficies carbón y rojo para consecuencias negativas relevantes
 
 Priorizar cifras, porcentajes y comparaciones. Una gráfica debe explicar una relación que la jerarquía numérica no comunica. Respetar safe areas, acciones alcanzables y targets cómodos; estado principal legible en segundos sin scroll horizontal.
 
-## Asistente y correo
+## Consultas y correo
 
-El asistente es un sheet global del topbar, accesible desde las cuatro tabs. Conserva conversación al cerrar, recargar o cambiar mes; **Nueva conversación** no borra las anteriores. Conversaciones y memorias durables tienen superficies separadas para revisar/borrar. Mostrar citas, actividad compacta de tools y errores como datos no disponibles; jamás inputs crudos ni razonamiento privado. Modo privado también protege títulos, texto restaurado y recibos.
-
-Una instrucción explícita de tags/categoría autoriza el cambio acotado descrito en [asistente](ai-assistant.md#mutations): sin segunda confirmación UI; recibo factual por operación y undo por chat. Las categorías del asistente no crean reglas de comercio.
+Las consultas conversacionales se hacen en ChatGPT con la [integración de Olbia de sólo lectura](operations.md#private-chatgpt-mcp-connection). La web de Olbia conserva sus cuatro tabs y las acciones de edición de movimientos y categorías.
 
 **Precierre** pone primero saldos de efectivo y deudas manuales con importe/fecha y captura pendiente; Fondo derivado y Bitso/IBKR automáticos. **Cierre mensual** tiene dos capítulos: **Tu mes / Dónde se fue** y **Tu patrimonio / Qué cambió**. Conservar voz/paleta, declarar tags superpuestos y no atribuir causalidad entre gasto y variación patrimonial.
 
