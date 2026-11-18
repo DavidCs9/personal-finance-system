@@ -55,8 +55,8 @@ beforeEach(async () => {
 describe('posted bank credits and the shared month close', () => {
   const incomeCredit = {
     creditType: 'income', incomeType: 'finiquito', institution: 'santander_mx', accountKind: 'cash',
-    accountLastFour: '1234', amountMinor: 60_649_39, postedOn: '2026-11-17',
-    description: 'PSL / finiquito', evidenceReference: 'SPEI-TEST-171126-1', confirmedPosted: true,
+    accountLastFour: '1234', amountMinor: 47_283_61, postedOn: '2026-11-16',
+    description: 'Compañía Ejemplo / finiquito', evidenceReference: 'TEST-BANK-CREDIT-001', confirmedPosted: true,
   };
   const call = (name: string, input: Record<string, unknown>) => writeHandler({ toolName: name, arguments: input }, {} as never);
   const prepare = (input: Record<string, unknown>) => call('preview_manual_credit', input) as Promise<{ operationId: string }>;
@@ -66,35 +66,36 @@ describe('posted bank credits and the shared month close', () => {
     const { getMonthDashboard } = await import('../src/months/dashboard.js');
     const { createManualCashSnapshot } = await import('../src/wealth/service.js');
     await fixture.sql.query("INSERT INTO olbia.asset_accounts VALUES ('santander_cash','Santander','Santander','cash','manual',3) ON CONFLICT DO NOTHING");
-    await createManualCashSnapshot('santander_cash', '{"amountMinor":19989900}', 'owner');
+    await createManualCashSnapshot('santander_cash', '{"amountMinor":15243820}', 'owner');
     const payrollSourceId = '22222222-2222-4222-8222-222222222222';
     await fixture.sql.query(`INSERT INTO olbia.payslips
       (uuid,owner,paid_on,payroll_type,total_mxn_minor,perceptions_mxn_minor,deductions_mxn_minor,other_payments_mxn_minor,employer_name,ingested_at,evidence_bucket,evidence_key,evidence_sha256,evidence_content_type)
-      VALUES ($1,'owner','2026-10-30','O',3000000,3000000,0,0,'PSL',$2,'test','payroll',$3,'application/xml')`,
+      VALUES ($1,'owner','2026-10-30','O',3000000,3000000,0,0,'Compañía Ejemplo',$2,'test','payroll',$3,'application/xml')`,
     [payrollSourceId, now.toISOString(), 'b'.repeat(64)]);
     await fixture.sql.query(`INSERT INTO olbia.payroll_closures
       (owner,employer_key,source_payslip_uuid,ended_on,fund_paid_on,fund_paid_mxn_minor,recorded_at,evidence_bucket,evidence_key,evidence_sha256)
-      VALUES ('owner','PSL',$1,'2026-11-13','2026-11-17',12300000,$2,'test','fund',$3)`,
+      VALUES ('owner','COMPANIAEJEMPLO',$1,'2026-11-12','2026-11-16',9700000,$2,'test','fund',$3)`,
     [payrollSourceId, now.toISOString(), 'c'.repeat(64)]);
     const expected = await service.previewFinancialChange('owner', 'income', {
-      ...salary, employer: 'Blend360', paymentDays: undefined, paymentRules: [{ kind: 'last_business_day' }],
+      action: 'create', name: 'Nueva nómina de prueba', employer: 'Empresa Ficticia', amountMxnMinor: 42_587_16,
+      frequency: 'monthly', startDate: '2026-11-25', confidence: 'estimated', paymentRules: [{ kind: 'last_business_day' }],
     });
     await apply(expected.operationId);
     const before = await getMonthDashboard('owner', '2026-11');
     expect(before).toMatchObject({ futureIncome: { status: 'unknown_amount_or_date', scheduledMinor: null },
-      cash: { current: { status: 'partial', accounts: [{ amountMinor: 199_899_00, day: '2026-11-17', source: 'manual' }] },
+      cash: { current: { status: 'partial', accounts: [{ amountMinor: 152_438_20, day: '2026-11-17', source: 'manual' }] },
         closing: { status: 'not_available', amountMinor: null } }, postedCredits: { incomeStatus: 'no_recorded_evidence' } });
     harness.s3.mockClear();
     const first = await prepare(incomeCredit);
-    const duplicate = await prepare({ ...incomeCredit, evidenceReference: ' spei-test-171126-1 ' });
+    const duplicate = await prepare({ ...incomeCredit, evidenceReference: ' test-bank-credit-001 ' });
     expect(await getMonthDashboard('owner', '2026-11')).toEqual(before);
     expect(harness.s3).not.toHaveBeenCalled();
 
     failAfterCommit = true;
     await expect(post(first.operationId)).rejects.toThrow(/after commit/);
     const result = await post(first.operationId);
-    expect(result).toMatchObject({ status: 'applied', created: true, credit: { amountMinor: 60_649_39,
-      incomeType: 'finiquito', postedOn: '2026-11-17' }, modifiesCashSnapshots: false, snapshotCoverage: 'unverified' });
+    expect(result).toMatchObject({ status: 'applied', created: true, credit: { amountMinor: 47_283_61,
+      incomeType: 'finiquito', postedOn: '2026-11-16' }, modifiesCashSnapshots: false, snapshotCoverage: 'unverified' });
     expect(await post(first.operationId)).toEqual(result);
     expect(await post(duplicate.operationId)).toMatchObject({ status: 'applied', created: false });
     expect(harness.s3).toHaveBeenCalledTimes(1);
@@ -106,35 +107,35 @@ describe('posted bank credits and the shared month close', () => {
     expect(after.cash).toEqual(before.cash);
     expect(after.futureIncome).toEqual(before.futureIncome);
     expect(after.budget).toEqual(before.budget);
-    expect(after.postedCredits).toMatchObject({ incomeMinor: 60_649_39, cashRefundsMinor: 0,
-      recordedOperatingCashInflowsMinor: 60_649_39, snapshotCoverage: 'unverified' });
-    expect(after.payrollFundClosures).toMatchObject([{ fundPaidMinor: 123_000_00, bankReconciliationStatus: 'unverified' }]);
+    expect(after.postedCredits).toMatchObject({ incomeMinor: 47_283_61, cashRefundsMinor: 0,
+      recordedOperatingCashInflowsMinor: 47_283_61, snapshotCoverage: 'unverified' });
+    expect(after.payrollFundClosures).toMatchObject([{ fundPaidMinor: 97_000_00, bankReconciliationStatus: 'unverified' }]);
     expect(after).toEqual(await runAgentTool('owner', 'month_snapshot', { month: '2026-11' }));
-    expect(await prepare({ ...incomeCredit, amountMinor: 60_649_40 })).toMatchObject({ ok: false });
+    expect(await prepare({ ...incomeCredit, amountMinor: 47_283_62 })).toMatchObject({ ok: false });
 
-    const fund = { ...incomeCredit, creditType: 'fund_release', incomeType: undefined, fundEmployerKey: 'PSL',
-      description: 'Fondo de ahorro PSL', amountMinor: 123_841_30, evidenceReference: 'FUND-TEST-171126-7' };
+    const fund = { ...incomeCredit, creditType: 'fund_release', incomeType: undefined, fundEmployerKey: 'COMPANIAEJEMPLO',
+      description: 'Fondo de ahorro de prueba', amountMinor: 97_521_84, evidenceReference: 'TEST-FUND-CREDIT-001' };
     const fundOp = await prepare(fund);
-    expect(fundOp).toMatchObject({ fundReconciliation: { differenceMinor: 841_30 } });
-    expect(await post(fundOp.operationId)).toMatchObject({ created: true, fundReconciliation: { differenceMinor: 841_30 } });
+    expect(fundOp).toMatchObject({ fundReconciliation: { differenceMinor: 521_84 } });
+    expect(await post(fundOp.operationId)).toMatchObject({ created: true, fundReconciliation: { differenceMinor: 521_84 } });
     const reconciled = await getMonthDashboard('owner', '2026-11');
     expect(reconciled.cash).toEqual(before.cash);
     expect(reconciled.postedCredits).toEqual(after.postedCredits);
-    expect(reconciled.payrollFundClosures).toMatchObject([{ fundPaidMinor: 123_000_00, bankReconciliationStatus: 'amount_differs',
-      bankAmountMinor: 123_841_30, differenceMinor: 841_30 }]);
+    expect(reconciled.payrollFundClosures).toMatchObject([{ fundPaidMinor: 97_000_00, bankReconciliationStatus: 'amount_differs',
+      bankAmountMinor: 97_521_84, differenceMinor: 521_84 }]);
     expect(await prepare({ ...fund, evidenceReference: 'UNRELATED-FUND-REF' })).toMatchObject({ ok: false });
   });
 
   it('records a November refund for an old purchase without discounting new shopping or reporting it as payroll', async () => {
     const { getMonthDashboard } = await import('../src/months/dashboard.js');
     const at = '2026-11-10T18:00:00Z';
-    await fixture.create({ merchantRaw: 'Mercado Libre', occurredAt: at, categoryId: 'shopping',
+    await fixture.create({ merchantRaw: 'Tienda Ejemplo', occurredAt: at, categoryId: 'shopping',
       amount: { amountMinor: 1_500_00, currency: 'MXN' } });
-    await fixture.create({ merchantRaw: 'SHEIN', occurredAt: at, categoryId: 'shopping',
+    await fixture.create({ merchantRaw: 'Mercado de prueba', occurredAt: at, categoryId: 'shopping',
       amount: { amountMinor: 900_00, currency: 'MXN' } });
     const before = await getMonthDashboard('owner', '2026-11');
-    const refund = { ...incomeCredit, creditType: 'refund', incomeType: undefined, description: 'Amazon octubre',
-      amountMinor: 1_799_94, evidenceReference: 'AMZ-TEST-REFUND-1' };
+    const refund = { ...incomeCredit, creditType: 'refund', incomeType: undefined, description: 'Devolución de compra previa',
+      amountMinor: 1_697_83, evidenceReference: 'TEST-REFUND-001' };
     expect(await prepare({ ...refund, confirmedPosted: false })).toMatchObject({ ok: false });
     expect(await prepare({ ...refund, postedOn: '2026-11-19' })).toMatchObject({ ok: false });
     const cashOp = await prepare(refund);
@@ -142,7 +143,7 @@ describe('posted bank credits and the shared month close', () => {
     await expect(post(cashOp.operationId)).rejects.toThrow(/before commit/);
     expect((await fixture.sql.query('SELECT movement_id FROM olbia.ledger_credit_details')).rows).toHaveLength(0);
     await post(cashOp.operationId);
-    const cardOp = await prepare({ ...refund, accountKind: 'credit_card', amountMinor: 249_95, evidenceReference: 'AMZ-TEST-REFUND-2' });
+    const cardOp = await prepare({ ...refund, accountKind: 'credit_card', amountMinor: 249_95, evidenceReference: 'TEST-REFUND-002' });
     await post(cardOp.operationId);
 
     const after = await getMonthDashboard('owner', '2026-11');
@@ -150,7 +151,7 @@ describe('posted bank credits and the shared month close', () => {
     expect(after.budget).toEqual(before.budget);
     expect(after.cash).toEqual(before.cash);
     expect(after.postedCredits).toMatchObject({ incomeMinor: 0, incomeStatus: 'no_recorded_evidence',
-      cashRefundsMinor: 1_799_94, cardRefundsMinor: 249_95, recordedOperatingCashInflowsMinor: 1_799_94 });
+      cashRefundsMinor: 1_697_83, cardRefundsMinor: 249_95, recordedOperatingCashInflowsMinor: 1_697_83 });
     expect(after.budget.categories.find(row => row.categoryId === 'shopping')).toMatchObject({ countedSpentMxnMinor: 2_400_00 });
     expect((await getMonthDashboard('owner', '2026-10')).postedCredits.recordedOperatingCashInflowsMinor).toBe(0);
     await expect((await import('../src/events/read-verification.js')).verifyNativeFinancialReads('owner', now))
