@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ledgerApi } from "../api/client";
+import { demoBudgetStatus } from "../api/planning-demo";
 import { mockAnalyticsFor, mockExceptionRawEmail, mockExceptions, mockFeedForMonth, mockMonthSummaryFor, mockEvents } from "../api/mock-data";
 import { useMarketWealthSync } from "./useMarketWealthSync";
 import { AppShell } from "../layout/AppShell";
 import { eventDate, monthKey } from "../lib/format";
 import { usePrivateMode } from "../lib/private-mode";
-import { analyticsQueryKey, analyticsQueryRoot, eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, monthlyPlanQueryRoot, monthlySummaryQueryKey, monthlySummaryQueryRoot, cardsQueryKey, wealthQueryKey, commitmentsQueryRoot, statementsQueryKey, budgetQueryRoot, financialGoalsQueryRoot, financialPlanningQueryRoot, expectedIncomeQueryRoot } from "../lib/query-keys";
-import { BudgetShortcut } from "../planning/BudgetRead";
+import { analyticsQueryKey, analyticsQueryRoot, eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthDashboardQueryKey, monthlyPlanQueryKey, monthlyPlanQueryRoot, monthlySummaryQueryKey, monthlySummaryQueryRoot, cardsQueryKey, wealthQueryKey, commitmentsQueryRoot, statementsQueryKey, budgetQueryRoot, financialGoalsQueryRoot, financialPlanningQueryRoot, expectedIncomeQueryRoot } from "../lib/query-keys";
 import { FinancialPlanningDialog, PlanningEntries } from "../planning/FinancialPlanning";
 import type { PlanningPane } from "../planning/PlanningRead";
 import type { Tab } from "../lib/tabs";
@@ -44,7 +44,7 @@ import { AnalyticsView } from "../views/AnalyticsView";
 import { demoWealthOverview } from "../wealth-demo";
 import type { WealthOverview, WealthAccountView, WealthHistoryPoint, WealthLiabilityView } from "../wealth";
 import { withWealthTotals } from "../wealth";
-import { SANTANDER_CASH_ACCOUNT_ID, BITSO_ACCOUNT_ID, IBKR_ACCOUNT_ID, WEALTH_ACCOUNTS, dayKeyInZone, manualCashHolding, type ManualCashAccountId, type WealthAccountId, type WealthSnapshot } from "@finance/domain";
+import { SANTANDER_CASH_ACCOUNT_ID, BITSO_ACCOUNT_ID, IBKR_ACCOUNT_ID, WEALTH_ACCOUNTS, dayKeyInZone, manualCashHolding, monthDashboardLiquidity, type ManualCashAccountId, type WealthAccountId, type WealthSnapshot } from "@finance/domain";
 
 const reconcileDemoPayment = (plan: MonthlyPlan, paymentId: string, eventId: string | null,
   expectedEventId: string | null, expectedPayment: Pick<PlannedPayment, "name" | "amountMinor" | "dueDay">,
@@ -128,8 +128,23 @@ export function Dashboard({
         ? Promise.resolve({ exceptions: mockExceptions })
         : ledgerApi.listExceptions(idToken),
   });
+  const dashboardQuery = useQuery({
+    queryKey: monthDashboardQueryKey(selectedMonth),
+    enabled: tab === "summary" && !analyticsOpen,
+    queryFn: () => {
+      if (!demoMode) return ledgerApi.monthlyDashboard(selectedMonth, idToken);
+      const demoPlan = queryClient.getQueryData<MonthlyPlan>(monthlyPlanQueryKey(selectedMonth)) ?? planFor(demoPlans, selectedMonth);
+      const summary = mockMonthSummaryFor(selectedMonth, demoPlan, now);
+      return Promise.resolve({
+        month: selectedMonth, generatedAt: now.toISOString(), summary,
+        budget: demoBudgetStatus(selectedMonth, demoPlan, true),
+        liquidity: monthDashboardLiquidity(summary, demoPlan, true),
+      });
+    },
+  });
   const monthlyPlanQuery = useQuery({
     queryKey: monthlyPlanQueryKey(selectedMonth),
+    enabled: tab !== "summary" || incomeSheetOpen || dashboardQuery.isError,
     queryFn: () =>
       demoMode
         ? Promise.resolve(queryClient.getQueryData<MonthlyPlan>(monthlyPlanQueryKey(selectedMonth)) ?? planFor(demoPlans, selectedMonth))
@@ -137,6 +152,7 @@ export function Dashboard({
   });
   const monthlySummaryQuery = useQuery({
     queryKey: monthlySummaryQueryKey(selectedMonth),
+    enabled: tab !== "summary" || dashboardQuery.isError,
     queryFn: () =>
       demoMode
         ? Promise.resolve(mockMonthSummaryFor(selectedMonth, queryClient.getQueryData<MonthlyPlan>(monthlyPlanQueryKey(selectedMonth)) ?? planFor(demoPlans, selectedMonth), now))
@@ -144,6 +160,7 @@ export function Dashboard({
   });
   const analyticsQuery = useQuery({
     queryKey: analyticsQueryKey(selectedMonth),
+    enabled: tab === "summary" && (analyticsOpen || dashboardQuery.isError),
     queryFn: () =>
       demoMode
         ? Promise.resolve(mockAnalyticsFor(selectedMonth, now))
@@ -274,7 +291,8 @@ export function Dashboard({
     () => [...events, ...msiRelated],
     [events, msiRelated],
   );
-  const summary = monthlySummaryQuery.data;
+  const dashboard = tab === "summary" && !dashboardQuery.isError ? dashboardQuery.data : undefined;
+  const summary = dashboard?.summary ?? monthlySummaryQuery.data;
   const spentMinor = summary?.spentMinor ?? 0;
   const uncertainMinor = summary?.uncertainMinor ?? 0;
   const billUpcomingMinor = summary?.billUpcomingMinor ?? 0;
@@ -306,9 +324,10 @@ export function Dashboard({
     setActivePayslip(receipt);
   };
   const access = { idToken, demoMode };
-  const spendPercent = plan.incomeMinor > 0 ? Math.round((spentMinor / plan.incomeMinor) * 100) : 0;
+  const incomeMinor = dashboard?.liquidity.incomeMinor ?? plan.incomeMinor;
+  const spendPercent = incomeMinor > 0 ? Math.round((spentMinor / incomeMinor) * 100) : 0;
   const risk =
-    plan.incomeMinor > 0 && projectedRemainingMinor < 0
+    incomeMinor > 0 && projectedRemainingMinor < 0
       ? "danger"
       : spendPercent >= 70
         ? "watch"
@@ -343,7 +362,7 @@ export function Dashboard({
   const activeQueryFetching = tab === "wealth" ? wealthQuery.isFetching
     : tab === "planning" ? monthlyPlanQuery.isFetching || monthlySummaryQuery.isFetching || cardsQuery.isFetching
     : tab === "movements" ? eventsQuery.isFetching || exceptionsQuery.isFetching
-    : monthlyPlanQuery.isFetching || monthlySummaryQuery.isFetching || analyticsQuery.isFetching;
+    : dashboardQuery.isFetching || monthlyPlanQuery.isFetching || monthlySummaryQuery.isFetching || analyticsQuery.isFetching;
   const summaryLoadError = monthlySummaryQuery.error instanceof Error
     ? monthlySummaryQuery.error.message
     : monthlySummaryQuery.error ? "No se pudo cargar el resumen del mes." : undefined;
@@ -390,11 +409,16 @@ export function Dashboard({
         ) : tab === "summary" ? (
           <SummaryView
             month={selectedMonth}
-            budgetShortcut={<BudgetShortcut month={selectedMonth} access={access} onOpen={() => setPlanningPane("budget")} />}
-            spendAvailable={summary !== undefined && !monthlySummaryQuery.isError}
+            dashboard={dashboard}
+            dashboardLoading={dashboardQuery.isPending}
+            dashboardError={dashboardQuery.isError}
+            privateMode={privateMode}
+            onOpenBudget={() => setPlanningPane("budget")}
+            onRetryDashboard={() => { void dashboardQuery.refetch(); }}
+            spendAvailable={summary !== undefined && (dashboard !== undefined || !monthlySummaryQuery.isError)}
             plan={plan}
-            loading={planLoading || monthlySummaryQuery.isPending}
-            loadError={planLoadError ?? summaryLoadError}
+            loading={!dashboard && (dashboardQuery.isPending || planLoading || monthlySummaryQuery.isPending)}
+            loadError={dashboard ? undefined : planLoadError ?? summaryLoadError}
             onRetry={() => {
               void monthlyPlanQuery.refetch();
               void monthlySummaryQuery.refetch();
@@ -557,6 +581,9 @@ export function Dashboard({
       {incomeSheetOpen && (
         <MonthIncomeSheet
           plan={plan}
+          loading={planLoading}
+          loadError={planLoadError}
+          onRetry={() => { void monthlyPlanQuery.refetch(); }}
           onClose={() => setIncomeSheetOpen(false)}
           onOpenPayslip={(payslip) => setActivePayslip(payslip)}
           onUploadNomina={() => {

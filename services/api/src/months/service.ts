@@ -3,6 +3,7 @@ import type { JsonObject } from '../http/response.js';
 import { incomeFieldsForMonth } from '../imports/cfdi-nomina-flow.js';
 import { isValidMonth, InvalidMonthlyPlanError, parseMonthlyPlan, type MonthlyPlanInput, type MonthlyPlanRecord } from './monthly-plan.js';
 import { readSqlPlanRecord } from './sql-reads.js';
+import type { ReadSqlClient } from '../events/sql-reads.js';
 import { assertPaymentChargeMembership, readPaymentCharges, replaceMonthlyPaymentRows } from './reconciliation-storage.js';
 
 export const getMonthlyPlanFromReads = async (owner: string, month: string,
@@ -48,14 +49,18 @@ export const saveMonthlyPlan = async (owner: string, month: string, input: Month
   if (!isValidMonth(month)) throw new InvalidMonthlyPlanError('month is invalid.');
   const validated = parseMonthlyPlan(JSON.stringify(input));
   return withSqlTransaction(async client => {
-    const links = await readPaymentCharges(client,month);
-    assertPaymentChargeMembership(links,validated.upcomingPayments);
-    const at = new Date().toISOString();
-    const parent = (await client.query(`INSERT INTO olbia.month_plans (month,owner,updated_at) VALUES ($1,$2,$3)
-      ON CONFLICT (month) DO UPDATE SET updated_at=EXCLUDED.updated_at
-      WHERE olbia.month_plans.owner=EXCLUDED.owner RETURNING month`, [month, owner, at])).rows[0];
-    if (!parent) throw new InvalidMonthlyPlanError('month is invalid.');
-    await replaceMonthlyPaymentRows(client,owner,month,validated.upcomingPayments,at,links);
+    await writeMonthlyPayments(client, owner, month, validated, new Date().toISOString());
     return getMonthlyPlan(owner, month);
   });
+};
+
+export const writeMonthlyPayments = async (client: ReadSqlClient, owner: string, month: string,
+  plan: MonthlyPlanInput, at: string): Promise<void> => {
+  const links = await readPaymentCharges(client,month);
+  assertPaymentChargeMembership(links,plan.upcomingPayments);
+  const parent = (await client.query(`INSERT INTO olbia.month_plans (month,owner,updated_at) VALUES ($1,$2,$3)
+    ON CONFLICT (month) DO UPDATE SET updated_at=EXCLUDED.updated_at
+    WHERE olbia.month_plans.owner=EXCLUDED.owner RETURNING month`, [month, owner, at])).rows[0];
+  if (!parent) throw new InvalidMonthlyPlanError('month is invalid.');
+  await replaceMonthlyPaymentRows(client,owner,month,plan.upcomingPayments,at,links);
 };

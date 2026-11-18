@@ -249,3 +249,88 @@ it('previews and applies business-day payroll and audited monthly exceptions thr
   await apply(clear.operationId);
   expect(await read()).toMatchObject({ monthlyTotals: [{ expectedScheduledMxnMinor: null }, { expectedScheduledMxnMinor: 50000_00 }] });
 });
+
+describe('MCP reconciliation uses the shared SQL and dashboard authority', () => {
+  it('previews an inherited fixed expense without materializing it, applies once and updates both dashboard reads', async () => {
+    const { saveMonthlyPlan } = await import('../src/months/service.js');
+    const { monthSnapshot } = await import('../src/agent/aggregates.js');
+    const fixed = { id: 'membership', name: 'Membership', amountMinor: 720_00, dueDay: 9 };
+    await saveMonthlyPlan('owner', '2026-10', { currency: 'MXN', upcomingPayments: [fixed] });
+    const id = await fixture.create({ merchantRaw: 'Membership', occurredAt: '2026-11-09T18:00:00Z',
+      amount: { amountMinor: 720_00, currency: 'MXN' } });
+    const config = await service.previewFinancialChange('owner', 'budget', { action: 'set_recurring', month: '2026-11', totalMxnMinor: 2_000_00 });
+    await apply(config.operationId);
+    const before = await monthSnapshot('owner', '2026-11');
+    expect(before.budget).toMatchObject({ countedSpentMxnMinor: 720_00, upcomingFixedMxnMinor: 720_00,
+      reconciledFixedProgrammingMxnMinor: 0, remainingDiscretionaryMxnMinor: 560_00 });
+    const op = await service.previewFinancialChange('owner', 'fixed_reconciliation', {
+      action: 'link', month: '2026-11', paymentId: fixed.id, expectedPayment: fixed, eventId: id, reason: 'Confirmed merchant charge',
+    });
+    expect((await fixture.sql.query('SELECT month FROM olbia.month_plans')).rows).toEqual([{ month: '2026-10' }]);
+    expect(await monthSnapshot('owner', '2026-11')).toEqual(before);
+    await expect(service.applyFinancialChange('other', op.operationId, 'fixed_reconciliation')).rejects.toThrow(/no encontrada/);
+    failAfterCommit = true;
+    await expect(service.applyFinancialChange('owner', op.operationId, 'fixed_reconciliation')).rejects.toThrow(/after commit/);
+    const first = await service.applyFinancialChange('owner', op.operationId, 'fixed_reconciliation');
+    expect(await service.applyFinancialChange('owner', op.operationId, 'fixed_reconciliation')).toEqual(first);
+    expect((await fixture.sql.query('SELECT * FROM olbia.planned_payment_charge_revisions')).rows).toHaveLength(1);
+    const after = await runAgentTool('owner', 'month_snapshot', { month: '2026-11' });
+    expect(after).toEqual(await monthSnapshot('owner', '2026-11'));
+    expect(after).toMatchObject({
+      budget: { countedSpentMxnMinor: 720_00, countedFixedSpendMxnMinor: 720_00, upcomingFixedMxnMinor: 0,
+        reconciledFixedProgrammingMxnMinor: 720_00, remainingDiscretionaryMxnMinor: 1_280_00 },
+      summary: { spentMinor: 720_00, billUpcomingMinor: 0 },
+      liquidity: { status: 'missing', remainingMinor: null, projectedSpendMinor: null },
+    });
+    expect(await runAgentTool('owner', 'get_month_details', { month: '2026-11' })).toMatchObject({
+      upcomingPayments: [{ id: fixed.id, linkedMovementId: id, effectiveReconciliation: true }],
+    });
+  });
+
+  it('uses the literal Santander installment on one existing movement, with source retention and replay protection', async () => {
+    const occurredAt = '2026-11-09T18:00:00Z';
+    const row = { merchantRaw: 'Shop', occurredAt, amount: { amountMinor: 367_97, currency: 'MXN' },
+      account: { institution: 'santander_mx', lastFour: '1234' } };
+    const id = await fixture.create(row);
+    const duplicateCandidate = await fixture.create(row);
+    const importId = 'f'.repeat(64);
+    await fixture.sql.query(`INSERT INTO olbia.bank_imports
+      (kind,content_sha256,owner,status,created_at,applied_at,account_last_four,product,period_start,period_end,
+      evidence_bucket,evidence_key,evidence_content_type,result_created,result_linked,result_skipped)
+      VALUES ('santander_statement',$1,'owner','applied',$2,$2,'1234','Card','2026-11-01','2026-11-30',
+      'originals','statement-key','application/pdf',0,0,1)`, [importId, now.toISOString()]);
+    await fixture.sql.query(`INSERT INTO olbia.bank_import_rows
+      (kind,content_sha256,position,identity,occurred_on,merchant_raw,amount_mxn_minor,status,row_kind,
+      installment_index,installment_months,original_amount_mxn_minor)
+      VALUES ('santander_statement',$1,0,'bank-installment','2026-11-09','Shop',12266,'skipped','msi',1,3,36797)`, [importId]);
+    const read = (movementId: string) => runAgentTool('owner', 'get_msi_reconciliation', { month: '2026-11', movementId }) as
+      Promise<{ movements: { expectedRevision: string }[]; bankRows: { bankRow: Record<string, unknown> }[] }>;
+    const current = await read(id);
+    expect(current.bankRows[0]).toMatchObject({ amountMxnMinor: 122_66, originalAmountMxnMinor: 367_97 });
+    const input = { action: 'correct_schedule', movementId: id, expectedRevision: current.movements[0]!.expectedRevision,
+      bankRow: current.bankRows[0]!.bankRow, reason: 'Bank statement confirms the installment' };
+    const op = await service.previewFinancialChange('owner', 'msi_reconciliation', input);
+    expect((await fixture.sql.query('SELECT * FROM olbia.installment_plans')).rows).toEqual([]);
+    failBeforeCommit = true;
+    await expect(service.applyFinancialChange('owner', op.operationId, 'msi_reconciliation')).rejects.toThrow(/before commit/);
+    expect((await fixture.sql.query('SELECT * FROM olbia.installment_plans')).rows).toEqual([]);
+    const receipt = await service.applyFinancialChange('owner', op.operationId, 'msi_reconciliation');
+    expect(await service.applyFinancialChange('owner', op.operationId, 'msi_reconciliation')).toEqual(receipt);
+    expect(receipt).toMatchObject({ movementId: id, plan: { principalMinor: 367_97, cuotaMinor: 122_66, months: 3,
+      installments: [{ index: 1, amountMinor: 122_66, status: 'spent', occurredOn: '2026-11-09' },
+        { index: 2, status: 'committed' }, { index: 3, status: 'committed' }] } });
+    expect((await fixture.sql.query('SELECT id FROM olbia.ledger_movements')).rows).toHaveLength(2);
+    expect((await fixture.sql.query('SELECT movement_id,evidence_row_position FROM olbia.installment_entries WHERE evidence_origin=\'bank_row\'')).rows)
+      .toEqual([{ movement_id: id, evidence_row_position: 0 }]);
+    expect((await fixture.sql.query('SELECT token FROM olbia.source_claims')).rows).toHaveLength(1);
+    expect((await fixture.sql.query('SELECT operation_id FROM olbia.financial_change_receipts')).rows).toHaveLength(1);
+    const duplicate = await read(duplicateCandidate);
+    await expect(service.previewFinancialChange('owner', 'msi_reconciliation', {
+      ...input, movementId: duplicateCandidate, expectedRevision: duplicate.movements[0]!.expectedRevision,
+    })).rejects.toThrow(/asociada a otro movimiento/);
+    await expect(service.previewFinancialChange('owner', 'msi_reconciliation', input)).rejects.toThrow(/cambió/);
+    expect(await runAgentTool('owner', 'month_snapshot', { month: '2026-11' })).toMatchObject({
+      budget: { countedSpentMxnMinor: 490_63, countedMsiSpendMxnMinor: 122_66, upcomingMsiMxnMinor: 0 },
+    });
+  });
+});

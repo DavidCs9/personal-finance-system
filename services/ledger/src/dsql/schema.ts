@@ -1,4 +1,5 @@
-import { INCOME_SCHEDULE_CHECK, NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS, nativeFinancialPlanReadGrant, nativeFinancialPlanWriteGrants } from './financial-plan-schema.js';
+import { FINANCIAL_RECEIPT_ENTITY_CHECK, FINANCIAL_WRITE_KIND_CHECK, INCOME_SCHEDULE_CHECK,
+  NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS, nativeFinancialPlanReadGrant, nativeFinancialPlanWriteGrants } from './financial-plan-schema.js';
 import { NATIVE_EXCEPTION_SCHEMA_STATEMENTS,nativeExceptionReadGrant,nativeExceptionWriteGrants } from './exception-schema.js';
 import { NATIVE_THREAD_SCHEMA_STATEMENTS, nativeThreadReadGrant, nativeThreadWriteGrants } from './thread-schema.js';
 import { NATIVE_DELIVERY_SCHEMA_STATEMENTS, nativeDeliveryReadGrant, nativeDeliveryWriteGrant } from './delivery-schema.js';
@@ -341,6 +342,13 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
       `GRANT SELECT ON olbia.spend_categories,olbia.category_lifecycle TO ${role}`,
       `GRANT INSERT ON olbia.ledger_movements,olbia.ledger_observations,olbia.source_claims,olbia.ledger_movement_warnings,olbia.ledger_observation_warnings,olbia.installment_plans,olbia.installment_entries,olbia.installment_evidence_candidates TO ${role}`,
       `GRANT DELETE ON olbia.ledger_movement_warnings,olbia.installment_plans,olbia.installment_entries,olbia.installment_evidence_candidates TO ${role}`,
+      `GRANT SELECT ON olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates TO ${role}`,
+      `GRANT INSERT ON olbia.ledger_revisions TO ${role}`,
+      `GRANT UPDATE (reconciled_at,bank_transaction_id) ON olbia.ledger_movements TO ${role}`,
+      `GRANT SELECT ON olbia.month_plans,olbia.planned_payments,olbia.planned_payment_charges TO ${role}`,
+      `GRANT INSERT ON olbia.month_plans,olbia.planned_payment_charge_revisions TO ${role}`,
+      `GRANT UPDATE (updated_at) ON olbia.month_plans TO ${role}`,
+      `GRANT INSERT,DELETE ON olbia.planned_payments,olbia.planned_payment_charges TO ${role}`,
     ].entries()) await query(`financial-writer-grant-${index}`,statement);
     for (const arn of options.financialPlanRoleArns) {
       if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid financial writer ARN');
@@ -362,6 +370,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('category-catalog-complete','INSERT INTO olbia.schema_migrations VALUES (24,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('financial-plans-complete','INSERT INTO olbia.schema_migrations VALUES (26,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('income-schedule-complete','INSERT INTO olbia.schema_migrations VALUES (28,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
+  await query('reconciliation-tools-complete','INSERT INTO olbia.schema_migrations VALUES (29,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('cash-and-payroll-closure-complete','INSERT INTO olbia.schema_migrations VALUES (25,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 };
 
@@ -469,16 +478,14 @@ export const ensureBudgetSchema = async (client: SqlClient, options: Parameters<
   await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_budget_exclusion_fk',
     'FOREIGN KEY (budget_exclusion_id) REFERENCES olbia.budget_exclusions(id)', 'budget-exclusion-receipt-fk', options);
   for (const table of ['financial_write_operations', 'financial_change_receipts']) {
-    await ensureValidatedConstraint(client, table, `${table}_budget_kind_check`, "CHECK (kind IN ('income','goal','manual_charge','budget'))", 'budget-kind', options);
+    await ensureValidatedConstraint(client, table, `${table}_reconciliation_kind_check`, FINANCIAL_WRITE_KIND_CHECK, 'financial-write-kind', options);
     await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_kind_check`);
+    await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_budget_kind_check`);
   }
-  await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_budget_entity_check', `CHECK (
-    (kind='income' AND income_id IS NOT NULL AND goal_id IS NULL AND movement_id IS NULL AND budget_id IS NULL AND budget_exclusion_id IS NULL) OR
-    (kind='goal' AND goal_id IS NOT NULL AND income_id IS NULL AND movement_id IS NULL AND budget_id IS NULL AND budget_exclusion_id IS NULL) OR
-    (kind='manual_charge' AND movement_id IS NOT NULL AND income_id IS NULL AND goal_id IS NULL AND budget_id IS NULL AND budget_exclusion_id IS NULL) OR
-    (kind='budget' AND income_id IS NULL AND goal_id IS NULL AND movement_id IS NULL AND
-      ((budget_id IS NOT NULL AND budget_exclusion_id IS NULL) OR (budget_id IS NULL AND budget_exclusion_id IS NOT NULL))))`, 'budget-receipt', options);
+  await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_reconciliation_entity_check',
+    FINANCIAL_RECEIPT_ENTITY_CHECK, 'financial-receipt-entity', options);
   await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_change_receipts_check');
+  await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_receipts_budget_entity_check');
   await client.query('INSERT INTO olbia.schema_migrations VALUES (27,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 };
 

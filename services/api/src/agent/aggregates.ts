@@ -3,13 +3,13 @@ import {
   aggregateSpendByMerchant,
   previousCalendarMonth,
   type CategorizedSpendEvent,
-  type MonthSummary,
   type SpendAggregateResult,
   type WealthAccountId,
   wealthSnapshotAgeDays,
 } from '@finance/domain';
 import { getMonthSummary } from '../months/summary.js';
-import { readerPool, withLedgerReadSnapshot } from '../events/sql-reads.js';
+import { getMonthDashboard } from '../months/dashboard.js';
+import { readerPool } from '../events/sql-reads.js';
 import { readLedgerMovementIdsByPrefix } from '@finance/ledger/native-ledger';
 import { getWealthOverview, listWealthSnapshots } from '../wealth/service.js';
 import { listCategories } from '../categories/service.js';
@@ -75,36 +75,15 @@ export const monthSnapshot = async (
   owner: string,
   month: string,
   now: Date = new Date(),
-): Promise<{
-  readonly month: string;
-  readonly summary: MonthSummary;
-  readonly uncategorizedMinor: number;
-  readonly uncategorizedEventCount: number;
-  readonly knownMsiSchedulesOnly: true;
-}> => {
-  return withLedgerReadSnapshot(async () => {
-    const [summary, events, names] = await Promise.all([
-      getMonthSummary(owner, month, now),
-      loadMonthEvents(month),
-      categoryNameMap(),
-    ]);
-    const byCategory = aggregateSpendByCategory(events, month, names);
-    return {
-      month,
-      summary,
-      knownMsiSchedulesOnly: true,
-      uncategorizedMinor: byCategory.uncategorizedMinor,
-      uncategorizedEventCount: byCategory.uncategorizedEventCount,
-    };
-  });
-};
+) => getMonthDashboard(owner, month, now);
 
 export const planMonthScenario = async (
   owner: string,
   input: Record<string, unknown>,
 ) => {
   const month = String(input.month);
-  const snapshot = await monthSnapshot(owner, month);
+  if (!isValidMonth(month)) throw new InvalidAgentQueryError('Mes inválido (YYYY-MM).');
+  const summary = await getMonthSummary(owner, month);
   const commitments = Array.isArray(input.commitments)
     ? input.commitments.map((raw) => {
       const item = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
@@ -121,8 +100,8 @@ export const planMonthScenario = async (
   return buildMonthScenario({
     month,
     budgetMxn: Number(input.budgetMxn),
-    recordedSpentMxnMinor: snapshot.summary.spentMinor,
-    ledgerUpcomingMxnMinor: snapshot.summary.upcomingMinor,
+    recordedSpentMxnMinor: summary.spentMinor,
+    ledgerUpcomingMxnMinor: summary.upcomingMinor,
     includeLedgerUpcoming: input.includeLedgerUpcoming === true,
     commitments,
     usdToMxn: input.usdToMxn === undefined ? undefined : Number(input.usdToMxn),

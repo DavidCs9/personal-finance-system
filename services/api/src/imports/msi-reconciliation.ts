@@ -315,6 +315,7 @@ export const buildPlanFromCreateDecision = (
     readonly months: number;
     readonly cuotaMinor: number;
     readonly startMonth?: string;
+    readonly confirmedAt?: string;
   },
 ): MsiPlan => {
   if (!canCreateMsiPlanFromEvidence(line, input.months)) {
@@ -348,7 +349,7 @@ export const buildPlanFromCreateDecision = (
   return markInstallmentSpent(withPriorSpent, indexForSpent, {
     amountMinor: line.amountMinor,
     occurredOn: line.occurredOn,
-    confirmedAt: new Date().toISOString(),
+    confirmedAt: input.confirmedAt ?? new Date().toISOString(),
     evidenceObservationId: line.identity,
   });
 };

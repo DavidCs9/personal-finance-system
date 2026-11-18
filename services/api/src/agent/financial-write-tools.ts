@@ -5,6 +5,8 @@ import { FINANCIAL_WRITE_TOOL_DEFINITIONS } from './financial-tool-definitions.j
 export { FINANCIAL_WRITE_TOOL_DEFINITIONS };
 /** Extension point: every registered bounded tool inherits the same trusted Gateway write policy. */
 const operations = {
+  preview_fixed_reconciliation: { kind: 'fixed_reconciliation', phase: 'preview' }, apply_fixed_reconciliation: { kind: 'fixed_reconciliation', phase: 'apply' },
+  preview_msi_reconciliation: { kind: 'msi_reconciliation', phase: 'preview' }, apply_msi_reconciliation: { kind: 'msi_reconciliation', phase: 'apply' },
   preview_budget_change: { kind: 'budget', phase: 'preview' }, apply_budget_change: { kind: 'budget', phase: 'apply' },
   preview_income_change: { kind: 'income', phase: 'preview' }, apply_income_change: { kind: 'income', phase: 'apply' },
   preview_financial_goal_change: { kind: 'goal', phase: 'preview' }, apply_financial_goal_change: { kind: 'goal', phase: 'apply' },

@@ -37,4 +37,25 @@ describe('deterministic budgets using canonical accounting', () => {
     expect(status([event('x', 1000, { msi: { months: 2, principalMinor: 2000, cuotaMinor: 1000, installments: [], needsScheduleCompletion: true } })]))
       .toMatchObject({ incompleteScheduleMovementIds: ['x'], safeDailyAllowanceMxnMinor: null });
   });
+  it('keeps recorded cuotas without a bank day in the total while comparing dated counted spend to the monthly limit', () => {
+    const msi = { months: 2, principalMinor: 4200, cuotaMinor: 2100, installments: [
+      { index: 1, month: '2026-11', amountMinor: 2100, status: 'spent' as const },
+      { index: 2, month: '2026-12', amountMinor: 2100, status: 'committed' as const },
+    ] };
+    const result = status([
+      event('personal', 9000, { personalAmountMinor: 4000, occurredAt: '2026-11-07T03:00:00Z' }),
+      event('undated-cuota', 4200, { msi }),
+      event('excluded', 900),
+      event('usd', 40000, { currency: 'USD' }),
+    ], {
+      includeSpendTimeline: true, fixedPayments: [{ id: 'due', amountMinor: 3000 }],
+      exclusions: [{ entityType: 'exclusion', id: 'x', month: '2026-11', movementId: 'excluded',
+        reason: 'Extraordinary', status: 'active', revision: 1, createdAt: '', updatedAt: '' }],
+    });
+    expect(result).toMatchObject({ countedSpentMxnMinor: 6100, warning: 'normal', warningWithCommitments: '90',
+      utilizationWithCommitmentsPercent: 91, remainingDiscretionaryMxnMinor: 900, paceVarianceMxnMinor: 1100,
+      spendTimeline: { unplottedMinor: 2100, unplottedEntries: 1 } });
+    expect(result.spendTimeline?.cumulativeMinorByDay.slice(5, 8)).toEqual([0, 4000, 4000]);
+    expect(result.spendTimeline?.cumulativeMinorByDay.at(-1)).toBe(4000);
+  });
 });

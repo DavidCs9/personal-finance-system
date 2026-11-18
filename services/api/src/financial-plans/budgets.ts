@@ -8,6 +8,7 @@ import { readerPool, withLedgerReadSnapshot, readSqlFeed } from '../events/sql-r
 import { monthSpendEventsFromFeed } from '../months/summary.js';
 import { incompletePlansReadStatement } from '../months/commitments.js';
 import { readSqlPlanRecord } from '../months/sql-reads.js';
+import type { MonthlyPlanRecord } from '../months/monthly-plan.js';
 
 export const readBudgetEntity = async (client: SqlClient, owner: string, id: string): Promise<BudgetEntity | null> =>
   await readSpendingBudget(client, owner, id) ?? await readBudgetExclusion(client, owner, id);
@@ -44,17 +45,25 @@ export const listBudgets = (owner: string, input: Record<string, unknown> = {}) 
   return { currency: 'MXN', ...await listSpendingBudgets(readerPool(), owner, Number(limit), input.cursor === undefined ? undefined : financialId(input.cursor)) };
 });
 export const readBudgetStatus = async (client: SqlClient, owner: string, month: string, now: Date) => {
-  const budget = await resolveSpendingBudget(client, owner, month);
-  const exclusions = await listBudgetExclusions(client, owner, month);
-  const feed = await readSqlFeed([month], client);
+  const [feed, plan] = await Promise.all([readSqlFeed([month], client), readSqlPlanRecord(owner, month, client)]);
+  return budgetStatusFromMonth(client, owner, month, now, feed, plan);
+};
+
+export const budgetStatusFromMonth = async (client: SqlClient, owner: string, month: string, now: Date,
+  feed: Awaited<ReturnType<typeof readSqlFeed>>, plan: MonthlyPlanRecord | undefined, includeSpendTimeline = false) => {
+  const [budget, exclusions, catalog, incomplete] = await Promise.all([
+    resolveSpendingBudget(client, owner, month),
+    listBudgetExclusions(client, owner, month),
+    client.query('SELECT id,name FROM olbia.spend_categories ORDER BY sort_order,id'),
+    month >= monthKeyInZone(now)
+      ? client.query(incompletePlansReadStatement).then(result => result.rows.map(row => String(row.event_id))) : [],
+  ]);
   const raw = new Map([...feed.events, ...feed.msiRelated].map(e => [String(e.id), e]));
   const events: BudgetSpendEvent[] = monthSpendEventsFromFeed(feed).map(event => ({ ...event, id: event.id!, categoryId: typeof raw.get(event.id!)?.categoryId === 'string' ? String(raw.get(event.id!)!.categoryId) : null }));
-  const plan = await readSqlPlanRecord(owner, month, client);
-  const incomplete = month >= monthKeyInZone(now) ? (await client.query(incompletePlansReadStatement)).rows.map(row => String(row.event_id)) : [];
-  const status = computeBudgetStatus({ month, budget, exclusions, events, fixedPayments: plan?.upcomingPayments ?? [], now, missingFixedConfiguration: !plan, additionalIncompleteMovementIds: incomplete });
-  const catalog = (await client.query('SELECT id,name FROM olbia.spend_categories ORDER BY sort_order,id')).rows;
+  const status = computeBudgetStatus({ month, budget, exclusions, events, fixedPayments: plan?.upcomingPayments ?? [], now,
+    missingFixedConfiguration: !plan, additionalIncompleteMovementIds: incomplete, includeSpendTimeline });
   return { ...status, generatedAt: now.toISOString(), categories: status.categories.map(row => ({ ...row,
-    label: row.categoryId === null ? 'Sin categoría' : catalog.find(c => c.id === row.categoryId)?.name ?? row.categoryId })) };
+    label: row.categoryId === null ? 'Sin categoría' : catalog.rows.find(c => c.id === row.categoryId)?.name ?? row.categoryId })) };
 };
 export const getBudgetStatus = (owner: string, input: Record<string, unknown> = {}, now = new Date()) => {
   const month = budgetMonth(input.month ?? monthKeyInZone(now));

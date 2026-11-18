@@ -124,6 +124,7 @@ export const isValidMonth = (month: string): boolean => /^\d{4}-(0[1-9]|1[0-2])$
 export {
   FINANCE_TIME_ZONE,
   computeMonthSummary,
+  monthDashboardLiquidity,
   countsTowardMonthSpend,
   dailyBalancePushMessage,
   dayInZone,

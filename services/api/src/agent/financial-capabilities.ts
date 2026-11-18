@@ -54,6 +54,7 @@ export const monthDetailsForAgent = async (owner: string, input: Record<string, 
       reconciliationState: !payment.reconciliation ? 'unlinked'
         : payment.reconciliation.valid ? 'linked' : 'needs_review',
       effectiveReconciliation: payment.reconciliation?.valid ?? false,
+      linkedMovementId: payment.reconciliation?.eventId ?? null,
       invalidReason: payment.reconciliation?.invalidReason ?? null,
     })),
   };

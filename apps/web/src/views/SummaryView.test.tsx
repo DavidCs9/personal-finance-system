@@ -1,7 +1,8 @@
 import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { buildMsiSchedule, computeMonthSummary, markInstallmentSpent, type MonthSpendEvent } from "@finance/domain";
+import { buildMsiSchedule, computeBudgetStatus, computeMonthSummary, markInstallmentSpent,
+  monthDashboardLiquidity, type MonthSpendEvent } from "@finance/domain";
 import { SummaryView, type SummaryViewProps } from "./SummaryView";
 
 const now = new Date("2026-08-04T12:00:00-06:00");
@@ -183,4 +184,24 @@ it("shows observed spend and the analysis entry when liquidity is missing or una
     expect(html).not.toContain('class="projection-card');
     expect(html).not.toContain("Te quedan");
   }
+});
+
+it("puts the shared budget and category alerts above liquidity and conceals its graphics in private mode", () => {
+  const month = "2026-08", at = now.toISOString();
+  const summary = computeMonthSummary({ month, now, events, incomeMinor: 0, incomeConfigured: false, upcomingPaymentsMinor: 0 });
+  const facts = computeBudgetStatus({ month, now, includeSpendTimeline: true, fixedPayments: [{ id: "due", amountMinor: 350_00 }],
+    exclusions: [], events: [{ id: "food", status: "accepted", currency: "MXN", amountMinor: 600_00, receivedAt: at, categoryId: "food" }],
+    budget: { id: "budget", entityType: "budget", scope: "override", effectiveMonth: month, status: "active",
+      createdAt: at, updatedAt: at, revision: 1, totalMxnMinor: 1_000_00, allocations: [{ categoryId: "food", amountMxnMinor: 500_00 }] } });
+  const props: SummaryViewProps = { ...propsFor(), onOpenBudget() {}, dashboard: { month, generatedAt: at, summary,
+    budget: { ...facts, generatedAt: at, categories: facts.categories.map(row => ({ ...row, label: "Comida" })) },
+    liquidity: monthDashboardLiquidity(summary, {}, true),
+  } };
+  const html = renderToStaticMarkup(<SummaryView {...props} />);
+  expect(html.indexOf("Presupuesto mensual")).toBeLessThan(html.indexOf("Ritmo de gasto"));
+  expect(html.indexOf("En qué se fue")).toBeLessThan(html.indexOf("Falta tu nómina"));
+  expect(html).toContain("Cerca del límite");
+  expect(html).toContain("Te pasaste");
+  expect(html).toContain("<canvas");
+  expect(renderToStaticMarkup(<SummaryView {...props} privateMode />)).not.toMatch(/<canvas|class="summary-budget-meter"/);
 });

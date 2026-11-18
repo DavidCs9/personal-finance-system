@@ -1,5 +1,6 @@
 import { listBudgets, getBudgetStatus, getBudgetHistory, simulateBudgetPurchase } from '../financial-plans/budgets.js';
 import { listExpectedIncome, getExpectedIncome, listFinancialGoals, getFinancialGoal, getFinancialWriteStatus } from '../financial-plans/service.js';
+import { getMsiReconciliation } from '../financial-plans/reconciliation.js';
 import {
   compareMonths,
   InvalidAgentQueryError,
@@ -34,6 +35,7 @@ export const runAgentTool = async (
     case 'list_financial_goals': return listFinancialGoals(owner, input);
     case 'get_financial_goal': return getFinancialGoal(owner, input.goalId);
     case 'get_financial_write_status': return getFinancialWriteStatus(owner, input.operationId);
+    case 'get_msi_reconciliation': return getMsiReconciliation(owner, input);
     case 'edit_operation_status':
       return editOperationStatus(owner, input.operationId);
     case 'list_categories':

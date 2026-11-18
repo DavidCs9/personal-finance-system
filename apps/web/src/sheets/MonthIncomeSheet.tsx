@@ -24,15 +24,25 @@ const payslipDayLabel = (fechaPago: string): { readonly month: string; readonly 
 
 export function MonthIncomeSheet({
   plan,
+  loading,
+  loadError,
+  onRetry,
   onClose,
   onOpenPayslip,
   onUploadNomina,
 }: {
   plan: MonthlyPlan;
+  loading?: boolean;
+  loadError?: string;
+  onRetry?: () => void;
   onClose(): void;
   onOpenPayslip(payslip: Payslip): void;
   onUploadNomina(): void;
 }) {
+  if (loading || loadError) return <Sheet eyebrow={monthLabel(plan.month)} title="Nómina del mes" onClose={onClose} className="month-income-sheet">
+    <p role={loadError ? "alert" : "status"}>{loadError ?? "Consultando nómina…"}</p>
+    {loadError && <button type="button" className="text-button" onClick={onRetry}>Reintentar</button>}
+  </Sheet>;
   const payslips = plan.payslips ?? [];
   const provisionalActive = Boolean(plan.provisionalActive);
   const estimateActive = Boolean(plan.estimateActive) && (plan.estimatedMinor ?? 0) > 0;

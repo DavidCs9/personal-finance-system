@@ -16,7 +16,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'month_snapshot',
     description:
-      'Resumen del mes: Has gastado, Te quedan, proyección, MSI, incertidumbre y monto sin categoría. Usa la misma matemática que Resumen. Sólo acredita calendarios MSI existentes. Una compra hipotética no tiene primera cuota acreditada: no asignes su primera cuota a este mes ni al siguiente sin evidencia; si muestras ese impacto mensual, declara la condición de inicio y no lo presentes como proyección confirmada.',
+      'Lee todo el Resumen de Olbia en una sola llamada, con los mismos datos que la web: presupuesto mensual, gasto registrado y contado, restante tras compromisos, ritmo diario frente al límite, categorías con sus límites y avisos, liquidez, fijos, MSI y estimación de cierre. Montos en centavos MXN. Usa liquidity para distinguir liquidez registrada, provisional, estimada o faltante y omite proyecciones nulas. La serie no inventa días para cuotas sin fecha; su importe sigue en el total. Los compromisos conocidos no acreditan pagos.',
     inputSchema: {
       type: 'object',
       properties: {

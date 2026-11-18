@@ -1,4 +1,4 @@
-import type { MsiInstallment, MsiPlan } from "./msi.js";
+import type { MsiPlan } from "./msi.js";
 import { msiLabel } from "./msi.js";
 
 export const FINANCE_TIME_ZONE = "America/Chihuahua";
@@ -43,6 +43,7 @@ export interface MonthSummaryInput {
   /** Effective monthly programming; an explicit empty list overrides the legacy total. */
   readonly fixedPayments?: readonly MonthFixedPayment[];
   readonly now: Date;
+  readonly includeSpendTimeline?: boolean;
 }
 
 export interface CommittedMsiRow {
@@ -90,7 +91,38 @@ export interface MonthSummary {
   readonly committedMsiRows: readonly CommittedMsiRow[];
   /** Spent and committed cuotas for the selected month (UI MSI section). */
   readonly monthMsiRows: readonly MonthMsiRow[];
+  readonly spendTimeline?: {
+    readonly cumulativeMinorByDay: readonly number[];
+    readonly unplottedMinor: number;
+    readonly unplottedEntries: number;
+  };
 }
+
+export const monthDashboardLiquidity = (summary: MonthSummary, plan: {
+  readonly depositedMinor?: number;
+  readonly estimatedMinor?: number;
+  readonly estimateActive?: boolean;
+  readonly provisionalMinor?: number;
+  readonly provisionalActive?: boolean;
+  readonly payslips?: readonly unknown[];
+}, fixedConfigured: boolean) => {
+  const available = summary.incomeConfigured && summary.incomeMinor > 0;
+  const totalCommittedSpendMinor = summary.spentMinor + summary.upcomingMinor;
+  return {
+    status: !available ? 'missing' : plan.provisionalActive ? 'provisional' : plan.estimateActive ? 'estimated' : 'recorded',
+    incomeMinor: available ? summary.incomeMinor : null,
+    depositedMinor: plan.depositedMinor ?? 0,
+    estimatedMinor: plan.estimateActive ? plan.estimatedMinor ?? 0 : null,
+    provisionalMinor: plan.provisionalActive ? plan.provisionalMinor ?? 0 : null,
+    payslipCount: plan.payslips?.length ?? 0,
+    fixedConfigured,
+    remainingMinor: available ? summary.remainingMinor : null,
+    projectedSpendMinor: available && summary.isCurrentMonth ? summary.projectedSpendMinor : null,
+    projectedRemainingMinor: available && summary.isCurrentMonth ? summary.projectedRemainingMinor : null,
+    totalCommittedSpendMinor,
+    committedSpendPercent: available ? totalCommittedSpendMinor / summary.incomeMinor * 100 : null,
+  } as const;
+};
 
 export type PushContentMode = "amounts" | "private";
 
@@ -145,23 +177,6 @@ export const formatMxnWhole = (amountMinor: number): string =>
     currency: "MXN",
     maximumFractionDigits: 0,
   }).format(amountMinor / 100);
-
-const installmentAmountFor = (
-  events: readonly MonthSpendEvent[],
-  month: string,
-  status: MsiInstallment["status"],
-): number =>
-  events.reduce((sum, event) => {
-    if (!countsTowardMonthSpend(event.status) || !event.msi) return sum;
-    // Incomplete stubs must not pollute committed totals.
-    if (status === "committed" && event.msi.needsScheduleCompletion) return sum;
-    return (
-      sum +
-      event.msi.installments
-        .filter((installment) => installment.month === month && installment.status === status)
-        .reduce((inner, installment) => inner + installment.amountMinor, 0)
-    );
-  }, 0);
 
 export const listMonthMsiRows = (
   events: readonly (MonthSpendEvent & { readonly id?: string })[],
@@ -221,26 +236,50 @@ export const listCommittedMsiRows = (
 
 export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
   const activeEvents = input.events.filter((event) => countsTowardMonthSpend(event.status));
+  const currentMonth = monthKeyInZone(input.now);
+  const isCurrentMonth = input.month === currentMonth;
+  const isFutureMonth = input.month > currentMonth;
+  const daysInMonth = daysInCalendarMonth(input.month);
+  const elapsedDays = isCurrentMonth ? dayInZone(input.now) : daysInMonth;
+  const byDay = input.includeSpendTimeline ? Array<number>(isFutureMonth ? 1 : elapsedDays + 1).fill(0) : undefined;
+  let unplottedMinor = 0;
+  let unplottedEntries = 0;
+  const recordSpendDay = (day: string | undefined, amountMinor: number) => {
+    if (!byDay) return;
+    const index = day?.slice(0, 7) === input.month ? Number(day.slice(8)) : 0;
+    if (index > 0 && index < byDay.length) byDay[index]! += amountMinor;
+    else {
+      unplottedMinor += amountMinor;
+      unplottedEntries++;
+    }
+  };
   let nonMsiSpentMinor = 0;
+  let msiSpentMinor = 0;
+  let msiCommittedMinor = 0;
   let uncertainMinor = 0;
 
   for (const event of activeEvents) {
     if (event.msi) {
-      if (event.status !== "needs_review") continue;
-      const spentThisMonth = event.msi.installments
-        .filter((installment) => installment.month === input.month && installment.status === "spent")
-        .reduce((sum, installment) => sum + installment.amountMinor, 0);
-      uncertainMinor += spentThisMonth;
+      for (const installment of event.msi.installments) {
+        if (installment.month !== input.month) continue;
+        if (installment.status === "spent") {
+          msiSpentMinor += installment.amountMinor;
+          if (event.status === "needs_review") uncertainMinor += installment.amountMinor;
+          recordSpendDay(installment.occurredOn, installment.amountMinor);
+        } else if (installment.status === "committed" && !event.msi.needsScheduleCompletion) {
+          msiCommittedMinor += installment.amountMinor;
+        }
+      }
       continue;
     }
-    if (eventMonthKey(event) !== input.month) continue;
+    const day = byDay ? dayKeyInZone(new Date(event.occurredAt ?? event.receivedAt)) : undefined;
+    if ((day?.slice(0, 7) ?? eventMonthKey(event)) !== input.month) continue;
     const amountMinor = personalSpendAmountMinor(event);
     nonMsiSpentMinor += amountMinor;
+    recordSpendDay(day, amountMinor);
     if (event.status === "needs_review") uncertainMinor += amountMinor;
   }
 
-  const msiSpentMinor = installmentAmountFor(activeEvents, input.month, "spent");
-  const msiCommittedMinor = installmentAmountFor(activeEvents, input.month, "committed");
   const spentMinor = nonMsiSpentMinor + msiSpentMinor;
   const billScheduledMinor = input.fixedPayments === undefined
     ? input.upcomingPaymentsMinor
@@ -264,11 +303,6 @@ export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
   const discretionarySpentMinor = nonMsiSpentMinor - fixedSpentMinor;
   const upcomingMinor = billUpcomingMinor + msiCommittedMinor;
   const remainingMinor = input.incomeMinor - spentMinor - upcomingMinor;
-  const currentMonth = monthKeyInZone(input.now);
-  const isCurrentMonth = input.month === currentMonth;
-  const isFutureMonth = input.month > currentMonth;
-  const daysInMonth = daysInCalendarMonth(input.month);
-  const elapsedDays = isCurrentMonth ? dayInZone(input.now) : daysInMonth;
   const pacedDiscretionaryMinor = Math.round(
     (discretionarySpentMinor / Math.max(elapsedDays, 1)) * daysInMonth,
   );
@@ -277,6 +311,7 @@ export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
     : isFutureMonth ? spentMinor + upcomingMinor : spentMinor;
   const projectedRemainingMinor = input.incomeMinor - projectedSpendMinor;
 
+  let cumulativeMinor = 0;
   return {
     month: input.month,
     spentMinor,
@@ -299,6 +334,11 @@ export const computeMonthSummary = (input: MonthSummaryInput): MonthSummary => {
     elapsedDays,
     committedMsiRows: listCommittedMsiRows(activeEvents, input.month),
     monthMsiRows: listMonthMsiRows(activeEvents, input.month),
+    ...(byDay && { spendTimeline: {
+      cumulativeMinorByDay: byDay.map(amount => cumulativeMinor += amount),
+      unplottedMinor,
+      unplottedEntries,
+    } }),
   };
 };
 

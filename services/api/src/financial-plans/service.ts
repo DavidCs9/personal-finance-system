@@ -1,4 +1,5 @@
 import { proposeBudgetChange, readBudgetEntity, budgetEvidence, assertBudgetSlotAvailable } from './budgets.js';
+import { applyFixedReconciliation, applyMsiReconciliation, fixedReconciliationProposal, msiReconciliationProposal } from './reconciliation.js';
 import { type BudgetEntity } from '@finance/domain';
 import { writeBudgetEntity } from '@finance/ledger/native-budgets';
 import { isDeepStrictEqual } from 'node:util';
@@ -173,6 +174,19 @@ export const previewFinancialChange = async (owner: string, kind: FinancialWrite
       before = proposed.prior ? jsonObject(proposed.prior) : null; after = jsonObject(proposed.after);
       evidencePreconditions = jsonObject(proposed.evidence);
       preview = { before, after, inheritedSourceBudget: proposed.evidence.sourceBudget ?? null, effect: 'budget_configuration_only; ledger_actuals_unchanged' };
+    } else if (kind === 'fixed_reconciliation') {
+      const proposed = await fixedReconciliationProposal(client, owner, input);
+      entityId = proposed.movementId;
+      before = jsonObject(proposed.before); after = jsonObject(proposed.after);
+      evidencePreconditions = jsonObject(proposed.evidence);
+      preview = { before, after, evidence: evidencePreconditions,
+        effect: proposed.after.eventId === null ? 'restore_unlinked_fixed_programming' : 'cover_fixed_occurrence_without_adding_spend' };
+    } else if (kind === 'msi_reconciliation') {
+      const proposed = await msiReconciliationProposal(client, owner, input, at);
+      entityId = proposed.after.movementId;
+      before = jsonObject(proposed.before); after = jsonObject(proposed.after);
+      evidencePreconditions = jsonObject(proposed.evidence);
+      preview = { before, after, evidence: evidencePreconditions, effect: 'reconcile_existing_purchase_without_new_charge' };
     } else if (kind === 'income') {
       const prior = input.action === 'create' ? null : await readExpectedIncome(client, owner, entityId);
       const proposed = proposeExpectedIncome(input, prior, entityId, at);
@@ -231,6 +245,7 @@ export const applyFinancialChange = async (owner: string, operationId: unknown, 
       const operation = validPending(await readFinancialOperation(client, owner, id), kind, new Date());
       if (operation.status === 'applied') return (await readFinancialReceipt(client, owner, id))!;
       let result: Record<string, unknown>, movementId: string | undefined;
+      let receiptOperation = operation;
       const appliedAt = new Date().toISOString();
       if (operation.kind === 'budget') {
         const before = await readBudgetEntity(client, owner, operation.entityId);
@@ -245,6 +260,24 @@ export const applyFinancialChange = async (owner: string, operationId: unknown, 
         if (!before) await assertBudgetSlotAvailable(client, owner, after);
         await writeBudgetEntity(client, owner, before, after);
         result = { ok: true, operationId: id, kind: 'budget', status: 'applied', appliedAt, budgetEntity: await readBudgetEntity(client, owner, operation.entityId) };
+      } else if (operation.kind === 'fixed_reconciliation') {
+        const proposed = await fixedReconciliationProposal(client, owner, operation.after);
+        if (!same(proposed.before, operation.before) || !same(proposed.evidence, operation.evidencePreconditions))
+          throw new FinancialPlanError('El fijo, su vínculo o el movimiento cambió después del preview.', 'conflict');
+        await applyFixedReconciliation(client, owner, proposed, appliedAt);
+        movementId = proposed.movementId;
+        result = { ok: true, operationId: id, kind: operation.kind, status: 'applied', appliedAt,
+          month: proposed.after.month, paymentId: proposed.after.paymentId, linkedMovementId: proposed.after.eventId,
+          programmedAmountMinor: proposed.checked.payment.amountMinor, movement: proposed.evidence.movement };
+      } else if (operation.kind === 'msi_reconciliation') {
+        const proposed = await msiReconciliationProposal(client, owner, operation.after, appliedAt);
+        if (!same(proposed.before, operation.before) || !same(proposed.evidence, operation.evidencePreconditions))
+          throw new FinancialPlanError('El plan o la evidencia bancaria cambió después del preview.', 'conflict');
+        const plan = await applyMsiReconciliation(owner, proposed, appliedAt);
+        movementId = proposed.after.movementId;
+        receiptOperation = { ...operation, after: jsonObject({ ...proposed.after, plan }) };
+        result = { ok: true, operationId: id, kind: operation.kind, status: 'applied', appliedAt, movementId, plan,
+          bankRow: proposed.after.bankRow };
       } else if (operation.kind === 'income') {
         const before = await readExpectedIncome(client, owner, operation.entityId);
         if (!same(before, operation.before)) throw new FinancialPlanError('El ingreso cambió después del preview.', 'conflict');
@@ -273,7 +306,7 @@ export const applyFinancialChange = async (owner: string, operationId: unknown, 
         movementId = String(movement.id);
         result = { ok: true, operationId: id, kind: operation.kind, status: 'applied', appliedAt, movement: manualFacts(movement) };
       }
-      await appendFinancialReceipt(client, operation, result, appliedAt, movementId);
+      await appendFinancialReceipt(client, receiptOperation, result, appliedAt, movementId);
       return result;
     });
   } catch (error) {
@@ -293,7 +326,7 @@ export const getFinancialWriteStatus = async (owner: string, operationId: unknow
     const status = result ? 'applied' : operation.failureCode === 'expired' || operation.status === 'pending' && operation.expiresAt <= now.toISOString() ? 'expired' : operation.status;
     return { ok: true, operationId: id, kind: operation.kind, action: operation.action, status, expiresAt: operation.expiresAt,
       result, failureCode: operation.failureCode,
-      recovery: status === 'applied' ? 'Consulta el ingreso/meta/movimiento/presupuesto para verificar el estado actual; el recibo acredita esta operación histórica.'
+      recovery: status === 'applied' ? 'Consulta el registro actual para verificarlo; el recibo acredita esta operación histórica.'
         : status === 'pending' ? 'Aplica sólo este operationId si la instrucción explícita sigue vigente.' : 'Vuelve a consultar y crea otro preview; no repitas este apply.' };
   });
 };
