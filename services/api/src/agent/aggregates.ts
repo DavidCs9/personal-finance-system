@@ -7,7 +7,6 @@ import {
   type WealthAccountId,
   wealthSnapshotAgeDays,
 } from '@finance/domain';
-import { getMonthSummary } from '../months/summary.js';
 import { getMonthDashboard } from '../months/dashboard.js';
 import { readerPool } from '../events/sql-reads.js';
 import { readLedgerMovementIdsByPrefix } from '@finance/ledger/native-ledger';
@@ -83,7 +82,7 @@ export const planMonthScenario = async (
 ) => {
   const month = String(input.month);
   if (!isValidMonth(month)) throw new InvalidAgentQueryError('Mes inválido (YYYY-MM).');
-  const summary = await getMonthSummary(owner, month);
+  const dashboard = await getMonthDashboard(owner, month);
   const commitments = Array.isArray(input.commitments)
     ? input.commitments.map((raw) => {
       const item = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
@@ -97,11 +96,11 @@ export const planMonthScenario = async (
   const dailyUsdScenarios = Array.isArray(input.dailyUsdScenarios)
     ? input.dailyUsdScenarios.map(Number)
     : undefined;
-  return buildMonthScenario({
+  const scenario = buildMonthScenario({
     month,
     budgetMxn: Number(input.budgetMxn),
-    recordedSpentMxnMinor: summary.spentMinor,
-    ledgerUpcomingMxnMinor: summary.upcomingMinor,
+    recordedSpentMxnMinor: dashboard.spending.recordedMinor,
+    ledgerUpcomingMxnMinor: dashboard.spending.knownCommitmentsMinor,
     includeLedgerUpcoming: input.includeLedgerUpcoming === true,
     commitments,
     usdToMxn: input.usdToMxn === undefined ? undefined : Number(input.usdToMxn),
@@ -109,6 +108,7 @@ export const planMonthScenario = async (
     tripEnd: String(input.tripEnd),
     dailyUsdScenarios,
   });
+  return { ...scenario, spending: dashboard.spending, cashAtClose: dashboard.cash.closing, futureIncome: dashboard.futureIncome };
 };
 
 export const spendByCategory = async (month: string): Promise<SpendAggregateResult> => {

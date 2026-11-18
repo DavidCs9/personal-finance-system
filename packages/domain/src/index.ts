@@ -125,6 +125,7 @@ export {
   FINANCE_TIME_ZONE,
   computeMonthSummary,
   monthDashboardLiquidity,
+  monthDashboardSpending,
   countsTowardMonthSpend,
   dailyBalancePushMessage,
   dayInZone,
@@ -290,3 +291,6 @@ export * from './financial-plans.js';
 export * from './budgets.js';
 
 export { MX_BANKING_CALENDAR_VERSION } from './mx-banking-calendar.js';
+export type { BankCredit } from "./bank-credit.js";
+export { cashBalanceCutoffDay, monthCashLiquidity, payrollFundReconciliation, summarizePostedCredits,
+  type BankCashBalance, type MonthFutureIncome } from "./month-cash-flow.js";

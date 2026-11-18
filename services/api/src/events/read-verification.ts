@@ -6,6 +6,7 @@ import { monthReadStatement, readerPool, readSqlDetail, readSqlFeed, withLedgerV
 import { allStoredEvents, listEventsForMonths, getEventDetail } from './queries.js';
 import { samePublicResult } from './read-selection.js';
 import { getMonthlyPlan } from '../months/service.js';
+import { getMonthDashboard } from '../months/dashboard.js';
 import { summarizeMonthFeed } from '../months/summary.js';
 import type { JsonObject } from '../http/response.js';
 import { verifyDomainReads } from '../categories/read-verification.js';
@@ -64,6 +65,12 @@ export const verifyNativeFinancialReads = (owner: string, now: Date) => withLedg
   const configuredFeed = await listEventsForMonths([current]);
   mismatches += Number(!samePublicResult(configuredFeed, await readSqlFeed([current], pool)));
   if (source.length) mismatches += Number(!samePublicResult(await getEventDetail(String(source[0].id)), await readSqlDetail(String(source[0].id), pool)));
+  const dashboard = await getMonthDashboard(owner, current, now);
+  mismatches += Number(dashboard.spending.recordedMinor !== dashboard.budget.grossSpentMxnMinor);
+  mismatches += Number(dashboard.spending.budgetCountedMinor !== dashboard.budget.countedSpentMxnMinor);
+  mismatches += Number(dashboard.summary.observedSpendEntries > 0
+    && dashboard.spending.closingSpendMinor !== dashboard.summary.projectedSpendMinor);
+  mismatches += Number(dashboard.cash.closing.amountMinor !== null || dashboard.liquidity.projectedRemainingMinor !== null);
   const configuredReadsMs = Date.now() - configuredStarted;
   const plan = await pool.query(`EXPLAIN ANALYZE VERBOSE ${monthReadStatement}`, [null, [current]]);
   // Plans can contain predicates/identifiers. Return only native scan node kinds and numeric cost/timing lines.

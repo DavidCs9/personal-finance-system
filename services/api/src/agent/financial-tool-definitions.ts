@@ -84,4 +84,18 @@ export const FINANCIAL_WRITE_TOOL_DEFINITIONS = [
       accountLastFour: { type: 'string', pattern: '^[0-9]{4}$' }, note: { type: 'string' } }, required: ['institution', 'merchantRaw', 'amountMinor', 'occurredOn'] } },
   { name: 'apply_manual_charge', description: 'Registra únicamente el cobro observado del preview_manual_charge autorizado, usando operación auténtica vigente. Conserva original, identidad de retry y reglas MSI del servicio web; confirma movimiento y recibo en una transacción. Tras interrupción usa get_financial_write_status. Verifica el movimiento con list_movements y no registres el mismo cobro otra vez.',
     inputSchema: { type: 'object', properties: { operationId: uuid }, required: ['operationId'] } },
+  { name: 'preview_manual_credit', description: 'Prepara un solo abono ya acreditado y respaldado por evidencia bancaria, con importe exacto y referencia estable. income registra un ingreso de efectivo recibido (finiquito, nomina u otro); refund registra una devolución a efectivo o tarjeta. fund_release vincula el abono del Fondo con un cierre existente para comparar importe y fecha, fuera de ingreso operativo. Las promesas quedan fuera. Se conservan saldos, presupuesto y compras. Presenta los datos al dueño antes de aplicar.',
+    inputSchema: { type: 'object', properties: {
+      creditType: { type: 'string', enum: ['income', 'refund', 'fund_release'] },
+      incomeType: { type: 'string', enum: ['finiquito', 'nomina', 'otro'], description: 'Obligatorio sólo para income.' },
+      fundEmployerKey: { type: 'string', description: 'Clave exacta del cierre en payrollFundClosures de month_snapshot. Obligatoria para fund_release.' },
+      institution: { type: 'string', enum: ['santander_mx', 'nu_mx', 'american_express_mx'] },
+      accountKind: { type: 'string', enum: ['cash', 'credit_card'] },
+      accountLastFour: { type: 'string', pattern: '^[0-9]{4}$' },
+      amountMinor: minor, postedOn: day, description: { type: 'string' },
+      evidenceReference: { type: 'string', description: 'Referencia bancaria estable y verificable de este abono; no inventar ni usar la descripción.' },
+      confirmedPosted: { type: 'boolean', description: 'true sólo si la evidencia acredita que el banco ya lo abonó.' },
+    }, required: ['creditType', 'institution', 'accountKind', 'accountLastFour', 'amountMinor', 'postedOn', 'description', 'evidenceReference', 'confirmedPosted'] } },
+  { name: 'apply_manual_credit', description: 'Registra el abono exacto del preview_manual_credit vigente autorizado, con original, movimiento, referencia y recibo idempotente. Verifica el flujo con month_snapshot del día acreditado. Un reembolso de tarjeta no aumenta el efectivo registrado. Ante interrupción consulta get_financial_write_status con el mismo ID.',
+    inputSchema: { type: 'object', properties: { operationId: uuid }, required: ['operationId'] } },
 ] as const;

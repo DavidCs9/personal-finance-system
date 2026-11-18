@@ -68,6 +68,13 @@ html.private-mode .summary-budget-facts { margin-top: 12px; }
 .summary-observed-totals dd { margin-top: 4px; font-size: clamp(13px,2.5vw,23px); font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .summary-support-details { margin-top: 8px; }
 .summary-support-details > summary { min-height: 44px; padding: 13px 3px; color: var(--ink); font-size: 12px; cursor: pointer; }
+.summary-cash-balances { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.summary-cash-balances h3 { margin: 0 0 4px; font-size: 14px; }
+.summary-cash-balances dl { display: grid; gap: 6px; margin: 8px 0; }
+.summary-cash-balances dl > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto); gap: 10px; align-items: baseline; }
+.summary-cash-balances dt, .summary-cash-balances dd { font-size: 12px; overflow-wrap: anywhere; margin: 0; }
+.summary-cash-balances dd { text-align: right; font-weight: 650; font-variant-numeric: tabular-nums; }
+.summary-cash-balances small { display: block; color: var(--ink-soft); }
 @media (min-width: 680px) {
   .summary-budget-panel { padding: 20px; }
   .summary-budget-top, .summary-budget-charts { grid-template-columns: repeat(2,minmax(0,1fr)); }

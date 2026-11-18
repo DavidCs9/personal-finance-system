@@ -4,11 +4,43 @@ import {
   dailyBalancePushMessage,
   dayKeyInZone,
   formatMxnWhole,
+  monthCashLiquidity,
+  monthDashboardLiquidity,
+  monthDashboardSpending,
   monthKeyInZone,
 } from '@finance/domain';
 
 describe('computeMonthSummary', () => {
   const now = new Date('2026-08-02T14:00:00-06:00');
+
+  it('estimates registered spending without payroll and preserves amounts excluded from the operating budget', () => {
+    const summary = computeMonthSummary({ now, month: '2026-08', incomeConfigured: false, incomeMinor: 0,
+      events: [{ amountMinor: 100_00, status: 'accepted', receivedAt: now.toISOString() }], upcomingPaymentsMinor: 70_00 });
+    expect(monthDashboardLiquidity(summary, {}, true)).toMatchObject({ status: 'missing',
+      remainingMinor: null, projectedRemainingMinor: null, projectedSpendMinor: 1620_00 });
+    expect(monthDashboardSpending(summary, { countedSpentMxnMinor: 20_00, projectedCountedSpendMxnMinor: 380_00 }))
+      .toMatchObject({ status: 'estimated', recordedMinor: 100_00, budgetCountedMinor: 20_00,
+        closingSpendMinor: 1620_00, closingBudgetCountedMinor: 380_00, knownCommitmentsMinor: 70_00 });
+  });
+
+  it('only combines like-dated cash balances and uses evidence at the actual historical cutoff', () => {
+    const a = { accountId: 'santander_cash' as const, name: 'Santander', day: '2026-07-31',
+      capturedAt: '2026-07-31T18:00:00Z', source: 'manual' as const, amountMinor: 500 };
+    const b = { ...a, accountId: 'nu_cajita_emergencia' as const, name: 'Nu', amountMinor: 100 };
+    const afterCutoff = { ...a, day: '2026-08-01', capturedAt: '2026-08-01T18:00:00Z', amountMinor: 900 };
+    expect(monthCashLiquidity('2026-07', now, [a, b, afterCutoff])).toMatchObject({
+      current: { status: 'recorded', balanceDay: '2026-07-31', totalMinor: 600 },
+      closing: { status: 'recorded', amountMinor: 600 },
+    });
+    expect(monthCashLiquidity('2026-08', now, [a, b, afterCutoff])).toMatchObject({
+      current: { status: 'mixed_dates', totalMinor: null },
+      closing: { status: 'not_available', amountMinor: null, reasons: expect.arrayContaining(['card_payment_timing_unverified']) },
+    });
+    const later = new Date('2026-09-02T18:00:00Z');
+    expect(monthCashLiquidity('2026-08', later, [a, b, afterCutoff])).toMatchObject({
+      closing: { status: 'not_available', amountMinor: null, reasons: ['period_end_balance_missing'] },
+    });
+  });
 
   it('matches Resumen arithmetic for the current month', () => {
     const summary = computeMonthSummary({
@@ -156,7 +188,7 @@ describe('dailyBalancePushMessage', () => {
     expect(base.projectedRemainingMinor).toBeGreaterThanOrEqual(0);
     expect(dailyBalancePushMessage(base, 'amounts', 'https://finance.castrodavid.dev/', '2026-08-02')).toEqual({
       title: 'Olbia · balance de hoy',
-      body: `Has gastado ${formatMxnWhole(12_430_00)} este mes. Te quedan ${formatMxnWhole(base.remainingMinor)} después de compromisos.`,
+      body: `Has gastado ${formatMxnWhole(12_430_00)} este mes. Quedan ${formatMxnWhole(base.remainingMinor)} frente a la nómina del mes, después de compromisos.`,
       tag: 'daily-2026-08-02',
       navigate: 'https://finance.castrodavid.dev/',
     });
@@ -198,7 +230,7 @@ describe('dailyBalancePushMessage', () => {
       .toContain(`Incluye ${formatMxnWhole(200_00)} por confirmar`);
   });
 
-  it('asks to configure income without inventing availability', () => {
+  it('estimates spending without inventing availability when payroll is missing', () => {
     const summary = computeMonthSummary({
       events: [{ amountMinor: 100_00, status: 'accepted', receivedAt: '2026-08-01T12:00:00Z' }],
       month: '2026-08',
@@ -208,7 +240,7 @@ describe('dailyBalancePushMessage', () => {
       now: new Date('2026-08-02T14:00:00-06:00'),
     });
     expect(dailyBalancePushMessage(summary, 'amounts', 'https://finance.castrodavid.dev/', '2026-08-02').body)
-      .toBe(`Has gastado ${formatMxnWhole(100_00)} este mes. Sube la nómina del mes para ver qué te queda.`);
+      .toBe(`Has gastado ${formatMxnWhole(100_00)} este mes. El gasto estimado al cierre es ${formatMxnWhole(summary.projectedSpendMinor)}.`);
   });
 
   it('hides amounts in private mode', () => {
@@ -242,7 +274,7 @@ describe('explicit monthly fixed-charge reconciliation', () => {
     expect(unlinked).toMatchObject({ spentMinor: linked.spentMinor, fixedSpentMinor: 0, billUpcomingMinor: 399_00,
       remainingMinor: 8401_00, projectedSpendMinor: 1949_00 });
     expect(unlinked.projectedSpendMinor - linked.projectedSpendMinor).toBe(457_33);
-    expect(dailyBalancePushMessage(linked, 'amounts', '/', '2026-08-24').body).toContain('Te quedan $8,800');
+    expect(dailyBalancePushMessage(linked, 'amounts', '/', '2026-08-24').body).toContain('Quedan $8,800 frente a la nómina');
   });
 
   it.each([

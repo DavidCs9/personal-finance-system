@@ -6,6 +6,7 @@ import { nativeFixture } from './fixtures/native-ledger.js';
 import { appendLedgerObservation, insertLedgerRevision } from '../../ledger/src/dsql/ledger-writes.js';
 import { saveNativeCapture } from '../../ledger/src/dsql/ledger-capture.js';
 import { readLedgerMovements } from '../../ledger/src/dsql/ledger-reads.js';
+import { NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS, NATIVE_FINANCIAL_PLAN_TABLES } from '../../ledger/src/dsql/financial-plan-schema.js';
 import { currentSqlClient } from '../../ledger/src/dsql/sql-runtime.js';
 import { reconcileKey } from '../../ledger/src/dsql/projection.js';
 import type { SqlClient, TransactionPool } from '../../ledger/src/dsql/projection.js';
@@ -33,12 +34,13 @@ const checkState = () => readLedgerMovements(fixture.pool).then(movements =>
 beforeAll(async () => {
   vi.stubEnv('METADATA_TABLE_NAME', 'test-metadata'); vi.stubEnv('RAW_EMAIL_BUCKET_NAME', 'test-evidence');
   fixture = await nativeFixture(); harness.pool = fixture.pool;
+  for (const statement of NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS) await fixture.sql.query(statement);
   readers = await import('../src/events/sql-reads.js'); queries = await import('../src/events/queries.js');
   verification = await import('../src/events/native-verification.js');
   summarize = (await import('../src/months/summary.js')).summarizeMonthFeed;
 }, 30_000);
 beforeEach(async () => {
-  await fixture.reset();
+  await fixture.reset(NATIVE_FINANCIAL_PLAN_TABLES);
   await fixture.sql.exec('TRUNCATE olbia.movements');
   vi.spyOn(DynamoDBDocumentClient.prototype, 'send').mockRejectedValue(new Error('Retired financial document path') as never);
 });

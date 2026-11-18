@@ -5,7 +5,7 @@ import type { JsonObject } from '../http/response.js';
 export const reconciliationMovementColumns = `m.id::text AS reconciliation_event_id,m.merchant_raw AS reconciliation_merchant,
   COALESCE(m.personal_amount_minor,m.amount_minor) AS reconciliation_amount,m.amount_minor AS reconciliation_gross,
   COALESCE(m.occurred_at,m.received_at) AS reconciliation_occurred_at,m.status AS reconciliation_status,
-  m.currency AS reconciliation_currency,
+  m.currency AS reconciliation_currency,m.event_type AS reconciliation_event_type,
   to_char(COALESCE(m.occurred_at,m.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM') AS reconciliation_month,
   EXISTS(SELECT 1 FROM olbia.installment_plans ip WHERE ip.movement_id=m.id) AS reconciliation_has_msi`;
 const planColumns = `plan.month,plan.updated_at,payment.id,payment.name,payment.amount_mxn_minor,payment.due_day,payment.sort_order,${reconciliationMovementColumns}`;
@@ -14,7 +14,7 @@ const chargeJoins = (targetMonth: string) => `LEFT JOIN olbia.planned_payment_ch
   LEFT JOIN olbia.ledger_movements m ON m.id=charge.movement_id`;
 export const reconciliationFromRow = (row: JsonObject, month: string): PaymentReconciliationRecord | undefined => {
   if (!row.reconciliation_event_id) return undefined;
-  const invalidReason = !['accepted','needs_review'].includes(String(row.reconciliation_status))
+  const invalidReason = row.reconciliation_event_type === 'bank_credit' || !['accepted','needs_review'].includes(String(row.reconciliation_status))
     ? 'El movimiento fue rechazado o ya no cuenta como gasto.'
     : row.reconciliation_currency !== 'MXN' ? 'El movimiento no está registrado en MXN.'
       : !(Number(row.reconciliation_gross)>0) ? 'El movimiento no tiene un importe bruto positivo.'

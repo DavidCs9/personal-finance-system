@@ -168,14 +168,14 @@ export const SCHEMA_STATEMENTS = [
     CONSTRAINT bank_import_candidates_movement_key UNIQUE (kind,content_sha256,row_position,movement_id),
     CONSTRAINT bank_import_candidates_row_fk FOREIGN KEY (kind,content_sha256,row_position) REFERENCES olbia.bank_import_rows(kind,content_sha256,position),
     CHECK (merchant_raw IS NOT NULL OR occurred_at IS NULL))`,
+  PAYROLL_CLOSURES_SCHEMA,
   ...NATIVE_LEDGER_SCHEMA_STATEMENTS,
   `CREATE OR REPLACE VIEW olbia.movement_months AS
     SELECT id::text AS movement_id,
       to_char(COALESCE(occurred_at,received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM') AS month
-      FROM olbia.ledger_movements
+      FROM olbia.ledger_movements WHERE event_type<>'bank_credit'
     UNION SELECT movement_id::text,month FROM olbia.installment_entries`,
   ...NATIVE_WEALTH_SCHEMA_STATEMENTS,
-  PAYROLL_CLOSURES_SCHEMA,
   NATIVE_PUSH_SCHEMA_STATEMENT,
   ...NATIVE_DELIVERY_SCHEMA_STATEMENTS,
   ...NATIVE_THREAD_SCHEMA_STATEMENTS,

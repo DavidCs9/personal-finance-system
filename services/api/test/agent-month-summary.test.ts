@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeMonthSummary } from '@finance/domain';
+import { computeMonthSummary, monthCashLiquidity, monthDashboardSpending } from '@finance/domain';
 
 process.env.RAW_EMAIL_BUCKET_NAME ??= 'test-raw';
-const reads = vi.hoisted(() => ({ summary: vi.fn(), events: vi.fn(), snapshots: vi.fn() }));
-vi.mock('../src/months/summary.js', () => ({ getMonthSummary: reads.summary }));
+const reads = vi.hoisted(() => ({ events: vi.fn(), snapshots: vi.fn() }));
 vi.mock('../src/months/dashboard.js', () => ({ getMonthDashboard: reads.snapshots }));
 vi.mock('../src/categories/service.js', () => ({ listCategories: async () => [] }));
 vi.mock('../src/analytics/events.js', () => ({ loadCategorizedMonthEvents: reads.events,
@@ -19,8 +18,11 @@ const summary = computeMonthSummary({ events: [event], month: '2026-08', incomeM
   ], now });
 
 beforeEach(() => {
-  vi.clearAllMocks(); reads.summary.mockResolvedValue(summary); reads.events.mockResolvedValue([event]);
-  reads.snapshots.mockResolvedValue({ month: '2026-08', summary, uncategorizedMinor: 200_00, uncategorizedEventCount: 1 });
+  vi.clearAllMocks(); reads.events.mockResolvedValue([event]);
+  reads.snapshots.mockResolvedValue({ month: '2026-08', summary, uncategorizedMinor: 200_00, uncategorizedEventCount: 1,
+    spending: monthDashboardSpending(summary, { countedSpentMxnMinor: 200_00, projectedCountedSpendMxnMinor: 300_00 }),
+    cash: monthCashLiquidity('2026-08', now, []),
+    futureIncome: { status: 'unconfigured', scheduledMinor: null } });
 });
 
 describe('assistant canonical monthly amounts', () => {
@@ -36,6 +38,7 @@ describe('assistant canonical monthly amounts', () => {
     const result = await planMonthScenario('owner', { month: '2026-08', budgetMxn: 10_000,
       includeLedgerUpcoming: true, tripStart: '2026-08-25', tripEnd: '2026-08-26' });
     expect(result).toMatchObject({ recordedSpentMxnMinor: 200_00, ledgerUpcomingMxnMinor: 100_00,
-      remainingAfterCommitmentsMxnMinor: 9700_00 });
+      remainingAfterCommitmentsMxnMinor: 9700_00, cashAtClose: { status: 'not_available', amountMinor: null },
+      spending: { status: 'estimated', recordedMinor: 200_00 } });
   });
 });

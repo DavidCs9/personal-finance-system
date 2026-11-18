@@ -1,6 +1,6 @@
 import {
-  FONDO_AHORRO_ACCOUNT_ID, WEALTH_ACCOUNTS,
-  type CardLiabilitySnapshot, type PayrollClosure, type WealthAccountDefinition, type WealthAccountId, type WealthHolding, type WealthSnapshot,
+  CAJITA_ACCOUNT_ID, FONDO_AHORRO_ACCOUNT_ID, SANTANDER_CASH_ACCOUNT_ID, WEALTH_ACCOUNTS,
+  type BankCashBalance, type CardLiabilitySnapshot, type PayrollClosure, type WealthAccountDefinition, type WealthAccountId, type WealthHolding, type WealthSnapshot,
 } from '@finance/domain';
 import { toNativeHolding, toNativeAssetSnapshot, toNativeLiabilitySnapshot } from '@finance/ledger/native-wealth';
 import { cardReadStatement, toNativeCardRecord } from '../cards/sql-reads.js';
@@ -32,6 +32,24 @@ export const nativeAssetReadStatement = selectedAssetStatement(`SELECT c.* FROM 
 export const nativeAssetAuditReadStatement = selectedAssetStatement(`SELECT c.*,r.replacement_capture_id,next.captured_at AS superseded_at
   FROM olbia.asset_capture_replacements r JOIN olbia.asset_captures c ON c.id=r.previous_capture_id
   JOIN olbia.asset_captures next ON next.id=r.replacement_capture_id WHERE c.owner=$1`);
+const cashBalanceReadStatement = selectedAssetStatement(`SELECT c.* FROM olbia.asset_daily_captures d
+  JOIN olbia.asset_captures c ON c.id=d.capture_id
+  JOIN (
+    SELECT s.account_id,max(s.day) AS day FROM olbia.asset_daily_captures s
+    JOIN olbia.asset_captures capture ON capture.id=s.capture_id
+    WHERE capture.owner=$1 AND s.day<=$2::date AND s.account_id=ANY($3::text[])
+    GROUP BY s.account_id
+  ) latest ON latest.account_id=d.account_id AND latest.day=d.day
+  WHERE c.owner=$1`);
+
+export const readCashBalances = async (owner: string, asOfDay: string, client: ReadSqlClient): Promise<readonly BankCashBalance[]> =>
+  (await client.query(cashBalanceReadStatement, [owner, asOfDay, [SANTANDER_CASH_ACCOUNT_ID, CAJITA_ACCOUNT_ID]])).rows
+    .map(row => {
+      const snapshot = toNativeAssetSnapshot(row, []);
+      return { accountId: snapshot.accountId as BankCashBalance['accountId'], day: snapshot.day, source: snapshot.source,
+        capturedAt: snapshot.capturedAt, amountMinor: snapshot.totalMxnMinor,
+        name: WEALTH_ACCOUNTS.find(account => account.id === snapshot.accountId)!.name };
+    });
 export const nativeLiabilityReadStatement = `SELECT c.*,c.day::text AS capture_day
   FROM olbia.liability_daily_captures d JOIN olbia.liability_captures c ON c.id=d.capture_id
   WHERE c.owner=$1 ORDER BY c.day,c.card_id`;
