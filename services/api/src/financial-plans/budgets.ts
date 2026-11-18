@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { budgetMonth, budgetMoney, computeBudgetStatus, financialId, FinancialPlanError, monthKeyInZone,
+import { budgetMonth, budgetMoney, budgetWarning, computeBudgetStatus, financialId, FinancialPlanError, monthKeyInZone,
   proposeBudget, type BudgetEntity, type BudgetSpendEvent, type SpendingBudget } from '@finance/domain';
 import { readSpendingBudget, readBudgetExclusion, resolveSpendingBudget, listSpendingBudgets, listBudgetExclusions,
   budgetCategoryPreconditions } from '@finance/ledger/native-budgets';
 import { readLedgerMovements, type SqlClient } from '@finance/ledger/native-ledger';
 import { readerPool, withLedgerReadSnapshot, readSqlFeed } from '../events/sql-reads.js';
 import { monthSpendEventsFromFeed } from '../months/summary.js';
+import { incompletePlansReadStatement } from '../months/commitments.js';
 import { readSqlPlanRecord } from '../months/sql-reads.js';
 
 export const readBudgetEntity = async (client: SqlClient, owner: string, id: string): Promise<BudgetEntity | null> =>
@@ -49,7 +50,8 @@ export const readBudgetStatus = async (client: SqlClient, owner: string, month: 
   const raw = new Map([...feed.events, ...feed.msiRelated].map(e => [String(e.id), e]));
   const events: BudgetSpendEvent[] = monthSpendEventsFromFeed(feed).map(event => ({ ...event, id: event.id!, categoryId: typeof raw.get(event.id!)?.categoryId === 'string' ? String(raw.get(event.id!)!.categoryId) : null }));
   const plan = await readSqlPlanRecord(owner, month, client);
-  const status = computeBudgetStatus({ month, budget, exclusions, events, fixedPayments: plan?.upcomingPayments ?? [], now, missingFixedConfiguration: !plan });
+  const incomplete = month >= monthKeyInZone(now) ? (await client.query(incompletePlansReadStatement)).rows.map(row => String(row.event_id)) : [];
+  const status = computeBudgetStatus({ month, budget, exclusions, events, fixedPayments: plan?.upcomingPayments ?? [], now, missingFixedConfiguration: !plan, additionalIncompleteMovementIds: incomplete });
   const catalog = (await client.query('SELECT id,name FROM olbia.spend_categories ORDER BY sort_order,id')).rows;
   return { ...status, generatedAt: now.toISOString(), categories: status.categories.map(row => ({ ...row,
     label: row.categoryId === null ? 'Sin categoría' : catalog.find(c => c.id === row.categoryId)?.name ?? row.categoryId })) };
@@ -63,6 +65,7 @@ export const simulateBudgetPurchase = (owner: string, input: Record<string, unkn
   if (month < monthKeyInZone(now)) throw new FinancialPlanError('Simula una compra en un mes actual o futuro.');
   return withLedgerReadSnapshot(async () => {
     const before = await readBudgetStatus(readerPool(), owner, month, now);
+    const countedAfter = budgetMoney(before.countedSpentMxnMinor + amount);
     const remaining = before.remainingMxnMinor === null ? null : before.remainingMxnMinor - amount;
     const discretionary = before.remainingDiscretionaryMxnMinor === null ? null : before.remainingDiscretionaryMxnMinor - amount;
     const category = input.categoryId === undefined ? null : before.categories.find(c => c.categoryId === input.categoryId) ?? null;
@@ -71,7 +74,8 @@ export const simulateBudgetPurchase = (owner: string, input: Record<string, unkn
       if (!exists) throw new FinancialPlanError('Categoría no encontrada.');
     }
     return { readOnly: true, month, currency: 'MXN', amountMxnMinor: amount, assumption: 'additional_counted_MXN_purchase_in_selected_month; no_MSI_schedule_or_existing_commitment_inferred', before,
-      after: { countedSpentMxnMinor: before.countedSpentMxnMinor + amount, remainingMxnMinor: remaining,
+      after: { countedSpentMxnMinor: countedAfter,
+        warning: before.configured ? budgetWarning(countedAfter, before.budget!.totalMxnMinor) : null, remainingMxnMinor: remaining,
         overspentMxnMinor: remaining === null ? null : Math.max(0, -remaining), remainingDiscretionaryMxnMinor: discretionary,
         safeDailyAllowanceMxnMinor: discretionary === null || before.safeDailyAllowanceMxnMinor === null ? null : Math.floor(Math.max(0, discretionary) / before.remainingDays),
         categoryId: input.categoryId ?? null,

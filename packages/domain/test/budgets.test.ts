@@ -31,6 +31,7 @@ describe('deterministic budgets using canonical accounting', () => {
     for (const [amount, warning] of [[7000, '70'], [9000, '90'], [10000, '100'], [11000, '100']] as const) expect(status([event('x', amount)]).warning).toBe(warning);
     expect(status([event('x', 11000, { categoryId: null })])).toMatchObject({ remainingMxnMinor: -1000, overspentMxnMinor: 1000,
       categories: expect.arrayContaining([expect.objectContaining({ categoryId: null, limitMxnMinor: 0, overspentMxnMinor: 11000 })]) });
+    expect(status([], { additionalIncompleteMovementIds: ['prior-purchase-with-unknown-schedule'] })).toMatchObject({ safeDailyAllowanceMxnMinor: null });
     expect(status([], { month: '2026-12' })).toMatchObject({ elapsedPercent: 0, remainingDays: 31 });
     expect(status([], { month: '2026-10' })).toMatchObject({ elapsedPercent: 100, remainingDays: 0, safeDailyAllowanceMxnMinor: null });
     expect(status([event('x', 1000, { msi: { months: 2, principalMinor: 2000, cuotaMinor: 1000, installments: [], needsScheduleCompletion: true } })]))

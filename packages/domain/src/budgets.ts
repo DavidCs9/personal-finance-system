@@ -38,7 +38,8 @@ export const proposeBudget = (input: Record<string, unknown>, before: BudgetEnti
   const exclusion = action === 'exclude_movement' || action === 'include_movement';
   if (before && (before.entityType === 'exclusion') !== exclusion) throw new FinancialPlanError('Tipo de registro incompatible.');
   const month = budgetMonth(before ? before.entityType === 'budget' ? before.effectiveMonth : before.month : input.month);
-  if (month < todayMonth) throw new FinancialPlanError('No se pueden reescribir presupuestos ni exclusiones de meses cerrados.');
+  if (month < todayMonth && (before?.entityType === 'budget' ? before.scope === 'recurring' : action === 'set_recurring'))
+    throw new FinancialPlanError('No se pueden reescribir configuraciones recurrentes de meses cerrados; usa un override mensual explícito.');
   if (input.month !== undefined && input.month !== month) throw new FinancialPlanError('El mes de un registro es inmutable; crea una configuración para el nuevo mes.');
   const common = { id, revision: (before?.revision ?? 0) + 1, createdAt: before?.createdAt ?? at, updatedAt: at };
   if (exclusion) {
@@ -83,7 +84,7 @@ export const proposeBudget = (input: Record<string, unknown>, before: BudgetEnti
 export const budgetWarning = (spent: number, limit: number) => spent >= limit ? '100' : BigInt(spent) * 10n >= BigInt(limit) * 9n ? '90' : BigInt(spent) * 10n >= BigInt(limit) * 7n ? '70' : 'normal';
 export interface BudgetSpendEvent extends MonthSpendEvent { readonly id: string; readonly categoryId?: string | null }
 export const computeBudgetStatus = (input: { month: string; budget: SpendingBudget | null; events: readonly BudgetSpendEvent[];
-  fixedPayments: readonly MonthFixedPayment[]; exclusions: readonly BudgetExclusion[]; now: Date; missingFixedConfiguration?: boolean }) => {
+  fixedPayments: readonly MonthFixedPayment[]; exclusions: readonly BudgetExclusion[]; now: Date; missingFixedConfiguration?: boolean; additionalIncompleteMovementIds?: readonly string[] }) => {
   const { month, budget, fixedPayments, now } = input;
   const events = input.events.filter(event => event.currency === 'MXN');
   const excluded = new Set(input.exclusions.filter(item => item.status === 'active' && item.month === month).map(item => item.movementId));
@@ -117,7 +118,8 @@ export const computeBudgetStatus = (input: { month: string; budget: SpendingBudg
       utilizationPercent: limit === null ? null : utilization(spent, limit), warning: limit === null ? null : budgetWarning(spent, limit) };
   });
   const invalidExclusions = input.exclusions.filter(item => item.status === 'active' && (!events.some(event => event.id === item.movementId && !['rejected','pending_foreign','deferred_msi'].includes(event.status)))).map(item => item.id);
-  const incomplete = events.filter(event => event.msi?.needsScheduleCompletion && !['rejected', 'deferred_msi', 'pending_foreign'].includes(event.status)).map(event => event.id);
+  const incomplete = [...new Set([...events.filter(event => event.msi?.needsScheduleCompletion && !['rejected', 'deferred_msi', 'pending_foreign'].includes(event.status)).map(event => event.id),
+    ...(input.additionalIncompleteMovementIds ?? [])])].filter(id => !excluded.has(id));
   const allocationTotal = active ? financialSum(active.allocations.map(item => item.amountMxnMinor)) : null;
   return { month, currency: 'MXN', timeZone: 'America/Chihuahua', budget, configured: !!active,
     grossSpentMxnMinor: gross.spentMinor, countedSpentMxnMinor: counted.spentMinor, excludedSpentMxnMinor: gross.spentMinor - counted.spentMinor,

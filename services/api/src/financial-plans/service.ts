@@ -221,7 +221,7 @@ export const applyFinancialChange = async (owner: string, operationId: unknown, 
         if (!same(before, operation.before)) throw new FinancialPlanError('El presupuesto/exclusión cambió después del preview.', 'conflict');
         const after = operation.after as unknown as BudgetEntity;
         const effectiveMonth = after.entityType === 'budget' ? after.effectiveMonth : after.month;
-        if (effectiveMonth < monthKeyInZone(new Date(appliedAt))) throw new FinancialPlanError('El mes del preview ya está cerrado.', 'conflict');
+        if (after.entityType === 'budget' && after.scope === 'recurring' && effectiveMonth < monthKeyInZone(new Date(appliedAt))) throw new FinancialPlanError('El mes del preview ya está cerrado.', 'conflict');
         const evidence = await budgetEvidence(client, before, after);
         const source = operation.evidencePreconditions.sourceBudget as BudgetEntity | undefined;
         const currentEvidence = { ...evidence, ...(source ? { sourceBudget: await readBudgetEntity(client, owner, source.id) } : {}) };

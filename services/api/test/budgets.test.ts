@@ -68,7 +68,9 @@ it('MCP exclusions preserve actual spending, simulation is read-only, and stale/
   await apply(first.operationId);
   await expect(apply(stale.operationId)).rejects.toThrow(/cambió/);
   expect(await getFinancialWriteStatus('owner', stale.operationId)).toMatchObject({ status: 'failed' });
-  await expect(preview({ action: 'set_override', month: '2026-10', totalMxnMinor: 100 })).rejects.toThrow(/cerrados/);
+  await expect(preview({ action: 'set_recurring', month: '2026-10', totalMxnMinor: 100 })).rejects.toThrow(/cerrados/);
+  const historical = await preview({ action: 'set_override', month: '2026-10', totalMxnMinor: 100 }); await apply(historical.operationId);
+  expect(await status('2026-10')).toMatchObject({ configured: true, budget: { scope: 'override', totalMxnMinor: 100 } });
   const expiry = await preview({ action: 'archive', entityId: setup.after.id, expectedRevision: 2 });
   vi.setSystemTime(new Date('2026-11-18T18:16:00Z'));
   await expect(apply(expiry.operationId)).rejects.toThrow(/expiró/);
