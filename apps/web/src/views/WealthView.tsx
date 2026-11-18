@@ -11,7 +11,7 @@ import {
 } from "@finance/domain";
 import { Amt } from "../components/Amt";
 import { WealthSparkline } from "../components/WealthSparkline";
-import { money } from "../lib/format";
+import { exactMxn, money } from "../lib/format";
 import type { WealthAccountView, WealthHistoryPoint, WealthLiabilityView, WealthOverview } from "../wealth";
 
 const accountRoleLabel = (role: WealthAccountView["role"]): string => {
@@ -153,7 +153,9 @@ export function WealthView(props: {
                 )}
               </div>
               <strong className="hero-amount">
-                {selectedCashId && !selectedAccount?.latestSnapshot ? "—" : <Amt>{money(heroAmount)}</Amt>}
+                {selectedCashId && !selectedAccount?.latestSnapshot
+                  ? "—"
+                  : <Amt>{selectedCashId ? exactMxn(heroAmount) : money(heroAmount)}</Amt>}
               </strong>
               <div className="spend-meta">
                 <span>
@@ -357,7 +359,7 @@ export function WealthView(props: {
                         <strong>{closure.employerName}</strong>
                         <small>Liquidado el {formatDay(closure.fundPaidOn)}</small>
                       </span>
-                      <strong className="payment-amount"><Amt>{money(closure.fundPaidMinor)}</Amt></strong>
+                      <strong className="payment-amount"><Amt>{exactMxn(closure.fundPaidMinor)}</Amt></strong>
                       <span aria-hidden="true" />
                     </div>
                   ))}
@@ -422,7 +424,7 @@ export function WealthView(props: {
                         <small>MXN</small>
                       </span>
                       <strong className="payment-amount">
-                        <Amt>{money(holding.valueMxnMinor)}</Amt>
+                        <Amt>{exactMxn(holding.valueMxnMinor)}</Amt>
                       </strong>
                       <span aria-hidden="true" />
                     </div>

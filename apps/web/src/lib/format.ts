@@ -50,6 +50,8 @@ export const statusLabel: Record<ReviewStatus, string> = {
 };
 
 export const money = (amountMinor: number) => formatMxnWhole(amountMinor);
+const exactMxnFormatter = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" });
+export const exactMxn = (amountMinor: number) => exactMxnFormatter.format(amountMinor / 100);
 
 /** Amount shown in Movimientos for the selected month (MSI → that month's cuota, else principal). */
 export const movementAmountMinor = (event: PurchaseEvent, month: string): number => {
