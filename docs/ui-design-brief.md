@@ -16,15 +16,25 @@ Cada lista completa tiene una ubicación principal. Resumen conserva cifras, ale
 2. **A este ritmo**, proyección al cierre del mes actual. En un mes cerrado, **Gastaste** usa gasto observado; en un mes futuro se declara programación conocida.
 3. **Te quedan**, después de compromisos.
 4. **Incluye por confirmar**, incertidumbre dentro del total.
-5. Acceso compacto a **Planificación**: MSI, gastos fijos y próximas fechas.
+5. Accesos compactos a **Presupuesto del mes** y **Planificación**. El primero muestra el restante del límite cuando existe y abre su detalle sin salir de Resumen.
 6. **En qué se fue**, entrada compacta al análisis y a su evidencia.
 7. Preferencias de avisos, con prioridad visual secundaria.
 
 **Te quedan** indica «según tu gasto y compromisos del mes». **A este ritmo** declara que incluye fijos y MSI del mes. El total combinado no sustituye gasto observado, categorías ni cierre mensual; sigue las [reglas del resumen](financial-rules.md#resumen-del-mes). No mostrar porcentaje, disponibilidad o proyección válidos sin liquidez válida; mantener visibles provisionales e importes por confirmar. El desglose usa expansión nativa, conserva modo privado y se cierra al cambiar de mes.
 
+Mostrar gasto observado y análisis cuando esas fuentes estén disponibles, incluso si falta liquidez.
+
 El chip **Liquidez** concentra el acceso a **Nómina del mes**, sus recibos y la carga XML: liquidez y compensación. Cada recibo presenta primero liquidez, fondo, ISR e IMSS; líneas SAT colapsadas. La lista completa de nóminas permanece en ese detalle; Resumen conserva el aviso y la acción para añadir nómina cuando falta. Estimados y cifras provisionales se etiquetan y piden el XML. Si falta liquidez válida, disponibilidad y proyección no se presentan como válidas.
 
-**Planificación** responde qué tienes programado. Usa el mes global elegido para sus cuotas MSI, gastos fijos y calendario de tarjetas; la cabecera explicita el periodo. Se puede consultar sin nómina ni liquidez configurada. Una fuente con error no oculta las secciones que sí están disponibles ni se presenta como cero. Orden:
+**Planificación** abre con **Tu plan financiero**, tres accesos a detalles de lectura:
+
+- **Presupuesto del mes** abre el mes seleccionado con límite, gasto contado, ritmo, restante antes y después de compromisos, categorías e historial. Expone gasto registrado, exclusiones y sus movimientos en el desglose. Un límite faltante se declara y el historial sigue disponible.
+- **Ingresos esperados** abre el mes elegido y los dos siguientes. Deja visibles los importes desconocidos, las fechas provisionales y la superposición pendiente de revisar. Los CFDI importados tienen una sección propia con acceso a cada recibo.
+- **Metas financieras** lista metas de todos los periodos y abre presupuesto original y vigente, pagado, pendiente, no asignado, partidas, evidencia e historial. Archivar se refleja en la lista y conserva acceso al detalle. Las metas no se suman al gasto mensual.
+
+La configuración ordinaria de las tres áreas sigue en ChatGPT. Los detalles web comparten lecturas del dominio y cierran con Escape o su botón, conservando el contexto al volver de evidencia.
+
+**Pagos y documentos** mantiene la programación, conciliación, fechas y archivos. Usa el mes global elegido para cuotas MSI, gastos fijos y calendario de tarjetas. Se puede consultar sin nómina ni liquidez configurada. Una fuente con error no oculta las demás ni se presenta como cero. Orden:
 
 1. **Planes con fin**, cuotas MSI del mes con comercio, tags de contexto cuando existan, cuota i/N, total fijo e inicio–fin. Cada plan conserva la identidad de su compra y acceso a su evidencia; varias compras del mismo comercio permanecen distinguibles. La fila identifica **Cuota del mes** y **Compra total** por separado. Las etiquetas **Registrada en gasto** y **Comprometida este mes** describen el estado de la cuota; no afirmar pago o conciliación sólo por ese estado. Mantener las señales de calendarios incompletos e importes por confirmar.
 2. **Gastos fijos**, servicios y suscripciones con nombre, importe y día programado, separados de MSI. Conservar sus acciones de alta/edición y mostrar el mes fuente cuando la lista sea heredada. La cabecera conserva el total programado, separado de lo que falta conciliar. Cada fila distingue **Por conciliar**, **Cobro vinculado** o **Revisar vínculo**. Desde su detalle se elige un cargo del mismo mes y se revisan importe programado, bruto y Mi parte antes de confirmar; el vínculo completo puede deshacerse. No seleccionar coincidencias automáticamente ni llamar «pendiente de cobro» a la falta de vínculo. La programación no acredita cobro; su significado sigue las [reglas financieras](financial-rules.md#nómina-y-gastos-fijos).

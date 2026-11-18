@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { SpendingAnalytics } from "@finance/domain";
 import { money } from "../lib/format";
 import type { MonthlyPlan } from "../monthly-plan";
@@ -6,6 +7,8 @@ import { PushPreference } from "../components/PushPreference";
 import { AnalyticsPreview } from "../components/AnalyticsPreview";
 
 export interface SummaryViewProps {
+  readonly budgetShortcut?: ReactNode;
+  readonly spendAvailable?: boolean;
   readonly month: string;
   readonly plan: MonthlyPlan;
   readonly loading: boolean;
@@ -43,23 +46,32 @@ export function SummaryView(props: SummaryViewProps) {
   const spendAndCommitmentsPercent = hasIncome
     ? Math.round((spendAndCommitmentsMinor / props.plan.incomeMinor) * 100)
     : 0;
+  const spendAvailable = props.spendAvailable ?? (!props.loading && !props.loadError);
   const payslips = props.plan.payslips ?? [];
   const provisionalActive = Boolean(props.plan.provisionalActive);
 
   return (
     <section className={`summary-view risk-${props.risk}`}>
       <div className="summary-scroll">
+        {spendAvailable && (props.loading || props.loadError || !hasIncome) && (
+          <section className="spend-hero">
+            <div className="spend-heading"><h1>Has gastado</h1></div>
+            <strong className="hero-amount"><Amt>{money(props.spentMinor)}</Amt></strong>
+            <p className="spend-caption">En movimientos y cuotas MSI del mes</p>
+            {props.uncertainMinor > 0 && <p className="spend-caption">Incluye <Amt>{money(props.uncertainMinor)}</Amt> por confirmar</p>}
+          </section>
+        )}
         {props.loading ? (
           <section className="setup-card plan-loading">
             <p className="eyebrow">CONFIGURACIÓN MENSUAL</p>
-            <h1>Cargando este mes…</h1>
+            <h2>Consultando tu liquidez…</h2>
             <p>Estamos consultando tu liquidez y pagos próximos.</p>
           </section>
         ) : props.loadError ? (
           <section className="setup-card plan-error">
             <span className="setup-alert">!</span>
             <p className="eyebrow">NO PUDIMOS LEER ESTE MES</p>
-            <h1>Tu configuración no está disponible.</h1>
+            <h2>Consulta incompleta</h2>
             <p>{props.loadError} Intenta cargarla de nuevo antes de hacer cambios.</p>
             <button className="primary-button" onClick={props.onRetry}>
               Reintentar
@@ -68,8 +80,7 @@ export function SummaryView(props: SummaryViewProps) {
         ) : !hasIncome ? (
           <section className="setup-card missing-income">
             <span className="setup-alert">!</span>
-            <p className="eyebrow">EMPIEZA POR TU LÍMITE</p>
-            <h1>Falta tu nómina de este mes.</h1>
+            <h2>Falta tu nómina de este mes.</h2>
             <p>
               Sube el XML del CFDI de nómina para ver liquidez real, retenciones y cuánto te queda.
             </p>
@@ -221,6 +232,7 @@ export function SummaryView(props: SummaryViewProps) {
         )}
 
         <section className="summary-shortcuts" aria-label="Explora tu mes">
+          {props.budgetShortcut}
           <button type="button" className="summary-shortcut" onClick={props.onOpenPlanning}>
             <span>
               <strong>Planificación</strong>
@@ -230,16 +242,14 @@ export function SummaryView(props: SummaryViewProps) {
           </button>
         </section>
 
-        {!props.loading && !props.loadError && hasIncome && (
-          <AnalyticsPreview
+        <AnalyticsPreview
             analytics={props.analytics}
             loading={props.analyticsLoading}
             loadError={props.analyticsLoadError}
             onRetry={props.onRetryAnalytics}
             onOpen={props.onOpenAnalytics}
             onDrillDown={props.onOpenAnalyticsMovements}
-          />
-        )}
+        />
 
         {!props.loading && !props.loadError && (
           <PushPreference idToken={props.idToken} demoMode={props.demoMode} />

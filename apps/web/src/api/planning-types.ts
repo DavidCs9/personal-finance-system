@@ -1,0 +1,45 @@
+import type {
+  ActualIncomeReceipt, computeBudgetStatus, ExpectedIncome, FinancialGoalView, IncomeOccurrence,
+} from "@finance/domain";
+
+type BudgetFacts = ReturnType<typeof computeBudgetStatus>;
+export type BudgetCategory = BudgetFacts["categories"][number] & { readonly label: string };
+export type BudgetStatus = Omit<BudgetFacts, "categories"> & {
+  readonly categories: readonly BudgetCategory[];
+  readonly generatedAt: string;
+};
+export interface BudgetHistory {
+  readonly months: readonly (BudgetStatus & {
+    readonly periodStatus: "closed" | "partial" | "future";
+    readonly countedSpendChangeMxnMinor: number | null;
+  })[];
+}
+export type IncomeSource = ExpectedIncome & { readonly confirmedTerminationDate: string | null };
+export interface IncomeMonth {
+  readonly month: string;
+  readonly expectedScheduledMxnMinor: number | null;
+  readonly expectedKnownMxnMinor: number;
+  readonly remainingExpectedMxnMinor: number | null;
+  readonly unknownExpectedOccurrences: number;
+  readonly provisionalCalendarOccurrences: number;
+  readonly actualPayrollMxnMinor: number;
+  readonly actualPayslipCount: number;
+  readonly overlapStatus: "unresolved_payroll_overlap" | "no_overlap_identified_not_reconciled";
+}
+export interface IncomeSchedule {
+  readonly sources: readonly IncomeSource[];
+  readonly occurrences: readonly IncomeOccurrence[];
+  readonly actualPayroll: readonly ActualIncomeReceipt[];
+  readonly monthlyTotals: readonly IncomeMonth[];
+  readonly nextCursor?: string | null;
+}
+export type GoalSummary = FinancialGoalView & {
+  readonly linkedPaymentWarnings: readonly { paymentId: string; ledgerMovementId: string; message: string }[];
+};
+export interface GoalPage {
+  readonly goals: readonly GoalSummary[];
+  readonly nextCursor: string | null;
+}
+export type GoalDetail = GoalSummary & {
+  readonly history: readonly { operationId: string; action: string; appliedAt: string }[];
+};

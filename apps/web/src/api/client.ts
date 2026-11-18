@@ -1,3 +1,4 @@
+import type { BudgetHistory, BudgetStatus, GoalDetail, GoalPage, IncomeSchedule } from "./planning-types";
 import { MAX_STATEMENT_PDF_BYTES, type StatementUploadTarget, type StatementCatalog, type StatementProvider } from '@finance/domain';
 import type {
   AmexImportPreview,
@@ -332,6 +333,25 @@ export const ledgerApi = {
         note: input.note,
       }),
     });
+  },
+  budgetStatus(month: string, idToken: string) {
+    return request<BudgetStatus>(`/budgets/status?${new URLSearchParams({ month })}`, idToken, { cache: "no-store" });
+  },
+  budgetHistory(fromMonth: string, toMonth: string, idToken: string) {
+    return request<BudgetHistory>(`/budgets/history?${new URLSearchParams({ fromMonth, toMonth })}`, idToken, { cache: "no-store" });
+  },
+  expectedIncome(fromMonth: string, toMonth: string, idToken: string, cursor?: string) {
+    const params = new URLSearchParams({ fromMonth, toMonth, limit: "10" });
+    if (cursor) params.set("cursor", cursor);
+    return request<IncomeSchedule>(`/expected-income?${params}`, idToken, { cache: "no-store" });
+  },
+  financialGoals(idToken: string, cursor?: string) {
+    const params = new URLSearchParams({ limit: "10" });
+    if (cursor) params.set("cursor", cursor);
+    return request<GoalPage>(`/financial-goals?${params}`, idToken, { cache: "no-store" });
+  },
+  financialGoal(goalId: string, idToken: string) {
+    return request<GoalDetail>(`/financial-goals/${encodeURIComponent(goalId)}`, idToken, { cache: "no-store" });
   },
   async monthlyPlan(month: string, idToken: string): Promise<MonthlyPlan> {
     return request<MonthlyPlan>(`/months/${encodeURIComponent(month)}`, idToken);
