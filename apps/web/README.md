@@ -1,6 +1,6 @@
 # Web UI
 
-SPA de Olbia: Resumen (gasto del mes), Movimientos, Planificación (programación y próximas fechas) y Patrimonio (neto). La [dirección de UI](../../docs/ui-design-brief.md) define la organización de las pantallas. En desarrollo puede usar la API real (Cognito) o un **modo mock** con datos locales.
+SPA de Olbia: Resumen (gasto del mes), Movimientos, Planificación (presupuesto, expectativas, metas, programación y documentos) y Patrimonio (neto). La [dirección de UI](../../docs/ui-design-brief.md) define la organización de las pantallas. En desarrollo puede usar la API real (Cognito) o un **modo mock** con datos locales.
 
 ## Ejecutar
 
@@ -22,7 +22,7 @@ Para revisar Resumen, Movimientos, Planificación y Patrimonio sin autenticarte 
 
 El tablero queda fijado en julio 2026 con movimientos, MSI, gastos fijos, tarjetas, patrimonio de ejemplo (Cajita, Fondo, Bitso, IBKR, pasivos) y un correo por revisar. El topbar muestra el badge **Mock**; **Salir del mock** vuelve al login real.
 
-Estados de cuenta incluye cobertura, huecos, versiones y conciliaciones pendientes de ejemplo en [`src/api/statements-demo.ts`](src/api/statements-demo.ts). Los originales de ejemplo no se descargan.
+Presupuesto, ingresos esperados y metas tienen ejemplos de consulta y evidencia en [planning-demo](src/api/planning-demo.ts). Estados de cuenta incluye cobertura, huecos, versiones y conciliaciones pendientes de ejemplo en [`src/api/statements-demo.ts`](src/api/statements-demo.ts). Los originales de ejemplo no se descargan.
 
 Los fixtures viven en [`src/api/mock-data.ts`](src/api/mock-data.ts), [`src/monthly-plan.ts`](src/monthly-plan.ts), [`src/card-cycle-demo.ts`](src/card-cycle-demo.ts) y [`src/wealth-demo.ts`](src/wealth-demo.ts). El mock no está disponible en builds de producción.
 

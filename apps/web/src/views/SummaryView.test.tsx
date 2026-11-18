@@ -170,3 +170,17 @@ const buttonFor = (view: ReactNode, onClick: () => void): ReactElement<ElementPr
   expect(button).toBeDefined();
   return button!;
 };
+
+it("shows observed spend and the analysis entry when liquidity is missing or unavailable", () => {
+  const props = propsFor();
+  for (const liquidity of [
+    { plan: { ...props.plan, configured: false, incomeMinor: 0 } },
+    { loadError: "No se pudo consultar la nómina." },
+  ]) {
+    const html = renderToStaticMarkup(<SummaryView {...props} {...liquidity} spendAvailable />);
+    expect(html).toContain('class="hero-amount"><span class="amt">$850</span>');
+    expect(html).toContain("Tu gasto, explicado");
+    expect(html).not.toContain('class="projection-card');
+    expect(html).not.toContain("Te quedan");
+  }
+});

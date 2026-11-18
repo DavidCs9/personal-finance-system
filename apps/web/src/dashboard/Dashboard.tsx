@@ -2,10 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ledgerApi } from "../api/client";
 import { mockAnalyticsFor, mockExceptionRawEmail, mockExceptions, mockFeedForMonth, mockMonthSummaryFor, mockEvents } from "../api/mock-data";
+import { useMarketWealthSync } from "./useMarketWealthSync";
 import { AppShell } from "../layout/AppShell";
 import { eventDate, monthKey } from "../lib/format";
 import { usePrivateMode } from "../lib/private-mode";
-import { analyticsQueryKey, analyticsQueryRoot, eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, monthlyPlanQueryRoot, monthlySummaryQueryKey, monthlySummaryQueryRoot, cardsQueryKey, wealthQueryKey, commitmentsQueryRoot, statementsQueryKey } from "../lib/query-keys";
+import { analyticsQueryKey, analyticsQueryRoot, eventsQueryKey, eventsQueryRoot, exceptionsQueryKey, monthlyPlanQueryKey, monthlyPlanQueryRoot, monthlySummaryQueryKey, monthlySummaryQueryRoot, cardsQueryKey, wealthQueryKey, commitmentsQueryRoot, statementsQueryKey, budgetQueryRoot, financialGoalsQueryRoot, financialPlanningQueryRoot, expectedIncomeQueryRoot } from "../lib/query-keys";
+import { BudgetShortcut } from "../planning/BudgetRead";
+import { FinancialPlanningDialog, PlanningEntries } from "../planning/FinancialPlanning";
+import type { PlanningPane } from "../planning/PlanningRead";
 import type { Tab } from "../lib/tabs";
 import {
   demoPlans,
@@ -83,6 +87,7 @@ export function Dashboard({
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("summary");
   const [selectedMonth, setSelectedMonth] = useState(monthKey(now));
+  const [planningPane, setPlanningPane] = useState<PlanningPane>();
   const [incomeSheetOpen, setIncomeSheetOpen] = useState(false);
   const [activePayslip, setActivePayslip] = useState<Payslip>();
   const [uploadingNomina, setUploadingNomina] = useState(false);
@@ -157,134 +162,8 @@ export function Dashboard({
       demoMode ? Promise.resolve(demoWealthOverview) : ledgerApi.wealth(idToken),
   });
 
-  const bitsoSyncMutation = useMutation({
-    mutationFn: async () => {
-      if (demoMode) {
-        const day = dayKeyInZone(now);
-        const snapshot: WealthSnapshot = {
-          accountId: BITSO_ACCOUNT_ID,
-          day,
-          capturedAt: now.toISOString(),
-          source: "api",
-          currency: "MXN",
-          totalMxnMinor: 1_250_000,
-          fxSource: "bitso_ticker",
-          holdings: demoWealthOverview.accounts.find((account) => account.id === BITSO_ACCOUNT_ID)
-            ?.latestSnapshot?.holdings ?? [],
-        };
-        return { snapshot, skipped: [] as string[] };
-      }
-      return ledgerApi.syncBitso(idToken);
-    },
-    onSuccess: async (result) => {
-      if (demoMode) {
-        const snapshot = result.snapshot;
-        queryClient.setQueryData<WealthOverview>(wealthQueryKey, (current) => {
-          const base: WealthOverview = current ?? demoWealthOverview;
-          const accounts: WealthAccountView[] = base.accounts.map((account: WealthAccountView) =>
-            account.id === BITSO_ACCOUNT_ID
-              ? { ...account, connected: true, latestSnapshot: snapshot }
-              : account,
-          );
-          const previous: readonly WealthHistoryPoint[] = base.history.byAccount.bitso ?? [];
-          const bitsoHistory: WealthHistoryPoint[] = [
-            ...previous.filter((point) => point.day !== snapshot.day),
-            { day: snapshot.day, totalMxnMinor: snapshot.totalMxnMinor },
-          ].sort((left, right) => left.day.localeCompare(right.day));
-          const allByDay = new Map<string, number>();
-          for (const account of accounts) {
-            for (const point of (
-              account.id === BITSO_ACCOUNT_ID
-                ? bitsoHistory
-                : (base.history.byAccount[account.id] ?? [])
-            )) {
-              allByDay.set(point.day, (allByDay.get(point.day) ?? 0) + point.totalMxnMinor);
-            }
-          }
-          return withWealthTotals({
-            accounts,
-            liabilities: base.liabilities,
-            history: {
-              all: [...allByDay.entries()]
-                .sort(([left], [right]) => left.localeCompare(right))
-                .map(([day, totalMxnMinor]) => ({ day, totalMxnMinor })),
-              byAccount: {
-                ...base.history.byAccount,
-                bitso: bitsoHistory,
-              },
-            },
-          });
-        });
-        return;
-      }
-      await queryClient.invalidateQueries({ queryKey: wealthQueryKey });
-    },
-  });
-
-  const ibkrSyncMutation = useMutation({
-    mutationFn: async () => {
-      if (demoMode) {
-        const day = dayKeyInZone(now);
-        const snapshot: WealthSnapshot = {
-          accountId: IBKR_ACCOUNT_ID,
-          day,
-          capturedAt: now.toISOString(),
-          source: "flex",
-          currency: "MXN",
-          totalMxnMinor: 12_500_500,
-          fxRate: 20,
-          fxSource: "banxico_sf43718",
-          holdings: demoWealthOverview.accounts.find((account) => account.id === IBKR_ACCOUNT_ID)
-            ?.latestSnapshot?.holdings ?? [],
-        };
-        return { snapshot, skipped: [] as string[], fxRate: 20 };
-      }
-      return ledgerApi.syncIbkr(idToken);
-    },
-    onSuccess: async (result) => {
-      if (demoMode) {
-        const snapshot = result.snapshot;
-        queryClient.setQueryData<WealthOverview>(wealthQueryKey, (current) => {
-          const base: WealthOverview = current ?? demoWealthOverview;
-          const accounts: WealthAccountView[] = base.accounts.map((account: WealthAccountView) =>
-            account.id === IBKR_ACCOUNT_ID
-              ? { ...account, connected: true, latestSnapshot: snapshot }
-              : account,
-          );
-          const previous: readonly WealthHistoryPoint[] = base.history.byAccount.ibkr ?? [];
-          const ibkrHistory: WealthHistoryPoint[] = [
-            ...previous.filter((point) => point.day !== snapshot.day),
-            { day: snapshot.day, totalMxnMinor: snapshot.totalMxnMinor },
-          ].sort((left, right) => left.day.localeCompare(right.day));
-          const allByDay = new Map<string, number>();
-          for (const account of accounts) {
-            for (const point of (
-              account.id === IBKR_ACCOUNT_ID
-                ? ibkrHistory
-                : (base.history.byAccount[account.id] ?? [])
-            )) {
-              allByDay.set(point.day, (allByDay.get(point.day) ?? 0) + point.totalMxnMinor);
-            }
-          }
-          return withWealthTotals({
-            accounts,
-            liabilities: base.liabilities,
-            history: {
-              all: [...allByDay.entries()]
-                .sort(([left], [right]) => left.localeCompare(right))
-                .map(([day, totalMxnMinor]) => ({ day, totalMxnMinor })),
-              byAccount: {
-                ...base.history.byAccount,
-                ibkr: ibkrHistory,
-              },
-            },
-          });
-        });
-        return;
-      }
-      await queryClient.invalidateQueries({ queryKey: wealthQueryKey });
-    },
-  });
+  const bitsoSyncMutation = useMarketWealthSync(BITSO_ACCOUNT_ID, idToken, demoMode, now);
+  const ibkrSyncMutation = useMarketWealthSync(IBKR_ACCOUNT_ID, idToken, demoMode, now);
 
   const events = eventsQuery.data?.events ?? [];
   const msiRelated = eventsQuery.data?.msiRelated ?? [];
@@ -322,7 +201,13 @@ export function Dashboard({
         ? "No se pudo cargar tu patrimonio."
         : undefined;
 
+  const refreshPlanningEvidence = () => {
+    void queryClient.invalidateQueries({ queryKey: budgetQueryRoot });
+    void queryClient.invalidateQueries({ queryKey: financialGoalsQueryRoot });
+  };
+
   const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: financialPlanningQueryRoot });
     void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
     void queryClient.invalidateQueries({ queryKey: exceptionsQueryKey });
     void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
@@ -411,6 +296,16 @@ export function Dashboard({
     if (!found) throw new Error("No pudimos encontrar esta compra.");
     setActiveEvent(found);
   };
+  const openPlanningPayslip = async (month: string, id: string, signal: AbortSignal) => {
+    if (signal.aborted) return;
+    const record = month === selectedMonth && monthlyPlanQuery.data ? monthlyPlanQuery.data
+      : demoMode ? planFor(demoPlans, month) : await ledgerApi.monthlyPlan(month, idToken);
+    if (signal.aborted) return;
+    const receipt = record.payslips?.find(item => item.uuid === id);
+    if (!receipt) throw new Error("No pudimos encontrar el recibo.");
+    setActivePayslip(receipt);
+  };
+  const access = { idToken, demoMode };
   const spendPercent = plan.incomeMinor > 0 ? Math.round((spentMinor / plan.incomeMinor) * 100) : 0;
   const risk =
     plan.incomeMinor > 0 && projectedRemainingMinor < 0
@@ -427,6 +322,7 @@ export function Dashboard({
     await queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
     if (!demoMode) await queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot });
     await queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
+    await queryClient.invalidateQueries({ queryKey: budgetQueryRoot });
   };
 
   const reviewLargest = () => {
@@ -494,6 +390,8 @@ export function Dashboard({
         ) : tab === "summary" ? (
           <SummaryView
             month={selectedMonth}
+            budgetShortcut={<BudgetShortcut month={selectedMonth} access={access} onOpen={() => setPlanningPane("budget")} />}
+            spendAvailable={summary !== undefined && !monthlySummaryQuery.isError}
             plan={plan}
             loading={planLoading || monthlySummaryQuery.isPending}
             loadError={planLoadError ?? summaryLoadError}
@@ -535,6 +433,7 @@ export function Dashboard({
           />
         ) : tab === "planning" ? (
           <PlanningView
+            financialPlanning={<PlanningEntries month={selectedMonth} access={access} onOpen={setPlanningPane} />}
             month={selectedMonth}
             now={now}
             monthMsiRows={monthMsiRows}
@@ -650,6 +549,7 @@ export function Dashboard({
             const response = await ledgerApi.uploadNominas(files, idToken);
             await queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
             await queryClient.invalidateQueries({ queryKey: monthlySummaryQueryKey(selectedMonth) });
+            await queryClient.invalidateQueries({ queryKey: expectedIncomeQueryRoot });
             return response;
           }}
         />
@@ -665,6 +565,9 @@ export function Dashboard({
           }}
         />
       )}
+      {planningPane && <FinancialPlanningDialog key={`${selectedMonth}:${planningPane}`}
+        pane={planningPane} month={selectedMonth} access={access} suspended={Boolean(activePayslip || activeEvent)}
+        onClose={() => setPlanningPane(undefined)} onOpenEvent={openMsiEvent} onOpenPayslip={openPlanningPayslip} />}
       {activePayslip && (
         <PayslipSheet payslip={activePayslip} onClose={() => setActivePayslip(undefined)} />
       )}
@@ -686,6 +589,7 @@ export function Dashboard({
             queryClient.setQueryData(monthlyPlanQueryKey(selectedMonth), saved);
             await queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
             await queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
+            await queryClient.invalidateQueries({ queryKey: budgetQueryRoot });
             setEditingPayment(current => current === paymentContext ? saved.upcomingPayments.find(p => p.id === paymentContext.id) : current);
           } : undefined}
           payment={editingPayment ?? undefined}
@@ -762,6 +666,7 @@ export function Dashboard({
             setImportOpen(false);
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            refreshPlanningEvidence();
             void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
@@ -782,6 +687,7 @@ export function Dashboard({
         setAmexActivityOpen(false);
         void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
         void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+        refreshPlanningEvidence();
         void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
         void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
       }} />}
@@ -796,6 +702,7 @@ export function Dashboard({
             closeStatementImport();
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            refreshPlanningEvidence();
             void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
@@ -813,6 +720,7 @@ export function Dashboard({
             closeStatementImport();
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            refreshPlanningEvidence();
             void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
@@ -833,6 +741,7 @@ export function Dashboard({
               msiRelated: current?.msiRelated ?? [],
             }));
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            refreshPlanningEvidence();
             void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
@@ -952,6 +861,7 @@ export function Dashboard({
               queryClient.invalidateQueries({ queryKey: wealthQueryKey }),
               queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot }),
               queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot }),
+              queryClient.invalidateQueries({ queryKey: expectedIncomeQueryRoot }),
             ]);
           }}
         />
@@ -968,6 +878,7 @@ export function Dashboard({
             setActiveEvent(event);
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            refreshPlanningEvidence();
             void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot }).then(() => {
               const refreshed = queryClient.getQueryData<MonthlyPlan>(monthlyPlanQueryKey(selectedMonth));
               if (refreshed) setEditingPayment(current => current && current === paymentContext

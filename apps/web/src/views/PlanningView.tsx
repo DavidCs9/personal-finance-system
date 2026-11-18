@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { MonthMsiRow } from "@finance/domain";
 import type { CardCycle } from "../card-cycle";
 import type { PlannedPayment } from "../monthly-plan";
@@ -9,6 +9,7 @@ import { FixedPaymentsSection } from "../components/FixedPaymentsSection";
 import { MsiMonthSection } from "../components/MsiMonthSection";
 
 export interface PlanningViewProps {
+  readonly financialPlanning?: ReactNode;
   readonly month: string;
   readonly now: Date;
   readonly monthMsiRows: readonly MonthMsiRow[];
@@ -71,10 +72,12 @@ export function PlanningView(props: PlanningViewProps) {
     <section className="planning-view">
       <div className="planning-scroll">
         <header className="planning-heading">
-          <p className="eyebrow">LO QUE TIENES PROGRAMADO</p>
           <h1>Planificación</h1>
-          <p>MSI, gastos fijos y fechas de {monthKeyLabel(props.month)}, el mes elegido.</p>
+          <p>Presupuesto, pagos y fechas de {monthKeyLabel(props.month)}, el mes elegido.</p>
         </header>
+
+        {props.financialPlanning}
+        {props.financialPlanning && <h2 className="planning-programming-title">Pagos y documentos</h2>}
 
         {currentOpening?.status === "opening" ? <p role="status">Abriendo compra…</p> : null}
         {currentOpening?.status === "failed" ? (

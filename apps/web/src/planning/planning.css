@@ -1,0 +1,119 @@
+.financial-planning-entries { display: grid; gap: 8px; margin-bottom: 28px; }
+.financial-planning-entries h2, .planning-programming-title {
+  margin: 0 0 3px;
+  font: 600 22px/1.2 Fraunces, serif;
+  letter-spacing: -.025em;
+}
+.planning-programming-title { margin-bottom: 12px; }
+.financial-planning-entries .summary-shortcut, .budget-shortcut { min-height: 66px; }
+.summary-shortcuts:has(.budget-shortcut) { display: grid; gap: 8px; }
+.budget-shortcut > span:nth-last-child(2):not(:first-child) { text-align: right; }
+.budget-shortcut > span:nth-last-child(2):not(:first-child) strong { font-variant-numeric: tabular-nums; }
+
+.planning-read-dialog {
+  position: fixed;
+  inset: auto 0 0;
+  width: min(100%, 42rem);
+  max-width: 100%;
+  max-height: 92vh;
+  max-height: 92dvh;
+  margin: 0 auto;
+  border: 0;
+  border-radius: 22px 22px 0 0;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 -20px 60px #211b1730;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.planning-read-dialog::backdrop { background: #1d181475; backdrop-filter: blur(3px); }
+.planning-read-inner { min-width: 0; }
+.planning-read-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+.planning-read-header h2 { margin: 0; font: 600 clamp(23px, 6vw, 31px)/1.1 Fraunces, serif; letter-spacing: -.03em; }
+.planning-read-header .close-button { flex: 0 0 44px; width: 44px; height: 44px; }
+.plan-read-body { min-width: 0; display: grid; gap: 14px; padding: 15px 16px calc(20px + env(safe-area-inset-bottom)); }
+.plan-period { margin: 0; color: var(--ink-soft); font-size: 12px; text-transform: capitalize; }
+.plan-feature { display: grid; gap: 9px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--ivory); }
+.plan-feature p { margin: 0; }
+.plan-big { font-size: clamp(26px, 8vw, 44px); line-height: 1.06; letter-spacing: -.035em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.plan-goal-title { margin: 0 0 5px; font: 600 26px/1.12 Fraunces, serif; overflow-wrap: anywhere; }
+.plan-meta { margin: 0; color: var(--ink-soft); font-size: 12px; font-weight: 400; line-height: 1.45; }
+.plan-negative, .budget-shortcut .plan-negative strong { color: var(--red-dark); }
+.plan-unknown { font-size: .85em; font-weight: 600; }
+.plan-metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--line); border-radius: 12px; margin: 0; background: var(--line); overflow: hidden; }
+.plan-metric { display: grid; gap: 4px; align-content: start; min-width: 0; padding: 11px; background: var(--paper); overflow-wrap: anywhere; }
+.plan-metric dt { font-size: 12px; color: var(--ink-soft); }
+.plan-metric dd { margin: 0; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.plan-row-head { display: flex; justify-content: space-between; flex-wrap: wrap; align-items: baseline; gap: 3px 12px; font-size: 13px; overflow-wrap: anywhere; }
+.plan-bar { position: relative; display: block; width: 100%; height: 7px; margin: 5px 0; background: #e7ded1; border-radius: 2px; }
+.plan-bar-fill { position: absolute; inset: 0 auto 0 0; background: var(--ink); border-radius: inherit; }
+.plan-bar.watch .plan-bar-fill { background: #946124; }
+.plan-bar.over .plan-bar-fill { background: var(--red-dark); }
+.plan-bar-marker { position: absolute; top: -3px; bottom: -3px; border-left: 1px solid var(--ink); box-shadow: 1px 0 var(--paper); }
+html.private-mode .plan-bar { display: block; visibility: hidden; }
+html.private-mode .plan-sensitive { filter: blur(7px); user-select: none; }
+
+.plan-section, .plan-income-page { display: grid; gap: 9px; min-width: 0; }
+.plan-section h3 { margin: 0; font: 600 21px/1.22 Fraunces, serif; }
+.plan-payroll { margin-top: 5px; padding-top: 15px; border-top: 1px solid var(--line); }
+.plan-disclosure { min-width: 0; border-top: 1px solid var(--line); }
+.plan-disclosure summary {
+  display: flex;
+  min-height: 49px;
+  gap: 7px 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.plan-disclosure summary::marker, .plan-disclosure summary::-webkit-details-marker { display: none; }
+.plan-disclosure summary::after { content: "+"; margin-inline-start: auto; color: var(--ink-soft); font-size: 17px; }
+.plan-disclosure[open] > summary::after { content: "−"; }
+.plan-disclosure > .plan-meta, .plan-disclosure > .plan-notice { margin-bottom: 7px; }
+.plan-rows { display: grid; list-style: none; padding: 0; margin: 0; }
+.plan-rows > li, .plan-history-row { padding: 10px 0; border-bottom: 1px solid var(--line); min-width: 0; overflow-wrap: anywhere; }
+.plan-history-row { display: grid; gap: 5px; }
+.plan-history { display: grid; gap: 6px; }
+.plan-notice, .plan-read-state { margin: 0; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; color: var(--ink-soft); font-size: 13px; line-height: 1.45; }
+.plan-read-state p { margin: 0; }
+.plan-read-state[role="alert"] { border-color: #d8aca6; color: var(--red-dark); }
+.plan-action { min-height: 44px; }
+.plan-back { justify-self: start; padding-inline-start: 0; color: var(--ink); font-weight: 700; }
+.goal-read-list { display: grid; gap: 8px; }
+.goal-read-row {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  border-radius: 11px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: var(--ivory);
+  color: var(--ink);
+}
+.goal-read-row .plan-row-head > strong { font-size: 16px; }
+.goal-read-row:hover { background: #f1ebe2; }
+.plan-read-body :focus-visible, .planning-read-header :focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+@media (min-width: 680px) {
+  .planning-read-dialog { inset: 0; margin: auto; border-radius: 18px; max-height: min(85dvh, 54rem); }
+  .plan-read-body { padding-inline: 24px; }
+  .planning-read-header { padding-inline: 24px; }
+}
+.plan-metric-note { display: block; margin-top: 4px; }
