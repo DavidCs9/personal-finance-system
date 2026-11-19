@@ -1482,6 +1482,7 @@ export class PersonalFinanceV1Stack extends Stack {
       'GET /financial-goals',
       'GET /financial-goals/{goalId}',
       'POST /financial-goals/preview',
+      'POST /monthly-received/preview',
       'GET /financial-writes/{operationId}',
       'POST /financial-writes/{operationId}/apply',
       'GET /events',

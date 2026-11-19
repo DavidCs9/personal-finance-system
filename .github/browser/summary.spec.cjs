@@ -9,6 +9,7 @@ for (const width of [320, 390, 1000]) {
     await page.route('**/runtime-config.js', route => route.fulfill({ contentType: 'application/javascript', body: '' }));
     await page.goto('/?demo=1');
     await expect(page.getByRole('heading', { name: 'Entradas del mes' })).toBeVisible();
+    await expect(page.getByText('Gasto total del mes', { exact: true })).toBeVisible();
     const headings = await page.locator('.summary-scroll h2').allTextContents();
     expect(headings).toEqual(['Presupuesto mensual', 'Ritmo de gasto', 'En qué se fue', 'Entradas del mes']);
     for (const removed of ['Saldos de efectivo', 'Nómina y compromisos', 'Abonos del mes', 'Avisos de Olbia']) {
@@ -43,6 +44,22 @@ for (const width of [320, 390, 1000]) {
     await expect(detail.locator('.amt').first()).toHaveCSS('filter', 'blur(7px)');
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Mostrar montos' }).click();
+
+    if (width === 320) {
+      await page.getByRole('button', { name: 'Registrar total recibido' }).click();
+      const form = page.getByRole('dialog', { name: 'Registrar total recibido' });
+      await form.getByLabel('Total recibido en MXN').fill('150000,62');
+      await form.getByRole('button', { name: 'Guardar total' }).click();
+      await expect(page.getByText('Declarado por ti')).toBeVisible();
+      await expect(page.locator('.month-entries-totals').getByText('$150,000.62', { exact: true })).toBeVisible();
+      await expect(page.getByText(/Abonos en Olbia/)).toBeVisible();
+      await page.getByRole('button', { name: 'Editar total recibido' }).click();
+      const editForm = page.getByRole('dialog', { name: 'Editar total recibido' });
+      await expect(editForm.getByLabel('Total recibido en MXN')).toHaveValue('150000.62');
+      await editForm.getByLabel('Total recibido en MXN').fill('0');
+      await editForm.getByRole('button', { name: 'Guardar total' }).click();
+      await expect(page.locator('.month-entries-totals').getByText('$0', { exact: true })).toBeVisible();
+    }
 
     await page.getByLabel('Elegir mes', { exact: true }).fill('2026-08');
     await expect(page.getByRole('dialog')).toHaveCount(0);

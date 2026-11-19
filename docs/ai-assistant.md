@@ -36,6 +36,7 @@ The native loop receives the same generation budget as the resolved model, with 
 | preview/apply/undo_tag_edit; apply_tag_edits | Bounded tag-only operations. |
 | preview/apply/undo_category_edit; apply_category_edits | Bounded category-only operations. |
 | list_categories; manage_category | Read the catalog; create, rename/reorder, archive or restore one category. |
+| preview_monthly_received; apply_monthly_received | Guarda el total recibido declarado del mes con revisión. Lee monthlyReceived de month_snapshot y usa expectedRevision igual a 0 para el primer registro. Los abonos se consultan aparte. |
 | preview_manual_credit; apply_manual_credit | Record a bank-posted cash income or refund with evidence, through scoped financial writes. |
 | suggest_movement_classification | Review one charge using deterministic evidence first. |
 | edit_operation_status | Read the owned preview/apply/undo or catalog receipt after an interruption, including expiry and current comparison within `comparisonScope`. Matching values now do not prove absence of intervening edits; `subsequentEditHistory` is not determined by this tool. |

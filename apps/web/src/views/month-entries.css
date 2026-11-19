@@ -32,3 +32,7 @@
   .month-entry-row { grid-template-columns: minmax(0, 1fr) auto 8px; gap: 7px; }
   .month-entry-amount { font-size: 13px; }
 }
+
+.month-received-edit { padding-inline: 0; text-align: left; }
+.month-received-form { display: grid; gap: 12px; }
+.month-received-form input { padding: 10px; min-height: 44px; width: 100%; border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 16px; }

@@ -1,5 +1,6 @@
 import { aggregateSpendByCategory, budgetMonth, cashBalanceCutoffDay, daysInCalendarMonth, monthCashLiquidity,
   monthDashboardLiquidity, monthDashboardSpending, payrollEmployerKey, payrollFundReconciliation, summarizePostedCredits } from '@finance/domain';
+import { readMonthlyReceived } from '@finance/ledger/native-financial-plans';
 import { readBankCreditsForMonth } from '@finance/ledger/native-ledger';
 import { deduplicateFeed } from '../analytics/events.js';
 import { readerPool, readSqlFeed, withLedgerReadSnapshot } from '../events/sql-reads.js';
@@ -18,10 +19,11 @@ export const getMonthDashboard = (owner: string, inputMonth: string, now = new D
   return withLedgerReadSnapshot(async () => {
     const client = readerPool();
     const cutoffDay = cashBalanceCutoffDay(month, now);
-    const [feed, record, credits, balances, payrollClosures] = await Promise.all([
+    const [feed, record, credits, balances, payrollClosures, monthlyReceived] = await Promise.all([
       readSqlFeed([month], client), readSqlPlanRecord(owner, month, client),
       readBankCreditsForMonth(client, owner, `${month}-01`, `${month}-${daysInCalendarMonth(month)}`),
       readCashBalances(owner, cutoffDay, client), readPayrollClosures(owner, client),
+      readMonthlyReceived(client, owner, month),
     ]);
     const [plan, budget] = await Promise.all([
       getMonthlyPlanFromReads(owner, month, async () => record, () => incomeFieldsForMonth(owner, month, now)),
@@ -42,6 +44,7 @@ export const getMonthDashboard = (owner: string, inputMonth: string, now = new D
       spending: monthDashboardSpending(summary, budget),
       liquidity: monthDashboardLiquidity(summary, plan, record !== undefined),
       cash: monthCashLiquidity(month, now, balances),
+      monthlyReceived,
       postedCredits: summarizePostedCredits(credits),
       futureIncome: await getMonthFutureIncome(owner, month, now, credits.some(credit => credit.creditType === 'income' && credit.incomeType !== 'finiquito')),
       payrollFundClosures: fundClosures,

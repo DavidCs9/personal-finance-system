@@ -4,9 +4,10 @@ import { money } from "../lib/format";
 import { Amt } from "../components/Amt";
 import { AnalyticsPreview } from "../components/AnalyticsPreview";
 import { SummaryBudget } from "./SummaryBudget";
-import { MonthEntries } from "./MonthEntries";
+import { MonthEntries, type MonthlyReceivedEditor } from "./MonthEntries";
 
 export interface SummaryViewProps {
+  readonly receivedEditor?: MonthlyReceivedEditor;
   readonly dashboard?: MonthDashboard;
   readonly dashboardLoading?: boolean;
   readonly dashboardError?: boolean;
@@ -35,8 +36,9 @@ export function SummaryView(props: SummaryViewProps) {
           <button type="button" className="text-button" onClick={props.onRetryDashboard}>Reintentar</button>
         </p>}
         <SummaryBudget status={props.dashboard.budget} privateMode={Boolean(props.privateMode)}
+          recordedMinor={props.dashboard.spending.recordedMinor}
           onOpen={props.onOpenBudget} onOpenAnalytics={props.onOpenAnalytics} />
-        <MonthEntries key={props.month} month={props.month} dashboard={props.dashboard} />
+        <MonthEntries key={props.month} month={props.month} dashboard={props.dashboard} editor={props.receivedEditor} />
       </> : <>
         <section className="summary-budget-panel" role={props.dashboardError ? "alert" : "status"}>
           <h2>Presupuesto mensual</h2>
@@ -45,7 +47,7 @@ export function SummaryView(props: SummaryViewProps) {
             onClick={props.onRetryDashboard}>Reintentar</button>}
         </section>
         {props.dashboardError && props.spendAvailable && <section className="summary-budget-panel summary-fallback-spend">
-          <h2>Gasto registrado</h2>
+          <h2>Gasto total del mes</h2>
           <strong><Amt>{money(props.spentMinor)}</Amt></strong>
           {props.uncertainMinor > 0 && <p>Incluye <Amt>{money(props.uncertainMinor)}</Amt> por confirmar.</p>}
         </section>}

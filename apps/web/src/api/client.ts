@@ -360,6 +360,18 @@ export const ledgerApi = {
   async monthlySummary(month: string, idToken: string): Promise<MonthSummary> {
     return request<MonthSummary>(`/months/${encodeURIComponent(month)}/summary`, idToken);
   },
+  previewMonthlyReceived(month: string, amountMinor: number, expectedRevision: number, idToken: string): Promise<{ operationId: string }> {
+    return request('/monthly-received/preview', idToken, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ month, amountMinor, expectedRevision }),
+    });
+  },
+  monthlyReceivedOperationStatus(operationId: string, idToken: string): Promise<{ status: string }> {
+    return request(`/financial-writes/${encodeURIComponent(operationId)}`, idToken, { cache: "no-store" });
+  },
+  applyMonthlyReceived(operationId: string, idToken: string): Promise<{ monthlyReceived: NonNullable<MonthDashboard["monthlyReceived"]> }> {
+    return request(`/financial-writes/${encodeURIComponent(operationId)}/apply`, idToken, { method: 'POST' });
+  },
   monthlyDashboard(month: string, idToken: string): Promise<MonthDashboard> {
     return request<MonthDashboard>(`/agent/month-snapshot?${new URLSearchParams({ month })}`, idToken, { cache: "no-store" });
   },
