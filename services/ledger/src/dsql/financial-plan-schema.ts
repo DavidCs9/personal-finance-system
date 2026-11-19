@@ -1,16 +1,18 @@
 import { NATIVE_BUDGET_TABLES, NATIVE_BUDGET_SCHEMA_STATEMENTS, nativeBudgetWriteGrants } from './budget-schema.js';
 /** Typed current plans; JSON is limited to frozen preview intent and immutable receipts. */
 export const NATIVE_FINANCIAL_PLAN_TABLES = ['expected_income', 'financial_goals', 'goal_allocations', 'goal_payments',
-  'financial_write_operations', 'financial_change_receipts', 'expected_income_month_overrides', ...NATIVE_BUDGET_TABLES] as const;
+  'monthly_received_totals', 'financial_write_operations', 'financial_change_receipts', 'expected_income_month_overrides', ...NATIVE_BUDGET_TABLES] as const;
 const money = 'BETWEEN 1 AND 9007199254740991';
-export const FINANCIAL_WRITE_KIND_CHECK = "CHECK (kind IN ('income','goal','manual_charge','manual_credit','budget','fixed_reconciliation','msi_reconciliation'))";
+export const FINANCIAL_WRITE_KIND_CHECK = "CHECK (kind IN ('income','goal','manual_charge','manual_credit','budget','fixed_reconciliation','msi_reconciliation','monthly_received'))";
 export const FINANCIAL_RECEIPT_ENTITY_CHECK = `CHECK (
+  (kind='monthly_received') = (monthly_received_id IS NOT NULL) AND (
+  (kind='monthly_received' AND income_id IS NULL AND goal_id IS NULL AND movement_id IS NULL AND budget_id IS NULL AND budget_exclusion_id IS NULL) OR
   (kind='income' AND income_id IS NOT NULL AND goal_id IS NULL AND movement_id IS NULL AND budget_id IS NULL AND budget_exclusion_id IS NULL) OR
   (kind='goal' AND goal_id IS NOT NULL AND income_id IS NULL AND movement_id IS NULL AND budget_id IS NULL AND budget_exclusion_id IS NULL) OR
   (kind IN ('manual_charge','manual_credit','fixed_reconciliation','msi_reconciliation') AND movement_id IS NOT NULL
     AND income_id IS NULL AND goal_id IS NULL AND budget_id IS NULL AND budget_exclusion_id IS NULL) OR
   (kind='budget' AND income_id IS NULL AND goal_id IS NULL AND movement_id IS NULL AND
-    ((budget_id IS NOT NULL AND budget_exclusion_id IS NULL) OR (budget_id IS NULL AND budget_exclusion_id IS NOT NULL))))`;
+    ((budget_id IS NOT NULL AND budget_exclusion_id IS NULL) OR (budget_id IS NULL AND budget_exclusion_id IS NOT NULL)))))`;
 export const INCOME_SCHEDULE_CHECK = `CHECK (
   (payment_rule_1 IS NULL OR (payment_day_1 IS NOT NULL AND
     (payment_rule_1='previous_business_day' OR (payment_rule_1='last_business_day' AND payment_day_1=31))))
@@ -65,9 +67,15 @@ export const NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS = [
     recorded_by text NOT NULL CHECK (length(recorded_by)>0), created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
     CHECK ((source='manual_attestation' AND ledger_movement_id IS NULL) OR (source='linked_ledger_movement' AND ledger_movement_id IS NOT NULL)))`,
   ...NATIVE_BUDGET_SCHEMA_STATEMENTS,
+  `CREATE TABLE IF NOT EXISTS olbia.monthly_received_totals (
+    id uuid PRIMARY KEY, owner text NOT NULL CHECK (length(owner)>0),
+    month text NOT NULL CHECK (month ~ '^[1-9][0-9]{3}-(0[1-9]|1[0-2])$'),
+    amount_mxn_minor bigint NOT NULL CHECK (amount_mxn_minor BETWEEN 0 AND 9007199254740991),
+    revision integer NOT NULL CHECK (revision>0), updated_at timestamptz NOT NULL,
+    UNIQUE (owner,month))`,
   `CREATE TABLE IF NOT EXISTS olbia.financial_write_operations (
     operation_id uuid PRIMARY KEY, owner text NOT NULL CHECK (length(owner)>0),
-    kind text NOT NULL CONSTRAINT financial_write_operations_credit_kind_check ${FINANCIAL_WRITE_KIND_CHECK}, action text NOT NULL CHECK (length(action)>0),
+    kind text NOT NULL CONSTRAINT financial_write_operations_received_kind_check ${FINANCIAL_WRITE_KIND_CHECK}, action text NOT NULL CHECK (length(action)>0),
     entity_id uuid NOT NULL, created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL CHECK (expires_at>created_at),
     status text NOT NULL CHECK (status IN ('pending','applied','failed')), failure_code text,
     before_state jsonb, after_state jsonb NOT NULL CHECK (jsonb_typeof(after_state)='object'),
@@ -77,14 +85,15 @@ export const NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS = [
     CHECK ((status='failed')=(failure_code IS NOT NULL)))`,
   `CREATE TABLE IF NOT EXISTS olbia.financial_change_receipts (
     operation_id uuid PRIMARY KEY REFERENCES olbia.financial_write_operations(operation_id),
-    owner text NOT NULL CHECK (length(owner)>0), kind text NOT NULL CONSTRAINT financial_change_receipts_credit_kind_check ${FINANCIAL_WRITE_KIND_CHECK},
+    owner text NOT NULL CHECK (length(owner)>0), kind text NOT NULL CONSTRAINT financial_change_receipts_received_kind_check ${FINANCIAL_WRITE_KIND_CHECK},
     income_id uuid REFERENCES olbia.expected_income(id), goal_id uuid REFERENCES olbia.financial_goals(id),
     movement_id uuid REFERENCES olbia.ledger_movements(id), budget_id uuid CONSTRAINT financial_receipts_budget_fk REFERENCES olbia.spending_budgets(id),
     budget_exclusion_id uuid CONSTRAINT financial_receipts_budget_exclusion_fk REFERENCES olbia.budget_exclusions(id), applied_at timestamptz NOT NULL,
+    monthly_received_id uuid CONSTRAINT financial_receipts_monthly_received_fk REFERENCES olbia.monthly_received_totals(id),
     before_state jsonb, after_state jsonb NOT NULL CHECK (jsonb_typeof(after_state)='object'),
     result jsonb NOT NULL CHECK (jsonb_typeof(result)='object'),
     CHECK (before_state IS NULL OR jsonb_typeof(before_state)='object'),
-    CONSTRAINT financial_receipts_credit_entity_check ${FINANCIAL_RECEIPT_ENTITY_CHECK})`,
+    CONSTRAINT financial_receipts_received_entity_check ${FINANCIAL_RECEIPT_ENTITY_CHECK})`,
 ] as const;
 export const nativeFinancialPlanReadGrant = (role: string) =>
   `GRANT SELECT ON ${NATIVE_FINANCIAL_PLAN_TABLES.map(table => `olbia.${table}`).join(',')} TO ${role}`;
@@ -97,5 +106,6 @@ export const nativeFinancialPlanWriteGrants = (role: string) => [
   `GRANT UPDATE (name,total_budget_mxn_minor,target_date,status,revision,updated_at) ON olbia.financial_goals TO ${role}`,
   `GRANT UPDATE (name,allocated_mxn_minor,expected_payment_date,status,revision) ON olbia.goal_allocations TO ${role}`,
   `GRANT UPDATE (allocation_id,amount_mxn_minor,payment_date,source,ledger_movement_id,status,revision,updated_at) ON olbia.goal_payments TO ${role}`,
+  `GRANT UPDATE (amount_mxn_minor,revision,updated_at) ON olbia.monthly_received_totals TO ${role}`,
   `GRANT UPDATE (status,failure_code) ON olbia.financial_write_operations TO ${role}`,
 ];

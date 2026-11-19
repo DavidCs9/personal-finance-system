@@ -28,6 +28,16 @@ const propsFor = (dashboard?: MonthDashboard): SummaryViewProps => ({ month,dash
   analyticsLoading:false,onRetryAnalytics(){},onOpenAnalytics(){},onOpenAnalyticsMovements(){},onOpenBudget(){},onRetryDashboard(){} });
 
  describe("simple monthly Resumen",()=>{
+  it("shows recorded spending above categories even when the budget excludes part of it", () => {
+    const base = dashboardFor();
+    const html = renderToStaticMarkup(<SummaryView {...propsFor({
+      ...base, spending: { ...base.spending, recordedMinor: 194_562_31 },
+      budget: { ...base.budget, countedSpentMxnMinor: 100_00, excludedSpentMxnMinor: 194_462_31 },
+    })} />);
+    expect(html.indexOf("Gasto total del mes")).toBeLessThan(html.indexOf("En qué se fue"));
+    expect(html).toContain("$194,562.31");
+    expect(html).toContain("Incluye gastos fuera del presupuesto");
+  });
   it("keeps all spending before generic entries and removes duplicated cash/payroll/navigation",()=>{
     const html=renderToStaticMarkup(<SummaryView {...propsFor(dashboardFor())} />);
     const headings=["Presupuesto mensual","Ritmo de gasto","En qué se fue","Entradas del mes"].map(label=>html.indexOf(label));

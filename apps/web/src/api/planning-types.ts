@@ -1,6 +1,6 @@
 import type {
   ActualIncomeReceipt, computeBudgetStatus, ExpectedIncome, FinancialGoalView, IncomeOccurrence,
-  MonthFutureIncome, MonthSummary, monthCashLiquidity, monthDashboardLiquidity,
+  MonthFutureIncome, MonthlyReceivedTotal, MonthSummary, monthCashLiquidity, monthDashboardLiquidity,
   monthDashboardSpending, payrollFundReconciliation, summarizePostedCredits,
 } from "@finance/domain";
 
@@ -21,6 +21,7 @@ export interface MonthDashboard {
   readonly liquidity: ReturnType<typeof monthDashboardLiquidity>;
   readonly spending: ReturnType<typeof monthDashboardSpending>;
   readonly cash: ReturnType<typeof monthCashLiquidity>;
+  readonly monthlyReceived?: MonthlyReceivedTotal | null;
   readonly postedCredits: ReturnType<typeof summarizePostedCredits>;
   readonly futureIncome: MonthFutureIncome;
   readonly payrollFundClosures: readonly ReturnType<typeof payrollFundReconciliation>[];

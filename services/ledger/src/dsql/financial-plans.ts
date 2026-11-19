@@ -1,7 +1,7 @@
 import { FinancialPlanError, type ActualIncomeReceipt, type ExpectedIncome, type FinancialGoalState,
-  type FinancialGoal, type GoalAllocation, type GoalPayment, type IncomeTermination, type IncomeMonthOverride, type IncomePaymentRule } from '@finance/domain';
+  type FinancialGoal, type GoalAllocation, type GoalPayment, type IncomeTermination, type IncomeMonthOverride, type IncomePaymentRule, type MonthlyReceivedTotal } from '@finance/domain';
 import type { SqlClient } from './projection.js';
-export type FinancialWriteKind = 'income' | 'goal' | 'manual_charge' | 'manual_credit' | 'budget' | 'fixed_reconciliation' | 'msi_reconciliation';
+export type FinancialWriteKind = 'income' | 'goal' | 'manual_charge' | 'manual_credit' | 'budget' | 'fixed_reconciliation' | 'msi_reconciliation' | 'monthly_received';
 export interface FinancialWriteOperation {
   readonly operationId: string; readonly owner: string; readonly kind: FinancialWriteKind; readonly action: string;
   readonly entityId: string; readonly createdAt: string; readonly expiresAt: string;
@@ -149,6 +149,25 @@ export const readGoalMovement = async (client: SqlClient, id: string): Promise<R
   (await readGoalMovements(client, [id]))[0] ?? null;
 export const paymentMovementUsed = async (client: SqlClient, movementId: string, paymentId: string): Promise<boolean> =>
   (await client.query('SELECT id FROM olbia.goal_payments WHERE ledger_movement_id=$1::uuid AND id<>$2::uuid', [movementId, paymentId])).rows.length > 0;
+export async function readMonthlyReceived(client: SqlClient, owner: string, month: string): Promise<MonthlyReceivedTotal | null> {
+  const row = (await client.query(
+    'SELECT id,amount_mxn_minor,revision,updated_at FROM olbia.monthly_received_totals WHERE owner=$1 AND month=$2',
+    [owner, month])).rows[0];
+  return row ? { id: String(row.id), month, amountMinor: Number(row.amount_mxn_minor),
+    revision: Number(row.revision), updatedAt: instant(row.updated_at) } : null;
+}
+
+export async function writeMonthlyReceived(client: SqlClient, owner: string, total: MonthlyReceivedTotal): Promise<void> {
+  const result = total.revision === 1
+    ? await client.query(`INSERT INTO olbia.monthly_received_totals (id,owner,month,amount_mxn_minor,revision,updated_at)
+        VALUES ($1,$2,$3,$4,1,$5) ON CONFLICT (owner,month) DO NOTHING RETURNING id`,
+      [total.id, owner, total.month, total.amountMinor, total.updatedAt])
+    : await client.query(`UPDATE olbia.monthly_received_totals SET amount_mxn_minor=$4, revision=$5, updated_at=$6
+        WHERE id=$1 AND owner=$2 AND month=$3 AND revision=$5-1 RETURNING id`,
+      [total.id, owner, total.month, total.amountMinor, total.revision, total.updatedAt]);
+  if (!result.rows.length) throw new FinancialPlanError('El total recibido cambió. Vuelve a consultar el mes.', 'conflict');
+}
+
 export const insertFinancialOperation = async (client: SqlClient, operation: FinancialWriteOperation): Promise<void> => {
   await client.query(`INSERT INTO olbia.financial_write_operations
     (operation_id,owner,kind,action,entity_id,created_at,expires_at,status,failure_code,before_state,after_state,preview_facts,evidence_preconditions)
@@ -167,11 +186,12 @@ export const readFinancialReceipt = async (client: SqlClient, owner: string, id:
   ((await client.query('SELECT result FROM olbia.financial_change_receipts WHERE operation_id=$1::uuid AND owner=$2', [id, owner])).rows[0]?.result as Record<string, unknown>) ?? null;
 export const appendFinancialReceipt = async (client: SqlClient, operation: FinancialWriteOperation, result: Record<string, unknown>, appliedAt: string,
   movementId?: string): Promise<void> => {
-  await client.query(`INSERT INTO olbia.financial_change_receipts (operation_id,owner,kind,income_id,goal_id,movement_id,budget_id,budget_exclusion_id,applied_at,before_state,after_state,result)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb)`, [operation.operationId, operation.owner, operation.kind,
+  await client.query(`INSERT INTO olbia.financial_change_receipts (operation_id,owner,kind,income_id,goal_id,movement_id,budget_id,budget_exclusion_id,applied_at,before_state,after_state,result,monthly_received_id)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13)`, [operation.operationId, operation.owner, operation.kind,
     operation.kind === 'income' ? operation.entityId : null, operation.kind === 'goal' ? operation.entityId : null, movementId ?? null, operation.kind === 'budget' && operation.after.entityType === 'budget' ? operation.entityId : null,
     operation.kind === 'budget' && operation.after.entityType === 'exclusion' ? operation.entityId : null, appliedAt,
-    operation.before === null ? null : JSON.stringify(operation.before), JSON.stringify(operation.after), JSON.stringify(result)]);
+    operation.before === null ? null : JSON.stringify(operation.before), JSON.stringify(operation.after), JSON.stringify(result),
+    operation.kind === 'monthly_received' ? operation.entityId : null]);
   if (!(await client.query("UPDATE olbia.financial_write_operations SET status='applied' WHERE operation_id=$1 AND owner=$2 AND status='pending' RETURNING operation_id",
     [operation.operationId, operation.owner])).rows.length) throw new FinancialPlanError('La operación cambió; consulta su estado.', 'conflict');
 };

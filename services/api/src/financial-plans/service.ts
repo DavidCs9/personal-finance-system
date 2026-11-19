@@ -7,10 +7,10 @@ import { randomUUID } from 'node:crypto';
 import { addCalendarMonths, dayKeyInZone, monthKeyInZone, FINANCE_TIME_ZONE, isValidMonth,
   FinancialPlanError, financialId, financialObject, financialSum, financialGoalFacts, incomeOccurrences, summarizeFutureIncome,
   proposeExpectedIncome, proposeFinancialGoal, maybeAutoAmexMsi, payrollEmployerKey, MX_BANKING_CALENDAR_VERSION,
-  type ExpectedIncome, type FinancialGoalState, type GoalPayment, type MonthFutureIncome } from '@finance/domain';
+  type ExpectedIncome, type FinancialGoalState, type GoalPayment, type MonthFutureIncome, type MonthlyReceivedTotal } from '@finance/domain';
 import { applicationSqlClient, withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { readExpectedIncome, listExpectedIncomeRows, readIncomeEvidence, writeExpectedIncome, readFinancialGoal,
-  listFinancialGoalIds, writeFinancialGoal, readGoalMovement, readGoalMovements, paymentMovementUsed, insertFinancialOperation,
+  readMonthlyReceived, writeMonthlyReceived, listFinancialGoalIds, writeFinancialGoal, readGoalMovement, readGoalMovements, paymentMovementUsed, insertFinancialOperation,
   readFinancialOperation, readFinancialReceipt, appendFinancialReceipt, failFinancialOperation, financialHistory,
   type FinancialWriteOperation, type FinancialWriteKind } from '@finance/ledger/native-financial-plans';
 import { readerPool, withLedgerReadSnapshot } from '../events/sql-reads.js';
@@ -175,7 +175,22 @@ export const previewFinancialChange = async (owner: string, kind: FinancialWrite
   // Writes only an authentic preview record. Current domain records are unchanged.
   return withSqlTransaction(async client => {
     let before: Record<string, unknown> | null = null, after: Record<string, unknown>, preview: Record<string, unknown>, evidencePreconditions: Record<string, unknown> = {};
-    if (kind === 'budget') {
+    if (kind === 'monthly_received') {
+      if (typeof input.month !== 'string' || !isValidMonth(input.month) || input.month < '1000-01' || input.month > today.slice(0, 7))
+        throw new FinancialPlanError('Elige un mes actual o anterior.');
+      const amount = input.amountMinor;
+      if (typeof amount !== 'number' || !Number.isSafeInteger(amount) || amount < 0)
+        throw new FinancialPlanError('Indica el total en centavos MXN, desde cero.');
+      const prior = await readMonthlyReceived(client, owner, input.month);
+      if (input.expectedRevision !== (prior?.revision ?? 0))
+        throw new FinancialPlanError('El total recibido cambió. Vuelve a consultar el mes.', 'conflict');
+      entityId = prior?.id ?? entityId;
+      const total: MonthlyReceivedTotal = { id: entityId, month: input.month, amountMinor: amount,
+        revision: (prior?.revision ?? 0) + 1, updatedAt: at };
+      before = prior ? { ...prior } : null;
+      after = { ...total };
+      preview = { before, after, effect: 'declared_month_total_only; bank_credits_unchanged' };
+    } else if (kind === 'budget') {
       const proposed = await proposeBudgetChange(client, owner, input, entityId, at);
       entityId = proposed.after.id;
       before = proposed.prior ? jsonObject(proposed.prior) : null; after = jsonObject(proposed.after);
@@ -243,7 +258,7 @@ export const previewFinancialChange = async (owner: string, kind: FinancialWrite
         classification: 'registro_manual', effect: before ? 'existing_idempotent_capture' : 'create_observed_charge_with_canonical_accounting',
         warning: 'Esta operación registra un cobro observado; no uses un ingreso esperado ni un compromiso futuro como evidencia.' };
     }
-    const action = kind === 'manual_charge' ? 'register_manual_charge' : kind === 'manual_credit' ? 'register_manual_credit' : String(input.action);
+    const action = kind === 'monthly_received' ? 'set_monthly_received' : kind === 'manual_charge' ? 'register_manual_charge' : kind === 'manual_credit' ? 'register_manual_credit' : String(input.action);
     const operation: FinancialWriteOperation = { operationId: randomUUID(), owner, kind, action,
       entityId, createdAt: at, expiresAt: new Date(now.getTime() + 15 * 60_000).toISOString(), status: 'pending', failureCode: null,
       before, after, preview: jsonObject(preview), evidencePreconditions };
@@ -268,7 +283,16 @@ export const applyFinancialChange = async (owner: string, operationId: unknown, 
       let result: Record<string, unknown>, movementId: string | undefined;
       let receiptOperation = operation;
       const appliedAt = new Date().toISOString();
-      if (operation.kind === 'budget') {
+      if (operation.kind === 'monthly_received') {
+        const proposed = operation.after as unknown as MonthlyReceivedTotal;
+        const current = await readMonthlyReceived(client, owner, proposed.month);
+        if (!same(current, operation.before))
+          throw new FinancialPlanError('El total recibido cambió. Vuelve a consultar el mes.', 'conflict');
+        const total = { ...proposed, updatedAt: appliedAt };
+        await writeMonthlyReceived(client, owner, total);
+        receiptOperation = { ...operation, after: { ...total } };
+        result = { ok: true, operationId: id, kind: operation.kind, status: 'applied', appliedAt, monthlyReceived: total };
+      } else if (operation.kind === 'budget') {
         const before = await readBudgetEntity(client, owner, operation.entityId);
         if (!same(before, operation.before)) throw new FinancialPlanError('El presupuesto/exclusión cambió después del preview.', 'conflict');
         const after = operation.after as unknown as BudgetEntity;

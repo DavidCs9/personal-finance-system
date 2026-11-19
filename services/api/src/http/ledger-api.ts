@@ -195,7 +195,7 @@ app.get('/financial-goals/:goalId', async ({ event, params }) =>
   json(200, await getFinancialGoal(ownerOf(asHttpEvent(event)), params.goalId)));
 app.get('/financial-writes/:operationId', async ({ event, params }) =>
   json(200, await getFinancialWriteStatus(ownerOf(asHttpEvent(event)), params.operationId)));
-for (const [path, kind] of [['/expected-income/preview', 'income'], ['/financial-goals/preview', 'goal'], ['/budgets/preview', 'budget']] as const) {
+for (const [path, kind] of [['/expected-income/preview', 'income'], ['/financial-goals/preview', 'goal'], ['/budgets/preview', 'budget'], ['/monthly-received/preview', 'monthly_received']] as const) {
   app.post(path, async ({ event }) => {
     const e = asHttpEvent(event);
     let input: unknown;

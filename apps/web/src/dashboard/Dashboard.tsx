@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ledgerApi } from "../api/client";
+import type { MonthDashboard } from "../api/planning-types";
 import { demoBudgetStatus, demoMonthCredits, demoMonthFutureIncome } from "../api/planning-demo";
 import { mockAnalyticsFor, mockExceptionRawEmail, mockExceptions, mockFeedForMonth, mockMonthSummaryFor, mockEvents } from "../api/mock-data";
 import { useMarketWealthSync } from "./useMarketWealthSync";
@@ -145,6 +146,7 @@ export function Dashboard({
         spending: monthDashboardSpending(summary, budget),
         liquidity: monthDashboardLiquidity(summary, demoPlan, true),
         cash: monthCashLiquidity(selectedMonth, now, []),
+        monthlyReceived: queryClient.getQueryData<MonthDashboard>(monthDashboardQueryKey(selectedMonth))?.monthlyReceived ?? null,
         postedCredits: summarizePostedCredits(demoMonthCredits(selectedMonth)),
         futureIncome: demoMonthFutureIncome(selectedMonth),
         payrollFundClosures: [],
@@ -331,6 +333,31 @@ export function Dashboard({
     setActivePayslip(receipt);
   };
   const access = { idToken, demoMode };
+  const saveMonthlyReceived = async (amountMinor: number, revision: number) => {
+    const key = monthDashboardQueryKey(selectedMonth);
+    let monthlyReceived: NonNullable<MonthDashboard["monthlyReceived"]>;
+    if (demoMode) {
+      monthlyReceived = { id: "demo-monthly-received", month: selectedMonth, amountMinor,
+        revision: revision + 1, updatedAt: now.toISOString() };
+    } else {
+      try {
+        const { operationId } = await ledgerApi.previewMonthlyReceived(selectedMonth, amountMinor, revision, idToken);
+        try {
+          ({ monthlyReceived } = await ledgerApi.applyMonthlyReceived(operationId, idToken));
+        } catch (error) {
+          const status = await ledgerApi.monthlyReceivedOperationStatus(operationId, idToken).catch(() => undefined);
+          if (status?.status !== "applied") throw error;
+          ({ monthlyReceived } = await ledgerApi.applyMonthlyReceived(operationId, idToken));
+        }
+      } catch (error) {
+        void queryClient.invalidateQueries({ queryKey: key, exact: true });
+        throw error;
+      }
+    }
+    queryClient.setQueryData<MonthDashboard>(key, previous => previous && { ...previous, monthlyReceived });
+    if (!demoMode) void queryClient.invalidateQueries({ queryKey: key, exact: true });
+  };
+
   const savePlan = async (nextPlan: MonthlyPlan) => {
     const saved = demoMode
       ? nextPlan
@@ -398,6 +425,7 @@ export function Dashboard({
           <SummaryView
             month={selectedMonth}
             dashboard={dashboard}
+            receivedEditor={saveMonthlyReceived}
             dashboardLoading={dashboardQuery.isPending}
             dashboardError={dashboardQuery.isError}
             privateMode={privateMode}

@@ -98,6 +98,55 @@ describe('posted bank credits and the shared month close', () => {
   const prepare = (input: Record<string, unknown>) => call('preview_manual_credit', input) as Promise<{ operationId: string }>;
   const post = (operationId: string) => call('apply_manual_credit', { operationId });
 
+  it('shares an editable monthly declaration across authenticated web and MCP without adding bank credits to it', async () => {
+    const { handler } = await import('../src/http/ledger-api.js');
+    const http = async (method: string, path: string, body?: unknown, owner = 'owner') => {
+      const routeKey = `${method} ${path}`;
+      const response = await handler({
+        version: '2.0', rawPath: path, routeKey, rawQueryString: 'month=2026-11',
+        queryStringParameters: { month: '2026-11' }, headers: { 'content-type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body), isBase64Encoded: false,
+        requestContext: { accountId: 'test', apiId: 'test', domainName: 'example.test', domainPrefix: 'example',
+          requestId: 'declared-income', routeKey, stage: '$default', time: now.toISOString(), timeEpoch: +now,
+          http: { method, path, protocol: 'HTTP/1.1', sourceIp: '127.0.0.1', userAgent: 'vitest' },
+          authorizer: { jwt: { claims: { sub: owner }, scopes: [] } } },
+      }, { awsRequestId: 'declared-income' } as never);
+      return { status: response.statusCode, body: JSON.parse(response.body ?? '{}') };
+    };
+    const current = await http('GET', '/agent/month-snapshot');
+    expect(current.body.monthlyReceived).toBeNull();
+    const previewPath = '/monthly-received/preview';
+    const total = { month: '2026-11', amountMinor: 180_000_62, expectedRevision: 0 };
+    expect((await http('POST', previewPath, { ...total, month: '2026-12' })).status).toBe(400);
+    expect((await http('POST', previewPath, { ...total, amountMinor: 1.5 })).status).toBe(400);
+    const proposed = await http('POST', previewPath, total);
+    expect(proposed.status).toBe(200);
+    expect((await http('GET', '/agent/month-snapshot')).body.monthlyReceived).toBeNull();
+    const applyPath = `/financial-writes/${proposed.body.operationId}/apply`;
+    const saved = await http('POST', applyPath);
+    expect(saved.body.monthlyReceived).toMatchObject({ amountMinor: total.amountMinor, revision: 1 });
+    expect(await http('POST', applyPath)).toEqual(saved);
+    await post((await prepare(incomeCredit)).operationId);
+    const snapshot = await http('GET', '/agent/month-snapshot');
+    expect(snapshot.body.monthlyReceived).toEqual(saved.body.monthlyReceived);
+    expect(snapshot.body.postedCredits.recordedOperatingCashInflowsMinor).toBe(incomeCredit.amountMinor);
+    expect(snapshot.body.spending).toEqual(current.body.spending);
+    expect(snapshot.body.cash).toEqual(current.body.cash);
+    expect((await http('GET', '/agent/month-snapshot', undefined, 'other-owner')).body.monthlyReceived).toBeNull();
+
+    const correction = { ...total, expectedRevision: 1, amountMinor: 0 };
+    const first = await call('preview_monthly_received', correction) as { operationId: string };
+    const stale = await call('preview_monthly_received', { ...correction, amountMinor: 70 }) as { operationId: string };
+    expect(await call('apply_monthly_received', { operationId: first.operationId }))
+      .toMatchObject({ monthlyReceived: { amountMinor: 0, revision: 2 } });
+    expect(await call('apply_monthly_received', { operationId: stale.operationId })).toMatchObject({ ok: false, reasonCode: 'conflict' });
+    expect(await runAgentTool('owner', 'month_snapshot', { month: '2026-11' }))
+      .toMatchObject({ monthlyReceived: { amountMinor: 0, revision: 2 } });
+    expect(await runAgentTool('owner', 'month_snapshot', { month: '2026-10' })).toMatchObject({ monthlyReceived: null });
+    expect((await fixture.sql.query("SELECT monthly_received_id FROM olbia.financial_change_receipts WHERE kind='monthly_received'")).rows)
+      .toEqual([{ monthly_received_id: saved.body.monthlyReceived.id }, { monthly_received_id: saved.body.monthlyReceived.id }]);
+  });
+
   it('delivers mixed MCP bank entries and expected concepts through the authenticated web snapshot without changing spending', async () => {
     const { getMonthDashboard } = await import('../src/months/dashboard.js');
     const { handler: readHandler } = await import('../src/http/ledger-api.js');

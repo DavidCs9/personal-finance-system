@@ -12,10 +12,16 @@ function BudgetAmount({ minor }: { minor: number }) {
   return <Amt>{amount(minor)}</Amt>;
 }
 
-function BudgetHero({ status, privateMode, onOpen }: { status: BudgetStatus; privateMode: boolean; onOpen: () => void }) {
+function BudgetHero({ status, privateMode, onOpen, recordedMinor }: { status: BudgetStatus; privateMode: boolean; onOpen: () => void; recordedMinor: number }) {
+  const recorded = <div className="summary-recorded-spend">
+    <span>Gasto total del mes</span>
+    <strong><BudgetAmount minor={recordedMinor} /></strong>
+    {status.configured && status.excludedSpentMxnMinor !== 0 && <small>Incluye gastos fuera del presupuesto</small>}
+  </div>;
   const limit = status.configured ? status.budget?.totalMxnMinor : undefined;
   if (limit === undefined) return <section className="summary-budget-panel">
     <h2>Presupuesto mensual</h2>
+    {recorded}
     <p>Sin límite configurado para este mes. Puedes configurarlo en ChatGPT con Olbia.</p>
     <button className="text-button summary-budget-link" type="button" onClick={onOpen}>Ver historial de presupuesto →</button>
   </section>;
@@ -46,11 +52,12 @@ function BudgetHero({ status, privateMode, onOpen }: { status: BudgetStatus; pri
           : <>Te quedan <b><BudgetAmount minor={margin} /> del presupuesto</b>{hasCommitments ? " tras compromisos conocidos." : "."}</>}</p>
       </div>
     </div>
+    {recorded}
     {!privateMode && <div className="summary-budget-meter" aria-hidden="true">
       <i style={{ width: `${usedWidth}%` }} /><i style={{ width: `${pendingWidth}%` }} />
     </div>}
     <dl className="summary-budget-facts">
-      <div><dt><i aria-hidden="true" />Usado{usage !== null && <> · <Amt>{percent(usage)}</Amt></>}</dt><dd><BudgetAmount minor={status.countedSpentMxnMinor} /></dd></div>
+      <div><dt><i aria-hidden="true" />Usado del presupuesto{usage !== null && <> · <Amt>{percent(usage)}</Amt></>}</dt><dd><BudgetAmount minor={status.countedSpentMxnMinor} /></dd></div>
       <div><dt><i aria-hidden="true" />Compromisos</dt><dd><BudgetAmount minor={status.upcomingCommitmentsMxnMinor} /></dd></div>
     </dl>
     <div className="summary-budget-foot">
@@ -209,11 +216,11 @@ function BudgetCategories({ status, privateMode, onOpen, onOpenAnalytics }: {
   </section>;
 }
 
-export function SummaryBudget({ status, privateMode, onOpen, onOpenAnalytics }: {
-  status: BudgetStatus; privateMode: boolean; onOpen: () => void; onOpenAnalytics: () => void;
+export function SummaryBudget({ status, privateMode, onOpen, onOpenAnalytics, recordedMinor }: {
+  status: BudgetStatus; privateMode: boolean; onOpen: () => void; onOpenAnalytics: () => void; recordedMinor: number;
 }) {
   return <div className="summary-budget">
-    <BudgetHero status={status} privateMode={privateMode} onOpen={onOpen} />
+    <BudgetHero status={status} privateMode={privateMode} onOpen={onOpen} recordedMinor={recordedMinor} />
     <div className="summary-budget-charts">
       {status.configured && <BudgetPace status={status} privateMode={privateMode} />}
       <BudgetCategories status={status} privateMode={privateMode} onOpen={onOpen} onOpenAnalytics={onOpenAnalytics} />

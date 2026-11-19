@@ -84,6 +84,12 @@ export const FINANCIAL_WRITE_TOOL_DEFINITIONS = [
       accountLastFour: { type: 'string', pattern: '^[0-9]{4}$' }, note: { type: 'string' } }, required: ['institution', 'merchantRaw', 'amountMinor', 'occurredOn'] } },
   { name: 'apply_manual_charge', description: 'Registra únicamente el cobro observado del preview_manual_charge autorizado, usando operación auténtica vigente. Conserva original, identidad de retry y reglas MSI del servicio web; confirma movimiento y recibo en una transacción. Tras interrupción usa get_financial_write_status. Verifica el movimiento con list_movements y no registres el mismo cobro otra vez.',
     inputSchema: { type: 'object', properties: { operationId: uuid }, required: ['operationId'] } },
+  { name: 'preview_monthly_received', description: 'Prepara el total que David declara haber recibido en un mes actual o anterior. Es el total completo en centavos MXN, no un importe adicional a los abonos. No incluye entradas futuras ni devoluciones a tarjeta. Lee monthlyReceived de month_snapshot primero y pasa su revisión exacta, o 0 cuando no exista. Presenta el importe y mes antes de aplicar.',
+    inputSchema: { type: 'object', properties: { month: { type: 'string', pattern: '^[1-9][0-9]{3}-(0[1-9]|1[0-2])$' },
+      amountMinor: { type: 'integer', minimum: 0, maximum: 9007199254740991 },
+      expectedRevision: { type: 'integer', minimum: 0 } }, required: ['month', 'amountMinor', 'expectedRevision'] } },
+  { name: 'apply_monthly_received', description: 'Aplica el preview_monthly_received autorizado, conserva la revisión y el recibo. Si hay una interrupción, consulta get_financial_write_status con el mismo ID. Verifica con month_snapshot. No crea un abono, no modifica efectivo ni presupuesto.',
+    inputSchema: { type: 'object', properties: { operationId: uuid }, required: ['operationId'] } },
   { name: 'preview_manual_credit', description: 'Prepara un solo abono ya acreditado y respaldado por evidencia bancaria, con importe exacto y referencia estable. income registra un ingreso de efectivo recibido (finiquito, nomina u otro); refund registra una devolución a efectivo o tarjeta. fund_release vincula el abono del Fondo con un cierre existente para comparar importe y fecha, fuera de ingreso operativo. Las promesas quedan fuera. Se conservan saldos, presupuesto y compras. Presenta los datos al dueño antes de aplicar.',
     inputSchema: { type: 'object', properties: {
       creditType: { type: 'string', enum: ['income', 'refund', 'fund_release'] },

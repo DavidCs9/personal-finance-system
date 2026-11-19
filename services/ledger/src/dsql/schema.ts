@@ -161,7 +161,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   for (const [index, statement] of SCHEMA_STATEMENTS.entries()) await query(`schema-statement-${index + 1}`, statement);
   const migrationOptions = { now, pause, waitMs: options.indexWaitMs };
   await ensureIncomeScheduleSchema({ query: (statement, params) => query('income-schedule-schema', statement, params) }, migrationOptions);
-  await ensureBudgetSchema({ query: (statement, params) => query('budget-schema', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
+  await ensureBudgetSchema({ query: (statement, params) => query('budget-schema', statement, params) }, migrationOptions);
   await ensureAmexActivitySchema({ query: (statement, params) => query('amex-activity-schema', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   await ensureSantanderAccount({ query: (statement, params) => query('santander-account', statement, params) },
     { now, pause, waitMs: options.indexWaitMs });
@@ -393,6 +393,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('income-schedule-complete','INSERT INTO olbia.schema_migrations VALUES (28,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('reconciliation-tools-complete','INSERT INTO olbia.schema_migrations VALUES (29,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('ledger-credits-complete','INSERT INTO olbia.schema_migrations VALUES (30,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
+  await query('monthly-received-complete','INSERT INTO olbia.schema_migrations VALUES (32,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('budget-push-complete','INSERT INTO olbia.schema_migrations VALUES (31,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('cash-and-payroll-closure-complete','INSERT INTO olbia.schema_migrations VALUES (25,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 };
@@ -507,14 +508,20 @@ export const ensureBudgetSchema = async (client: SqlClient, options: Parameters<
     'FOREIGN KEY (budget_id) REFERENCES olbia.spending_budgets(id)', 'budget-receipt-fk', options);
   await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_budget_exclusion_fk',
     'FOREIGN KEY (budget_exclusion_id) REFERENCES olbia.budget_exclusions(id)', 'budget-exclusion-receipt-fk', options);
+  await client.query('ALTER TABLE olbia.financial_change_receipts ADD COLUMN IF NOT EXISTS monthly_received_id uuid');
+  await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_monthly_received_fk',
+    'FOREIGN KEY (monthly_received_id) REFERENCES olbia.monthly_received_totals(id)', 'monthly-received-fk', options);
   for (const table of ['financial_write_operations', 'financial_change_receipts']) {
-    await ensureValidatedConstraint(client, table, `${table}_credit_kind_check`, FINANCIAL_WRITE_KIND_CHECK, 'financial-write-kind', options);
+    await ensureValidatedConstraint(client, table, `${table}_received_kind_check`, FINANCIAL_WRITE_KIND_CHECK, 'financial-write-kind', options);
+    await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_credit_kind_check`);
     await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_kind_check`);
     await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_budget_kind_check`);
     await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_reconciliation_kind_check`);
   }
-  await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_credit_entity_check',
+
+  await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_received_entity_check',
     FINANCIAL_RECEIPT_ENTITY_CHECK, 'financial-receipt-entity', options);
+  await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_receipts_credit_entity_check');
   await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_change_receipts_check');
   await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_receipts_budget_entity_check');
   await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_receipts_reconciliation_entity_check');
