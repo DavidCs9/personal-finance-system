@@ -101,7 +101,7 @@ export function MonthEntries({ month, dashboard }: { month: string; dashboard: M
         </button>
       </li>)}
     </ul>
-    {cashCredits.length === 0 && expected.length === 0 && <p className="month-entry-empty">Sin entradas registradas para este mes.</p>}
+    {credits.credits.length === 0 && expected.length === 0 && <p className="month-entry-empty">Sin entradas registradas para este mes.</p>}
     {cardCredits.length > 0 && <div className="month-entry-card-refunds">
       <h3>Devoluciones a tarjeta</h3><p>Fuera del efectivo recibido.</p>
       <ul className="month-entries-list">{cardCredits.map(postedRow)}</ul>
