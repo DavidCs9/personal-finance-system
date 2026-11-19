@@ -1,4 +1,4 @@
-import { addCalendarMonths, clampDayInMonth, isValidMonth, monthKeyInZone,
+import { addCalendarMonths, BUDGET_EXCLUSION_TAG, clampDayInMonth, isValidMonth, monthKeyInZone,
   type CommitmentItem, type CommitmentMonth, type FutureCommitments } from '@finance/domain';
 import { readerPool, withLedgerReadSnapshot, type ReadSqlClient } from '../events/sql-reads.js';
 import { InvalidMonthlyPlanError } from './monthly-plan.js';
@@ -49,7 +49,8 @@ SELECT t.*,p.source_month,e.kind,e.id,e.name,e.amount_minor,e.needs_review,e.due
 FROM changes t JOIN effective_plans p ON p.month=t.month
 LEFT JOIN entries e ON e.month=t.month ORDER BY t.month,e.kind,e.sort_order,e.name,e.id`;
 
-export const incompletePlansReadStatement = `SELECT m.id AS event_id,m.merchant_raw AS name
+export const incompletePlansReadStatement = `SELECT m.id AS event_id,m.merchant_raw AS name,
+  EXISTS (SELECT 1 FROM olbia.ledger_tags t WHERE t.movement_id=m.id AND t.tag='${BUDGET_EXCLUSION_TAG}') AS budget_excluded
   FROM olbia.installment_plans p JOIN olbia.ledger_movements m ON m.id=p.movement_id
   WHERE p.needs_schedule_completion IS TRUE
     AND m.status IN ('accepted','needs_review') AND m.currency='MXN' ORDER BY m.merchant_raw,m.id`;

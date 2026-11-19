@@ -1,10 +1,13 @@
 import { beforeAll, afterAll, beforeEach, afterEach, it, expect, vi } from 'vitest';
+import { BUDGET_EXCLUSION_TAG } from '@finance/domain';
 import { nativeFixture } from './fixtures/native-ledger.js';
 import { NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS, NATIVE_FINANCIAL_PLAN_TABLES } from '../../ledger/src/dsql/financial-plan-schema.js';
 import type { SqlClient, TransactionPool } from '../../ledger/src/dsql/projection.js';
 const harness = vi.hoisted(() => ({ pool: undefined as unknown as SqlClient & TransactionPool }));
 vi.mock('../src/http/clients.js', () => ({ rawSourceBucketName: 'test-evidence', s3: { send: vi.fn() } }));
 vi.mock('../../ledger/src/dsql/connection.js', () => ({ createPool: () => harness.pool }));
+const { runTagMutationTool } = await import('../src/agent/tag-mutation-tools.js');
+const { patchEvent } = await import('../src/events/mutations.js');
 const { runAgentTool } = await import('../src/agent/tools.js');
 const { runFinancialWriteTool } = await import('../src/agent/financial-write-tools.js');
 const { getFinancialWriteStatus } = await import('../src/financial-plans/service.js');
@@ -22,8 +25,7 @@ beforeAll(async () => {
 afterAll(async () => { await fixture.sql.close(); });
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-18T18:00:00Z'));
-  await fixture.sql.exec(`TRUNCATE ${NATIVE_FINANCIAL_PLAN_TABLES.map(t => `olbia.${t}`).join(',')}`);
-  await fixture.sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");
+  await fixture.reset(NATIVE_FINANCIAL_PLAN_TABLES);
 });
 afterEach(() => { vi.useRealTimers(); });
 it('MCP preview/apply is atomic/idempotent, resolves overrides, reallocates and preserves recurring history', async () => {
@@ -74,4 +76,20 @@ it('MCP exclusions preserve actual spending, simulation is read-only, and stale/
   const expiry = await preview({ action: 'archive', entityId: setup.after.id, expectedRevision: 2 });
   vi.setSystemTime(new Date('2026-11-18T18:16:00Z'));
   await expect(apply(expiry.operationId)).rejects.toThrow(/expiró/);
+});
+it('uses saved MCP and web tag edits for budget reads without creating manual exclusions', async () => {
+  const id = await fixture.create({ amount: { amountMinor: 3000, currency: 'MXN' }, occurredAt: '2026-11-17T18:00:00Z' });
+  const tagEdit = await runTagMutationTool('owner', 'preview_tag_edit', { eventId: id, addTags: [BUDGET_EXCLUSION_TAG] }) as { operationId: string };
+  expect(await status()).toMatchObject({ countedSpentMxnMinor: 3000 });
+  await runTagMutationTool('owner', 'apply_tag_edit', { operationId: tagEdit.operationId });
+  expect(await status()).toMatchObject({ grossSpentMxnMinor: 3000, countedSpentMxnMinor: 0, tagExcludedMovementIds: [id] });
+  const history = await runAgentTool('owner', 'get_budget_history', { fromMonth: '2026-11', toMonth: '2026-11' });
+  expect(history).toMatchObject({ months: [{ grossSpentMxnMinor: 3000, countedSpentMxnMinor: 0 }] });
+  await runTagMutationTool('owner', 'undo_tag_edit', { operationId: tagEdit.operationId });
+  expect(await status()).toMatchObject({ countedSpentMxnMinor: 3000 });
+  await patchEvent(id, 'owner', JSON.stringify({ action: 'set_tags', tags: [BUDGET_EXCLUSION_TAG] }));
+  expect(await status()).toMatchObject({ grossSpentMxnMinor: 3000, countedSpentMxnMinor: 0, tagExcludedMovementIds: [id] });
+  await patchEvent(id, 'owner', JSON.stringify({ action: 'set_tags', tags: [] }));
+  expect(await status()).toMatchObject({ grossSpentMxnMinor: 3000, countedSpentMxnMinor: 3000 });
+  expect((await fixture.sql.query('SELECT id FROM olbia.budget_exclusions')).rows).toEqual([]);
 });

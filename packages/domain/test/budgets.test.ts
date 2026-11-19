@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeBudgetStatus, proposeBudget, type BudgetSpendEvent, type SpendingBudget } from '../src/budgets.js';
+import { BUDGET_EXCLUSION_TAG, computeBudgetStatus, proposeBudget, type BudgetExclusion, type BudgetSpendEvent, type SpendingBudget } from '../src/budgets.js';
 const now = new Date('2026-11-15T18:00:00Z');
 const budget = proposeBudget({ action: 'set_recurring', month: '2026-11', totalMxnMinor: 10000,
   allocations: [{ categoryId: 'food', amountMxnMinor: 6000 }] }, null, 'id', now.toISOString()) as SpendingBudget;
@@ -26,6 +26,39 @@ describe('deterministic budgets using canonical accounting', () => {
     expect(status([event('extra', 3000)], { fixedPayments: [{ id: 'bill', amountMinor: 5000, reconciliation: { eventId: 'extra', valid: true } }],
       exclusions: [{ entityType: 'exclusion', id: 'x', month: '2026-11', movementId: 'extra', reason: 'Travel', status: 'active', revision: 1, createdAt: '', updatedAt: '' }] }))
       .toMatchObject({ grossSpentMxnMinor: 3000, countedSpentMxnMinor: 0, excludedSpentMxnMinor: 3000, upcomingCommitmentsMxnMinor: 0 });
+  });
+  it('applies and reverses the exact budget tag while preserving manual exclusions, gross spend and fixed links', () => {
+    const charge = event('charge', 3000, { personalAmountMinor: 2500 });
+    const tagged = { ...charge, tags: [BUDGET_EXCLUSION_TAG] };
+    const unrelated = event('unrelated', 1000, { tags: ['presupuesto:excluir-otro'] });
+    const manual: BudgetExclusion = { entityType: 'exclusion', id: 'manual', month: '2026-11', movementId: charge.id,
+      reason: 'Viaje', status: 'active', revision: 1, createdAt: '', updatedAt: '' };
+    const options = { includeSpendTimeline: true, fixedPayments: [
+      { id: 'bill', amountMinor: 5000, reconciliation: { eventId: charge.id, valid: true } },
+    ] };
+    const excluded = status([tagged, unrelated], options);
+    expect(excluded).toMatchObject({ grossSpentMxnMinor: 3500, countedSpentMxnMinor: 1000, excludedSpentMxnMinor: 2500,
+      upcomingCommitmentsMxnMinor: 0, tagExcludedMovementIds: [charge.id],
+      categories: [{ grossSpentMxnMinor: 3500, countedSpentMxnMinor: 1000 }] });
+    expect(excluded.spendTimeline?.cumulativeMinorByDay.at(-1)).toBe(1000);
+    for (const movement of [tagged, charge]) {
+      expect(status([movement, unrelated], { ...options, exclusions: [manual] }))
+        .toMatchObject({ countedSpentMxnMinor: 1000, excludedSpentMxnMinor: 2500, tagExcludedMovementIds: [], exclusions: [manual] });
+    }
+    expect(status([tagged], { exclusions: [{ ...manual, status: 'archived' }] }))
+      .toMatchObject({ countedSpentMxnMinor: 0, tagExcludedMovementIds: [charge.id] });
+    expect(status([charge, unrelated], options))
+      .toMatchObject({ grossSpentMxnMinor: 3500, countedSpentMxnMinor: 3500, countedFixedSpendMxnMinor: 2500, excludedSpentMxnMinor: 0 });
+  });
+  it('excludes tagged MSI cuotas and commitments in their months while retaining recorded spend', () => {
+    const purchase = event('msi', 8000, { msi: { months: 2, principalMinor: 8000, cuotaMinor: 4000, installments: [
+      { index: 1, month: '2026-11', amountMinor: 4000, status: 'spent' },
+      { index: 2, month: '2026-12', amountMinor: 4000, status: 'committed' },
+    ] } });
+    const tagged = { ...purchase, tags: [BUDGET_EXCLUSION_TAG] };
+    expect(status([tagged])).toMatchObject({ grossSpentMxnMinor: 4000, countedSpentMxnMinor: 0, excludedSpentMxnMinor: 4000 });
+    expect(status([tagged], { month: '2026-12' })).toMatchObject({ grossSpentMxnMinor: 0, upcomingMsiMxnMinor: 0, tagExcludedMovementIds: ['msi'] });
+    expect(status([purchase], { month: '2026-12' })).toMatchObject({ upcomingMsiMxnMinor: 4000 });
   });
   it('reports warnings, zero limits, month boundaries, unknown schedules and uncategorized spending honestly', () => {
     for (const [amount, warning] of [[7000, '70'], [9000, '90'], [10000, '100'], [11000, '100']] as const) expect(status([event('x', amount)]).warning).toBe(warning);

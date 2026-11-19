@@ -1,5 +1,5 @@
 import { FinancialPlanError, financialId, financialSum } from './financial-plans.js';
-import { computeMonthSummary, dayInZone, daysInCalendarMonth, monthKeyInZone, type MonthFixedPayment, type MonthSpendEvent } from './month-summary.js';
+import { computeMonthSummary, countsTowardMonthSpend, dayInZone, daysInCalendarMonth, eventMonthKey, monthKeyInZone, type MonthFixedPayment, type MonthSpendEvent } from './month-summary.js';
 
 export interface BudgetAllocation { readonly categoryId: string; readonly amountMxnMinor: number }
 export interface SpendingBudget {
@@ -82,13 +82,22 @@ export const proposeBudget = (input: Record<string, unknown>, before: BudgetEnti
   validateBudget(result); return result;
 };
 export const budgetWarning = (spent: number, limit: number) => spent >= limit ? '100' : BigInt(spent) * 10n >= BigInt(limit) * 9n ? '90' : BigInt(spent) * 10n >= BigInt(limit) * 7n ? '70' : 'normal';
+export const BUDGET_EXCLUSION_TAG = 'presupuesto:excluir';
 export interface BudgetSpendEvent extends MonthSpendEvent { readonly id: string; readonly categoryId?: string | null }
 export const computeBudgetStatus = (input: { month: string; budget: SpendingBudget | null; events: readonly BudgetSpendEvent[];
   fixedPayments: readonly MonthFixedPayment[]; exclusions: readonly BudgetExclusion[]; now: Date; missingFixedConfiguration?: boolean;
   additionalIncompleteMovementIds?: readonly string[]; includeSpendTimeline?: boolean }) => {
   const { month, budget, fixedPayments, now } = input;
   const events = input.events.filter(event => event.currency === 'MXN');
-  const excluded = new Set(input.exclusions.filter(item => item.status === 'active' && item.month === month).map(item => item.movementId));
+  const manualExclusions = new Set(input.exclusions.filter(item => item.status === 'active' && item.month === month).map(item => item.movementId));
+  const taggedEvents = events.filter(event => event.tags?.includes(BUDGET_EXCLUSION_TAG));
+  const excluded = new Set([...manualExclusions, ...taggedEvents.map(event => event.id)]);
+  const tagExcludedMovementIds = taggedEvents.filter(event => !manualExclusions.has(event.id)
+    && countsTowardMonthSpend(event.status)
+    && (event.msi ? event.msi.installments.some(entry => entry.month === month
+      && (entry.status === 'spent' || (entry.status === 'committed' && !event.msi?.needsScheduleCompletion)))
+      : eventMonthKey(event) === month))
+    .map(event => event.id);
   const summary = (values: readonly BudgetSpendEvent[], fixed: readonly MonthFixedPayment[], includeSpendTimeline?: boolean) => computeMonthSummary({
     month, events: values, fixedPayments: fixed, incomeMinor: 0, incomeConfigured: false, upcomingPaymentsMinor: 0, now, includeSpendTimeline });
   const gross = summary(events, fixedPayments);
@@ -151,7 +160,7 @@ export const computeBudgetStatus = (input: { month: string; budget: SpendingBudg
     projectedCountedSpendMxnMinor: counted.projectedSpendMinor,
     safeDailyAllowanceMxnMinor: discretionary === null || !remainingDays || incomplete.length ? null : Math.floor(Math.max(0, discretionary) / remainingDays),
     allowanceBasis: 'budget_limit_less_counted_spending_and_known_unreconciled_fixed_and_committed_msi; not_bank_balance',
-    categories, exclusions: input.exclusions, incompleteScheduleMovementIds: incomplete, inapplicableExclusionIds: invalidExclusions, invalidFixedPaymentLinkIds: invalidFixedLinks,
+    categories, exclusions: input.exclusions, tagExcludedMovementIds, incompleteScheduleMovementIds: incomplete, inapplicableExclusionIds: invalidExclusions, invalidFixedPaymentLinkIds: invalidFixedLinks,
     foreignMovementIds: input.events.filter(event => event.currency !== 'MXN').map(event => event.id),
     warnings: [...(invalidExclusions.length ? ['Hay exclusiones sin gasto aplicable en el mes; revisa su movimiento y estado.'] : []),
       ...(invalidFixedLinks.length ? ['Hay vínculos de fijos inválidos; conservan su programación por revisar.'] : []),

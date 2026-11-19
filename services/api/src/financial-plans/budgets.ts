@@ -56,7 +56,7 @@ export const budgetStatusFromMonth = async (client: SqlClient, owner: string, mo
     listBudgetExclusions(client, owner, month),
     client.query('SELECT id,name FROM olbia.spend_categories ORDER BY sort_order,id'),
     month >= monthKeyInZone(now)
-      ? client.query(incompletePlansReadStatement).then(result => result.rows.map(row => String(row.event_id))) : [],
+      ? client.query(incompletePlansReadStatement).then(result => result.rows.filter(row => row.budget_excluded !== true).map(row => String(row.event_id))) : [],
   ]);
   const raw = new Map([...feed.events, ...feed.msiRelated].map(e => [String(e.id), e]));
   const events: BudgetSpendEvent[] = monthSpendEventsFromFeed(feed).map(event => ({ ...event, id: event.id!, categoryId: typeof raw.get(event.id!)?.categoryId === 'string' ? String(raw.get(event.id!)!.categoryId) : null }));

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BUDGET_EXCLUSION_TAG } from "@finance/domain";
 import { Amt } from "../components/Amt";
 import { monthKeyLabel } from "../lib/format";
 import { Amount, EvidenceButton, PlanBar, PlanMetric, ReadState, shortPercent, type PlanningAccess } from "./PlanningRead";
@@ -46,6 +47,7 @@ export function BudgetRead({ month, access, onOpenEvent }: {
   const status = query.data;
   const limit = status?.configured ? status.budget?.totalMxnMinor ?? null : null;
   const exclusions = status?.exclusions.filter(entry => entry.status === "active") ?? [];
+  const tagExcludedMovementIds = status?.tagExcludedMovementIds ?? [];
   const categories = status?.categories.filter(row => row.allocationConfigured || row.grossSpentMxnMinor !== 0) ?? [];
   return <div className="plan-read-body">
     <p className="plan-period">{monthKeyLabel(month)} · MXN</p>
@@ -78,7 +80,7 @@ export function BudgetRead({ month, access, onOpenEvent }: {
           <PlanMetric label="Compromisos conocidos" value={<Amount value={status.upcomingCommitmentsMxnMinor} />} />
         </>}
       </dl>}
-      {(limit !== null || exclusions.length > 0) && <details className="plan-disclosure">
+      {(limit !== null || exclusions.length > 0 || tagExcludedMovementIds.length > 0) && <details className="plan-disclosure">
         <summary>Cómo se compone el gasto</summary>
         <dl className="plan-metric-grid">
           <PlanMetric label="Gasto registrado" value={<Amount value={status.grossSpentMxnMinor} />} />
@@ -90,6 +92,10 @@ export function BudgetRead({ month, access, onOpenEvent }: {
           <strong className="plan-sensitive">{entry.reason}</strong>
           {status.inapplicableExclusionIds.includes(entry.id) && <p className="plan-meta">Sin gasto aplicable en este mes.</p>}
           <EvidenceButton label="Ver movimiento excluido" onOpen={signal => onOpenEvent(entry.movementId, signal)} />
+        </div>)}
+        {tagExcludedMovementIds.map(id => <div className="plan-history-row" key={id}>
+          <strong>Tag {BUDGET_EXCLUSION_TAG}</strong>
+          <EvidenceButton label="Ver movimiento excluido" onOpen={signal => onOpenEvent(id, signal)} />
         </div>)}
       </details>}
       {limit !== null && <>
