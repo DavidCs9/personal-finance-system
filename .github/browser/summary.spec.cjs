@@ -10,6 +10,16 @@ for (const width of [320, 390, 1000]) {
     await page.goto('/?demo=1');
     await expect(page.getByRole('heading', { name: 'Entradas del mes' })).toBeVisible();
     await expect(page.getByText('Gasto total del mes', { exact: true })).toBeVisible();
+    const budget = page.locator('.summary-budget-hero');
+    expect(await budget.evaluate(card => {
+      const meter = card.querySelector('.summary-budget-meter').getBoundingClientRect();
+      const legend = card.querySelector('.summary-budget-facts').getBoundingClientRect();
+      const total = card.querySelector('.summary-recorded-spend');
+      const amount = total.querySelector('strong');
+      const legendAmount = card.querySelector('.summary-budget-facts dd');
+      return meter.bottom <= legend.top && legend.bottom < total.getBoundingClientRect().top
+        && parseFloat(getComputedStyle(amount).fontSize) <= parseFloat(getComputedStyle(legendAmount).fontSize);
+    })).toBe(true);
     const headings = await page.locator('.summary-scroll h2').allTextContents();
     expect(headings).toEqual(['Presupuesto mensual', 'Ritmo de gasto', 'En qué se fue', 'Entradas del mes']);
     for (const removed of ['Saldos de efectivo', 'Nómina y compromisos', 'Abonos del mes', 'Avisos de Olbia']) {
@@ -39,6 +49,7 @@ for (const width of [320, 390, 1000]) {
 
     await page.getByRole('button', { name: 'Ocultar montos' }).click();
     await expect(page.locator('.summary-pace-chart')).toHaveCount(0);
+    await expect(budget.locator('.summary-recorded-spend .amt')).toHaveCSS('filter', 'blur(7px)');
     await expect(page.locator('.month-entries-totals .amt').first()).toHaveCSS('filter', 'blur(7px)');
     await entry.click();
     await expect(detail.locator('.amt').first()).toHaveCSS('filter', 'blur(7px)');

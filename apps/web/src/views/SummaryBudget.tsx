@@ -21,8 +21,8 @@ function BudgetHero({ status, privateMode, onOpen, recordedMinor }: { status: Bu
   const limit = status.configured ? status.budget?.totalMxnMinor : undefined;
   if (limit === undefined) return <section className="summary-budget-panel">
     <h2>Presupuesto mensual</h2>
-    {recorded}
     <p>Sin límite configurado para este mes. Puedes configurarlo en ChatGPT con Olbia.</p>
+    {recorded}
     <button className="text-button summary-budget-link" type="button" onClick={onOpen}>Ver historial de presupuesto →</button>
   </section>;
 
@@ -52,7 +52,6 @@ function BudgetHero({ status, privateMode, onOpen, recordedMinor }: { status: Bu
           : <>Te quedan <b><BudgetAmount minor={margin} /> del presupuesto</b>{hasCommitments ? " tras compromisos conocidos." : "."}</>}</p>
       </div>
     </div>
-    {recorded}
     {!privateMode && <div className="summary-budget-meter" aria-hidden="true">
       <i style={{ width: `${usedWidth}%` }} /><i style={{ width: `${pendingWidth}%` }} />
     </div>}
@@ -60,6 +59,7 @@ function BudgetHero({ status, privateMode, onOpen, recordedMinor }: { status: Bu
       <div><dt><i aria-hidden="true" />Usado del presupuesto{usage !== null && <> · <Amt>{percent(usage)}</Amt></>}</dt><dd><BudgetAmount minor={status.countedSpentMxnMinor} /></dd></div>
       <div><dt><i aria-hidden="true" />Compromisos</dt><dd><BudgetAmount minor={status.upcomingCommitmentsMxnMinor} /></dd></div>
     </dl>
+    {recorded}
     <div className="summary-budget-foot">
       {status.incompleteScheduleMovementIds.length > 0 && <p>Hay calendarios MSI incompletos. El margen sólo contempla compromisos conocidos.</p>}
       {status.invalidFixedPaymentLinkIds.length > 0 && <p>Hay vínculos de gastos fijos por revisar.</p>}
