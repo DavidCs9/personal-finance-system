@@ -102,7 +102,7 @@ describe('posted bank credits and the shared month close', () => {
     const { handler } = await import('../src/http/ledger-api.js');
     const http = async (method: string, path: string, body?: unknown, owner = 'owner') => {
       const routeKey = `${method} ${path}`;
-      const response = await handler({
+      const event = {
         version: '2.0', rawPath: path, routeKey, rawQueryString: 'month=2026-11',
         queryStringParameters: { month: '2026-11' }, headers: { 'content-type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body), isBase64Encoded: false,
@@ -110,7 +110,8 @@ describe('posted bank credits and the shared month close', () => {
           requestId: 'declared-income', routeKey, stage: '$default', time: now.toISOString(), timeEpoch: +now,
           http: { method, path, protocol: 'HTTP/1.1', sourceIp: '127.0.0.1', userAgent: 'vitest' },
           authorizer: { jwt: { claims: { sub: owner }, scopes: [] } } },
-      }, { awsRequestId: 'declared-income' } as never);
+      };
+      const response = await handler(event, { awsRequestId: 'declared-income' } as never);
       return { status: response.statusCode, body: JSON.parse(response.body ?? '{}') };
     };
     const current = await http('GET', '/agent/month-snapshot');
