@@ -5,6 +5,8 @@ for (const width of [320, 390, 1000]) {
     await page.setViewportSize({ width, height: 844 });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
+    // Deployment generates this file; the development-only demo needs no runtime credentials.
+    await page.route('**/runtime-config.js', route => route.fulfill({ contentType: 'application/javascript', body: '' }));
     await page.goto('/?demo=1');
     await expect(page.getByRole('heading', { name: 'Entradas del mes' })).toBeVisible();
     const headings = await page.locator('.summary-scroll h2').allTextContents();
@@ -36,9 +38,9 @@ for (const width of [320, 390, 1000]) {
 
     await page.getByRole('button', { name: 'Ocultar montos' }).click();
     await expect(page.locator('.summary-pace-chart')).toHaveCount(0);
-    await expect(page.locator('.month-entries-totals .amt').first()).toHaveCSS('color', 'rgba(0, 0, 0, 0)');
+    await expect(page.locator('.month-entries-totals .amt').first()).toHaveCSS('filter', 'blur(7px)');
     await entry.click();
-    await expect(detail.locator('.amt').first()).toHaveCSS('color', 'rgba(0, 0, 0, 0)');
+    await expect(detail.locator('.amt').first()).toHaveCSS('filter', 'blur(7px)');
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Mostrar montos' }).click();
 
