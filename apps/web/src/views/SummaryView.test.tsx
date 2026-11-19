@@ -67,6 +67,9 @@ const propsFor = (dashboard?: MonthDashboard): SummaryViewProps => ({ month,dash
     for(const name of ["Finiquito de prueba","Nómina de prueba","Devolución de prueba","Venta de monitor"])expect(html).toContain(name);
     expect(html).toContain("$88,350");expect(html).toContain("$18,000");expect(html).not.toContain("$106,350");
     expect(html).toContain("Devoluciones a tarjeta");expect(html).toContain("$999.99");expect(html).not.toContain("$89,349.99");
+    const cardOnly=renderToStaticMarkup(<MonthEntries month={month} dashboard={dashboardFor([credit("card-only",{
+      creditType:"refund",incomeType:null,accountKind:"credit_card",amountMinor:500_00})],[])} />);
+    expect(cardOnly).toContain("Devoluciones a tarjeta");expect(cardOnly).not.toContain("Sin entradas registradas para este mes");
   });
   it("preserves unknown, overdue, overlap and incomplete expectations instead of promising a deposit",()=>{
     for(const futureIncome of [summarizeFutureIncome(month,now,[{...expected,amountMxnMinor:null,paymentDate:null}],false),
