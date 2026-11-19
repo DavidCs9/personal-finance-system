@@ -1,7 +1,7 @@
 import { App } from 'aws-cdk-lib';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Template } from 'aws-cdk-lib/assertions';
+import { Match, Template } from 'aws-cdk-lib/assertions';
 import { Source } from 'aws-cdk-lib/aws-s3-deployment';
 import { afterEach, expect, it, vi } from 'vitest';
 import { PersonalFinanceV1Stack } from '../lib/personal-finance-v1-stack.js';
@@ -79,7 +79,7 @@ it('gives the deployed verifier read-only access to every supported evidence fam
   expect(schema.Properties.Environment.Variables.RAW_EMAIL_BUCKET_NAME).toEqual({Ref:rawBucket});
   expect(schemaStatements.flatMap(actions).some(a=>/^s3:(?:Put|Delete|\*)/.test(a))).toBe(false);
   expect(schemaStatements.flatMap(actions)).toContain('kms:Decrypt');
-  const bootstrap=Object.values(template.findResources('AWS::CloudFormation::CustomResource')).find(r=>r.Properties.Version===34)!;
+  const bootstrap=Object.values(template.findResources('AWS::CloudFormation::CustomResource')).find(r=>r.Properties.Version===35)!;
   const schemaPolicy=Object.keys(template.findResources('AWS::IAM::Policy')).find(id=>id.startsWith('DsqlProjectionSchemaServiceRoleDefaultPolicy'))!;
   expect(bootstrap.DependsOn).toContain(schemaPolicy);
   const functions=template.findResources('AWS::Lambda::Function');
@@ -98,7 +98,20 @@ it('gives the deployed verifier read-only access to every supported evidence fam
     // Retained disabled stream mapping uses provider-managed stream reads, never table data access.
     expect(functionActions.filter(action=>/^dynamodb:(GetItem|BatchGetItem|Query|Scan|PutItem|UpdateItem|DeleteItem|BatchWriteItem|\*)$/.test(action))).toEqual([]);
   }
-  expect(nativeFunctions).toBe(18);
+  expect(nativeFunctions).toBe(19);
+  const budgetPush = Object.values(functions).find(resource => resource.Properties.FunctionName === 'personal-finance-v1-budget-push')!;
+  const budgetRole = budgetPush.Properties.Role['Fn::GetAtt'][0];
+  expect(budgetPush.Properties.Environment.Variables).toMatchObject({
+    OLBIA_SQL_ROLE: 'olbia_budget_push', DSQL_ENDPOINT: expect.anything(), VAPID_SECRET_ARN: expect.anything(),
+  });
+  const budgetRoleArn = { 'Fn::GetAtt': [budgetRole, 'Arn'] };
+  expect(bootstrap.Properties.BudgetPushRoleArns).toEqual([budgetRoleArn]);
+  expect(bootstrap.Properties.ReaderRoleArns).toContainEqual(budgetRoleArn);
+  expect(bootstrap.Properties.RuntimeRoleArns).not.toContainEqual(budgetRoleArn);
+  template.hasResourceProperties('AWS::Scheduler::Schedule', {
+    Name: 'personal-finance-v1-budget-push', ScheduleExpression: 'rate(15 minutes)', FlexibleTimeWindow: { Mode: 'OFF' },
+    Target: { DeadLetterConfig: { Arn: Match.anyValue() } },
+  });
   const fallback=Object.values(functions).find(resource=>resource.Properties.FunctionName==='personal-finance-v1-bedrock-email-fallback')!;
   expect(fallback.Properties.Environment.Variables.DSQL_ENDPOINT).toBeDefined();
   expect(fallback.Properties.Environment.Variables.OLBIA_SQL_ROLE).toBe('olbia_store_reader');

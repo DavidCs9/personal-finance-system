@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SqlClient } from './projection.js';
 import { decodeNativePushSubscription, upsertNativePushSubscription, deleteNativePushSubscription, readNativePushMetadata, readNativePushSubscriptions } from './push.js';
+import { claimBudgetPushAlerts, finishBudgetPushAlerts } from './budget-push.js';
 
 /** Caller rolls back completely. Exact registration primitive; no secret or transport IO. Empty registries remain valid. */
 export const smokeNativePush = async (client: SqlClient, owner: string): Promise<void> => {
@@ -14,4 +15,19 @@ export const smokeNativePush = async (client: SqlClient, owner: string): Promise
   if(!(await readNativePushMetadata(client,owner)).some(r=>r.subscriptionId===next.subscriptionId&&r.contentMode==='amounts'))throw new Error('Native push metadata failed');
   await deleteNativePushSubscription(client,owner,next.subscriptionId);
   if((await readNativePushSubscriptions(client,owner)).some(r=>r.subscriptionId===next.subscriptionId))throw new Error('Native push removal failed');
+};
+
+/** Operator-only smoke. The caller rolls back the isolated subscription and its delivery state. */
+export const smokeNativeBudgetPush = async (client: SqlClient, owner: string): Promise<void> => {
+  const now = new Date(), lease = randomUUID(), month = '2099-01';
+  const subscription = await upsertNativePushSubscription(client, {
+    owner, endpoint: `https://push.example.invalid/budget-verification-${lease}`,
+    keys: { p256dh: 'verification_key', auth: 'verification_auth' }, contentMode: 'private', at: now.toISOString(),
+  });
+  const candidates = [{ scope: 'total', threshold: 70 as const }];
+  if (!(await claimBudgetPushAlerts(client, subscription, month, lease, now, candidates)).has('total'))
+    throw new Error('Native budget push claim failed');
+  await finishBudgetPushAlerts(client, subscription, month, lease, true);
+  if ((await claimBudgetPushAlerts(client, subscription, month, randomUUID(), now, candidates)).size)
+    throw new Error('Native budget push did not retain the delivery threshold');
 };

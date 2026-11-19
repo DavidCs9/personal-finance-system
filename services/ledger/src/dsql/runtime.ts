@@ -17,7 +17,7 @@ export const streamHandler = async (_event: { Records: unknown[] }) => ({ batchI
 export const replayHandler = async (_event: { key: string }): Promise<never> => { throw new Error('DSQL migration replay is retired'); };
 export const schemaHandler = async (event: {
   action?: 'retire-migration-evidence'; RequestType?: string; PhysicalResourceId?: string;
-  ResourceProperties?: { RuntimeRoleArns?: string[]; ReaderRoleArns?: string[]; OperationalVerifierRoleArns?: string[]; ApplicationRoleArns?: string[]; StoreReaderRoleArns?: string[]; FinancialPlanRoleArns?: string[]; CutoverRoleArns?: string[] };
+  ResourceProperties?: { RuntimeRoleArns?: string[]; ReaderRoleArns?: string[]; OperationalVerifierRoleArns?: string[]; ApplicationRoleArns?: string[]; StoreReaderRoleArns?: string[]; FinancialPlanRoleArns?: string[]; CutoverRoleArns?: string[]; BudgetPushRoleArns?: string[] };
 }): Promise<Record<string, unknown>> => {
   if (event.action === 'retire-migration-evidence') {
     const admin = createPool('admin');
@@ -49,6 +49,7 @@ export const schemaHandler = async (event: {
     try { await bootstrapSchema(client as SqlClient, event.ResourceProperties.RuntimeRoleArns ?? [], {
       financialPlanRoleArns: event.ResourceProperties.FinancialPlanRoleArns, transactionPool: admin, readerRoleArns: event.ResourceProperties.ReaderRoleArns, operationalVerifierRoleArns: event.ResourceProperties.OperationalVerifierRoleArns,
       applicationRoleArns: event.ResourceProperties.ApplicationRoleArns,storeReaderRoleArns:event.ResourceProperties.StoreReaderRoleArns,cutoverRoleArns:event.ResourceProperties.CutoverRoleArns,
+      budgetPushRoleArns: event.ResourceProperties.BudgetPushRoleArns,
     }); }
     finally { client.release(); }
     // Real engine / non-admin IAM smoke, before enabling the event source.

@@ -68,7 +68,7 @@ export function PushPreference({
       await ledgerApi.savePushSubscription(subscriptionId, subscription, idToken);
       setEnabled(true);
       setPermission("granted");
-      setMessage("Te avisaré por la mañana y cuando llegue una compra nueva.");
+      setMessage("Recibirás avisos de saldo diario, compras, presupuesto y tarjetas.");
     } catch (error) {
       setEnabled(false);
       setPermission(currentPushPermission());
@@ -106,7 +106,7 @@ export function PushPreference({
         <small>
           {permission === "denied"
             ? "El permiso está bloqueado en el sistema. Cámbialo en Ajustes."
-            : "Balance diario, compras nuevas y recordatorios de corte/pago de tarjetas."}
+            : "Balance diario, compras nuevas, límites de presupuesto y recordatorios de tarjetas."}
         </small>
         {message && <p className="push-preference-message">{message}</p>}
       </div>

@@ -3,8 +3,8 @@ import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 import { bootstrapSchema } from '../src/dsql/schema.js';
 import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../src/dsql/ledger-schema.js';
-import { smokeNativePush } from '../src/dsql/push-smoke.js';
-import { upsertNativePushSubscription, readNativePushMetadata, deleteNativePushSubscription } from '../src/dsql/push.js';
+import { smokeNativeBudgetPush, smokeNativePush } from '../src/dsql/push-smoke.js';
+import { claimBudgetPushAlerts, finishBudgetPushAlerts, upsertNativePushSubscription, readNativePushMetadata, deleteNativePushSubscription, readNativePushSubscriptions } from '../src/dsql/push.js';
 import type { SqlClient } from '../src/dsql/projection.js';
 
 let sql:PGlite;const owner='owner',endpoint='https://push.example.test/registered';
@@ -21,11 +21,11 @@ beforeAll(async()=>{
   const identity=['arn:aws:iam::225989371926:role/permission-test'];
   for(const version of [8,9,10,11,12,13,14,15,16,17,18,19,20]) await sql.query('INSERT INTO olbia.schema_migrations VALUES ($1,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING',[version]);
   await bootstrapSchema(client,[],{transactionPool:{transaction:fn=>sql.transaction(c=>fn(c as unknown as SqlClient))},applicationRoleArns:identity,
-    cutoverRoleArns:identity,readerRoleArns:identity,operationalVerifierRoleArns:identity,storeReaderRoleArns:identity});
+    cutoverRoleArns:identity,readerRoleArns:identity,operationalVerifierRoleArns:identity,storeReaderRoleArns:identity,budgetPushRoleArns:identity});
   await upsertNativePushSubscription(sql,{owner,endpoint,keys:{p256dh:'original_key',auth:'original_auth'},contentMode:'private',at:'2026-10-03T12:00:00.123Z'});
 },30_000);
 afterAll(()=>sql.close());afterEach(()=>sql.query('RESET ROLE'));
-const snapshot=async()=>Object.fromEntries(await Promise.all(['web_push_subscriptions','push_subscriptions','projection_state','application_barrier']
+const snapshot=async()=>Object.fromEntries(await Promise.all(['web_push_subscriptions','budget_push_alerts','push_subscriptions','projection_state','application_barrier']
   .map(async t=>[t,(await sql.query(`SELECT * FROM olbia.${t} ORDER BY 1`)).rows])));
 
 it('runs the actual deployed registration/renewal/removal smoke under both writer roles and rolls back existing or empty registries',async()=>{
@@ -38,6 +38,33 @@ it('runs the actual deployed registration/renewal/removal smoke under both write
     await expect(sql.transaction(async c=>{await c.query('DELETE FROM olbia.web_push_subscriptions');await smokeNativePush(c as unknown as SqlClient,owner);throw rollback;})).rejects.toBe(rollback);
     await sql.query('RESET ROLE');expect(await snapshot()).toEqual(before);
   }
+});
+
+it('runs the budget push smoke as the operator and limits the scheduled writer to delivery state', async () => {
+  const before = await snapshot();
+  const rollback = new Error('Expected full rollback');
+  await sql.query('SET ROLE olbia_cutover');
+  await expect(sql.transaction(async client => {
+    await smokeNativeBudgetPush(client as unknown as SqlClient, owner);
+    throw rollback;
+  })).rejects.toBe(rollback);
+  await sql.query('RESET ROLE');
+  expect(await snapshot()).toEqual(before);
+  await sql.query('SET ROLE olbia_budget_push');
+  expect((await sql.query('SELECT endpoint FROM olbia.web_push_subscriptions')).rows).toHaveLength(1);
+  expect((await sql.query('SELECT * FROM olbia.budget_push_alerts')).rows).toEqual([]);
+  const [subscription] = await readNativePushSubscriptions(sql, owner);
+  const lease = 'c53e46ce-ebbd-4262-bf80-872589193581';
+  await expect(sql.transaction(async client => {
+    const connection = client as unknown as SqlClient;
+    const scopes = await claimBudgetPushAlerts(connection, subscription!, '2030-04', lease, new Date(), [{ scope: 'total', threshold: 70 }]);
+    expect(scopes).toEqual(new Set(['total']));
+    await finishBudgetPushAlerts(connection, subscription!, '2030-04', lease, true);
+    throw rollback;
+  })).rejects.toBe(rollback);
+  await expect(sql.query('UPDATE olbia.web_push_subscriptions SET content_mode=content_mode')).rejects.toMatchObject({ code: '42501' });
+  await expect(sql.query('UPDATE olbia.ledger_movements SET status=status')).rejects.toMatchObject({ code: '42501' });
+  await expect(sql.query('UPDATE olbia.spending_budgets SET status=status')).rejects.toMatchObject({ code: '42501' });
 });
 
 it('isolates product metadata from endpoint/key fields and keeps all reader roles unable to mutate native or frozen registries',async()=>{

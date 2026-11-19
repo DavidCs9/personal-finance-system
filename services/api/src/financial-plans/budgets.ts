@@ -62,8 +62,9 @@ export const budgetStatusFromMonth = async (client: SqlClient, owner: string, mo
   const events: BudgetSpendEvent[] = monthSpendEventsFromFeed(feed).map(event => ({ ...event, id: event.id!, categoryId: typeof raw.get(event.id!)?.categoryId === 'string' ? String(raw.get(event.id!)!.categoryId) : null }));
   const status = computeBudgetStatus({ month, budget, exclusions, events, fixedPayments: plan?.upcomingPayments ?? [], now,
     missingFixedConfiguration: !plan, additionalIncompleteMovementIds: incomplete, includeSpendTimeline });
+  const categoryNames = new Map(catalog.rows.map(row => [String(row.id), String(row.name)]));
   return { ...status, generatedAt: now.toISOString(), categories: status.categories.map(row => ({ ...row,
-    label: row.categoryId === null ? 'Sin categoría' : catalog.rows.find(c => c.id === row.categoryId)?.name ?? row.categoryId })) };
+    label: row.categoryId === null ? 'Sin categoría' : categoryNames.get(row.categoryId) ?? row.categoryId })) };
 };
 export const getBudgetStatus = (owner: string, input: Record<string, unknown> = {}, now = new Date()) => {
   const month = budgetMonth(input.month ?? monthKeyInZone(now));

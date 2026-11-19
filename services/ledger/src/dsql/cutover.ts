@@ -2,7 +2,7 @@ import { smokeNativeFinancialPlans } from './financial-plan-smoke.js';
 import { smokeNativeExceptions } from './exception-smoke.js';
 import { smokeNativeThreads } from './thread-smoke.js';
 import { smokeNativeDeliveries } from './delivery-smoke.js';
-import { smokeNativePush } from './push-smoke.js';
+import { smokeNativeBudgetPush, smokeNativePush } from './push-smoke.js';
 import { createPool } from './connection.js';
 import { readStorageAuthority } from './sql-runtime.js';
 import { smokeNativeLedger } from './ledger-smoke.js';
@@ -92,6 +92,7 @@ export const cutoverHandler=async (event:{action:'status'|'pause'|'activate'|'sm
         await smokeNativePlanning(client,String(importSource.owner),verificationMovement);
         await smokeNativeWealth(client, String(importSource.owner), String(card.id));
         await smokeNativePush(client, String(importSource.owner));
+        await smokeNativeBudgetPush(client, String(importSource.owner));
         await smokeNativeDeliveries(client, String(importSource.owner));
         await smokeNativeThreads(client, String(importSource.owner));
         await smokeNativeExceptions(client,String(importSource.owner));

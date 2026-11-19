@@ -89,6 +89,8 @@ Safari → finance.castrodavid.dev → Share → Add to Home Screen, Open as Web
 
 Resumen's **Avisos de Olbia** requests permission only after a tap and enables the shared Declarative Web Push subscription. Turning off removes device/server subscription. Current UI registers amounts mode; private API mode exists but has no UI toggle. VAPID private key stays in Secrets Manager; only public key enters runtime config. Remove expired 404/410 endpoints; retain on other failures. New-movement push is only new email/Apple Pay events, not manual/CSV/PDF import. Stable daily/card tags suppress stacked retry notices; totals share Resumen's calculation.
 
+Budget push uses the same subscription. It groups newly reached thresholds into one notification per device per evaluation and omits financial details in private mode. The SQL lease prevents concurrent retries from sending the same threshold. The delivery record advances after the push provider accepts it. A crash before that record is saved can trigger a retry using the same monthly push tag. Release verification checks claim and delivery state inside a rolled-back transaction without contacting the push provider.
+
 ## Schedules and integrations
 
 All times below use America/Chihuahua:
@@ -99,6 +101,7 @@ All times below use America/Chihuahua:
 | IBKR Flex + Banxico FIX sync | Daily 06:45 |
 | Daily balance push | Daily 07:00 |
 | Card cut-off/payment push | Daily 07:05 |
+| Budget thresholds push | Every 15 minutes |
 | Patrimonio Precierre checklist | Last calendar day 18:00 |
 | Previous-month close email | Day 1, 07:10 |
 
