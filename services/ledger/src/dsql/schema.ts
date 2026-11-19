@@ -3,7 +3,7 @@ import { FINANCIAL_RECEIPT_ENTITY_CHECK, FINANCIAL_WRITE_KIND_CHECK, INCOME_SCHE
 import { NATIVE_EXCEPTION_SCHEMA_STATEMENTS,nativeExceptionReadGrant,nativeExceptionWriteGrants } from './exception-schema.js';
 import { NATIVE_THREAD_SCHEMA_STATEMENTS, nativeThreadReadGrant, nativeThreadWriteGrants } from './thread-schema.js';
 import { NATIVE_DELIVERY_SCHEMA_STATEMENTS, nativeDeliveryReadGrant, nativeDeliveryWriteGrant } from './delivery-schema.js';
-import { NATIVE_PUSH_SCHEMA_STATEMENT, nativePushReadGrant, nativePushMetadataGrant, nativePushWriteGrants } from './push-schema.js';
+import { NATIVE_BUDGET_PUSH_SCHEMA_STATEMENT, NATIVE_PUSH_SCHEMA_STATEMENT, nativeBudgetPushGrants, nativePushReadGrant, nativePushMetadataGrant, nativePushWriteGrants } from './push-schema.js';
 import type { SqlClient, TransactionPool } from './projection.js';
 import { isOCCError } from '@aws/aurora-dsql-node-postgres-connector';
 import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT, LEDGER_EVENT_TYPE_CHECK } from './ledger-schema.js';
@@ -134,6 +134,7 @@ export const SCHEMA_STATEMENTS = [
     UNION SELECT movement_id::text,month FROM olbia.installment_entries`,
   ...NATIVE_WEALTH_SCHEMA_STATEMENTS,
   NATIVE_PUSH_SCHEMA_STATEMENT,
+  NATIVE_BUDGET_PUSH_SCHEMA_STATEMENT,
   ...NATIVE_DELIVERY_SCHEMA_STATEMENTS,
   ...NATIVE_THREAD_SCHEMA_STATEMENTS,
   ...NATIVE_EXCEPTION_SCHEMA_STATEMENTS,
@@ -142,7 +143,7 @@ export const SCHEMA_STATEMENTS = [
 ];
 
 export const bootstrapSchema = async (client: SqlClient, roleArns: readonly string[], options: {
-  transactionPool?: TransactionPool; now?: () => number; pause?: (ms: number) => Promise<void>; indexWaitMs?: number; readerRoleArns?: readonly string[]; operationalVerifierRoleArns?: readonly string[]; applicationRoleArns?: readonly string[]; storeReaderRoleArns?: readonly string[]; cutoverRoleArns?: readonly string[]; financialPlanRoleArns?: readonly string[];
+  transactionPool?: TransactionPool; now?: () => number; pause?: (ms: number) => Promise<void>; indexWaitMs?: number; readerRoleArns?: readonly string[]; operationalVerifierRoleArns?: readonly string[]; applicationRoleArns?: readonly string[]; storeReaderRoleArns?: readonly string[]; cutoverRoleArns?: readonly string[]; financialPlanRoleArns?: readonly string[]; budgetPushRoleArns?: readonly string[];
 } = {}): Promise<void> => {
   const now = options.now ?? Date.now;
   const pause = options.pause ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -320,6 +321,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (writer) await query(`catalog-write-${role}`, `GRANT INSERT,UPDATE ON olbia.spend_categories TO ${role}`);
     if (writer) await query(`rules-write-${role}`, `GRANT INSERT,UPDATE ON olbia.merchant_rules TO ${role}`);
     if (operator) {
+      for (const [index, statement] of nativeBudgetPushGrants(role).entries()) await query(`budget-push-smoke-grant-${index}`, statement);
       await query(`control-revoke-${role}`,`REVOKE UPDATE ON olbia.runtime_state FROM ${role}`);
       await query(`control-${role}`,`GRANT UPDATE (mode,changed_at) ON olbia.runtime_state TO ${role}`);
     }
@@ -356,6 +358,23 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
       await query('financial-writer-iam',`AWS IAM GRANT ${role} TO '${arn}'`);
     }
   }
+  if (options.budgetPushRoleArns?.length) {
+    const role = 'olbia_budget_push';
+    if (!(await query('budget-push-lookup', 'SELECT rolname FROM pg_roles WHERE rolname=$1', [role])).rows.length)
+      await query('budget-push-create', `CREATE ROLE ${role} WITH LOGIN`);
+    for (const [index, statement] of [
+      `GRANT USAGE ON SCHEMA olbia TO ${role}`,
+      `GRANT SELECT ON olbia.runtime_state,olbia.application_barrier TO ${role}`,
+      `GRANT UPDATE (generation) ON olbia.application_barrier TO ${role}`,
+      nativePushReadGrant(role),
+      `GRANT DELETE ON olbia.web_push_subscriptions TO ${role}`,
+      ...nativeBudgetPushGrants(role),
+    ].entries()) await query(`budget-push-grant-${index}`, statement);
+    for (const arn of options.budgetPushRoleArns) {
+      if (!/^arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(arn)) throw new Error('Invalid budget push role ARN');
+      await query('budget-push-iam', `AWS IAM GRANT ${role} TO '${arn}'`);
+    }
+  }
   // Revoke still-present migration copies during this deployment. After cleanup
   // the empty catalog makes future bootstraps independent of those relations.
   const frozen = (await query('migration-evidence-lookup',
@@ -373,6 +392,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('income-schedule-complete','INSERT INTO olbia.schema_migrations VALUES (28,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('reconciliation-tools-complete','INSERT INTO olbia.schema_migrations VALUES (29,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('ledger-credits-complete','INSERT INTO olbia.schema_migrations VALUES (30,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
+  await query('budget-push-complete','INSERT INTO olbia.schema_migrations VALUES (31,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('cash-and-payroll-closure-complete','INSERT INTO olbia.schema_migrations VALUES (25,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 };
 

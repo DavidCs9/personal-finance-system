@@ -6,7 +6,7 @@ import { NATIVE_THREAD_SCHEMA_STATEMENTS, nativeThreadReadGrant, nativeThreadWri
 import { migrateConversationMetadata } from '../../src/dsql/thread-copy.js';
 import { NATIVE_DELIVERY_SCHEMA_STATEMENTS, nativeDeliveryReadGrant, nativeDeliveryWriteGrant } from '../../src/dsql/delivery-schema.js';
 import { migrateMonthlyDeliveries } from '../../src/dsql/delivery-copy.js';
-import { NATIVE_PUSH_SCHEMA_STATEMENT, nativePushReadGrant, nativePushMetadataGrant, nativePushWriteGrants } from '../../src/dsql/push-schema.js';
+import { NATIVE_BUDGET_PUSH_SCHEMA_STATEMENT, NATIVE_PUSH_SCHEMA_STATEMENT, nativePushReadGrant, nativePushMetadataGrant, nativePushWriteGrants } from '../../src/dsql/push-schema.js';
 import { migratePushSubscriptions } from '../../src/dsql/push-copy.js';
 import { TABLE_COLUMNS, TABLE_NAMES, OPERATIONAL_TABLE_NAMES } from '../../src/dsql/model.js';
 import type { SqlClient, TransactionPool } from '../../src/dsql/projection.js';
@@ -177,6 +177,7 @@ export const SCHEMA_STATEMENTS = [
     UNION SELECT movement_id::text,month FROM olbia.installment_entries`,
   ...NATIVE_WEALTH_SCHEMA_STATEMENTS,
   NATIVE_PUSH_SCHEMA_STATEMENT,
+  NATIVE_BUDGET_PUSH_SCHEMA_STATEMENT,
   ...NATIVE_DELIVERY_SCHEMA_STATEMENTS,
   ...NATIVE_THREAD_SCHEMA_STATEMENTS,
   ...NATIVE_EXCEPTION_SCHEMA_STATEMENTS,

@@ -76,6 +76,13 @@ export class DsqlProjection extends Construct {
     (fn.node.defaultChild as CfnResource).addDependency(this.bootstrap.node.defaultChild as CfnResource);
   }
 
+  /** Budget facts are read as olbia_reader. This connection can only change push state. */
+  grantBudgetPushWriter(fn: NodejsFunction): void {
+    this.grantReader(fn);
+    fn.addEnvironment('OLBIA_SQL_ROLE', 'olbia_budget_push');
+    (this.bootstrap.node.defaultChild as CfnResource).addPropertyOverride('BudgetPushRoleArns', [fn.role!.roleArn]);
+  }
+
   constructor(scope: Construct, id: string, props: {
     table: dynamodb.ITable; encryptionKey: kms.IKey; alertRecipientEmail: string;
   }) {
@@ -127,7 +134,7 @@ export class DsqlProjection extends Construct {
     });
     const bootstrap = new CustomResource(this, 'Bootstrap', {
       serviceToken: provider.serviceToken,
-      properties: { Version: 34, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
+      properties: { Version: 35, RuntimeRoleArns: runtimes.map((fn) => fn.role!.roleArn) },
     });
     this.bootstrap = bootstrap;
     // IAM policies must be installed before the bootstrap handler connects.

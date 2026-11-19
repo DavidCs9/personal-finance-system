@@ -12,7 +12,7 @@ export const NATIVE_DOMAIN_TABLES = [
   ...NATIVE_CATEGORY_TABLES, ...NATIVE_FINANCIAL_PLAN_TABLES,
   'spend_categories', 'merchant_rules', 'card_profiles', 'month_plans', 'planned_payments',
   'payslips', 'payslip_lines', 'payroll_closures', 'bank_imports', 'bank_import_rows', 'bank_import_candidates',
-  'web_push_subscriptions', 'monthly_email_preparations', 'monthly_email_receipts',
+  'web_push_subscriptions', 'budget_push_alerts', 'monthly_email_preparations', 'monthly_email_receipts',
   'ingestion_review_exceptions', 'ingestion_review_claims', 'ingestion_retry_attempts',
 ] as const;
 export const SQL_CONTROL_TABLES = ['schema_migrations', 'runtime_state', 'application_barrier'] as const;

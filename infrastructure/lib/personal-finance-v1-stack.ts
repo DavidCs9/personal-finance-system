@@ -1133,6 +1133,40 @@ export class PersonalFinanceV1Stack extends Stack {
       }),
     });
 
+    const budgetPushDlq = new sqs.Queue(this, 'BudgetPushDlq', {
+      queueName: 'personal-finance-v1-budget-push-dlq',
+      retentionPeriod: Duration.days(14),
+      encryption: sqs.QueueEncryption.KMS_MANAGED,
+    });
+    const budgetPushFunction = new NodejsFunction(this, 'BudgetPushFunction', {
+      ...pushLambdaDefaults,
+      functionName: 'personal-finance-v1-budget-push',
+      logGroup: this.createLogGroup('BudgetPushLogGroup', 'personal-finance-v1-budget-push'),
+      entry: path.join(__dirname, '..', 'lambda', 'budget-push.ts'),
+      handler: 'handler',
+      description: 'Sends newly reached Olbia budget thresholds through the existing Web Push subscriptions.',
+      timeout: Duration.minutes(2),
+      environment: {
+        RAW_EMAIL_BUCKET_NAME: rawEmailBucket.bucketName,
+        AGENT_OWNER: agentOwnerSub.valueAsString,
+        VAPID_SECRET_ARN: vapidSecret.secretArn,
+        WEB_APP_URL: webAppUrl,
+      },
+    });
+    dsqlProjection.grantBudgetPushWriter(budgetPushFunction);
+    vapidSecret.grantRead(budgetPushFunction);
+    new scheduler.Schedule(this, 'BudgetPushSchedule', {
+      scheduleName: 'personal-finance-v1-budget-push',
+      description: 'Checks the current Olbia budget and its categories every 15 minutes.',
+      schedule: scheduler.ScheduleExpression.rate(Duration.minutes(15)),
+      timeWindow: scheduler.TimeWindow.off(),
+      target: new LambdaInvoke(budgetPushFunction, {
+        deadLetterQueue: budgetPushDlq,
+        retryAttempts: 2,
+        maxEventAge: Duration.minutes(15),
+      }),
+    });
+
     const cardCyclePushDlq = new sqs.Queue(this, 'CardCyclePushDlq', {
       queueName: 'personal-finance-v1-card-cycle-push-dlq',
       retentionPeriod: Duration.days(14),
@@ -1628,6 +1662,16 @@ export class PersonalFinanceV1Stack extends Stack {
       threshold: 1,
       evaluationPeriods: 1,
     });
+    const budgetPushErrorAlarm = new cdk.aws_cloudwatch.Alarm(this, 'BudgetPushErrorsAlarm', {
+      metric: budgetPushFunction.metricErrors({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
+    const budgetPushDlqAlarm = new cdk.aws_cloudwatch.Alarm(this, 'BudgetPushDlqAlarm', {
+      metric: budgetPushDlq.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+    });
     const cardCyclePushErrorAlarm = new cdk.aws_cloudwatch.Alarm(this, 'CardCyclePushErrorsAlarm', {
       metric: cardCyclePushFunction.metricErrors({ period: Duration.minutes(5) }),
       threshold: 1,
@@ -1703,6 +1747,8 @@ export class PersonalFinanceV1Stack extends Stack {
     new cdk.CfnOutput(this, 'BedrockEmailFallbackDeadLetterMessagesAlarmName', { value: bedrockFallbackDeadLetterAlarm.alarmName });
     new cdk.CfnOutput(this, 'DailyBalancePushErrorsAlarmName', { value: dailyBalancePushErrorAlarm.alarmName });
     new cdk.CfnOutput(this, 'DailyBalancePushDlqAlarmName', { value: dailyBalancePushDlqAlarm.alarmName });
+    new cdk.CfnOutput(this, 'BudgetPushErrorsAlarmName', { value: budgetPushErrorAlarm.alarmName });
+    new cdk.CfnOutput(this, 'BudgetPushDlqAlarmName', { value: budgetPushDlqAlarm.alarmName });
     new cdk.CfnOutput(this, 'CardCyclePushErrorsAlarmName', { value: cardCyclePushErrorAlarm.alarmName });
     new cdk.CfnOutput(this, 'CardCyclePushDlqAlarmName', { value: cardCyclePushDlqAlarm.alarmName });
     new cdk.CfnOutput(this, 'BitsoSyncErrorsAlarmName', { value: bitsoSyncErrorAlarm.alarmName });

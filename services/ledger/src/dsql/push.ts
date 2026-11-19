@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { SqlClient } from './projection.js';
+export { claimBudgetPushAlerts, finishBudgetPushAlerts } from './budget-push.js';
 
 export type PushContentMode = 'amounts' | 'private';
 export interface PushSubscriptionKeys { readonly p256dh: string; readonly auth: string }
