@@ -908,6 +908,7 @@ export function Dashboard({
           demoMode={demoMode}
           onClose={() => setActiveEvent(undefined)}
           onVerified={(event) => {
+            void queryClient.invalidateQueries({ queryKey: budgetQueryRoot });
             const paymentContext = editingPayment;
             setActiveEvent(event);
             void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });

@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { defaultCuotaMinor, monthKeyInZone, replaceMsiSchedule, addCalendarMonths } from "@finance/domain";
+import { BUDGET_EXCLUSION_TAG, defaultCuotaMinor, monthKeyInZone, replaceMsiSchedule, addCalendarMonths } from "@finance/domain";
 import { ledgerApi } from "../api/client";
 import { Amt } from "../components/Amt";
 import { Mark } from "../components/Brand";
@@ -554,7 +554,7 @@ export function EventSheet({
               autoCorrect="off"
             />
           </Field>
-          <p>No cambian los cálculos ni la categoría.</p>
+          <p>El tag <code>{BUDGET_EXCLUSION_TAG}</code> deja este movimiento fuera del presupuesto y conserva el gasto registrado.</p>
           <button className="primary-button" type="submit" disabled={tagsMutation.isPending}>
             {tagsMutation.isPending ? "Guardando…" : "Guardar tags"}
           </button>

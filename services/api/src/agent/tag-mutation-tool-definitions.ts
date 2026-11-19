@@ -5,7 +5,7 @@ export const TAG_MUTATION_TOOL_DEFINITIONS = [
       'Es un dry run que congela movimientos accepted exactos antes de cambiar tags y devuelve affected completo, no sólo una muestra.',
       'Prefiere eventRefs con las referencias breves de list_movements; SQL exige una identidad única. Si una referencia es ambigua, usa eventId/eventIds completos, copiados exactamente. Acepta fechas distintas. También acepta un rango sólo si lleva merchantRaw exacto, sourceTags u onlyUntagged=true. Nunca llames esta tool con sólo fechas. Prepara como máximo cuatro previews por respuesta para evitar truncar argumentos; aplica esos y sigue con el siguiente lote.',
       'Revisa todos los afectados antes de apply. La instrucción explícita del usuario en el chat autoriza el cambio: después de recibir operationId debes llamar apply_tag_edit o apply_tag_edits inmediatamente en el mismo turno, sin pedir confirmación en la UI.',
-      'Sólo modifica tags; nunca categorías.',
+      'Agregar presupuesto:excluir excluye el movimiento del presupuesto al aplicar, sin otra operación. Quitar el tag vuelve a contarlo salvo si existe una exclusión manual activa. El gasto real se conserva.',
     ].join(' '),
     inputSchema: {
       type: 'object',
