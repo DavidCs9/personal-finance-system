@@ -1,6 +1,8 @@
 import { PGlite } from '@electric-sql/pglite';
-import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
+import { AuroraDSQLPool } from '@aws/aurora-dsql-node-postgres-connector';
+import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { bootstrapSchema } from '../src/dsql/schema.js';
+import { maintenanceHandler } from '../src/dsql/runtime.js';
 import { SCHEMA_STATEMENTS } from './helpers/migration-schema.js';
 import { LEDGER_PRIMARY_OBSERVATION_CONSTRAINT } from '../src/dsql/ledger-schema.js';
 import { smokeNativeBudgetPush, smokeNativePush } from '../src/dsql/push-smoke.js';
@@ -27,6 +29,25 @@ beforeAll(async()=>{
 afterAll(()=>sql.close());afterEach(()=>sql.query('RESET ROLE'));
 const snapshot=async()=>Object.fromEntries(await Promise.all(['web_push_subscriptions','budget_push_alerts','push_subscriptions','projection_state','application_barrier']
   .map(async t=>[t,(await sql.query(`SELECT * FROM olbia.${t} ORDER BY 1`)).rows])));
+
+it('runs the deployed catalog check with the real catalog verifier grants', async () => {
+  vi.stubEnv('DSQL_ENDPOINT', 'example.dsql.us-east-2.on.aws');
+  const transaction = vi.spyOn(AuroraDSQLPool.prototype, 'transaction').mockImplementation(fn =>
+    sql.transaction(async client => {
+      await client.query('SET LOCAL ROLE olbia_projector');
+      return fn(client as never);
+    }));
+  try {
+    await expect(maintenanceHandler({ runId: 'release', phase: 'source' })).resolves.toMatchObject({
+      phase: 'done', mismatch: 0, summary: { mode: 'native-sql' },
+    });
+  } finally {
+    transaction.mockRestore();
+    vi.unstubAllEnvs();
+  }
+  await sql.query('SET ROLE olbia_projector');
+  await expect(sql.query('UPDATE olbia.budget_push_alerts SET delivered_threshold=70')).rejects.toMatchObject({ code: '42501' });
+});
 
 it('runs the actual deployed registration/renewal/removal smoke under both writer roles and rolls back existing or empty registries',async()=>{
   const before=await snapshot(),rollback=new Error('Expected full rollback');

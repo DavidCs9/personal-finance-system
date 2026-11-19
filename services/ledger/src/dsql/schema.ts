@@ -213,6 +213,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('threads-projector-read', nativeThreadReadGrant('olbia_projector'));
   await query('delivery-projector-read', nativeDeliveryReadGrant('olbia_projector'));
   await query('push-projector-read', nativePushReadGrant('olbia_projector'));
+  await query('budget-push-projector-read', 'GRANT SELECT ON olbia.budget_push_alerts TO olbia_projector');
   await query('projector-barrier-revoke','REVOKE INSERT,UPDATE,DELETE ON olbia.application_barrier FROM olbia_projector');
   await query('projector-barrier-read','GRANT SELECT ON olbia.application_barrier TO olbia_projector');
   await query('projector-barrier-grant','GRANT UPDATE (generation) ON olbia.application_barrier TO olbia_projector');
