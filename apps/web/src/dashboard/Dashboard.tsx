@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ledgerApi } from "../api/client";
 import { demoBudgetStatus } from "../api/planning-demo";
 import { mockAnalyticsFor, mockExceptionRawEmail, mockExceptions, mockFeedForMonth, mockMonthSummaryFor, mockEvents } from "../api/mock-data";
@@ -366,8 +366,9 @@ export function Dashboard({
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const goalsFetching = useIsFetching({ queryKey: financialGoalsQueryRoot }) > 0;
   const activeQueryFetching = tab === "wealth" ? wealthQuery.isFetching
-    : tab === "planning" ? monthlyPlanQuery.isFetching || monthlySummaryQuery.isFetching || cardsQuery.isFetching
+    : tab === "planning" ? monthlyPlanQuery.isFetching || monthlySummaryQuery.isFetching || cardsQuery.isFetching || goalsFetching
     : tab === "movements" ? eventsQuery.isFetching || exceptionsQuery.isFetching
     : dashboardQuery.isFetching || monthlyPlanQuery.isFetching || monthlySummaryQuery.isFetching || analyticsQuery.isFetching;
   const summaryLoadError = monthlySummaryQuery.error instanceof Error
@@ -464,7 +465,7 @@ export function Dashboard({
           />
         ) : tab === "planning" ? (
           <PlanningView
-            financialPlanning={<PlanningEntries month={selectedMonth} access={access} onOpen={setPlanningPane} />}
+            financialPlanning={<PlanningEntries month={selectedMonth} access={access} onOpen={setPlanningPane} onOpenEvent={openMsiEvent} />}
             month={selectedMonth}
             now={now}
             monthMsiRows={monthMsiRows}

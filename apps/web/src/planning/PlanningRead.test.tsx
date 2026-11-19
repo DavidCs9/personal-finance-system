@@ -3,9 +3,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactNode } from "react";
 import { expect, it } from "vitest";
 import { BudgetRead } from "./BudgetRead";
+import { PlanningEntries } from "./FinancialPlanning";
 import { IncomeRead } from "./IncomeRead";
-import { budgetStatusQueryKey, expectedIncomeQueryKey } from "../lib/query-keys";
-import { demoBudgetStatus, demoIncomeSchedule } from "../api/planning-demo";
+import { budgetStatusQueryKey, expectedIncomeQueryKey, financialGoalsQueryKey } from "../lib/query-keys";
+import { demoBudgetStatus, demoFinancialGoals, demoIncomeSchedule } from "../api/planning-demo";
 
 const month = "2026-07";
 const access = { idToken: "demo", demoMode: true };
@@ -46,5 +47,30 @@ it("distinguishes a pending query, failed query, and missing budget limit", asyn
   expect(empty).toContain("Sin límite configurado");
   expect(empty).toContain("Gasto del mes");
   expect(empty).not.toContain("Disponible por día");
+  client.clear();
+});
+
+it("shows refreshed goal figures directly in Planificación and preserves access to archived and later records", () => {
+  const client = clientForTest();
+  const view = <PlanningEntries month={month} access={access} onOpen={() => {}} onOpenEvent={onOpen} />;
+  const [goal] = demoFinancialGoals.goals;
+  const read = (goals: typeof demoFinancialGoals.goals, nextCursor: string | null) => {
+    client.setQueryData(financialGoalsQueryKey, { pages: [{ goals, nextCursor }], pageParams: [undefined] });
+    return render(client, view);
+  };
+  const initial = read([goal!], null);
+  expect(initial.indexOf("Viaje en familia")).toBeLessThan(initial.indexOf("Presupuesto del mes"));
+  expect(initial).toContain("Pendiente total");
+  expect(initial).toContain("$30,000.00");
+  expect(initial).toContain("Todos los periodos");
+  const next = read([
+    { ...goal!, status: "archived" },
+    { ...goal!, id: "example-studio", name: "Estudio de ejemplo", totalBudgetMxnMinor: 4_300_000,
+      unallocatedMxnMinor: 1_280_000, remainingMxnMinor: 3_500_000 },
+  ], "opaque-cursor");
+  expect(next).toContain("$35,000.00");
+  expect(next).toContain("Metas archivadas");
+  expect(next).toContain("Ver más metas");
+  expect(next.indexOf("Estudio de ejemplo")).toBeLessThan(next.indexOf("Metas archivadas"));
   client.clear();
 });
