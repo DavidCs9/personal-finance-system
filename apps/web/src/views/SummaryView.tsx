@@ -26,7 +26,7 @@ export interface SummaryViewProps {
 }
 
 export function SummaryView(props: SummaryViewProps) {
-  return <section className="summary-view">
+  return <section className="summary-view" aria-label="Resumen del mes">
     <div className="summary-scroll">
       <h1 className="summary-dashboard-title">Resumen</h1>
       {props.dashboard ? <>
