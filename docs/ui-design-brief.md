@@ -18,13 +18,13 @@ Debajo de las gráficas, **Gasto y liquidez del mes** muestra gasto registrado, 
 
 **Saldos de efectivo** muestra Santander y Cajita Nu con fecha, fuente y antigüedad. Si falta evidencia para el cierre, muestra la causa. **Abonos del mes** distingue ingresos recibidos, reembolsos a efectivo y a tarjeta e ingresos esperados. **Nómina y compromisos** conserva el acceso al detalle de CFDI y a la carga XML. El detalle de recibo conserva nómina, fondo, ISR e IMSS, con líneas SAT colapsadas. El desglose conserva modo privado y se cierra al cambiar de mes. Las cifras siguen las [reglas del resumen](financial-rules.md#resumen-del-mes).
 
-**Planificación** abre con **Tu plan financiero**, tres accesos a detalles de lectura:
+**Planificación** abre con **Tu plan financiero**:
 
+- **Metas financieras** muestra directamente las metas de todos los periodos. Cada tarjeta presenta pendiente total, pagado, presupuesto vigente y una barra que separa lo pagado, las partidas por pagar y lo que falta asignar. Expandir una meta muestra el presupuesto original, lo no asignado, partidas, pagos, evidencia e historial. La lista se actualiza al volver a la app. Las metas archivadas conservan acceso al detalle. Las metas no se suman al gasto mensual.
 - **Presupuesto del mes** abre el mes seleccionado con límite, gasto contado, ritmo, restante antes y después de compromisos, categorías e historial. Expone gasto registrado, exclusiones y sus movimientos en el desglose. Un límite faltante se declara y el historial sigue disponible.
 - **Ingresos esperados** abre el mes elegido y los dos siguientes. Deja visibles los importes desconocidos, las fechas provisionales y la superposición pendiente de revisar. Los CFDI importados tienen una sección propia con acceso a cada recibo.
-- **Metas financieras** lista metas de todos los periodos y abre presupuesto original y vigente, pagado, pendiente, no asignado, partidas, evidencia e historial. Archivar se refleja en la lista y conserva acceso al detalle. Las metas no se suman al gasto mensual.
 
-La configuración ordinaria de las tres áreas sigue en ChatGPT. Los detalles web comparten lecturas del dominio y cierran con Escape o su botón, conservando el contexto al volver de evidencia.
+La configuración ordinaria de las tres áreas sigue en ChatGPT. Los detalles web comparten lecturas del dominio y conservan el contexto al volver de evidencia. Los diálogos cierran con Escape o su botón.
 
 **Pagos y documentos** mantiene la programación, conciliación, fechas y archivos. Usa el mes global elegido para cuotas MSI, gastos fijos y calendario de tarjetas. Se puede consultar sin nómina ni liquidez configurada. Una fuente con error no oculta las demás ni se presenta como cero. Orden:
 

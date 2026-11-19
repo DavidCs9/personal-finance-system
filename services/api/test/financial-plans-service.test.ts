@@ -52,6 +52,37 @@ beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now); vi.stubEnv('AGENT_OWNER', 'owner');
 });
 
+it('exposes the goals created and amended via MCP on the authenticated web read routes', async () => {
+  const { handler: readHandler } = await import('../src/http/ledger-api.js');
+  const read = async (path: string) => {
+    const event = { version: '2.0', routeKey: `GET ${path}`, rawPath: path, rawQueryString: '', headers: {},
+      requestContext: { http: { method: 'GET', path }, authorizer: { jwt: { claims: { sub: 'owner' }, scopes: [] } } },
+      isBase64Encoded: false } as Parameters<typeof readHandler>[0];
+    const response = await readHandler(event, { awsRequestId: 'goal-bridge-test' } as never);
+    expect(response.statusCode).toBe(200);
+    return JSON.parse(String(response.body));
+  };
+  const save = async (args: Record<string, unknown>): Promise<{ goal: { id: string; revision: number } }> => {
+    const draft = await writeHandler({ toolName: 'preview_financial_goal_change', arguments: args }, {} as never) as { operationId: string };
+    const receipt = await writeHandler({ toolName: 'apply_financial_goal_change', arguments: { operationId: draft.operationId } }, {} as never);
+    return receipt as { goal: { id: string; revision: number } };
+  };
+  expect(await read('/financial-goals')).toMatchObject({ goals: [] });
+  const { goal } = await save({ action: 'create_goal', name: 'Fictional studio', totalBudgetMxnMinor: 36000,
+    allocations: [{ name: 'Fictional equipment', allocatedMxnMinor: 24000 }] });
+  expect(await read('/financial-goals')).toMatchObject({
+    goals: [{ id: goal.id, remainingMxnMinor: 36000, outstandingAllocatedMxnMinor: 24000, unallocatedMxnMinor: 12000 }],
+  });
+  await save({ action: 'update_goal', goalId: goal.id, expectedRevision: goal.revision, totalBudgetMxnMinor: 41000 });
+  await save({ action: 'create_goal', name: 'Fictional exhibit', totalBudgetMxnMinor: 28000 });
+  expect(await read('/financial-goals')).toMatchObject({ goals: expect.arrayContaining([
+    expect.objectContaining({ id: goal.id, totalBudgetMxnMinor: 41000, remainingMxnMinor: 41000, unallocatedMxnMinor: 17000 }),
+    expect.objectContaining({ name: 'Fictional exhibit', remainingMxnMinor: 28000 }),
+  ]) });
+  expect(await read(`/financial-goals/${goal.id}`)).toMatchObject({ originalBudgetMxnMinor: 36000,
+    history: expect.arrayContaining([expect.objectContaining({ action: 'update_goal' })]) });
+});
+
 describe('posted bank credits and the shared month close', () => {
   const incomeCredit = {
     creditType: 'income', incomeType: 'finiquito', institution: 'santander_mx', accountKind: 'cash',

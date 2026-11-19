@@ -32,11 +32,13 @@ export const useExpectedIncome = (month: string, { demoMode, idToken }: Planning
 export const useFinancialGoals = ({ demoMode, idToken }: PlanningAccess) => useInfiniteQuery({
   queryKey: financialGoalsQueryKey,
   initialPageParam: undefined as string | undefined,
+  refetchOnMount: "always",
   queryFn: ({ pageParam }) => demoMode ? Promise.resolve(demoFinancialGoals) : ledgerApi.financialGoals(idToken, pageParam),
   getNextPageParam: page => page.nextCursor ?? undefined,
 });
 
 export const useFinancialGoal = (id: string, { demoMode, idToken }: PlanningAccess) => useQuery({
   queryKey: financialGoalQueryKey(id),
+  refetchOnMount: "always",
   queryFn: async () => demoMode ? demoGoalDetail(id) : ledgerApi.financialGoal(id, idToken),
 });

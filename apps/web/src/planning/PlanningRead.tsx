@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Amt } from "../components/Amt";
 import { exactMxn } from "../lib/format";
 
-export type PlanningPane = "budget" | "income" | "goals";
+export type PlanningPane = "budget" | "income";
 export type PlanningAccess = { readonly idToken: string; readonly demoMode: boolean };
 
 const shortDay = new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });

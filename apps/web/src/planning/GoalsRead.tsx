@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useId, useState } from "react";
 import type { GoalSummary } from "../api/planning-types";
 import { longDateFormatter } from "../lib/format";
-import { Amount, dayLabel, EvidenceButton, PlanBar, PlanMetric, ReadState, type PlanningAccess } from "./PlanningRead";
+import { Amount, dayLabel, EvidenceButton, ReadState, type PlanningAccess } from "./PlanningRead";
 import { useFinancialGoal, useFinancialGoals } from "./planning-queries";
 
 const statusLabel = { planned: "Planeada", active: "Activa", completed: "Completada", archived: "Archivada" } as const;
@@ -11,115 +11,136 @@ const actionLabel: Readonly<Record<string, string>> = {
   record_payment: "Pago registrado", correct_payment: "Pago corregido", void_payment: "Pago anulado",
 };
 
-function GoalDetailRead({ id, access, onBack, onOpenEvent }: {
-  id: string; access: PlanningAccess; onBack: () => void;
-  onOpenEvent: (id: string, signal: AbortSignal) => Promise<void>;
-}) {
+function GoalHistory({ id, access }: { id: string; access: PlanningAccess }) {
   const query = useFinancialGoal(id, access);
-  const goal = query.data;
-  return <div className="plan-read-body">
-    <button type="button" className="text-button plan-action plan-back" autoFocus onClick={onBack}>← Todas las metas</button>
-    {query.isError ? <ReadState label="No pudimos consultar esta meta." failed retry={() => void query.refetch()} />
-      : !goal ? <ReadState label="Consultando meta…" /> : <>
-      <section className="plan-feature">
-        <p className="plan-meta">{statusLabel[goal.status]}{goal.targetDate ? ` · Fecha objetivo ${dayLabel(goal.targetDate)}` : ""}</p>
-        <h3 className="plan-goal-title plan-sensitive">{goal.name}</h3>
-        <p className="plan-meta">Pendiente total</p>
-        <strong className="plan-big"><Amount value={goal.remainingMxnMinor} /></strong>
-        <PlanBar value={goal.paidMxnMinor} limit={goal.totalBudgetMxnMinor} />
-        <div className="plan-row-head">
-          <span>Pagado <Amount value={goal.paidMxnMinor} /></span>
-          <span>Presupuesto <Amount value={goal.totalBudgetMxnMinor} /></span>
-        </div>
-      </section>
-      <dl className="plan-metric-grid">
-        <PlanMetric label="Presupuesto original" value={<Amount value={goal.originalBudgetMxnMinor} />} />
-        <PlanMetric label="Asignado" value={<Amount value={goal.allocatedMxnMinor} />} />
-        <PlanMetric label="Sin asignar" value={<Amount value={goal.unallocatedMxnMinor} />} />
-        <PlanMetric label="Pendiente de partidas" value={<Amount value={goal.outstandingAllocatedMxnMinor} />} />
-      </dl>
-      <section className="plan-section">
-        <h3>Partidas y pagos</h3>
-        <p className="plan-meta">Los pagos de la meta se muestran por su fuente. Un vínculo abre el cobro registrado.</p>
-        {goal.allocations.length === 0 && <p className="plan-notice">Sin partidas asignadas.</p>}
-        {goal.allocations.map(allocation => {
-          const payments = goal.payments.filter(payment => payment.allocationId === allocation.id);
-          return <details key={allocation.id} className="plan-disclosure">
-            <summary><span className="plan-sensitive">{allocation.name}{allocation.status === "archived" ? " · Archivada" : ""}</span>
-              <small>Pendiente <Amount value={allocation.remainingMxnMinor} /></small></summary>
-            {allocation.expectedPaymentDate && <p className="plan-meta">Fecha prevista {dayLabel(allocation.expectedPaymentDate)}</p>}
-            <PlanBar value={allocation.paidMxnMinor} limit={allocation.allocatedMxnMinor} />
-            <div className="plan-row-head">
-              <span>Pagado <Amount value={allocation.paidMxnMinor} /></span>
-              <span>Asignado <Amount value={allocation.allocatedMxnMinor} /></span>
-            </div>
-            {!payments.length && <p className="plan-meta">Sin pagos registrados.</p>}
-            <ul className="plan-rows">{payments.map(payment => {
-              const warning = goal.linkedPaymentWarnings.find(item => item.paymentId === payment.id);
-              const movement = payment.ledgerMovementId;
-              return <li key={payment.id}>
-                <div className="plan-row-head"><strong>{dayLabel(payment.paymentDate)}</strong><Amount value={payment.amountMxnMinor} /></div>
-                <p className="plan-meta">{payment.status === "voided" ? "Pago anulado · " : ""}
-                  {payment.source === "manual_attestation" ? "Pago declarado" : "Cargo de Ledger vinculado"}</p>
-                {warning && <p className="plan-notice">{warning.message}</p>}
-                {movement && <EvidenceButton label="Ver movimiento vinculado" onOpen={signal => onOpenEvent(movement, signal)} />}
-              </li>;
-            })}</ul>
-          </details>;
-        })}
-      </section>
-      <details className="plan-disclosure">
-        <summary>Historial de cambios</summary>
-        {!goal.history.length ? <p className="plan-meta">No hay cambios registrados.</p> :
-          <ul className="plan-rows">{goal.history.map(change => <li key={change.operationId}>
+  const history = query.data?.history;
+  return <>
+    {query.isError && <ReadState failed retry={() => void query.refetch()}
+      label={history ? "No pudimos actualizar el historial. Se muestra la última lectura." : "No pudimos consultar el historial."} />}
+    {query.isPending && <ReadState label="Consultando historial…" />}
+    {history && (history.length === 0 ? <p className="plan-meta">No hay cambios registrados.</p> :
+          <ul className="plan-rows">{history.map(change => <li key={change.operationId}>
             <strong>{Object.hasOwn(actionLabel, change.action) ? actionLabel[change.action] : "Cambio registrado"}</strong>
             <p className="plan-meta">{longDateFormatter.format(new Date(change.appliedAt))}</p>
-          </li>)}</ul>}
-      </details>
-    </>}
+          </li>)}</ul>)}
+  </>;
+}
+
+function GoalDetail({ goal, access, onOpenEvent }: {
+  goal: GoalSummary; access: PlanningAccess;
+  onOpenEvent: (id: string, signal: AbortSignal) => Promise<void>;
+}) {
+  const [historyOpen, setHistoryOpen] = useState(false);
+  return <div className="goal-detail">
+    <dl className="goal-detail-metrics">
+      <div><dt>Presupuesto original</dt><dd><Amount value={goal.originalBudgetMxnMinor} /></dd></div>
+      <div><dt>Sin asignar, incluido en el pendiente</dt><dd><Amount value={goal.unallocatedMxnMinor} /></dd></div>
+    </dl>
+    <h4>Partidas y pagos</h4>
+    {goal.allocations.length === 0 && <p className="plan-meta">Sin partidas asignadas.</p>}
+    {goal.allocations.map(allocation => {
+      const payments = goal.payments.filter(payment => payment.allocationId === allocation.id);
+      return <details key={allocation.id} className="plan-disclosure goal-allocation">
+        <summary>
+          <span className="goal-allocation-summary">
+            <span className="plan-row-head">
+              <strong className="plan-sensitive">{allocation.name}{allocation.status === "archived" ? " · Archivada" : ""}</strong>
+              <span><Amount value={allocation.remainingMxnMinor} /> por pagar</span>
+            </span>
+            <span className="plan-meta"><Amount value={allocation.paidMxnMinor} /> pagados de <Amount value={allocation.allocatedMxnMinor} /> asignados</span>
+          </span>
+        </summary>
+        {allocation.expectedPaymentDate && <p className="plan-meta">Fecha prevista {dayLabel(allocation.expectedPaymentDate)}</p>}
+        {!payments.length && <p className="plan-meta">Sin pagos registrados.</p>}
+        <ul className="plan-rows">{payments.map(payment => {
+          const warning = goal.linkedPaymentWarnings.find(item => item.paymentId === payment.id);
+          const movement = payment.ledgerMovementId;
+          return <li key={payment.id}>
+            <div className="plan-row-head"><strong>{dayLabel(payment.paymentDate)}</strong><Amount value={payment.amountMxnMinor} /></div>
+            <p className="plan-meta">{payment.status === "voided" ? "Pago anulado · " : ""}
+              {payment.source === "manual_attestation" ? "Pago declarado" : "Cargo de Ledger vinculado"}</p>
+            {warning && <p className="plan-notice">{warning.message}</p>}
+            {movement && <EvidenceButton label="Ver movimiento vinculado" onOpen={signal => onOpenEvent(movement, signal)} />}
+          </li>;
+        })}</ul>
+      </details>;
+    })}
+    <details className="plan-disclosure" onToggle={event => setHistoryOpen(event.currentTarget.open)}>
+      <summary>Historial de cambios</summary>
+      {historyOpen && <GoalHistory id={goal.id} access={access} />}
+    </details>
   </div>;
 }
 
-function GoalRow({ goal, onOpen, focused }: { goal: GoalSummary; onOpen: () => void; focused: boolean }) {
-  const ref = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (focused) ref.current?.focus();
-  }, [focused]);
-  return <button ref={ref} type="button" className="goal-read-row" onClick={onOpen}>
-    <span className="plan-row-head"><strong className="plan-sensitive">{goal.name}</strong><span aria-hidden="true">→</span></span>
-    <span className="plan-meta">{statusLabel[goal.status]}{goal.targetDate ? ` · ${dayLabel(goal.targetDate)}` : ""}</span>
-    <PlanBar value={goal.paidMxnMinor} limit={goal.totalBudgetMxnMinor} />
-    <span className="plan-row-head">
-      <span>Pagado <Amount value={goal.paidMxnMinor} /></span>
-      <span>Pendiente <Amount value={goal.remainingMxnMinor} /></span>
-    </span>
-  </button>;
+function GoalCard({ goal, group, access, onOpenEvent }: {
+  goal: GoalSummary; group: string; access: PlanningAccess;
+  onOpenEvent: (id: string, signal: AbortSignal) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  // These proportions only draw the three amounts already calculated by Olbia.
+  const portion = (amount: number) => `${goal.totalBudgetMxnMinor > 0 ? amount / goal.totalBudgetMxnMinor * 100 : 0}%`;
+  return <details className="goal-card" name={group} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary className="goal-overview">
+      <span className="goal-card-top">
+        <span>
+          <strong className="goal-name plan-sensitive">{goal.name}</strong>
+          <span className="plan-meta goal-date">{goal.status !== "active" ? `${statusLabel[goal.status]} · ` : ""}
+            {goal.targetDate ? dayLabel(goal.targetDate) : "Sin fecha objetivo"}</span>
+        </span>
+        <span className="goal-outstanding"><strong><Amount value={goal.remainingMxnMinor} /></strong>
+          <span className="plan-meta">Pendiente total</span></span>
+        <span className="goal-chevron" aria-hidden="true" />
+      </span>
+      <span className="plan-bar goal-progress" aria-hidden="true">
+        <span className="goal-paid" style={{ width: portion(goal.paidMxnMinor) }} />
+        <span className="goal-allocated" style={{ width: portion(goal.outstandingAllocatedMxnMinor) }} />
+        <span className="goal-unallocated" style={{ width: portion(goal.unallocatedMxnMinor) }} />
+      </span>
+      <span className="goal-card-figures">
+        <span>Pagado <strong><Amount value={goal.paidMxnMinor} /></strong></span>
+        <span>Presupuesto vigente <strong><Amount value={goal.totalBudgetMxnMinor} /></strong></span>
+      </span>
+      {goal.linkedPaymentWarnings.length > 0 && <span className="plan-meta plan-negative">Revisar evidencia de pago</span>}
+    </summary>
+    {open && <GoalDetail goal={goal} access={access} onOpenEvent={onOpenEvent} />}
+  </details>;
 }
+
+const byTargetDate = (a: GoalSummary, b: GoalSummary) =>
+  (a.targetDate ?? "9999-12-31").localeCompare(b.targetDate ?? "9999-12-31") || a.name.localeCompare(b.name, "es-MX");
 
 export function GoalsRead({ access, onOpenEvent }: {
   access: PlanningAccess; onOpenEvent: (id: string, signal: AbortSignal) => Promise<void>;
 }) {
-  const [selected, setSelected] = useState<string>();
-  const lastGoal = useRef<string | undefined>(undefined);
+  const group = useId();
   const query = useFinancialGoals(access);
-  const goals = query.data?.pages.flatMap(page => page.goals);
-  if (selected) return <GoalDetailRead access={access} id={selected} onBack={() => { lastGoal.current = selected; setSelected(undefined); }} onOpenEvent={onOpenEvent} />;
+  const goals = query.data?.pages.flatMap(page => page.goals).sort(byTargetDate);
   const visible = goals?.filter(goal => goal.status !== "archived") ?? [];
   const archived = goals?.filter(goal => goal.status === "archived") ?? [];
-  return <div className="plan-read-body">
-    <p className="plan-meta">Presupuestos, partidas y pagos de tus metas. Configúralas en ChatGPT con Olbia.</p>
+  return <section className="goal-section" aria-labelledby={group}>
+    <header className="goal-section-header">
+      <h3 id={group}>Metas financieras</h3>
+      <span className="plan-meta">Todos los periodos · MXN</span>
+    </header>
     {!goals ? <ReadState label={query.isError ? "No pudimos consultar tus metas." : "Consultando tus metas…"}
       failed={query.isError} retry={query.isError ? () => void query.refetch() : undefined} /> : <>
       {query.isRefetchError && <ReadState label="No pudimos actualizar la consulta. Se muestra la última lectura."
         failed retry={() => void query.refetch()} />}
-      {!visible.length && <p className="plan-notice">{goals.length ? "Las metas de esta lista están archivadas." : "Aún no hay metas configuradas en Olbia."}</p>}
-      <div className="goal-read-list">{visible.map(goal => <GoalRow key={goal.id} goal={goal} focused={lastGoal.current === goal.id} onOpen={() => setSelected(goal.id)} />)}</div>
+      {!visible.length && !query.hasNextPage && <p className="plan-notice">{archived.length ? "Todas tus metas están archivadas." : "Crea tu primera meta en ChatGPT con Olbia."}</p>}
+      {visible.length > 0 && <div className="goal-read-list">{visible.map(goal =>
+        <GoalCard key={goal.id} goal={goal} group={group} access={access} onOpenEvent={onOpenEvent} />)}</div>}
+      {goals.length > 0 && <div className="goal-legend">
+        <span><b className="goal-paid" aria-hidden="true" />Pagado</span>
+        <span><b className="goal-allocated" aria-hidden="true" />Partidas por pagar</span>
+        <span><b className="goal-unallocated" aria-hidden="true" />Sin asignar</span>
+      </div>}
       {archived.length > 0 && <details className="plan-disclosure"><summary>Metas archivadas</summary>
-        <div className="goal-read-list">{archived.map(goal => <GoalRow key={goal.id} goal={goal} focused={lastGoal.current === goal.id} onOpen={() => setSelected(goal.id)} />)}</div>
+        <div className="goal-read-list">{archived.map(goal =>
+          <GoalCard key={goal.id} goal={goal} group={group} access={access} onOpenEvent={onOpenEvent} />)}</div>
       </details>}
       {query.isFetchNextPageError && <ReadState label="No pudimos consultar más metas." failed />}
       {query.hasNextPage && <button type="button" className="secondary-button plan-action" disabled={query.isFetchingNextPage}
         onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage ? "Consultando…" : "Ver más metas"}</button>}
     </>}
-  </div>;
+  </section>;
 }

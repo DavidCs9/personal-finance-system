@@ -48,7 +48,6 @@
 .plan-feature { display: grid; gap: 9px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--ivory); }
 .plan-feature p { margin: 0; }
 .plan-big { font-size: clamp(26px, 8vw, 44px); line-height: 1.06; letter-spacing: -.035em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.plan-goal-title { margin: 0 0 5px; font: 600 26px/1.12 Fraunces, serif; overflow-wrap: anywhere; }
 .plan-meta { margin: 0; color: var(--ink-soft); font-size: 12px; font-weight: 400; line-height: 1.45; }
 .plan-negative, .budget-shortcut .plan-negative strong { color: var(--red-dark); }
 .plan-unknown { font-size: .85em; font-weight: 600; }
@@ -92,22 +91,62 @@ html.private-mode .plan-sensitive { filter: blur(7px); user-select: none; }
 .plan-read-state p { margin: 0; }
 .plan-read-state[role="alert"] { border-color: #d8aca6; color: var(--red-dark); }
 .plan-action { min-height: 44px; }
-.plan-back { justify-self: start; padding-inline-start: 0; color: var(--ink); font-weight: 700; }
-.goal-read-list { display: grid; gap: 8px; }
-.goal-read-row {
+.goal-section {
+  --goal-paid: var(--ink);
+  --goal-allocated: #c8bfab;
+  --goal-unallocated: #eee7db;
+  --goal-hatch: #a3967e;
   display: grid;
-  gap: 6px;
-  width: 100%;
-  text-align: left;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 5px;
+}
+.goal-section-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 12px; }
+.goal-section-header h3 { margin: 0; font-size: 15px; }
+.goal-read-list { display: grid; gap: 8px; }
+.goal-card {
+  min-width: 0;
   border-radius: 11px;
-  padding: 12px;
   border: 1px solid var(--line);
   background: var(--ivory);
   color: var(--ink);
 }
-.goal-read-row .plan-row-head > strong { font-size: 16px; }
-.goal-read-row:hover { background: #f1ebe2; }
-.plan-read-body :focus-visible, .planning-read-header :focus-visible {
+.goal-overview { display: grid; gap: 6px; padding: 12px; border-radius: inherit; list-style: none; cursor: pointer; }
+.goal-overview::-webkit-details-marker { display: none; }
+.goal-card-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, max-content) 8px;
+  gap: 3px 8px;
+  overflow-wrap: anywhere;
+}
+.goal-name { display: block; font: 600 clamp(20px, 5.7vw, 24px)/1.12 Fraunces, serif; letter-spacing: -.035em; }
+.goal-date { display: block; margin-top: 3px; }
+.goal-outstanding { text-align: right; max-inline-size: clamp(118px, 38vw, 205px); }
+.goal-outstanding > strong { display: block; font-size: clamp(17px, 4.9vw, 23px); line-height: 1.15; letter-spacing: -.04em; }
+.goal-outstanding > span { display: block; margin-top: 2px; }
+.goal-chevron { width: 7px; height: 7px; margin-top: 5px; color: var(--ink-soft); border: solid currentColor; border-width: 0 1px 1px 0; transform: rotate(45deg); }
+.goal-card[open] > .goal-overview .goal-chevron { transform: translateY(4px) rotate(225deg); }
+.goal-progress { display: flex; height: 8px; margin: 2px 0 0; border-radius: 8px; background: var(--goal-unallocated); overflow: hidden; }
+.goal-progress > span { flex: 0 0 auto; }
+.goal-paid { background: var(--goal-paid); }
+.goal-allocated { background: var(--goal-allocated); }
+.goal-unallocated { background: repeating-linear-gradient(135deg, var(--goal-unallocated) 0 4px, var(--goal-hatch) 4px 5px, var(--goal-unallocated) 5px 7px); }
+.goal-card-figures, .goal-legend { display: flex; flex-wrap: wrap; gap: 3px 10px; color: var(--ink-soft); font-size: 12px; overflow-wrap: anywhere; }
+.goal-card-figures { justify-content: space-between; }
+.goal-card-figures strong { color: var(--ink); }
+.goal-card .amt { font-variant-numeric: tabular-nums; }
+.goal-legend > span { display: inline-flex; align-items: center; gap: 5px; }
+.goal-legend b { width: 10px; height: 7px; border-radius: 2px; }
+html.private-mode .goal-legend b { visibility: hidden; }
+.goal-detail { border-top: 1px solid var(--line); padding: 10px 12px; overflow-wrap: anywhere; }
+.goal-detail h4 { margin: 12px 0 4px; font-size: 14px; }
+.goal-detail-metrics { display: grid; gap: 4px; margin: 0; font-size: 13px; }
+.goal-detail-metrics > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; }
+.goal-detail-metrics dt { color: var(--ink-soft); }
+.goal-detail-metrics dd { margin: 0; font-weight: 700; }
+.goal-allocation-summary { display: grid; gap: 2px; padding-block: 7px; flex: 1 1 0; min-width: 0; }
+.goal-section > .plan-action { justify-self: start; }
+.goal-section :focus-visible, .plan-read-body :focus-visible, .planning-read-header :focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
