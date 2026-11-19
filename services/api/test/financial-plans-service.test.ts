@@ -55,9 +55,14 @@ beforeEach(async () => {
 it('exposes the goals created and amended via MCP on the authenticated web read routes', async () => {
   const { handler: readHandler } = await import('../src/http/ledger-api.js');
   const read = async (path: string) => {
-    const event = { version: '2.0', routeKey: `GET ${path}`, rawPath: path, rawQueryString: '', headers: {},
-      requestContext: { http: { method: 'GET', path }, authorizer: { jwt: { claims: { sub: 'owner' }, scopes: [] } } },
-      isBase64Encoded: false } as Parameters<typeof readHandler>[0];
+    const routeKey = `GET ${path}`;
+    const event = { version: '2.0', routeKey, rawPath: path, rawQueryString: '', headers: {}, isBase64Encoded: false,
+      requestContext: {
+        accountId: 'fixture', apiId: 'fixture', domainName: 'example.test', domainPrefix: 'example',
+        requestId: 'goal-bridge-test', routeKey, stage: '$default', time: now.toISOString(), timeEpoch: +now,
+        http: { method: 'GET', path, protocol: 'HTTP/1.1', sourceIp: '127.0.0.1', userAgent: 'vitest' },
+        authorizer: { jwt: { claims: { sub: 'owner' }, scopes: [] } },
+      } };
     const response = await readHandler(event, { awsRequestId: 'goal-bridge-test' } as never);
     expect(response.statusCode).toBe(200);
     return JSON.parse(String(response.body));
