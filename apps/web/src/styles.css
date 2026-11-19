@@ -39,6 +39,11 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .brand-mark i { right: 5px; }
 .brand-mark span::after, .brand-mark i::after { content: ""; position: absolute; left: 2px; top: 6px; width: 1px; height: 7px; background: #f4eee2; }
 .top-actions { display: flex; align-items: center; gap: 6px; }
+.top-actions .icon-button { width: 44px; height: 44px; }
+@media (max-width: 359px) {
+  .top-actions { gap: 3px; }
+  .sync-state-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+}
 .sync-state { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
 .sync-state i { width: 7px; height: 7px; border-radius: 50%; background: #4f896e; box-shadow: 0 0 0 3px #4f896e16; }
 .mock-badge {

@@ -22,13 +22,14 @@ export function PlanningEntries({ month, access, onOpen, onOpenEvent }: {
   </section>;
 }
 
-export function FinancialPlanningDialog({ pane, month, access, suspended, onClose, onOpenEvent, onOpenPayslip }: {
+export function FinancialPlanningDialog({ pane, month, access, suspended, onClose, onOpenEvent, onOpenPayslip, onUploadNomina }: {
   pane: PlanningPane; month: string; access: PlanningAccess; suspended: boolean; onClose: () => void;
   onOpenEvent: (id: string, signal: AbortSignal) => Promise<void>;
   onOpenPayslip: (month: string, id: string, signal: AbortSignal) => Promise<void>;
+  onUploadNomina?: () => void;
 }) {
   return <PlanningReadDialog title={titles[pane]} suspended={suspended} onClose={onClose}>
     {pane === "budget" && <BudgetRead month={month} access={access} onOpenEvent={onOpenEvent} />}
-    {pane === "income" && <IncomeRead month={month} access={access} onOpenPayslip={onOpenPayslip} />}
+    {pane === "income" && <IncomeRead month={month} access={access} onOpenPayslip={onOpenPayslip} onUploadNomina={onUploadNomina} />}
   </PlanningReadDialog>;
 }

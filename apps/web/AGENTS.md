@@ -10,6 +10,8 @@ Design for David alone and his real data. Follow the navigation, screen responsi
 
 Follow the binding [MCP-first direction](../../docs/product-north-star.md#mcp-first-chatgpt-como-interfaz-principal): ChatGPT is the primary interface, and the web app complements it for review, imports and dashboards. Ordinary financial management must be available through the single Olbia MCP connection without requiring a web form. Web and MCP call the same shared domain services; never put a second financial engine or authoritative client-only state in the UI.
 
+David approved the simplified Resumen on 2026-11-18: Presupuesto → Ritmo → En qué se fue → Entradas del mes. Follow the UI guide for generic bank entries, expected income, refunds and their details; do not restore duplicated cash/payroll blocks or generic tab shortcuts.
+
 ## Implement and review
 
 - Verify a narrow mobile viewport first, safe areas, readable primary state without horizontal scroll, comfortable touch targets and reachable actions. Desktop adapts the same contained experience.

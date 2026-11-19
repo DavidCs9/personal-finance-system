@@ -10,9 +10,10 @@ const ruleLabels = (source: IncomeSource) => source.paymentRules
     : rule.kind === "previous_business_day" ? `Día ${rule.day} o hábil anterior` : `Día ${rule.day}`).join(" · ")
   : source.expectedPaymentDate ? dayLabel(source.expectedPaymentDate) : source.paymentDays.map(day => `Día ${day}`).join(" · ");
 
-export function IncomeRead({ month, access, onOpenPayslip }: {
+export function IncomeRead({ month, access, onOpenPayslip, onUploadNomina }: {
   month: string; access: PlanningAccess;
   onOpenPayslip: (month: string, id: string, signal: AbortSignal) => Promise<void>;
+  onUploadNomina?: () => void;
 }) {
   const query = useExpectedIncome(month, access);
   const pages = query.data?.pages ?? [];
@@ -90,6 +91,7 @@ export function IncomeRead({ month, access, onOpenPayslip }: {
 
     <section className="plan-section plan-payroll">
       <h3>Nómina CFDI registrada</h3>
+      {onUploadNomina && <button type="button" className="text-button plan-action" onClick={onUploadNomina}>Añadir recibos de nómina</button>}
       <p className="plan-meta">Neto según los XML importados, separado de las expectativas.</p>
       {first.actualPayroll.length === 0 ? <p className="plan-notice">Sin recibos de nómina en este periodo.</p>
         : first.monthlyTotals.filter(total => total.actualPayslipCount > 0).map(total => <details className="plan-disclosure" key={total.month} open={total.month === month}>

@@ -98,6 +98,42 @@ describe('posted bank credits and the shared month close', () => {
   const prepare = (input: Record<string, unknown>) => call('preview_manual_credit', input) as Promise<{ operationId: string }>;
   const post = (operationId: string) => call('apply_manual_credit', { operationId });
 
+  it('delivers mixed MCP bank entries and expected concepts through the authenticated web snapshot without changing spending', async () => {
+    const { getMonthDashboard } = await import('../src/months/dashboard.js');
+    const { handler: readHandler } = await import('../src/http/ledger-api.js');
+    const before = await getMonthDashboard('owner', '2026-11');
+    const expected = await service.previewFinancialChange('owner', 'income', {
+      action:'create',name:'Expected payroll from Example Co',employer:'Example Co',amountMxnMinor:18000_00,
+      frequency:'monthly',paymentDays:[30],startDate:'2026-11-01',confidence:'estimated',
+    });
+    await apply(expected.operationId);
+    for (const item of [
+      { ...incomeCredit, description:'Example severance',amountMinor:82000_00,evidenceReference:'MIXED-1' },
+      { ...incomeCredit, incomeType:'otro',description:'Monitor sale',amountMinor:4500_00,evidenceReference:'MIXED-2' },
+      { ...incomeCredit, creditType:'refund',incomeType:undefined,description:'Example cash refund',amountMinor:1850_00,evidenceReference:'MIXED-3' },
+      { ...incomeCredit, creditType:'refund',incomeType:undefined,accountKind:'credit_card',description:'Example card refund',amountMinor:999_99,evidenceReference:'MIXED-4' },
+    ]) await post((await prepare(item)).operationId);
+    const path='/agent/month-snapshot';
+    const event={version:'2.0',routeKey:`GET ${path}`,rawPath:path,rawQueryString:'month=2026-11',queryStringParameters:{month:'2026-11'},
+      headers:{},isBase64Encoded:false,requestContext:{accountId:'fixture',apiId:'fixture',domainName:'example.test',domainPrefix:'example',
+        requestId:'mixed-entries',routeKey:`GET ${path}`,stage:'$default',time:now.toISOString(),timeEpoch:+now,
+        http:{method:'GET',path,protocol:'HTTP/1.1',sourceIp:'127.0.0.1',userAgent:'vitest'},
+        authorizer:{jwt:{claims:{sub:'owner'},scopes:[]}}}};
+    const response=await readHandler(event,{awsRequestId:'mixed-entries'} as never);
+    expect(response.statusCode).toBe(200);
+    const web=JSON.parse(String(response.body));
+    expect(web).toEqual(await runAgentTool('owner','month_snapshot',{month:'2026-11'}));
+    expect(web.postedCredits).toMatchObject({recordedOperatingCashInflowsMinor:88350_00,cardRefundsMinor:999_99,
+      credits:expect.arrayContaining([expect.objectContaining({description:'Example severance'}),
+        expect.objectContaining({description:'Example cash refund'}),expect.objectContaining({description:'Monitor sale'})])});
+    expect(web.futureIncome).toMatchObject({status:'reconciliation_needed',scheduledMinor:null,hasMore:false,
+      occurrences:[expect.objectContaining({name:'Expected payroll from Example Co',amountMxnMinor:18000_00,paymentDate:'2026-11-30'})]});
+    expect(web.spending).toEqual(before.spending);
+    expect(web.budget).toEqual(before.budget);
+    expect(web.cash).toEqual(before.cash);
+    expect((await fixture.sql.query('SELECT uuid FROM olbia.payslips')).rows).toEqual([]);
+  });
+
   it('posts a finiquito exactly once, leaves the captured bank balance alone, and never treats future payroll as received', async () => {
     const { getMonthDashboard } = await import('../src/months/dashboard.js');
     const { createManualCashSnapshot } = await import('../src/wealth/service.js');

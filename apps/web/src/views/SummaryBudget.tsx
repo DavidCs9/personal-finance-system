@@ -30,7 +30,7 @@ function BudgetHero({ status, privateMode, onOpen }: { status: BudgetStatus; pri
   const tone = warning === "100" ? "over" : warning === "90" ? "near" : warning === "70" ? "watch" : "";
   const usedWidth = widthPercent(status.countedSpentMxnMinor, limit);
   const pendingWidth = widthPercent(limit - margin, limit) - usedWidth;
-  const usageCopy = withCommitments !== null && hasCommitments ? <><Amt>{percent(withCommitments)}</Amt> con compromisos</> : null;
+  const usageCopy = warning !== "normal" && withCommitments !== null && hasCommitments ? <><Amt>{percent(withCommitments)}</Amt> con compromisos</> : null;
   return <section className={`summary-budget-panel summary-budget-hero ${tone}${status.warning === "100" && active ? " spent-limit" : ""}`} aria-labelledby="summary-month-budget">
     <div className="summary-budget-top">
       <div>
@@ -52,11 +52,8 @@ function BudgetHero({ status, privateMode, onOpen }: { status: BudgetStatus; pri
     <dl className="summary-budget-facts">
       <div><dt><i aria-hidden="true" />Usado{usage !== null && <> · <Amt>{percent(usage)}</Amt></>}</dt><dd><BudgetAmount minor={status.countedSpentMxnMinor} /></dd></div>
       <div><dt><i aria-hidden="true" />Compromisos</dt><dd><BudgetAmount minor={status.upcomingCommitmentsMxnMinor} /></dd></div>
-      <div><dt><i aria-hidden="true" />Margen</dt><dd><BudgetAmount minor={margin} /></dd></div>
     </dl>
     <div className="summary-budget-foot">
-      {hasCommitments && <p><BudgetAmount minor={status.upcomingFixedMxnMinor} /> de fijos por conciliar ·{" "}
-        <BudgetAmount minor={status.upcomingMsiMxnMinor} /> en MSI pendientes.</p>}
       {status.incompleteScheduleMovementIds.length > 0 && <p>Hay calendarios MSI incompletos. El margen sólo contempla compromisos conocidos.</p>}
       {status.invalidFixedPaymentLinkIds.length > 0 && <p>Hay vínculos de gastos fijos por revisar.</p>}
       {status.uncertainMxnMinor !== 0 && <p>Incluye <BudgetAmount minor={status.uncertainMxnMinor} /> por confirmar.</p>}
@@ -163,9 +160,6 @@ function BudgetPace({ status, privateMode }: { status: BudgetStatus; privateMode
           <PaceChart values={timeline.cumulativeMinorByDay} limit={limit} days={status.daysInMonth} month={status.month} />
           <figcaption><span>Gasto acumulado con fecha</span><span>Ritmo del presupuesto</span></figcaption>
         </figure>}
-        <p className="summary-budget-pace-facts">
-          <b><Amt>{percent(status.utilizationPercent ?? 0)}</Amt> del presupuesto usado</b> en el {percent(status.elapsedPercent)} del mes.
-        </p>
         {timeline && timeline.unplottedEntries > 0 && <p>El total incluye <BudgetAmount minor={timeline.unplottedMinor} /> sin fecha graficable en el periodo.</p>}
       </>}
   </section>;

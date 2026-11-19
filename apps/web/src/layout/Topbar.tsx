@@ -6,18 +6,16 @@ export function Topbar({
   onRefresh,
   privateMode,
   onTogglePrivateMode,
+  onOpenPreferences,
   demoMode,
-  showSignOut,
-  onSignOut,
 }: {
   syncing: boolean;
   refreshing: boolean;
   onRefresh(): void;
   privateMode: boolean;
   onTogglePrivateMode(): void;
+  onOpenPreferences(): void;
   demoMode: boolean;
-  showSignOut: boolean;
-  onSignOut(): void;
 }) {
   return (
     <header className="topbar">
@@ -30,7 +28,7 @@ export function Topbar({
         ) : (
           <span className="sync-state">
             <i />
-            {syncing ? "Sincronizando" : "Al día"}
+            <span className="sync-state-label">{syncing ? "Sincronizando" : "Al día"}</span>
           </span>
         )}
         <button
@@ -53,17 +51,7 @@ export function Topbar({
         >
           ↻
         </button>
-        {demoMode ? (
-          <button className="text-button" type="button" onClick={onSignOut}>
-            Salir del mock
-          </button>
-        ) : (
-          showSignOut && (
-            <button className="text-button" type="button" onClick={onSignOut}>
-              Salir
-            </button>
-          )
-        )}
+        <button className="icon-button" type="button" onClick={onOpenPreferences} aria-label="Preferencias">⋯</button>
       </div>
     </header>
   );

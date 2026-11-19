@@ -14,9 +14,8 @@ export function AppShell({
   onRefresh,
   privateMode,
   onTogglePrivateMode,
+  onOpenPreferences,
   demoMode,
-  showSignOut,
-  onSignOut,
   error,
   children,
 }: {
@@ -29,9 +28,8 @@ export function AppShell({
   onRefresh(): void;
   privateMode: boolean;
   onTogglePrivateMode(): void;
+  onOpenPreferences(): void;
   demoMode: boolean;
-  showSignOut: boolean;
-  onSignOut(): void;
   error?: string;
   children: ReactNode;
 }) {
@@ -52,9 +50,8 @@ export function AppShell({
         onRefresh={onRefresh}
         privateMode={privateMode}
         onTogglePrivateMode={onTogglePrivateMode}
+        onOpenPreferences={onOpenPreferences}
         demoMode={demoMode}
-        showSignOut={showSignOut}
-        onSignOut={onSignOut}
       />
 
       <div className={`app-content ${contentClass}`}>

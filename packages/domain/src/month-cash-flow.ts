@@ -1,5 +1,6 @@
 import type { BankCredit } from './bank-credit.js';
 import type { PayrollClosure } from './payroll.js';
+import type { IncomeOccurrence } from './financial-plans.js';
 import { financialSum } from './financial-plans.js';
 import { dayKeyInZone, daysInCalendarMonth } from './month-summary.js';
 import { isManualCashAccountId, isWealthSnapshotStale, type ManualCashAccountId, type WealthSnapshotSource } from './wealth.js';
@@ -18,7 +19,29 @@ export interface MonthFutureIncome {
   readonly scheduledMinor: number | null;
   readonly knownUpcomingMinor: number;
   readonly unknownOccurrences: number;
+  /** Additive read detail; optional while older clients/fixtures transition. */
+  readonly occurrences?: readonly IncomeOccurrence[];
+  readonly hasMore?: boolean;
 }
+
+/** Expected entries remain separate from bank receipts; uncertainty never becomes a zero total. */
+export const summarizeFutureIncome = (month: string, now: Date, schedule: readonly IncomeOccurrence[], observedIncome: boolean, hasMore = false): MonthFutureIncome => {
+  const today = dayKeyInZone(now);
+  if (month < today.slice(0, 7)) return { status: 'closed', scheduledMinor: null, knownUpcomingMinor: 0,
+    unknownOccurrences: 0, occurrences: [], hasMore: false };
+  const occurrences = schedule.filter(item => (item.paymentDate?.slice(0, 7) ?? item.periodMonth) === month);
+  const unknownOccurrences = occurrences.filter(item => item.amountMxnMinor === null
+    || item.paymentDate === null && item.amountMxnMinor !== 0).length;
+  const upcoming = occurrences.filter(item => item.paymentDate !== null && item.paymentDate > today);
+  const knownUpcomingMinor = financialSum(upcoming.flatMap(item => item.amountMxnMinor === null ? [] : [item.amountMxnMinor]));
+  const timingUnclear = occurrences.some(item => item.amountMxnMinor !== 0 && item.paymentDate !== null && item.paymentDate <= today
+    || item.reconciliationStatus === 'possible_payroll_overlap' || item.calendarStatus === 'cnbv_calendar_provisional');
+  const status = unknownOccurrences || hasMore ? 'unknown_amount_or_date'
+    : timingUnclear || observedIncome && occurrences.length ? 'reconciliation_needed'
+    : !occurrences.length ? 'unconfigured' : 'scheduled';
+  return { status, scheduledMinor: status === 'scheduled' ? knownUpcomingMinor : null, knownUpcomingMinor,
+    unknownOccurrences, occurrences, hasMore };
+};
 
 export const payrollFundReconciliation = (closure: PayrollClosure, fundEmployerKey: string, credit: BankCredit | undefined) => ({
   ...closure, fundEmployerKey,

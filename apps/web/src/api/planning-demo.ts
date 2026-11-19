@@ -1,6 +1,6 @@
 import {
   addCalendarMonths, computeBudgetStatus, DEFAULT_SPEND_CATEGORIES, financialGoalFacts, incomeOccurrences, proposeExpectedIncome,
-  type SpendingBudget,
+  summarizeFutureIncome, type BankCredit, type SpendingBudget,
 } from "@finance/domain";
 import { demoPlans, planFor } from "../monthly-plan";
 import { mockFeedForMonth } from "./mock-data";
@@ -9,6 +9,20 @@ import type { BudgetHistory, BudgetStatus, GoalDetail, GoalPage, IncomeSchedule 
 const demoNow = new Date("2026-07-12T18:00:00-06:00");
 const at = demoNow.toISOString();
 const linkedMovement = "evt_01J5A0A1";
+
+export const demoMonthCredits = (month: string): BankCredit[] => month !== "2026-07" ? [] : [
+  { movementId: "demo-severance", creditType: "income", incomeType: "finiquito", amountMinor: 82_000_00,
+    description: "Finiquito · Empresa de prueba", postedOn: "2026-07-08" },
+  { movementId: "demo-refund", creditType: "refund", incomeType: null, amountMinor: 1_850_00,
+    description: "Devolución · Tienda de prueba", postedOn: "2026-07-10" },
+  { movementId: "demo-sale", creditType: "income", incomeType: "otro", amountMinor: 4_500_00,
+    description: "Venta de monitor", postedOn: "2026-07-11" },
+].map(item => ({ ...item, creditType: item.creditType as BankCredit["creditType"], incomeType: item.incomeType as BankCredit["incomeType"],
+  accountKind: "cash", institution: "santander_mx", accountLastFour: "1234", currency: "MXN",
+  evidenceReference: item.movementId, fundEmployerKey: null }));
+
+export const demoMonthFutureIncome = (month: string) => summarizeFutureIncome(month, demoNow,
+  demoIncomeSchedule(month, month).occurrences, demoMonthCredits(month).some(item => item.creditType === "income" && item.incomeType !== "finiquito"));
 
 export function demoBudgetStatus(month: string, plan = planFor(demoPlans, month), includeSpendTimeline = false): BudgetStatus {
   const budget: SpendingBudget | null = month >= "2026-06" && month <= "2026-08" ? {
