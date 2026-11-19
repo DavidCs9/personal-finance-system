@@ -28,19 +28,15 @@ html.private-mode .summary-budget-limit .amt { color: transparent; text-shadow: 
 .over .summary-budget-meter i + i { background: var(--red); }
 .summary-budget-hero.spent-limit .summary-budget-meter i:first-child { background: var(--red); }
 .summary-budget-hero.spent-limit .summary-budget-facts dt i { background: var(--red); }
-.summary-budget-hero.spent-limit .summary-budget-facts div:last-child dt i { background: #ebe5d8; }
-.summary-budget-facts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; }
+.summary-budget-facts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
 html.private-mode .summary-budget-facts { margin-top: 12px; }
 .summary-budget-facts dt { color: var(--ink-soft); font-size: 11px; line-height: 1.25; }
 .summary-budget-facts dt i { display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 2px; background: var(--green); }
 .summary-budget-facts div:nth-child(2) dt i { background: #a58149; }
 .near .summary-budget-facts div:nth-child(2) dt i, .over .summary-budget-facts div:nth-child(2) dt i { background: var(--budget-near-bar); }
-.summary-budget-facts div:last-child dt i { background: #ebe5d8; }
 .summary-budget-facts dd { font-size: clamp(13px,2.55vw,24px); font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.035em; overflow-wrap: anywhere; margin-top: 3px; }
-.near .summary-budget-facts div:last-child dd, .over .summary-budget-facts div:last-child dd { color: var(--budget-near-ink); }
 .summary-budget-foot { display: grid; justify-items: start; margin-top: 7px; }
 .summary-budget-link { color: var(--ink); min-height: 44px; text-align: left; padding: 5px 0; font-weight: 650; }
-.summary-budget-pace-facts { border-top: 1px solid var(--line); padding-top: 9px; }
 .summary-pace-chart { display: block; width: 100%; height: 158px; margin-top: 8px; }
 .summary-budget-panel figcaption { display: flex; flex-wrap: wrap; gap: 4px 13px; color: var(--ink-soft); font-size: 11px; margin: 2px 0 10px; }
 .summary-budget-panel figcaption span::before { content: ""; display: inline-block; width: 14px; border-top: 2px solid var(--green); margin: 0 5px 3px 0; }
@@ -60,21 +56,6 @@ html.private-mode .summary-budget-facts { margin-top: 12px; }
 .summary-budget-categories li p { margin-top: 3px; font-size: 11px; font-weight: 650; }
 .summary-budget-categories :is(.near,.over) p { color: var(--budget-near-ink); }
 .summary-budget-categories .watch p { color: var(--budget-watch-ink); }
-.summary-support { margin-top: 12px; }
-.summary-support .spend-hero { padding-top: 14px; }
-.summary-support .hero-amount { font-size: clamp(30px,5vw,45px); }
-.summary-observed-totals { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
-.summary-observed-totals dt { color: var(--ink-soft); font-size: 11px; line-height: 1.25; }
-.summary-observed-totals dd { margin-top: 4px; font-size: clamp(13px,2.5vw,23px); font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.summary-support-details { margin-top: 8px; }
-.summary-support-details > summary { min-height: 44px; padding: 13px 3px; color: var(--ink); font-size: 12px; cursor: pointer; }
-.summary-cash-balances { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
-.summary-cash-balances h3 { margin: 0 0 4px; font-size: 14px; }
-.summary-cash-balances dl { display: grid; gap: 6px; margin: 8px 0; }
-.summary-cash-balances dl > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto); gap: 10px; align-items: baseline; }
-.summary-cash-balances dt, .summary-cash-balances dd { font-size: 12px; overflow-wrap: anywhere; margin: 0; }
-.summary-cash-balances dd { text-align: right; font-weight: 650; font-variant-numeric: tabular-nums; }
-.summary-cash-balances small { display: block; color: var(--ink-soft); }
 @media (min-width: 680px) {
   .summary-budget-panel { padding: 20px; }
   .summary-budget-top, .summary-budget-charts { grid-template-columns: repeat(2,minmax(0,1fr)); }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ledgerApi } from "../api/client";
-import { demoBudgetStatus } from "../api/planning-demo";
+import { demoBudgetStatus, demoMonthCredits, demoMonthFutureIncome } from "../api/planning-demo";
 import { mockAnalyticsFor, mockExceptionRawEmail, mockExceptions, mockFeedForMonth, mockMonthSummaryFor, mockEvents } from "../api/mock-data";
 import { useMarketWealthSync } from "./useMarketWealthSync";
 import { AppShell } from "../layout/AppShell";
@@ -21,7 +21,6 @@ import { demoCards } from "../card-cycle-demo";
 import type { CardCycle } from "../card-cycle";
 import { CommitmentsSheet } from "../sheets/CommitmentsSheet";
 import { EventSheet } from "../sheets/EventSheet";
-import { MonthIncomeSheet } from "../sheets/MonthIncomeSheet";
 import { NominaUploadSheet } from "../sheets/NominaUploadSheet";
 import { PayslipSheet } from "../sheets/PayslipSheet";
 import type { Payslip } from "../monthly-plan";
@@ -38,6 +37,8 @@ import { AmexActivitySheet } from "../sheets/AmexActivitySheet";
 import type { EventFeed, PurchaseEvent } from "../types";
 import { MovementsView } from "../views/MovementsView";
 import { SummaryView } from "../views/SummaryView";
+import { PushPreference } from "../components/PushPreference";
+import { PlanningReadDialog } from "../planning/PlanningRead";
 import { PlanningView } from "../views/PlanningView";
 import { WealthView } from "../views/WealthView";
 import { AnalyticsView } from "../views/AnalyticsView";
@@ -90,7 +91,7 @@ export function Dashboard({
   const [tab, setTab] = useState<Tab>("summary");
   const [selectedMonth, setSelectedMonth] = useState(monthKey(now));
   const [planningPane, setPlanningPane] = useState<PlanningPane>();
-  const [incomeSheetOpen, setIncomeSheetOpen] = useState(false);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [activePayslip, setActivePayslip] = useState<Payslip>();
   const [uploadingNomina, setUploadingNomina] = useState(false);
   const [editingPayment, setEditingPayment] = useState<PlannedPayment | null | undefined>();
@@ -144,16 +145,15 @@ export function Dashboard({
         spending: monthDashboardSpending(summary, budget),
         liquidity: monthDashboardLiquidity(summary, demoPlan, true),
         cash: monthCashLiquidity(selectedMonth, now, []),
-        postedCredits: summarizePostedCredits([]),
-        futureIncome: { status: summary.isFutureMonth || summary.isCurrentMonth ? "unconfigured" as const : "closed" as const,
-          scheduledMinor: null, knownUpcomingMinor: 0, unknownOccurrences: 0 },
+        postedCredits: summarizePostedCredits(demoMonthCredits(selectedMonth)),
+        futureIncome: demoMonthFutureIncome(selectedMonth),
         payrollFundClosures: [],
       });
     },
   });
   const monthlyPlanQuery = useQuery({
     queryKey: monthlyPlanQueryKey(selectedMonth),
-    enabled: tab !== "summary" || incomeSheetOpen || dashboardQuery.isError,
+    enabled: tab !== "summary" || dashboardQuery.isError,
     queryFn: () =>
       demoMode
         ? Promise.resolve(queryClient.getQueryData<MonthlyPlan>(monthlyPlanQueryKey(selectedMonth)) ?? planFor(demoPlans, selectedMonth))
@@ -331,15 +331,6 @@ export function Dashboard({
     setActivePayslip(receipt);
   };
   const access = { idToken, demoMode };
-  const incomeMinor = dashboard?.liquidity.incomeMinor ?? plan.incomeMinor;
-  const spendPercent = incomeMinor > 0 ? Math.round((spentMinor / incomeMinor) * 100) : 0;
-  const risk =
-    incomeMinor > 0 && projectedRemainingMinor < 0
-      ? "danger"
-      : spendPercent >= 70
-        ? "watch"
-        : "steady";
-
   const savePlan = async (nextPlan: MonthlyPlan) => {
     const saved = demoMode
       ? nextPlan
@@ -349,13 +340,6 @@ export function Dashboard({
     if (!demoMode) await queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot });
     await queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot });
     await queryClient.invalidateQueries({ queryKey: budgetQueryRoot });
-  };
-
-  const reviewLargest = () => {
-    setMovementEvidenceFilter(undefined);
-    setMovementSort("largest");
-    setTab("movements");
-    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const openAnalyticsMovements = (label: string, eventIds: readonly string[], month = selectedMonth) => {
@@ -390,20 +374,16 @@ export function Dashboard({
         onRefresh={refresh}
         privateMode={privateMode}
         onTogglePrivateMode={togglePrivateMode}
+        onOpenPreferences={() => setPreferencesOpen(true)}
         demoMode={demoMode}
-        showSignOut={!demoMode}
-        onSignOut={
-          demoMode
-            ? () => {
-                window.location.assign("/");
-              }
-            : onSignOut
-        }
         error={tab === "movements" ? error : undefined}
       >
         {tab === "summary" && analyticsOpen ? (
           <AnalyticsView
             analytics={analyticsQuery.data}
+            spending={dashboard?.spending}
+            isCurrentMonth={isCurrentMonth}
+            isFutureMonth={summary?.isFutureMonth ?? false}
             loading={analyticsQuery.isPending}
             loadError={analyticsQuery.error instanceof Error
               ? analyticsQuery.error.message
@@ -424,29 +404,8 @@ export function Dashboard({
             onOpenBudget={() => setPlanningPane("budget")}
             onRetryDashboard={() => { void dashboardQuery.refetch(); }}
             spendAvailable={summary !== undefined && (dashboard !== undefined || !monthlySummaryQuery.isError)}
-            plan={plan}
-            loading={!dashboard && (dashboardQuery.isPending || planLoading || monthlySummaryQuery.isPending)}
-            loadError={dashboard ? undefined : planLoadError ?? summaryLoadError}
-            onRetry={() => {
-              void monthlyPlanQuery.refetch();
-              void monthlySummaryQuery.refetch();
-            }}
             spentMinor={spentMinor}
             uncertainMinor={uncertainMinor}
-            billUpcomingMinor={billUpcomingMinor}
-            remainingMinor={remainingMinor}
-            projectedSpendMinor={projectedSpendMinor}
-            projectedRemainingMinor={projectedRemainingMinor}
-            isCurrentMonth={isCurrentMonth}
-            isFutureMonth={summary?.isFutureMonth ?? false}
-            fixedSpentMinor={summary?.fixedSpentMinor ?? 0}
-            risk={risk}
-            msiSpentMinor={msiSpentMinor}
-            msiCommittedMinor={msiCommittedMinor}
-            onUploadNomina={() => setUploadingNomina(true)}
-            onOpenIncome={() => setIncomeSheetOpen(true)}
-            onOpenPlanning={() => setTab("planning")}
-            onReviewLargest={reviewLargest}
             analytics={analyticsQuery.data}
             analyticsLoading={analyticsQuery.isPending}
             analyticsLoadError={analyticsQuery.error instanceof Error
@@ -460,8 +419,6 @@ export function Dashboard({
               window.scrollTo({ top: 0, behavior: "smooth" });
             }}
             onOpenAnalyticsMovements={openAnalyticsMovements}
-            idToken={idToken}
-            demoMode={demoMode}
           />
         ) : tab === "planning" ? (
           <PlanningView
@@ -582,27 +539,21 @@ export function Dashboard({
             await queryClient.invalidateQueries({ queryKey: monthlyPlanQueryKey(selectedMonth) });
             await queryClient.invalidateQueries({ queryKey: monthlySummaryQueryKey(selectedMonth) });
             await queryClient.invalidateQueries({ queryKey: expectedIncomeQueryRoot });
+            await queryClient.invalidateQueries({ queryKey: budgetQueryRoot });
             return response;
           }}
         />
       )}
-      {incomeSheetOpen && (
-        <MonthIncomeSheet
-          plan={plan}
-          loading={planLoading}
-          loadError={planLoadError}
-          onRetry={() => { void monthlyPlanQuery.refetch(); }}
-          onClose={() => setIncomeSheetOpen(false)}
-          onOpenPayslip={(payslip) => setActivePayslip(payslip)}
-          onUploadNomina={() => {
-            setIncomeSheetOpen(false);
-            setUploadingNomina(true);
-          }}
-        />
-      )}
+      {preferencesOpen && <PlanningReadDialog title="Preferencias" onClose={() => setPreferencesOpen(false)} suspended={false}>
+        <div className="plan-read-body"><PushPreference idToken={idToken} demoMode={demoMode} />
+          <button className="text-button plan-action" type="button" onClick={demoMode ? () => window.location.assign("/") : onSignOut}>
+            {demoMode ? "Salir del mock" : "Salir"}
+          </button>
+        </div>
+      </PlanningReadDialog>}
       {planningPane && <FinancialPlanningDialog key={`${selectedMonth}:${planningPane}`}
-        pane={planningPane} month={selectedMonth} access={access} suspended={Boolean(activePayslip || activeEvent)}
-        onClose={() => setPlanningPane(undefined)} onOpenEvent={openMsiEvent} onOpenPayslip={openPlanningPayslip} />}
+        pane={planningPane} month={selectedMonth} access={access} suspended={Boolean(activePayslip || activeEvent || uploadingNomina)}
+        onClose={() => setPlanningPane(undefined)} onOpenEvent={openMsiEvent} onOpenPayslip={openPlanningPayslip} onUploadNomina={() => setUploadingNomina(true)} />}
       {activePayslip && (
         <PayslipSheet payslip={activePayslip} onClose={() => setActivePayslip(undefined)} />
       )}

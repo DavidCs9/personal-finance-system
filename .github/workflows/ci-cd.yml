@@ -114,6 +114,21 @@ jobs:
       - run: npm ci --prefer-offline
       - run: python3 -m unittest discover -s infrastructure/scripts -p 'test_*.py'
       - run: npm run build --workspace @finance/web
+      - name: Install isolated browser test tools
+        run: npm install --prefix "$RUNNER_TEMP/olbia-browser" --no-package-lock --ignore-scripts --no-audit --no-fund @playwright/test@1.65.1
+      - name: Install Chromium for mobile checks
+        run: '"$RUNNER_TEMP/olbia-browser/node_modules/.bin/playwright" install --with-deps chromium'
+      - name: Verify mobile Resumen and entry details with one browser worker
+        env:
+          NODE_PATH: ${{ runner.temp }}/olbia-browser/node_modules
+        run: '"$RUNNER_TEMP/olbia-browser/node_modules/.bin/playwright" test --config .github/browser/playwright.config.cjs --workers=1'
+      - name: Save browser checks and mobile screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: summary-browser-checks
+          path: work-notes/browser-results/
+          if-no-files-found: ignore
       - run: npm run synth --workspace @finance/infrastructure
         env:
           CDK_DEFAULT_ACCOUNT: '225989371926'

@@ -4,7 +4,7 @@ import { ledgerApi, sessionExpiredEvent, type LedgerSession } from "./api/client
 import { LoadingScreen } from "./auth/LoadingScreen";
 import { SignIn } from "./auth/SignIn";
 import { Dashboard } from "./dashboard/Dashboard";
-import { financialGoalsQueryRoot } from "./lib/query-keys";
+import { expectedIncomeQueryRoot, financialGoalsQueryRoot, monthlySummaryQueryRoot } from "./lib/query-keys";
 
 export function App() {
   const queryClient = useQueryClient();
@@ -28,7 +28,9 @@ export function App() {
       if (document.visibilityState !== "visible") return;
       restore(false);
       // ChatGPT can change these records while the web app is in the background.
-      void queryClient.refetchQueries({ queryKey: financialGoalsQueryRoot, type: "active" }, { cancelRefetch: false });
+      for (const queryKey of [financialGoalsQueryRoot, monthlySummaryQueryRoot, expectedIncomeQueryRoot]) {
+        void queryClient.refetchQueries({ queryKey, type: "active" }, { cancelRefetch: false });
+      }
     };
     const expire = () => {
       if (!active) return;

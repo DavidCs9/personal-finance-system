@@ -1,6 +1,7 @@
 import type { SpendBucket, SpendingAnalytics } from "@finance/domain";
 import { Amt } from "../components/Amt";
 import { money, monthDate } from "../lib/format";
+import type { MonthDashboard } from "../api/planning-types";
 
 const signedMoney = (amountMinor: number): string => {
   if (amountMinor === 0) return money(0);
@@ -39,6 +40,9 @@ export function AnalyticsView({
   onRetry,
   onBack,
   onDrillDown,
+  spending,
+  isCurrentMonth,
+  isFutureMonth,
 }: {
   readonly analytics?: SpendingAnalytics;
   readonly loading: boolean;
@@ -46,6 +50,9 @@ export function AnalyticsView({
   readonly onRetry: () => void;
   readonly onBack: () => void;
   readonly onDrillDown: (label: string, eventIds: readonly string[], month?: string) => void;
+  readonly spending?: MonthDashboard["spending"];
+  readonly isCurrentMonth?: boolean;
+  readonly isFutureMonth?: boolean;
 }) {
   if (loading) {
     return (
@@ -101,6 +108,13 @@ export function AnalyticsView({
             </p>
           ) : null}
         </header>
+
+        {spending && <section className="analytics-section">
+          <h2>{isCurrentMonth ? "Gasto estimado al cierre" : isFutureMonth ? "Compromisos conocidos" : "Gasto al cierre"}</h2>
+          <strong>{!isFutureMonth && spending.closingSpendMinor === null ? "Sin estimación"
+            : <Amt>{money(isFutureMonth ? spending.knownCommitmentsMinor : spending.closingSpendMinor!)}</Amt>}</strong>
+          {isCurrentMonth && <p>Incluye gasto registrado, fijos y MSI conocidos, también los gastos excluidos del presupuesto.</p>}
+        </section>}
 
         <section className="analytics-section" aria-labelledby="analytics-categories-title">
           <div className="section-heading">

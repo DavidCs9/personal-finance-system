@@ -1,221 +1,95 @@
-import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { buildMsiSchedule, computeBudgetStatus, computeMonthSummary, markInstallmentSpent,
-  monthCashLiquidity, monthDashboardLiquidity, monthDashboardSpending, summarizePostedCredits, type MonthSpendEvent } from "@finance/domain";
+import { computeMonthSummary, monthCashLiquidity, monthDashboardLiquidity, monthDashboardSpending,
+  summarizePostedCredits, summarizeFutureIncome, type BankCredit, type IncomeOccurrence } from "@finance/domain";
+import { demoBudgetStatus } from "../api/planning-demo";
+import type { MonthDashboard } from "../api/planning-types";
 import { SummaryView, type SummaryViewProps } from "./SummaryView";
+import { MonthEntries, MonthEntryDetail } from "./MonthEntries";
 
-const now = new Date("2026-08-04T12:00:00-06:00");
-const pendingPlan = buildMsiSchedule({
-  principalMinor: 2_250_00, months: 3, startMonth: "2026-08", origin: "manual",
-});
-const spentPlan = markInstallmentSpent(buildMsiSchedule({
-  principalMinor: 1_500_00, months: 3, startMonth: "2026-07", origin: "manual",
-}), 2, { amountMinor: 500_00, confirmedAt: now.toISOString() });
+const now = new Date("2026-07-12T18:00:00-06:00");
+const month = "2026-07";
+const credit = (id: string, values: Partial<BankCredit> = {}): BankCredit => ({ movementId:id,
+  creditType:"income", incomeType:"otro", accountKind:"cash", institution:"santander_mx", accountLastFour:"1234",
+  currency:"MXN", amountMinor:4500_00, postedOn:"2026-07-11", description:"Venta de monitor",
+  evidenceReference:`BANK-${id}`, fundEmployerKey:null, ...values });
+const expected: IncomeOccurrence = { incomeId:"salary", occurrenceId:"salary:2026-07:0", name:"Nómina de prueba",
+  employer:"Empresa de prueba", paymentDate:"2026-07-31", periodMonth:month, amountMxnMinor:18000_00,
+  scheduleBasis:"regular", confidence:"estimated", basis:"configured_expectation_not_received_income", reconciliationStatus:"unreconciled" };
+const dashboardFor = (credits: BankCredit[] = [], occurrences: IncomeOccurrence[] = [expected]): MonthDashboard => {
+  const summary = computeMonthSummary({ month, now, events:[], incomeMinor:0, incomeConfigured:false, upcomingPaymentsMinor:0 });
+  const budget=demoBudgetStatus(month, undefined, true);
+  return { month, generatedAt:now.toISOString(), summary:{...summary,remainingMinor:null,projectedRemainingMinor:null}, budget,
+    spending:monthDashboardSpending(summary,budget), liquidity:monthDashboardLiquidity(summary,{},true),
+    cash:monthCashLiquidity(month,now,[]),postedCredits:summarizePostedCredits(credits),
+    futureIncome:summarizeFutureIncome(month,now,occurrences,false),payrollFundClosures:[] };
+};
+const propsFor = (dashboard?: MonthDashboard): SummaryViewProps => ({ month,dashboard,spentMinor:850_00,uncertainMinor:100_00,
+  analyticsLoading:false,onRetryAnalytics(){},onOpenAnalytics(){},onOpenAnalyticsMovements(){},onOpenBudget(){},onRetryDashboard(){} });
 
-const events: readonly MonthSpendEvent[] = [
-  { amountMinor: 1_000_00, personalAmountMinor: 250_00, status: "accepted", receivedAt: now.toISOString() },
-  { amountMinor: 100_00, status: "needs_review", receivedAt: now.toISOString() },
-  ...["rejected", "pending_foreign", "deferred_msi"].map((status) => ({
-    amountMinor: 10_000_00, status, receivedAt: now.toISOString(),
-  })),
-  { amountMinor: 1_500_00, status: "accepted", receivedAt: "2026-07-04T12:00:00Z", msi: spentPlan },
-  { amountMinor: 2_250_00, status: "accepted", receivedAt: now.toISOString(), msi: pendingPlan },
-];
+ describe("simple monthly Resumen",()=>{
+  it("keeps all spending before generic entries and removes duplicated cash/payroll/navigation",()=>{
+    const html=renderToStaticMarkup(<SummaryView {...propsFor(dashboardFor())} />);
+    const headings=["Presupuesto mensual","Ritmo de gasto","En qué se fue","Entradas del mes"].map(label=>html.indexOf(label));
+    expect(headings.every(index=>index>=0)).toBe(true);
+    expect(headings).toEqual([...headings].sort((a,b)=>a-b));
+    for(const removed of ["Saldos de efectivo","Liquidez al cierre","Nómina y compromisos","Abonos del mes","Avisos de Olbia","Explora tu mes"])
+      expect(html).not.toContain(removed);
+    expect(html).not.toContain("Falta tu nómina");
+    expect(html).not.toContain("<dt>Margen</dt>");
+    expect(html).toContain("Detalle e historial");
+    expect(html).toContain("Ver análisis");
+  });
+  it("keeps budget warnings and hides quantitative graphics in private mode",()=>{
+    const dashboard=dashboardFor();
+    const warning={...dashboard,budget:{...dashboard.budget,warningWithCommitments:"90" as const}};
+    expect(renderToStaticMarkup(<SummaryView {...propsFor(warning)} />)).toContain("Cerca del límite");
+    expect(renderToStaticMarkup(<SummaryView {...propsFor(dashboard)} />)).toContain("<canvas");
+    expect(renderToStaticMarkup(<SummaryView {...propsFor(dashboard)} privateMode />)).not.toMatch(/<canvas|class="summary-budget-meter"/);
+  });
+  it("does not turn loading or failed bank reads into zero income",()=>{
+    const loading=renderToStaticMarkup(<SummaryView {...propsFor()} dashboardLoading />);
+    expect(loading).toContain("Consultando entradas");expect(loading).not.toContain("$0");
+    const failed=renderToStaticMarkup(<SummaryView {...propsFor()} dashboardError spendAvailable />);
+    expect(failed).toContain("No pudimos consultar las entradas");expect(failed).toContain("$850");
+    expect(failed).toContain("$100");expect(failed).not.toContain("Sin registros");
+    const stale=renderToStaticMarkup(<SummaryView {...propsFor(dashboardFor())} dashboardError />);
+    expect(stale).toContain("Se muestra la última lectura");expect(stale).toContain("Entradas del mes");
+  });
+ });
 
-const propsFor = (sourceEvents = events): SummaryViewProps => ({
-  ...computeMonthSummary({
-    events: sourceEvents, month: "2026-08", incomeMinor: 10_000_00,
-    incomeConfigured: true, upcomingPaymentsMinor: 2_000_00, now,
-  }),
-  month: "2026-08",
-  plan: {
-    month: "2026-08", configured: true, currency: "MXN", incomeMinor: 10_000_00,
-    upcomingPayments: [{ id: "rent", name: "Renta", amountMinor: 2_000_00, dueDay: 15 }],
-  },
-  loading: false, risk: "steady", analyticsLoading: false,
-  idToken: "demo", demoMode: true,
-  onRetry() {}, onUploadNomina() {}, onOpenIncome() {},
-  onOpenPlanning() {},
-  onReviewLargest() {}, onRetryAnalytics() {}, onOpenAnalytics() {}, onOpenAnalyticsMovements() {},
-});
-
-describe("Resumen's recorded spend and commitments", () => {
-  it("uses the canonical financial summary and keeps the combined total stable when MSI is confirmed", () => {
-    const before = renderToStaticMarkup(<SummaryView {...propsFor()} />);
-    const confirmed = events.map((event) => event.msi === pendingPlan
-      ? { ...event, msi: markInstallmentSpent(pendingPlan, 1, { amountMinor: 750_00, confirmedAt: now.toISOString() }) }
-      : event);
-    const after = renderToStaticMarkup(<SummaryView {...propsFor(confirmed)} />);
-
-    // Mi parte + uncertain spend + this month's confirmed cuota; no rejected/foreign/deferred principal.
-    expect(before).toContain('class="hero-amount"><span class="amt">$850</span>');
-    expect(after).toContain('class="hero-amount"><span class="amt">$1,600</span>');
-    for (const html of [before, after]) {
-      expect(html).toContain('class="spend-commitments-amount"><span class="amt">$3,600</span>');
-      expect(html).toContain('<span class="amt">36%</span>');
-      expect(html).toContain('<span class="amt">$6,400</span>');
-      expect(html).toContain('Incluye <span class="amt">$100</span> por confirmar');
-      expect(html).toContain("Los fijos sin cobro vinculado muestran programación; no confirma si ya se cobraron.");
+ describe("generic monthly entries",()=>{
+  it("shows mixed manual income/refunds and expectations without double counting card refunds",()=>{
+    const dashboard=dashboardFor([credit("severance",{incomeType:"finiquito",description:"Finiquito de prueba",amountMinor:82000_00}),
+      credit("refund",{creditType:"refund",incomeType:null,description:"Devolución de prueba",amountMinor:1850_00}),credit("sale"),
+      credit("card",{creditType:"refund",incomeType:null,accountKind:"credit_card",description:"Reembolso a tarjeta de prueba",amountMinor:999_99})]);
+    const html=renderToStaticMarkup(<MonthEntries month={month} dashboard={dashboard} />);
+    for(const name of ["Finiquito de prueba","Nómina de prueba","Devolución de prueba","Venta de monitor"])expect(html).toContain(name);
+    expect(html).toContain("$88,350");expect(html).toContain("$18,000");expect(html).not.toContain("$106,350");
+    expect(html).toContain("Devoluciones a tarjeta");expect(html).toContain("$999.99");expect(html).not.toContain("$89,349.99");
+  });
+  it("preserves unknown, overdue, overlap and incomplete expectations instead of promising a deposit",()=>{
+    for(const futureIncome of [summarizeFutureIncome(month,now,[{...expected,amountMxnMinor:null,paymentDate:null}],false),
+      summarizeFutureIncome(month,now,[{...expected,paymentDate:"2026-07-10"}],false),
+      summarizeFutureIncome(month,now,[{...expected,reconciliationStatus:"possible_payroll_overlap"}],false),
+      summarizeFutureIncome(month,now,[expected],false,true)]) {
+      const html=renderToStaticMarkup(<MonthEntries month={month} dashboard={{...dashboardFor(),futureIncome}} />);
+      expect(html).toContain("Sin registros");expect(html).not.toContain("$0");
+      expect(html).toContain(futureIncome.status==="reconciliation_needed"?"Por conciliar":"Por confirmar");
+      if(futureIncome.hasMore)expect(html).toContain("programación está incompleta");
     }
   });
-
-  it("shows recorded spend in a past close and never forecasts a future month", () => {
-    const props = propsFor();
-    const past = findElement(SummaryView({ ...props, isCurrentMonth: false, isFutureMonth: false,
-      projectedSpendMinor: 5_000_00, projectedRemainingMinor: -1 }),
-    element => element.props.className?.startsWith("projection-card") === true);
-    const pastHtml = renderToStaticMarkup(past!);
-    expect(pastHtml).toContain('Gastaste <span class="amt">$850</span>');
-    expect(pastHtml).not.toContain("$5,000");
-    expect(pastHtml).not.toContain("Revisar gastos grandes");
-    expect(pastHtml).toContain("según tus movimientos y cuotas MSI registrados");
-
-    const future = findElement(SummaryView({ ...props, isCurrentMonth: false, isFutureMonth: true,
-      projectedSpendMinor: 5_000_00 }), element => element.props.className?.startsWith("projection-card") === true);
-    const futureHtml = renderToStaticMarkup(future!);
-    expect(futureHtml).toContain('Programado <span class="amt">$2,750</span>');
-    expect(futureHtml).not.toMatch(/Gastaste|Gastarás|A este ritmo/);
+  it("keeps posted evidence and expectation detail distinct, with private-mode amount markers",()=>{
+    const posted=renderToStaticMarkup(<MonthEntryDetail entry={{kind:"posted",credit:credit("refund",{creditType:"refund",incomeType:null})}} needsReconciliation={false} />);
+    expect(posted).toContain("BANK-refund");expect(posted).toContain("Santander");expect(posted).toContain("no modifica la compra original");
+    expect(posted).toContain('class="amt"');expect(posted).toContain('class="plan-sensitive"');
+    const planned=renderToStaticMarkup(<MonthEntryDetail entry={{kind:"expected",occurrence:expected}} needsReconciliation />);
+    expect(planned).toContain("Por conciliar");expect(planned).toContain("no se considera dinero recibido");
   });
-
-  it("explains that linked fixed spend is already included without claiming unlinked programming is unpaid", () => {
-    const html = renderToStaticMarkup(<SummaryView {...propsFor()} fixedSpentMinor={200_00} />);
-    expect(html).toContain('Los cobros vinculados de fijos (<span class="amt">$200</span>) ya están');
-    expect(html).toContain("Fijos sin cobro vinculado");
-    expect(html).not.toContain("Fijos pendientes de pago");
+  it("does not show future expectations on a closed month and does not fabricate cash from payroll",()=>{
+    const dashboard=dashboardFor();
+    const html=renderToStaticMarkup(<MonthEntries month="2026-06" dashboard={{...dashboard,
+      futureIncome:summarizeFutureIncome("2026-06",now,[{...expected,periodMonth:"2026-06",paymentDate:"2026-06-30"}],false)}} />);
+    expect(html).toContain("Mes cerrado");expect(html).toContain("Sin registros");expect(html).not.toContain("Nómina de prueba");
   });
-
-  it("places compact navigation after the financial core and before analysis", () => {
-    const html = renderToStaticMarkup(<SummaryView {...propsFor()} />);
-    const numbers = html.indexOf('class="number-grid"');
-    const planning = html.indexOf('<strong>Planificación</strong>');
-    const analytics = html.indexOf('class="analytics-preview"');
-
-    expect(numbers).toBeGreaterThan(-1);
-    expect(planning).toBeGreaterThan(numbers);
-    expect(analytics).toBeGreaterThan(planning);
-    expect(html).not.toContain("Estados de cuenta");
-    for (const removedClass of ["payslip-month-section", "msi-section", "payments-section", "card-cycle-section"]) {
-      expect(html).not.toContain(`class="${removedClass}`);
-    }
-  });
-
-  it.each(["loaded", "loading", "error", "missing-income"] as const)(
-    "keeps planning reachable when %s",
-    (state) => {
-      const props = propsFor();
-      const onOpenPlanning = vi.fn();
-      const overrides: Partial<SummaryViewProps> = state === "loading"
-        ? { loading: true }
-        : state === "error"
-          ? { loadError: "No disponible" }
-          : state === "missing-income"
-            ? { plan: { ...props.plan, configured: false, incomeMinor: 0 } }
-            : {};
-      const current = { ...props, ...overrides, onOpenPlanning };
-      const html = renderToStaticMarkup(<SummaryView {...current} />);
-      const view = SummaryView(current);
-
-      expect(html).toContain('<strong>Planificación</strong>');
-      expect(html).not.toContain("Estados de cuenta");
-      buttonFor(view, onOpenPlanning).props.onClick?.();
-      expect(onOpenPlanning).toHaveBeenCalledOnce();
-      if (state !== "loaded") {
-        expect(html).not.toContain('class="spend-commitments-amount"');
-        expect(html).not.toContain("Te quedan");
-        expect(html).not.toContain("Gastarás");
-      }
-    },
-  );
-
-  it("preserves provisional and estimated liquidity notices and its income action", () => {
-    const props = propsFor();
-    const onOpenIncome = vi.fn();
-    const provisional = {
-      ...props,
-      onOpenIncome,
-      plan: { ...props.plan, provisionalActive: true, provisionalMinor: props.plan.incomeMinor },
-    };
-    const html = renderToStaticMarkup(<SummaryView {...provisional} />);
-    expect(html).toContain("Liquidez provisional · pendiente nómina de este mes");
-    // The liquidity chip retains its existing route into Nómina del mes.
-    const chip = findElement(SummaryView(provisional), (element) => element.props.className === "income-button");
-    expect(chip).toBeDefined();
-    chip!.props.onClick?.();
-    expect(onOpenIncome).toHaveBeenCalledOnce();
-
-    const estimate = renderToStaticMarkup(<SummaryView {...props} plan={{
-      ...props.plan, estimateActive: true, estimatedMinor: 5_000_00,
-    }} />);
-    expect(estimate).toContain('Incluye <span class="amt">$5,000</span> estimado de la 2ª quincena');
-  });
-});
-
-type ElementProps = { readonly children?: ReactNode; readonly onClick?: () => void; readonly className?: string };
-
-const findElement = (
-  node: ReactNode,
-  predicate: (element: ReactElement<ElementProps>) => boolean,
-): ReactElement<ElementProps> | undefined => {
-  for (const child of Children.toArray(node)) {
-    if (!isValidElement<ElementProps>(child)) continue;
-    if (predicate(child)) return child;
-    const nested = findElement(child.props.children, predicate);
-    if (nested) return nested;
-  }
-  return undefined;
-};
-
-const buttonFor = (view: ReactNode, onClick: () => void): ReactElement<ElementProps> => {
-  const button = findElement(view, (element) => element.type === "button" && element.props.onClick === onClick);
-  expect(button).toBeDefined();
-  return button!;
-};
-
-it("shows observed spend and the analysis entry when liquidity is missing or unavailable", () => {
-  const props = propsFor();
-  for (const liquidity of [
-    { plan: { ...props.plan, configured: false, incomeMinor: 0 } },
-    { loadError: "No se pudo consultar la nómina." },
-  ]) {
-    const html = renderToStaticMarkup(<SummaryView {...props} {...liquidity} spendAvailable />);
-    expect(html).toContain('class="hero-amount"><span class="amt">$850</span>');
-    expect(html).toContain("Tu gasto, explicado");
-    expect(html).not.toContain('class="projection-card');
-    expect(html).not.toContain("Te quedan");
-  }
-});
-
-it("puts the shared budget and category alerts above liquidity and conceals its graphics in private mode", () => {
-  const month = "2026-08", at = now.toISOString();
-  const summary = computeMonthSummary({ month, now, events, incomeMinor: 0, incomeConfigured: false, upcomingPaymentsMinor: 0 });
-  const facts = computeBudgetStatus({ month, now, includeSpendTimeline: true, fixedPayments: [{ id: "due", amountMinor: 350_00 }],
-    exclusions: [], events: [{ id: "food", status: "accepted", currency: "MXN", amountMinor: 600_00, receivedAt: at, categoryId: "food" }],
-    budget: { id: "budget", entityType: "budget", scope: "override", effectiveMonth: month, status: "active",
-      createdAt: at, updatedAt: at, revision: 1, totalMxnMinor: 1_000_00, allocations: [{ categoryId: "food", amountMxnMinor: 500_00 }] } });
-  const props: SummaryViewProps = { ...propsFor(), onOpenBudget() {}, dashboard: { month, generatedAt: at,
-    summary: { ...summary, remainingMinor: null, projectedRemainingMinor: null },
-    budget: { ...facts, generatedAt: at, categories: facts.categories.map(row => ({ ...row, label: "Comida" })) },
-    liquidity: monthDashboardLiquidity(summary, {}, true),
-    spending: monthDashboardSpending(summary, facts),
-    cash: monthCashLiquidity(month, now, [{ accountId: "santander_cash", amountMinor: 152_438_20, name: "Santander",
-      day: "2026-08-02", capturedAt: "2026-08-02T18:00:00Z", source: "manual" }]),
-    postedCredits: summarizePostedCredits([]),
-    futureIncome: { status: "unknown_amount_or_date", scheduledMinor: null, knownUpcomingMinor: 0, unknownOccurrences: 1 },
-    payrollFundClosures: [],
-  } };
-  const html = renderToStaticMarkup(<SummaryView {...props} />);
-  expect(html.indexOf("Presupuesto mensual")).toBeLessThan(html.indexOf("Ritmo de gasto"));
-  expect(html.indexOf("En qué se fue")).toBeLessThan(html.indexOf("Gasto estimado al cierre"));
-  expect(html).toContain("Gasto registrado");
-  expect(html).toContain("Gasto contado");
-  expect(html).toContain("152,438");
-  expect(html).toContain("Captura manual");
-  expect(html).toContain("Sin estimación");
-  expect(html).toContain("Fecha o importe por confirmar");
-  expect(html).not.toContain("Liquidez tras compromisos");
-  expect(html).toContain("Cerca del límite");
-  expect(html).toContain("Te pasaste");
-  expect(html).toContain("<canvas");
-  expect(renderToStaticMarkup(<SummaryView {...props} privateMode />)).not.toMatch(/<canvas|class="summary-budget-meter"/);
-});
+ });

@@ -5,7 +5,7 @@ import { writeBudgetEntity } from '@finance/ledger/native-budgets';
 import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { addCalendarMonths, dayKeyInZone, monthKeyInZone, FINANCE_TIME_ZONE, isValidMonth,
-  FinancialPlanError, financialId, financialObject, financialSum, financialGoalFacts, incomeOccurrences,
+  FinancialPlanError, financialId, financialObject, financialSum, financialGoalFacts, incomeOccurrences, summarizeFutureIncome,
   proposeExpectedIncome, proposeFinancialGoal, maybeAutoAmexMsi, payrollEmployerKey, MX_BANKING_CALENDAR_VERSION,
   type ExpectedIncome, type FinancialGoalState, type GoalPayment, type MonthFutureIncome } from '@finance/domain';
 import { applicationSqlClient, withSqlTransaction } from '@finance/ledger/sql-runtime';
@@ -85,20 +85,9 @@ export const listExpectedIncome = async (owner: string, input: Record<string, un
 };
 
 export const getMonthFutureIncome = async (owner: string, month: string, now: Date, observedIncome: boolean): Promise<MonthFutureIncome> => {
-  const today = dayKeyInZone(now);
-  if (month < today.slice(0, 7)) return { status: 'closed', scheduledMinor: null, knownUpcomingMinor: 0, unknownOccurrences: 0 };
+  if (month < dayKeyInZone(now).slice(0, 7)) return summarizeFutureIncome(month, now, [], observedIncome);
   const plan = await listExpectedIncome(owner, { fromMonth: month, toMonth: month }, now);
-  const occurrences = plan.occurrences;
-  const unknownOccurrences = occurrences.filter(item => item.amountMxnMinor === null
-    || item.paymentDate === null && item.amountMxnMinor !== 0).length;
-  const upcoming = occurrences.filter(item => item.paymentDate !== null && item.paymentDate > today);
-  const knownUpcomingMinor = financialSum(upcoming.flatMap(item => item.amountMxnMinor === null ? [] : [item.amountMxnMinor]));
-  const timingUnclear = occurrences.some(item => item.amountMxnMinor !== 0 && item.paymentDate !== null && item.paymentDate <= today
-    || item.reconciliationStatus === 'possible_payroll_overlap' || item.calendarStatus === 'cnbv_calendar_provisional');
-  const status = unknownOccurrences || plan.nextCursor ? 'unknown_amount_or_date'
-    : timingUnclear || observedIncome && occurrences.length ? 'reconciliation_needed'
-    : !occurrences.length ? 'unconfigured' : 'scheduled';
-  return { status, scheduledMinor: status === 'scheduled' ? knownUpcomingMinor : null, knownUpcomingMinor, unknownOccurrences };
+  return summarizeFutureIncome(month, now, plan.occurrences, observedIncome, Boolean(plan.nextCursor));
 };
 export const getExpectedIncome = async (owner: string, incomeId: unknown, input: Record<string, unknown> = {}, now = new Date()) => {
   const id = financialId(incomeId), range = financialMonthRange(input, now);
