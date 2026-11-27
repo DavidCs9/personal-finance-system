@@ -1,3 +1,4 @@
+import { isBankCredit } from './credit-verification.js';
 import { randomUUID } from 'node:crypto';
 import type { MsiPlan } from '@finance/domain';
 import { msiPlanPurchaseOccurredAt } from '@finance/ledger';
@@ -15,7 +16,7 @@ import { toPublicEvent } from '../events/public-event.js';
 import type { JsonObject } from '../http/response.js';
 
 const classify = async (document: AmexActivityDocument, owner: string) => {
-  const [events, retained, claimed] = await Promise.all([bankLedgerEvents(), readAmexRetainedRows(owner),
+  const [events, retained, claimed] = await Promise.all([bankLedgerEvents(owner), readAmexRetainedRows(owner),
     claimedBankRows('amex_activity', document.rows.map(r => r.identity))]);
   return classifyAmexRows({ sourceKind: 'amex_activity', ...document, events, retained, claimed });
 };
@@ -62,7 +63,7 @@ export const applyAmexActivity = async (importId: string, owner: string, body: s
     if (record.status === 'applied') return { importId, created: [], summary: record.result, alreadyApplied: true };
     assertPreparedImport(record, prepared);
     const rows = await classify(document, owner);
-    let events = scopedAmexEvents(await bankLedgerEvents(), document.accountLastFour);
+    let events = scopedAmexEvents(await bankLedgerEvents(owner), document.accountLastFour);
     const created: JsonObject[] = [];
     let linked = 0, skipped = 0, msiConfirmed = 0;
     const usedTargets = new Set<string>(), createdIds = new Set<string>();
@@ -106,6 +107,7 @@ export const applyAmexActivity = async (importId: string, owner: string, body: s
         usedTargets.add(eventId); linked++; continue;
       }
       if (row.status !== 'new' && decision?.action !== 'create') return stale();
+      if (isBankCredit(row)) return stale();
       const movement = await create(record, row, new Date().toISOString());
       if (!movement) return stale();
       events = [...events, movement]; created.push(toPublicEvent(movement));

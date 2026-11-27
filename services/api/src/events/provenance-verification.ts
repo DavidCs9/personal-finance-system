@@ -14,7 +14,7 @@ const memberAssertion = (row: JsonObject) => ({ id: row.movement_id, merchantRaw
 
 const requiredRelations = ['source_claims_pkey', 'source_claims_movement_id_fkey', 'source_claims_observation_fk',
   'installment_evidence_candidates_pkey', 'installment_evidence_candidates_entry_fk',
-  'installment_evidence_candidates_row_fk', 'ledger_bulk_operations_pkey',
+  'installment_evidence_candidates_row_fk', 'installment_manual_observation_fk', 'ledger_bulk_operations_pkey',
   'ledger_bulk_members_pkey', 'ledger_bulk_members_movement_key'] as const;
 
 /** Independent current relationships, original capture identities and historical bulk assertions. */
@@ -86,6 +86,14 @@ export const verifyNativeLedgerProvenance = async (client: ReadSqlClient,
       const row = bankRows.rows.find(r => rowMatches({ import_kind: entry.evidence_import_kind,
         content_sha256: entry.evidence_content_sha256, row_position: entry.evidence_row_position }, r));
       check(entry.evidence_identity, row?.identity); check(choices.length, 0);
+    } else if (entry.evidence_origin === 'manual_observation') {
+      const observation = observations.rows.find(row => row.id === entry.manual_observation_id && row.movement_id === entry.movement_id);
+      const source = observation?.source_metadata as JsonObject | undefined;
+      const day = iso(entry.occurred_on)?.slice(0, 10);
+      check(choices.length, 0);
+      check(true, Boolean(observation && observation.capture_source === 'manual' && observation.source_kind === 'manual_entry'
+        && entry.status === 'spent' && entry.evidence_identity === `manual:${observation.id}`
+        && Number(entry.amount_minor) === Number(observation.amount_minor) && day && source?.occurredOn === day));
     } else if (entry.evidence_origin === 'ambiguous_bank_row') {
       check(true, choices.length >= 2 && choices.every(c => bankRows.rows.some(r => rowMatches(c, r) && r.identity === entry.evidence_identity)));
     } else {

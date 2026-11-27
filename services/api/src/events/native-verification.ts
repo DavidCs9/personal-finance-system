@@ -76,9 +76,11 @@ export const verifyNativeLedgerState = async (client: ReadSqlClient, movements: 
     for (const capture of captures) check(true, contiguous(children(observationWarnings.rows, 'observation_id', capture.id)));
     if (!primary) continue;
     if (parent.event_type === 'bank_credit') {
-      check(true, captures.length === 1 && primary.event_type === 'bank_credit'
+      check(true, primary.event_type === 'bank_credit'
         && primary.capture_source === 'manual' && primary.bank_transaction_id === parent.bank_transaction_id
-        && primary.amount_minor === parent.amount_minor && !movementTags.length);
+        && primary.amount_minor === parent.amount_minor && !movementTags.length
+        && captures.every(capture => capture.event_type === 'bank_credit' && capture.amount_minor === parent.amount_minor
+          && (capture.id === primary.id || ['amex_activity','amex_statement','santander_statement','santander_csv'].includes(String(capture.capture_source)))));
       check(undefined, await readDetail(String(parent.id)));
       continue;
     }

@@ -17,7 +17,7 @@ import { errorName, type JsonObject } from '../http/response.js';
 import { toPublicEvent } from './public-event.js';
 import type { SqlClient } from '@finance/ledger/native-ledger';
 
-const institutionDisplayName = (institution: ManualEntryInput['institution'], lastFour?: string): string => {
+export const institutionDisplayName = (institution: ManualEntryInput['institution'], lastFour?: string): string => {
   const base = institution === 'american_express_mx'
     ? 'American Express'
     : institution === 'santander_mx'

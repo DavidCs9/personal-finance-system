@@ -44,6 +44,7 @@ export interface AmexStatementDocument {
   readonly product: string;
   readonly period: { readonly from: string; readonly to: string };
   readonly charges: readonly AmexStatementCharge[];
+  readonly credits?: readonly AmexStatementCharge[];
   readonly msiPlans: readonly AmexMsiPlanSummary[];
   /** Credits that move purchases into MESES EN AUTOMÁTICO (excluded from spend). */
   readonly deferralCredits: readonly AmexDeferralCredit[];
@@ -305,6 +306,7 @@ const parseChargesAndPlansFromLines = (
   period: { readonly from: string; readonly to: string },
 ): { charges: AmexStatementCharge[]; msiPlans: AmexMsiPlanSummary[] } => {
   const charges: AmexStatementCharge[] = [];
+  let parsedPayments = 0;
   const msiSectionStart = lines.findIndex((line) => /Transacciones de Meses sin Intereses/i.test(line));
   const detailStart = lines.findIndex((line) => /Fecha y Detalle de las operaciones/i.test(line));
   const scanStart = detailStart >= 0 ? detailStart + 1 : 0;
@@ -318,13 +320,13 @@ const parseChargesAndPlansFromLines = (
     const occurredOn = parseSpanishDate(dated[1], dated[2], period.to);
     if (!occurredOn) continue;
     let merchantRaw = dated[3].trim();
-    if (/^GRACIAS POR SU PAGO/i.test(merchantRaw)) continue;
+    const cardPayment = /^GRACIAS POR SU PAGO/i.test(merchantRaw);
 
     let installment = installmentFrom(merchantRaw);
     const inline = splitTrailingAmount(merchantRaw);
     merchantRaw = cleanMerchant(inline.merchantRaw);
     let amountMinor = inline.amountMinor;
-    let credit = false;
+    let credit = cardPayment;
     let merchantReference = merchantReferenceFrom(line);
 
     for (let look = 1; look <= 6 && index + look < scanEnd; look += 1) {
@@ -379,8 +381,8 @@ const parseChargesAndPlansFromLines = (
         occurredOn,
         merchantRaw,
         String(amountMinor),
-        installment ? `${installment.index}/${installment.months}` : (isDeferral ? "deferral" : "full"),
-        String(charges.length + 1),
+        installment ? `${installment.index}/${installment.months}` : (isDeferral ? "deferral" : cardPayment ? "payment" : "full"),
+        String(cardPayment ? ++parsedPayments : charges.length - parsedPayments + 1),
       ].join(":"),
     });
   }
@@ -591,6 +593,7 @@ export const parseAmexStatementExtraction = (
     charge.occurredOn,
     charge.merchantRaw.toUpperCase(),
     charge.amountMinor,
+    charge.credit,
     charge.installmentIndex ?? "",
     charge.installmentMonths ?? "",
   ].join("|");
@@ -619,17 +622,18 @@ export const parseAmexStatementExtraction = (
   }
 
   const charges: AmexStatementCharge[] = [];
+  const credits: AmexStatementCharge[] = [];
   // Prefer TABLES: they preserve date/merchant/amount columns that LINE OCR often splits.
   // Keep duplicate table rows (two identical compras the same day are valid).
   for (const charge of fromTables) {
-    if (charge.credit) continue;
+    if (isDeferralCredit(charge)) continue;
     if (charge.msi && charge.installmentIndex === undefined) continue;
-    charges.push(charge);
+    (charge.credit ? credits : charges).push(charge);
     const key = chargeKey(charge);
     remaining.set(key, (remaining.get(key) ?? 0) + 1);
   }
   for (const charge of fromLines.charges) {
-    if (charge.credit) continue;
+    if (isDeferralCredit(charge)) continue;
     if (charge.msi && charge.installmentIndex === undefined) continue;
     const key = chargeKey(charge);
     const left = remaining.get(key) ?? 0;
@@ -637,7 +641,7 @@ export const parseAmexStatementExtraction = (
       remaining.set(key, left - 1);
       continue;
     }
-    charges.push(charge);
+    (charge.credit ? credits : charges).push(charge);
   }
 
   const planKeys = new Set<string>();
@@ -649,7 +653,7 @@ export const parseAmexStatementExtraction = (
     msiPlans.push(plan);
   }
 
-  if (charges.length === 0 && msiPlans.length === 0) {
+  if (charges.length === 0 && credits.length === 0 && msiPlans.length === 0) {
     throw new InvalidAmexStatementError(
       `Textract no encontró movimientos Amex (answers=${Object.keys(extraction.answers).join(",") || "∅"}, tables=${extraction.tables.length}, lines=${extraction.lines.length}).`,
     );
@@ -660,6 +664,7 @@ export const parseAmexStatementExtraction = (
     product,
     period,
     charges,
+    credits,
     msiPlans,
     deferralCredits,
   };

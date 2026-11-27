@@ -6,7 +6,7 @@ import type { ReadSqlClient } from './sql-reads.js';
 
 /** Collect immutable assertions inside a read snapshot; original object IO happens after it closes. */
 export const collectLedgerEvidence = async (client: ReadSqlClient) => (await client.query(`SELECT capture_source,
-  source_kind,evidence_bucket,evidence_key,evidence_sha256,evidence_content_type FROM olbia.ledger_observations
+  source_kind,evidence_bucket,evidence_key,evidence_sha256,evidence_content_type,source_metadata->'attachment' AS attachment FROM olbia.ledger_observations
   ORDER BY id`)).rows;
 
 const originalBytes = async (bucket: string, key: string) => {
@@ -20,6 +20,12 @@ export const verifyLedgerEvidence = async (assertions: readonly JsonObject[], re
   const started = Date.now();
   let mismatches = 0, inlineCaptures = 0, conflictingObjects = 0, evidenceFiles = 0;
   const objects = new Map<string, { bucket: string; key: string; hashes: Set<string> }>();
+  const add = (bucket: string, key: string, sha256: string) => {
+    const identity = JSON.stringify([bucket, key]);
+    const object = objects.get(identity) ?? { bucket, key, hashes: new Set<string>() };
+    object.hashes.add(sha256);
+    objects.set(identity, object);
+  };
   for (const assertion of assertions) {
     if (assertion.evidence_bucket == null) {
       const inline = assertion.capture_source === 'apple_pay_shortcut' && assertion.source_kind === 'apple_pay_shortcut'
@@ -32,9 +38,17 @@ export const verifyLedgerEvidence = async (assertions: readonly JsonObject[], re
       || typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(sha256) || typeof contentType !== 'string' || !contentType.length) {
       mismatches++; continue;
     }
-    const identity = JSON.stringify([bucket, key]);
-    const object = objects.get(identity) ?? { bucket, key, hashes: new Set<string>() };
-    object.hashes.add(sha256); objects.set(identity, object);
+    add(bucket, key, sha256);
+    if (assertion.attachment != null) {
+      const attachment = assertion.attachment as JsonObject;
+      const sourcePrefix = /^manual-entries\/[^/]+\//.exec(key)?.[0];
+      if (assertion.capture_source !== 'manual' || !sourcePrefix || typeof attachment.sha256 !== 'string'
+        || !/^[a-f0-9]{64}$/.test(attachment.sha256) || !['image/png', 'image/jpeg', 'application/pdf'].includes(String(attachment.contentType))) {
+        mismatches++;
+      } else {
+        add(bucket, `${sourcePrefix}attachments/${attachment.sha256}`, attachment.sha256);
+      }
+    }
   }
   for (const object of objects.values()) {
     if (object.hashes.size !== 1) { conflictingObjects++; mismatches++; continue; }

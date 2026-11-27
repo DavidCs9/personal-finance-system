@@ -1,3 +1,4 @@
+import { isBankCredit } from './credit-verification.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { type MsiPlan } from '@finance/domain';
@@ -280,7 +281,7 @@ const applyStatementImportInternal = async (input: StatementApplyInput,
   const decisions = parseStatementDecisions(input.decisionBody);
   const currentRows = await work.rebuildRows();
   const appliedAt = new Date().toISOString();
-  let eventsSnapshot = await bankLedgerEvents();
+  let eventsSnapshot = await bankLedgerEvents(input.owner);
   const createdPlanIds = new Set<string>(), usedTargets = new Set<string>();
   const retainMsiCapture = async (row: StatementPreviewRow, eventId: string) => {
     if (input.conservativeAmex && !await linkBankEvidence({ record: stored, row, eventId, appliedAt,
@@ -336,7 +337,7 @@ const applyStatementImportInternal = async (input: StatementApplyInput,
       if(action.kind==='reconcile_plan') {
         await reconcileManualPlanFromStatement(stored,row,action.eventId,action.expectedPlan,appliedAt);
         msiConfirmed+=1;linked+=1;
-        eventsSnapshot=await bankLedgerEvents();
+        eventsSnapshot=await bankLedgerEvents(input.owner);
         continue;
       }
       if (action.kind === 'confirm_msi') {
@@ -444,12 +445,13 @@ const applyStatementImportInternal = async (input: StatementApplyInput,
         eventsSnapshot = [...eventsSnapshot, purchase];
       } else skipped += 1;
     } else if (action.kind === 'link') {
-      if (input.conservativeAmex && usedTargets.has(action.eventId))
+      if ((input.conservativeAmex || isBankCredit(row)) && usedTargets.has(action.eventId))
         throw new InvalidAmexStatementError('Dos filas apuntan a la misma compra. Revisa la conciliación.');
       if (await linkBankEvidence({ record: stored, row, eventId: action.eventId, appliedAt,
         parserVersion: input.provider === 'amex' ? 'amex-mx-statement-textract-v1' : 'santander-mx-statement-textract-v1',
         reason: input.provider === 'amex' ? 'Conciliado con estado de cuenta Amex.' : 'Conciliado con estado de cuenta Santander.',
       })) { linked += 1; usedTargets.add(action.eventId); }
+      else if (isBankCredit(row)) throw new invalid('El abono ya tiene evidencia de esta fuente o cambió.');
       else skipped += 1;
     } else {
       skipped += 1;

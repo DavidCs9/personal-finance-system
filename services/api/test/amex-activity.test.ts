@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { S3Client } from '@aws-sdk/client-s3';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildMsiSchedule } from '@finance/domain';
 import { nativeFixture } from './fixtures/native-ledger.js';
@@ -19,14 +19,16 @@ let flow: typeof import('../src/imports/amex-activity-flow.js');
 let imports: typeof import('../src/imports/import-sql.js');
 let statements: typeof import('../src/imports/statement-shared.js');
 let amex: typeof import('../src/imports/amex-statement-flow.js');
+let financial: typeof import('../src/financial-plans/service.js');
 let reconciliation: typeof import('../src/imports/amex-reconciliation.js');
 const originals = new Map<string, Uint8Array>();
 const owner = 'owner', account = { institution: 'american_express_mx', lastFour: '3456' };
 beforeAll(async () => {
   vi.stubEnv('RAW_EMAIL_BUCKET_NAME', 'evidence'); vi.stubEnv('METADATA_TABLE_NAME', 'metadata');
-  fixture = await nativeFixture(); harness.pool = fixture.pool;
+  fixture = await nativeFixture(true); harness.pool = fixture.pool;
   flow = await import('../src/imports/amex-activity-flow.js'); imports = await import('../src/imports/import-sql.js');
   statements = await import('../src/imports/statement-shared.js'); amex = await import('../src/imports/amex-statement-flow.js');
+  financial = await import('../src/financial-plans/service.js');
   reconciliation = await import('../src/imports/amex-reconciliation.js');
 }, 30_000);
 beforeEach(async () => {
@@ -34,6 +36,10 @@ beforeEach(async () => {
   vi.spyOn(readers, 'readerPool').mockImplementation(() => currentSqlClient() ?? fixture.pool);
   vi.spyOn(S3Client.prototype, 'send').mockImplementation((async (command: unknown) => {
     expect(currentSqlClient()).toBeUndefined();
+    if (command instanceof PutObjectCommand) {
+      originals.set(command.input.Key!, Buffer.from(command.input.Body as string | Uint8Array));
+      return {};
+    }
     const bytes = originals.get(String((command as { input: { Key: string } }).input.Key));
     if (!bytes) throw Object.assign(new Error('Missing original'), { name: 'NoSuchKey' });
     return { ContentLength: bytes.length, ContentType: AMEX_ACTIVITY_CONTENT_TYPE,
@@ -151,6 +157,71 @@ describe('Amex activity parsing and native financial application', () => {
     const again = await preview([{ reference: 'AT-extra', amount: -1 }, { amount: 1000, date: '07 Oct 2026', detail: 'CARGO 02 DE 03', reference: 'AT-bank-0' }]);
     expect(again.rows[1].status).toBe('duplicate'); expect(await apply(again.importId)).toMatchObject({ summary: { created: 0, linked: 0 } });
   });
+  it('confirms a quota before the statement, retains evidence, and later verifies it without adding a movement', async () => {
+    const plan = buildMsiSchedule({ principalMinor: 300000, cuotaMinor: 100000, months: 3,
+      startMonth: '2026-09', origin: 'manual' });
+    const id = await seed({ msi: plan, account: undefined, amount: { amountMinor: 300000, currency: 'MXN' },
+      occurredAt: '2026-09-07T12:00:00Z' });
+    const { getMonthSummary } = await import('../src/months/summary.js');
+    const summary = () => getMonthSummary(owner, '2026-10', new Date('2026-10-20T12:00:00Z'));
+    expect(await summary()).toMatchObject({ msiSpentMinor: 0, msiCommittedMinor: 100000 });
+    const input = { action: 'installment', movementId: id, movementType: 'card_purchase', institution: 'american_express_mx',
+      accountLastFour: '3456', merchantRaw: 'Example shop', amountMinor: 100001, occurredOn: '2026-10-13', installmentIndex: 2,
+      evidenceKind: 'screenshot', attachmentBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l7sAAAAASUVORK5CYII=' };
+    const proposed = await financial.previewFinancialChange(owner, 'manual_reconciliation', input);
+    const applied = await financial.applyFinancialChange(owner, proposed.operationId, 'manual_reconciliation');
+    expect(await financial.applyFinancialChange(owner, proposed.operationId, 'manual_reconciliation')).toEqual(applied);
+    expect(await summary()).toMatchObject({ msiSpentMinor: 100001, msiCommittedMinor: 0 });
+    const { verifyNativeLedgerProvenance } = await import('../src/events/provenance-verification.js');
+    expect(await verifyNativeLedgerProvenance(fixture.pool)).toMatchObject({ mismatches: 0 });
+    const undo = { action: 'undo', movementId: id, originalOperationId: proposed.operationId };
+    const proposedUndo = await financial.previewFinancialChange(owner, 'manual_reconciliation', undo);
+    const doc = pdfDocument(['Fecha y Detalle de las operaciones', '14 de Octubre Example shop', 'CARGO 02 DE 03', '1,000.00']);
+    const pdf = await previewPdf(doc);
+    expect(pdf.rows[0]).toMatchObject({ status: 'matched', eventId: id });
+    expect(await applyPdf(pdf.importId, doc)).toMatchObject({ summary: { created: 0, linked: 1, msiConfirmed: 1 } });
+    expect(await summary()).toMatchObject({ msiSpentMinor: 100000, msiCommittedMinor: 0 });
+    expect(await count()).toBe(1);
+    expect((await fixture.sql.query('SELECT evidence_origin,manual_observation_id FROM olbia.installment_entries WHERE installment_index=2')).rows)
+      .toEqual([{ evidence_origin: 'bank_row', manual_observation_id: null }]);
+    expect((await fixture.sql.query('SELECT amount_minor,source_metadata FROM olbia.ledger_observations WHERE id=$1', [proposed.operationId])).rows)
+      .toMatchObject([{ amount_minor: 100001, source_metadata: { occurredOn: '2026-10-13', evidenceKind: 'screenshot' } }]);
+    await expect(financial.applyFinancialChange(owner, proposedUndo.operationId, 'manual_reconciliation')).rejects.toThrow('banco');
+  });
+
+  it('prevents a stale manual preview from opening a duplicate and reverses the first decision', async () => {
+    const input = { action: 'create', movementType: 'card_purchase', institution: 'american_express_mx', accountLastFour: '3456',
+      merchantRaw: 'Example shop', amountMinor: 59900, occurredOn: '2026-10-14', evidenceKind: 'receipt' };
+    const first = await financial.previewFinancialChange(owner, 'manual_reconciliation', input);
+    const stale = await financial.previewFinancialChange(owner, 'manual_reconciliation', input);
+    const receipt = await financial.applyFinancialChange(owner, first.operationId);
+    await expect(financial.applyFinancialChange(owner, stale.operationId)).rejects.toThrow('cambió');
+    expect(await financial.previewFinancialChange(owner, 'manual_reconciliation', input)).toMatchObject({ canApply: false });
+    const movement = receipt.movement as { id: string };
+    const undo = await financial.previewFinancialChange(owner, 'manual_reconciliation',
+      { action: 'undo', movementId: movement.id, originalOperationId: first.operationId });
+    expect(await financial.applyFinancialChange(owner, undo.operationId)).toMatchObject({ movement: { status: 'rejected' } });
+    expect(await count()).toBe(1);
+  });
+
+  it('verifies a typed card payment against a later statement while preserving the manual bank reference', async () => {
+    const input = { creditType: 'card_payment', institution: 'american_express_mx', accountKind: 'credit_card', accountLastFour: '3456',
+      amountMinor: 43100, postedOn: '2026-10-13', description: 'GRACIAS POR SU PAGO', evidenceReference: 'PAY-PUBLISHED',
+      confirmedPosted: true };
+    const proposed = await financial.previewFinancialChange(owner, 'manual_credit', input);
+    const applied = await financial.applyFinancialChange(owner, proposed.operationId);
+    const credit = applied.credit as { movementId: string };
+    const doc = pdfDocument(['Fecha y Detalle de las operaciones', '13 de Octubre GRACIAS POR SU PAGO', '431.00']);
+    const pdf = await previewPdf(doc);
+    expect(pdf.rows.find(row => row.credit)).toMatchObject({ status: 'matched', eventId: credit.movementId });
+    expect(await applyPdf(pdf.importId, doc)).toMatchObject({ summary: { created: 0, linked: 1 } });
+    expect(await count()).toBe(1);
+    expect((await fixture.sql.query('SELECT bank_transaction_id FROM olbia.ledger_movements')).rows)
+      .toEqual([{ bank_transaction_id: 'PAY-PUBLISHED' }]);
+    await expect(financial.previewFinancialChange(owner, 'manual_reconciliation',
+      { action: 'undo_credit', movementId: credit.movementId })).rejects.toThrow('banco');
+  });
+
   it('never opens a new MSI plan while compatible plans remain ambiguous, including already-spent cuotas', async () => {
     const plan = buildMsiSchedule({ principalMinor: 300000, cuotaMinor: 100000, months: 3, startMonth: '2026-09', origin: 'manual' });
     await seed({ msi: plan, amount: { amountMinor: 300000, currency: 'MXN' } });

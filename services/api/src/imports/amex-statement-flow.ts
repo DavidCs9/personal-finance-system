@@ -35,9 +35,9 @@ export const buildAmexPreviewRows = async (
   document: AmexStatementDocument,
   owner: string,
 ): Promise<readonly StatementPreviewRow[]> => {
-  const rows = [...document.charges.filter(charge => !charge.msi).map(charge => ({ ...charge, kind: 'purchase' as const })),
+  const rows = [...[...document.charges, ...(document.credits ?? [])].filter(charge => !charge.msi).map(charge => ({ ...charge, kind: 'purchase' as const })),
     ...amexMsiEvidenceLines(document).map(line => ({ ...line, kind: 'msi' as const, msi: true }))];
-  const [events, retained, claimed] = await Promise.all([bankLedgerEvents(), readAmexRetainedRows(owner),
+  const [events, retained, claimed] = await Promise.all([bankLedgerEvents(owner), readAmexRetainedRows(owner),
     claimedBankRows('amex_statement', rows.map(row => row.identity))]);
   return classifyAmexRows({ sourceKind: 'amex_statement', accountLastFour: document.accountLastFour,
     rows, events, retained, claimed }) as readonly StatementPreviewRow[];

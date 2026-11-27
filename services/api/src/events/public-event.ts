@@ -11,6 +11,7 @@ export const toPublicEvent = (
     institution: payload.institution,
     eventType: payload.eventType ?? 'card_purchase',
     status: payload.status,
+    accountLastFour: account?.lastFour,
     accountName: account?.displayName ?? 'Tarjeta sin identificar',
     amount: payload.amount,
     personalAmountMinor: payload.personalAmountMinor,

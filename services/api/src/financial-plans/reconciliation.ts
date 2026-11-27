@@ -7,7 +7,7 @@ import { readerPool, withLedgerReadSnapshot } from '../events/sql-reads.js';
 import { persistEventMsi } from '../events/mutations.js';
 import { bankClaimToken, bankPlanEvidence, linkBankEvidence } from '../imports/bank-ledger.js';
 import { readBankImport, type BankImportKind } from '../imports/import-sql.js';
-import { amexMerchantsMatch, buildPlanFromCreateDecision, hasCompleteMsiPlanEvidence, type EvidenceLine } from '../imports/msi-reconciliation.js';
+import { amexMerchantsMatch, compatibleManualInstallmentEvidence, hasManualInstallmentEvidence, verifyInstallmentWithBankEvidence, buildPlanFromCreateDecision, hasCompleteMsiPlanEvidence, type EvidenceLine } from '../imports/msi-reconciliation.js';
 import { InvalidMonthlyPlanError } from '../months/monthly-plan.js';
 import { parsePaymentReconciliationInput, PaymentReconciliationConflictError, validatePaymentReconciliation,
   writePaymentReconciliation } from '../months/reconciliation.js';
@@ -116,10 +116,18 @@ export const planFromMsiEvidence = (previous: MsiPlan | null, line: EvidenceLine
     if (!previous || !target || previous.needsScheduleCompletion || target.status === 'cancelled' || target.month !== month
       || (line.installmentMonths !== undefined && line.installmentMonths !== previous.months))
       throw new FinancialPlanError('La cuota no coincide con el calendario vigente. Revisa los términos bancarios antes de corregirlo.');
-    return { index, plan: markInstallmentSpent(previous, index, {
-      amountMinor: line.amountMinor, occurredOn: line.occurredOn, evidenceObservationId: line.identity, confirmedAt: at,
-    }) };
+    const current = target!;
+    if (!compatibleManualInstallmentEvidence(current, line))
+      conflict('El importe bancario contradice la evidencia manual de esta cuota.');
+    return { index, plan: hasManualInstallmentEvidence(current)
+      ? verifyInstallmentWithBankEvidence(previous!, current, line, at)
+      : markInstallmentSpent(previous!, index, {
+        amountMinor: line.amountMinor, occurredOn: line.occurredOn, evidenceObservationId: line.identity, confirmedAt: at,
+      }) };
   }
+  const previousTarget = previous?.installments.find(item => item.index === index);
+  if (previousTarget && !compatibleManualInstallmentEvidence(previousTarget, line))
+    conflict('La corrección contradice la evidencia manual de esta cuota.');
   if (!hasCompleteMsiPlanEvidence(line)) throw new FinancialPlanError('Corregir el calendario requiere principal, cuota y número/plazo impresos en el estado.');
   const rebuilt = buildPlanFromCreateDecision(line, { months: line.installmentMonths!, cuotaMinor: line.amountMinor, confirmedAt: at });
   const installments = [...rebuilt.installments];
@@ -180,7 +188,7 @@ export const msiReconciliationProposal = async (client: SqlClient, owner: string
     || !amexMerchantsMatch(before.merchant, row.merchantRaw)))
     throw new FinancialPlanError('La fila y la compra no tienen identidad bancaria compatible. Revisa comercio, principal, fecha y tarjeta.');
   const old = before.plan?.installments.find(item => item.index === index);
-  if (old?.evidenceObservationId && old.evidenceObservationId !== row.identity && !identityMatches && old.occurredOn !== row.occurredOn)
+  if (old?.evidenceObservationId && !hasManualInstallmentEvidence(old) && old.evidenceObservationId !== row.identity && !identityMatches && old.occurredOn !== row.occurredOn)
     conflict('La cuota ya tiene evidencia de otra fecha. Revisa ambas filas bancarias.');
   const evidence = { ref, identity: row.identity, merchant: row.merchantRaw, amountMinor: row.amountMinor,
     occurredOn: row.occurredOn, originalOn: line.originalOn ?? null, originalAmountMinor: row.originalAmountMinor ?? null,

@@ -10,6 +10,14 @@ const safeMoney = 'BETWEEN 0 AND 9007199254740991';
 const positiveMoney = 'BETWEEN 1 AND 9007199254740991';
 export const LEDGER_EVENT_TYPE_CHECK = "CHECK (event_type IN ('card_purchase','card_charge','outgoing_transfer','bank_credit'))";
 const captureKinds = "('email','apple_pay_shortcut','manual','santander_csv','amex_statement','amex_activity','santander_statement')";
+export const installmentEvidenceOriginCheck = "CHECK (evidence_origin IN ('bank_row','ambiguous_bank_row','legacy_backfill','manual_observation'))";
+export const installmentManualObservationCheck = "CHECK ((evidence_origin IS NOT DISTINCT FROM 'manual_observation') = (manual_observation_id IS NOT NULL) AND (manual_observation_id IS NULL OR (evidence_identity IS NOT DISTINCT FROM ('manual:' || manual_observation_id::text) AND status='spent')))";
+export const installmentManualObservationFk = "FOREIGN KEY (movement_id,manual_observation_id) REFERENCES olbia.ledger_observations(movement_id,id)";
+export const LEDGER_CREDIT_KIND_CHECK = "CHECK (kind IN ('income','refund','fund_release','card_payment'))";
+export const LEDGER_CREDIT_TERMS_CHECK = `CHECK ((kind='income' AND account_kind='cash' AND income_type IS NOT NULL)
+    OR (kind='refund' AND income_type IS NULL)
+    OR (kind='fund_release' AND account_kind='cash' AND income_type IS NULL)
+    OR (kind='card_payment' AND account_kind='credit_card' AND income_type IS NULL))`;
 const accountColumns = `account_present boolean NOT NULL,
   account_id text, account_name text, account_institution text, account_last_four text,
   CHECK (account_present OR (account_id IS NULL AND account_name IS NULL AND
@@ -70,15 +78,13 @@ export const NATIVE_LEDGER_SCHEMA_STATEMENTS = [
     PRIMARY KEY (movement_id,position), CONSTRAINT ledger_tags_value_key UNIQUE (movement_id,tag))`,
   `CREATE TABLE IF NOT EXISTS olbia.ledger_credit_details (
     movement_id uuid PRIMARY KEY REFERENCES olbia.ledger_movements(id),
-    posted_on date NOT NULL, kind text NOT NULL CHECK (kind IN ('income','refund','fund_release')),
+    posted_on date NOT NULL, kind text NOT NULL CONSTRAINT ledger_credit_details_reconciliation_kind_check ${LEDGER_CREDIT_KIND_CHECK},
     account_kind text NOT NULL CHECK (account_kind IN ('cash','credit_card')),
     income_type text CHECK (income_type IN ('finiquito','nomina','otro')),
     fund_owner text, fund_employer_key text,
     CONSTRAINT ledger_credit_fund_closure_fk FOREIGN KEY (fund_owner,fund_employer_key) REFERENCES olbia.payroll_closures(owner,employer_key),
     CONSTRAINT ledger_credit_fund_closure_key UNIQUE (fund_owner,fund_employer_key),
-    CHECK ((kind='income' AND account_kind='cash' AND income_type IS NOT NULL)
-      OR (kind='refund' AND income_type IS NULL)
-      OR (kind='fund_release' AND account_kind='cash' AND income_type IS NULL)),
+    CONSTRAINT ledger_credit_details_reconciliation_terms_check ${LEDGER_CREDIT_TERMS_CHECK},
     CHECK ((kind='fund_release' AND fund_owner IS NOT NULL AND fund_employer_key IS NOT NULL)
       OR (kind<>'fund_release' AND fund_owner IS NULL AND fund_employer_key IS NULL)))`,
   `CREATE TABLE IF NOT EXISTS olbia.ledger_bulk_operations (
@@ -124,7 +130,10 @@ export const NATIVE_LEDGER_SCHEMA_STATEMENTS = [
     amount_minor bigint NOT NULL CHECK (amount_minor ${positiveMoney}),
     status text NOT NULL CHECK (status IN ('committed','spent','cancelled')),
     occurred_on date, confirmed_at timestamptz,
-    evidence_identity text, evidence_origin text CHECK (evidence_origin IN ('bank_row','ambiguous_bank_row','legacy_backfill')),
+    evidence_identity text, evidence_origin text CONSTRAINT installment_evidence_origin_check ${installmentEvidenceOriginCheck},
+    manual_observation_id uuid,
+    CONSTRAINT installment_manual_observation_check ${installmentManualObservationCheck},
+    CONSTRAINT installment_manual_observation_fk ${installmentManualObservationFk},
     evidence_import_kind text, evidence_content_sha256 text, evidence_row_position integer,
     PRIMARY KEY (movement_id,installment_index),
     CONSTRAINT installment_entries_month_key UNIQUE (movement_id,month),

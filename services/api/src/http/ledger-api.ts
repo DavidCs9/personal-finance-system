@@ -1,3 +1,4 @@
+import { getManualReconciliationAttachment } from '../events/manual-reconciliation.js';
 import { listBudgets, getBudgetStatus, getBudgetHistory, simulateBudgetPurchase } from '../financial-plans/budgets.js';
 import { FinancialPlanError } from '@finance/domain';
 import { listExpectedIncome, getExpectedIncome, listFinancialGoals, getFinancialGoal, previewFinancialChange, applyFinancialChange, getFinancialWriteStatus } from '../financial-plans/service.js';
@@ -195,7 +196,7 @@ app.get('/financial-goals/:goalId', async ({ event, params }) =>
   json(200, await getFinancialGoal(ownerOf(asHttpEvent(event)), params.goalId)));
 app.get('/financial-writes/:operationId', async ({ event, params }) =>
   json(200, await getFinancialWriteStatus(ownerOf(asHttpEvent(event)), params.operationId)));
-for (const [path, kind] of [['/expected-income/preview', 'income'], ['/financial-goals/preview', 'goal'], ['/budgets/preview', 'budget'], ['/monthly-received/preview', 'monthly_received']] as const) {
+for (const [path, kind] of [['/expected-income/preview', 'income'], ['/financial-goals/preview', 'goal'], ['/budgets/preview', 'budget'], ['/monthly-received/preview', 'monthly_received'], ['/events/reconciliation/preview', 'manual_reconciliation'], ['/events/credit/preview', 'manual_credit']] as const) {
   app.post(path, async ({ event }) => {
     const e = asHttpEvent(event);
     let input: unknown;
@@ -206,6 +207,12 @@ for (const [path, kind] of [['/expected-income/preview', 'income'], ['/financial
 }
 app.post('/financial-writes/:operationId/apply', async ({ event, params }) =>
   json(200, await applyFinancialChange(ownerOf(asHttpEvent(event)), params.operationId)));
+
+app.get('/events/:eventId/reconciliation/:operationId/attachment', async ({ event, params }) => {
+  const result = await getManualReconciliationAttachment(ownerOf(asHttpEvent(event)), params.eventId, params.operationId);
+  return result ? statementResponse(HttpStatusCodes.OK, result)
+    : statementResponse(HttpStatusCodes.NOT_FOUND, { message: 'Adjunto no encontrado.' });
+});
 
 app.get('/cards', async ({ event }) => {
   const cards = await listCards(ownerOf(asHttpEvent(event)));
