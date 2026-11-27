@@ -6,6 +6,7 @@ import { Amt } from "../components/Amt";
 import { Mark } from "../components/Brand";
 import { Field } from "../components/Field";
 import { Sheet } from "../components/Sheet";
+import { evidenceLabels, ManualEntrySheet } from "./ManualEntrySheet";
 import {
   eventDate,
   eventMoney,
@@ -32,6 +33,13 @@ export function EventSheet({
   onVerified(event: PurchaseEvent): void;
 }) {
   const queryClient = useQueryClient();
+  const [manualTarget, setManualTarget] = useState<{ index?: number }>();
+  const [manualBusy, setManualBusy] = useState(false);
+  const manualDetail = useQuery({
+    queryKey: ["manual-reconciliation", event.id, event.captureSources?.length, event.msi],
+    enabled: !demoMode && (event.captureSources?.includes("manual") ?? event.captureSource === "manual"),
+    queryFn: () => ledgerApi.event(event.id, idToken),
+  });
   const [rawEmail, setRawEmail] = useState<string>();
   const [activityOriginals, setActivityOriginals] = useState<readonly string[]>([]);
   const [error, setError] = useState<string>();
@@ -357,6 +365,39 @@ export function EventSheet({
       ? event.source.key
       : event.id;
 
+  const canReconcile = !demoMode && ["accepted", "needs_review"].includes(event.status) && event.amount.currency === "MXN";
+  const manualOperations = (manualDetail.data?.observations ?? event.observations ?? [])
+    .filter(observation => observation.id && observation.source.evidenceKind);
+  const manualRevisions = manualDetail.data?.revisions ?? event.revisions;
+  const handleManualOperation = async (operationId: string, action: "undo" | "attachment") => {
+    setManualBusy(true);
+    setError(undefined);
+    try {
+      if (action === "undo") {
+        const preview = await ledgerApi.previewManualReconciliation({ action: "undo", movementId: event.id, originalOperationId: operationId }, idToken);
+        updateCache(await ledgerApi.applyManualReconciliation(preview.operationId, idToken));
+        await manualDetail.refetch();
+      } else {
+        const { url } = await ledgerApi.manualReconciliationAttachment(event.id, operationId, idToken);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "";
+        link.click();
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "No se pudo completar la acción.");
+    } finally {
+      setManualBusy(false);
+    }
+  };
+
+  if (manualTarget) return <ManualEntrySheet
+    idToken={idToken} demoMode={demoMode} now={new Date()} target={event}
+    installment={event.msi?.installments.find(item => item.index === manualTarget.index)}
+    onClose={() => setManualTarget(undefined)}
+    onCreated={updated => { updateCache(updated); setManualTarget(undefined); void manualDetail.refetch(); }}
+  />;
+
   return (
     <Sheet eyebrow="MOVIMIENTO OBSERVADO" title={event.merchantRaw} onClose={onClose}>
       <div className="event-detail">
@@ -669,6 +710,33 @@ export function EventSheet({
             </div>
           </div>
         )}
+        {canReconcile && !event.msi && <button className="secondary-button"
+          onClick={() => setManualTarget({})}>Vincular evidencia manual</button>}
+        {manualDetail.isError && <p role="alert">No se pudo consultar el historial de conciliación.</p>}
+        {manualOperations.length > 0 && <div className="sheet-form">
+          <h3>Conciliación manual</h3>
+          {manualOperations.map(observation => {
+            const id = observation.id!;
+            const revisionKey = `manual-reconciliation:${id}`;
+            const reversed = manualRevisions.some(revision => revision.id === `${revisionKey}:undo`);
+            const installmentChange = manualRevisions.find(revision => revision.id === revisionKey)?.changes.msi?.next as { index?: number } | undefined;
+            const installment = event.msi?.installments.find(item => item.index === installmentChange?.index);
+            const bankVerified = installmentChange
+              ? Boolean(installment?.evidenceObservationId && !installment.evidenceObservationId.startsWith("manual:"))
+              : (manualDetail.data?.captureSources ?? event.captureSources ?? []).some(source =>
+                source === "amex_activity" || source === "amex_statement" || source === "santander_statement" || source === "santander_csv");
+            return <div className="sheet-form" key={id}>
+              <p>{evidenceLabels[observation.source.evidenceKind as keyof typeof evidenceLabels]} · {observation.source.occurredOn}
+                {reversed ? " · Revertida" : bankVerified ? " · Verificada con banco" : ""}</p>
+              {observation.amount && <p><Amt>{money(observation.amount.amountMinor)}</Amt></p>}
+              {observation.source.evidenceReference && <p>{observation.source.evidenceReference}</p>}
+              {observation.source.attachment && <button type="button" className="secondary-button" disabled={manualBusy}
+                onClick={() => void handleManualOperation(id, "attachment")}>Descargar adjunto</button>}
+              {!reversed && !bankVerified && <button type="button" className="secondary-button" disabled={manualBusy}
+                onClick={() => void handleManualOperation(id, "undo")}>Deshacer conciliación</button>}
+            </div>;
+          })}
+        </div>}
         {event.msi && (
           <div className="payment-list">
             {event.msi.installments.map((installment) => (
@@ -681,7 +749,10 @@ export function EventSheet({
                   <strong>
                     MSI {installment.index}/{event.msi?.months}
                   </strong>
-                  <small>{installment.status}</small>
+                  <small>{installment.status === "spent" ? "Registrada en gasto" : installment.status === "committed" ? "Comprometida" : "Cancelada"}</small>
+                  {canReconcile && !event.msi?.needsScheduleCompletion && installment.status === "committed" &&
+                    <button type="button" className="secondary-button"
+                      onClick={() => setManualTarget({ index: installment.index })}>Confirmar cuota</button>}
                 </span>
                 <strong className="payment-amount">
                   <Amt>{money(installment.amountMinor)}</Amt>

@@ -30,12 +30,13 @@ import { localDate } from '../events/queries.js';
 import { bankLedgerEvents } from './bank-ledger.js';
 
 const buildSantanderStatementPreviewRows = async (
-  document: SantanderStatementDocument,
+  document: SantanderStatementDocument, owner: string,
 ): Promise<readonly StatementPreviewRow[]> => {
-  const events = await bankLedgerEvents();
-  const identities = document.charges.map((charge) => charge.identity);
+  const events = await bankLedgerEvents(owner);
+  const charges = [...document.charges, ...(document.credits ?? [])];
+  const identities = charges.map((charge) => charge.identity);
   const claimed = await claimedStatementIdentities('santander', identities);
-  const purchaseRows = document.charges
+  const purchaseRows = charges
     .filter((charge) => !charge.msi)
     .map((charge) => classifyPurchaseCharge({
       provider: 'santander',
@@ -87,7 +88,7 @@ export const getSantanderStatementImport = async (importId: string, owner: strin
   if (!stored) throw new InvalidSantanderStatementError('La previsualización ya no está disponible. Vuelve a seleccionar el estado de cuenta.');
   if (stored.status === 'previewed') {
     const document = parseSantanderStatementExtraction(await loadStatementTextractExtraction(stored));
-    return statementImportResponse(await refreshStatementPreview(stored, await buildSantanderStatementPreviewRows(document)));
+    return statementImportResponse(await refreshStatementPreview(stored, await buildSantanderStatementPreviewRows(document, owner)));
   }
   if (stored.status !== 'processing') return statementImportResponse(stored);
   const jobId = stored.textractJobId;
@@ -117,7 +118,7 @@ export const getSantanderStatementImport = async (importId: string, owner: strin
     const retained = await loadStatementTextractExtraction({source: stored.source, extractionKey});
     answers = retained.answers;
     const document = parseSantanderStatementExtraction(retained);
-    const rows = await buildSantanderStatementPreviewRows(document);
+    const rows = await buildSantanderStatementPreviewRows(document, owner);
     preview = { accountLastFour: document.accountLastFour, product: document.product,
       period: document.period, rows, extractionKey, textractAnswers: answers };
   } catch (error) {
@@ -143,6 +144,6 @@ export const applySantanderStatementImport = async (
   decisionBody,
   prepareRows: async (stored) => {
     const document = parseSantanderStatementExtraction(await loadStatementTextractExtraction(stored));
-    return { rebuildRows: () => buildSantanderStatementPreviewRows(document) };
+    return { rebuildRows: () => buildSantanderStatementPreviewRows(document, owner) };
   },
 });

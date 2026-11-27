@@ -6,7 +6,7 @@ import { NATIVE_DELIVERY_SCHEMA_STATEMENTS, nativeDeliveryReadGrant, nativeDeliv
 import { NATIVE_BUDGET_PUSH_SCHEMA_STATEMENT, NATIVE_PUSH_SCHEMA_STATEMENT, nativeBudgetPushGrants, nativePushReadGrant, nativePushMetadataGrant, nativePushWriteGrants } from './push-schema.js';
 import type { SqlClient, TransactionPool } from './projection.js';
 import { isOCCError } from '@aws/aurora-dsql-node-postgres-connector';
-import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT, LEDGER_EVENT_TYPE_CHECK } from './ledger-schema.js';
+import { NATIVE_LEDGER_SCHEMA_STATEMENTS, NATIVE_LEDGER_TABLES, LEDGER_PRIMARY_OBSERVATION_CONSTRAINT, LEDGER_EVENT_TYPE_CHECK, installmentEvidenceOriginCheck, installmentManualObservationCheck, installmentManualObservationFk, LEDGER_CREDIT_KIND_CHECK, LEDGER_CREDIT_TERMS_CHECK } from './ledger-schema.js';
 import { NATIVE_WEALTH_SCHEMA_STATEMENTS, nativeWealthReadGrant, nativeWealthWriteGrants } from './wealth-schema.js';
 import { NATIVE_PLANNING_SCHEMA_STATEMENTS, NATIVE_PLANNING_TABLES } from './planning-schema.js';
 import { NATIVE_CATEGORY_SCHEMA_STATEMENTS, nativeCategoryReadGrant, nativeCategoryWriteGrants } from './category-schema.js';
@@ -162,6 +162,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   const migrationOptions = { now, pause, waitMs: options.indexWaitMs };
   await ensureIncomeScheduleSchema({ query: (statement, params) => query('income-schedule-schema', statement, params) }, migrationOptions);
   await ensureBudgetSchema({ query: (statement, params) => query('budget-schema', statement, params) }, migrationOptions);
+  await ensureManualReconciliationSchema({ query: (statement, params) => query('manual-reconciliation-schema', statement, params) }, migrationOptions);
   await ensureAmexActivitySchema({ query: (statement, params) => query('amex-activity-schema', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   await ensureSantanderAccount({ query: (statement, params) => query('santander-account', statement, params) },
     { now, pause, waitMs: options.indexWaitMs });
@@ -348,7 +349,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
       `GRANT DELETE ON olbia.ledger_movement_warnings,olbia.installment_plans,olbia.installment_entries,olbia.installment_evidence_candidates TO ${role}`,
       `GRANT SELECT ON olbia.bank_imports,olbia.bank_import_rows,olbia.bank_import_candidates TO ${role}`,
       `GRANT INSERT ON olbia.ledger_revisions TO ${role}`,
-      `GRANT UPDATE (reconciled_at,bank_transaction_id) ON olbia.ledger_movements TO ${role}`,
+      `GRANT UPDATE (reconciled_at,bank_transaction_id,status) ON olbia.ledger_movements TO ${role}`,
       `GRANT SELECT ON olbia.month_plans,olbia.planned_payments,olbia.planned_payment_charges TO ${role}`,
       `GRANT INSERT ON olbia.month_plans,olbia.planned_payment_charge_revisions TO ${role}`,
       `GRANT UPDATE (updated_at) ON olbia.month_plans TO ${role}`,
@@ -386,6 +387,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
     if (frozen.length && (await query(`revoke-lookup-${role}`, 'SELECT rolname FROM pg_roles WHERE rolname=$1', [role])).rows.length)
       await query(`migration-evidence-revoke-${role}`, `REVOKE ALL PRIVILEGES ON ${frozen.map(table => `olbia.${table}`).join(',')} FROM ${role}`);
   }
+  await query('manual-reconciliation-complete','INSERT INTO olbia.schema_migrations VALUES (33,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('native-control-complete','INSERT INTO olbia.schema_migrations VALUES (20,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('native-payment-reconciliation-complete','INSERT INTO olbia.schema_migrations VALUES (22,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('category-catalog-complete','INSERT INTO olbia.schema_migrations VALUES (24,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
@@ -493,6 +495,24 @@ export const ensureLedgerPrimaryObservation = (client: SqlClient, options: Param
   ensureValidatedConstraint(client, 'ledger_movements', 'ledger_movements_primary_observation_fk',
     LEDGER_PRIMARY_OBSERVATION_CONSTRAINT, 'ledger-primary', options);
 
+export const ensureManualReconciliationSchema = async (
+  client: SqlClient, options: Parameters<typeof ensureValidatedConstraint>[5] = {},
+): Promise<void> => {
+  await client.query('ALTER TABLE olbia.installment_entries ADD COLUMN IF NOT EXISTS manual_observation_id uuid');
+  for (const [name, definition] of [
+    ['installment_evidence_origin_check', installmentEvidenceOriginCheck],
+    ['installment_manual_observation_check', installmentManualObservationCheck],
+    ['installment_manual_observation_fk', installmentManualObservationFk],
+  ]) await ensureValidatedConstraint(client, 'installment_entries', name, definition, name, options);
+  await ensureValidatedConstraint(client, 'ledger_credit_details', 'ledger_credit_details_reconciliation_kind_check',
+    LEDGER_CREDIT_KIND_CHECK, 'manual-credit-kind', options);
+  await ensureValidatedConstraint(client, 'ledger_credit_details', 'ledger_credit_details_reconciliation_terms_check',
+    LEDGER_CREDIT_TERMS_CHECK, 'manual-credit-terms', options);
+  await client.query('ALTER TABLE olbia.ledger_credit_details DROP CONSTRAINT IF EXISTS ledger_credit_details_kind_check');
+  await client.query('ALTER TABLE olbia.ledger_credit_details DROP CONSTRAINT IF EXISTS ledger_credit_details_check');
+  await client.query('ALTER TABLE olbia.installment_entries DROP CONSTRAINT IF EXISTS installment_entries_evidence_origin_check');
+};
+
 export const ensureLedgerCreditTypes = async (client: SqlClient, options: Parameters<typeof ensureValidatedConstraint>[5] = {}): Promise<void> => {
   for (const table of ['ledger_movements', 'ledger_observations']) {
     await ensureValidatedConstraint(client, table, `${table}_credit_type_check`, LEDGER_EVENT_TYPE_CHECK, 'ledger-credit-type', options);
@@ -512,15 +532,17 @@ export const ensureBudgetSchema = async (client: SqlClient, options: Parameters<
   await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_monthly_received_fk',
     'FOREIGN KEY (monthly_received_id) REFERENCES olbia.monthly_received_totals(id)', 'monthly-received-fk', options);
   for (const table of ['financial_write_operations', 'financial_change_receipts']) {
-    await ensureValidatedConstraint(client, table, `${table}_received_kind_check`, FINANCIAL_WRITE_KIND_CHECK, 'financial-write-kind', options);
+    await ensureValidatedConstraint(client, table, `${table}_manual_reconciliation_kind_check`, FINANCIAL_WRITE_KIND_CHECK, 'financial-write-kind', options);
+    await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_received_kind_check`);
     await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_credit_kind_check`);
     await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_kind_check`);
     await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_budget_kind_check`);
     await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_reconciliation_kind_check`);
   }
 
-  await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_received_entity_check',
+  await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_manual_reconciliation_entity_check',
     FINANCIAL_RECEIPT_ENTITY_CHECK, 'financial-receipt-entity', options);
+  await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_receipts_received_entity_check');
   await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_receipts_credit_entity_check');
   await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_change_receipts_check');
   await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_receipts_budget_entity_check');

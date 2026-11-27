@@ -1,3 +1,4 @@
+import { bankCreditCandidates, hasManualMovementEvidence, movementAmountMatches } from './credit-verification.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { MsiPlan } from '@finance/domain';
@@ -33,21 +34,29 @@ const candidateEvents = (document: SantanderCsvDocument, row: SantanderCsvRow, e
   events.filter((event) => {
     const account = event.account as JsonObject | undefined;
     const amount = event.amount as JsonObject | undefined;
-    return event.institution === 'santander_mx' && event.status !== 'rejected'
-      && account?.lastFour === document.accountLastFour
+    return event.institution === 'santander_mx' && event.status !== 'rejected' && event.eventType !== "bank_credit"
+      && (account?.lastFour === document.accountLastFour || !account?.lastFour && hasManualMovementEvidence(event))
       && amount?.currency === 'MXN'
-      && amount.amountMinor === row.amountMinor
+      && (!event.msi && hasManualMovementEvidence(event) || movementAmountMatches(event, row))
       && localDate(event.occurredAt ?? event.receivedAt) === row.occurredOn
       && typeof event.merchantRaw === 'string'
       && merchantsMatch(event.merchantRaw, row.merchantRaw);
   });
 
-const classifySantanderRows = async (document: SantanderCsvDocument): Promise<readonly SantanderPreviewRow[]> => {
-  const [events, claims] = await Promise.all([bankLedgerEvents(), claimedBankRows('santander_csv', document.rows.map(row => row.identity))]);
+const classifySantanderRows = async (document: SantanderCsvDocument, owner: string): Promise<readonly SantanderPreviewRow[]> => {
+  const [events, claims] = await Promise.all([bankLedgerEvents(owner), claimedBankRows('santander_csv', document.rows.map(row => row.identity))]);
   const msiEvents = statementMsiEvents(events, {institution:'santander_mx',accountLastFour:document.accountLastFour});
   return document.rows.map((row): SantanderPreviewRow => {
     if (claims.has(row.identity)) return { ...row, status: 'duplicate', candidateEventIds: [], candidates: [] };
-    if (row.amountMinor < 0) return { ...row, status: 'excluded', candidateEventIds: [], candidates: [] };
+    if (row.amountMinor < 0) {
+      const credits = bankCreditCandidates({ row, events, institution: 'santander_mx',
+        accountLastFour: document.accountLastFour, localDate, merchantsMatch }).filter(event =>
+        !(event.captureSources as string[] | undefined)?.includes('santander_csv'));
+      const candidates = credits.map(event => ({ id: String(event.id), merchantRaw: String(event.merchantRaw) }));
+      const safe = row.transactionId && credits.length === 1 && movementAmountMatches(credits[0], row) && (credits[0].account as JsonObject | undefined)?.lastFour === document.accountLastFour;
+      return { ...row, status: safe ? 'matched' : candidates.length ? 'ambiguous' : 'excluded',
+        candidates, candidateEventIds: candidates.map(item => item.id) };
+    }
     if (isSantanderMsiRow(row.merchantRaw) && row.amountMinor > 0) {
       const match = matchEvidenceLine({
         merchantRaw: row.merchantRaw,
@@ -86,8 +95,8 @@ const classifySantanderRows = async (document: SantanderCsvDocument): Promise<re
       ...(typeof candidate.occurredAt === 'string' ? { occurredAt: candidate.occurredAt } : {}),
     }));
     if (!row.transactionId) return { ...row, status: 'ambiguous', candidateEventIds: candidates.map((candidate) => String(candidate.id)), candidates: candidateSummaries };
-    if (candidates.length === 1) return { ...row, status: 'matched', candidateEventIds: [String(candidates[0].id)], candidates: candidateSummaries };
-    if (candidates.length > 1) return { ...row, status: 'ambiguous', candidateEventIds: candidates.map((candidate) => String(candidate.id)), candidates: candidateSummaries };
+    if (candidates.length === 1 && movementAmountMatches(candidates[0], row) && (candidates[0].account as JsonObject | undefined)?.lastFour === document.accountLastFour) return { ...row, status: 'matched', candidateEventIds: [String(candidates[0].id)], candidates: candidateSummaries };
+    if (candidates.length) return { ...row, status: 'ambiguous', candidateEventIds: candidates.map((candidate) => String(candidate.id)), candidates: candidateSummaries };
     return { ...row, status: 'new', candidateEventIds: [], candidates: [] };
   });
 };
@@ -139,7 +148,7 @@ export const previewSantanderImport = async (body: string | undefined, owner: st
   } catch (error) {
     if (errorName(error) !== 'PreconditionFailed') throw error;
   }
-  const rows = await classifySantanderRows(document);
+  const rows = await classifySantanderRows(document, owner);
   const previewedAt = new Date().toISOString();
   const saved = await startBankImport({
     kind: 'santander_csv', importId, owner, status: 'previewed',
@@ -234,7 +243,7 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
   if (stored.status !== 'previewed') throw new InvalidSantanderCsvError('Vuelve a seleccionar el CSV para revisar la importación.');
   assertPreparedImport(stored, prepared);
   const decisions = parseImportDecisions(decisionBody);
-  const rows = await classifySantanderRows(document);
+  const rows = await classifySantanderRows(document, owner);
   const previewRows = stored.rows as readonly SantanderPreviewRow[];
   const previewByIdentity = new Map(previewRows.map((row) => [row.identity, row]));
   const appliedAt = new Date().toISOString();
@@ -242,12 +251,15 @@ const applySantanderImportInternal = async (importId: string, owner: string, dec
   let linked = 0;
   let skipped = 0;
   let msiConfirmed = 0;
-  let eventsSnapshot = await bankLedgerEvents();
+  let eventsSnapshot = await bankLedgerEvents(owner);
   const currentMsiEvents = () => statementMsiEvents(eventsSnapshot, {institution:'santander_mx',accountLastFour:document.accountLastFour});
   for (const row of rows) {
     bankRowPosition(stored, row);
     const previewRow = previewByIdentity.get(row.identity);
-    const action = santanderApplyAction(row, previewRow, decisions[row.identity]);
+    const decision = decisions[row.identity];
+    const action = decision?.action === 'skip' ? { kind: 'skip' as const } : santanderApplyAction(row, previewRow, decision);
+    if (row.amountMinor < 0 && action.kind !== 'link' && action.kind !== 'skip')
+      throw new InvalidSantanderCsvError('Un abono sólo se puede vincular a un movimiento existente.');
     const msiEvidence: EvidenceLine | undefined = isSantanderMsiRow(row.merchantRaw) && row.amountMinor > 0
       ? {
           merchantRaw: row.merchantRaw,

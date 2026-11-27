@@ -1,3 +1,4 @@
+import { hasManualInstallmentEvidence } from '../imports/msi-reconciliation.js';
 import { applicationSqlClient, withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { randomUUID } from 'node:crypto';
 import { insertLedgerRevision, readLedgerDetail, replaceInstallmentPlan, replaceMovementTags,
@@ -129,6 +130,11 @@ const persistEventMsiInternal = async (
 ): Promise<JsonObject | undefined> => {
   const existing = await getEventDetail(eventId);
   if (!existing) return undefined;
+  const observedInstallments = readMsiPlan(existing.msi)?.installments.filter(hasManualInstallmentEvidence) ?? [];
+  if (observedInstallments.some(observed => !evidence?.some(item => item.installmentIndex === observed.index)
+    && !next?.installments.some(item => item.index === observed.index && item.month === observed.month
+      && item.evidenceObservationId === observed.evidenceObservationId)))
+    throw new InvalidMsiError('Deshaz la conciliación manual antes de eliminar o mover una cuota confirmada.');
   await replaceInstallmentPlan(applicationSqlClient(), eventId, next, evidence);
   const revision = {
     id: randomUUID(),

@@ -1,5 +1,5 @@
 import {addCalendarMonths,amountsWithinTolerance,dayKeyInZone,type MsiPlan} from '@finance/domain';
-import {amexMerchantsMatch,hasCompleteMsiPlanEvidence,isAutomaticAmexLabel,matchEvidenceLine as matchMsiEvidence,type EvidenceLine} from './msi-reconciliation.js';
+import {amexMerchantsMatch,hasManualInstallmentEvidence,hasCompleteMsiPlanEvidence,isAutomaticAmexLabel,matchEvidenceLine as matchMsiEvidence,type EvidenceLine} from './msi-reconciliation.js';
 import type {StatementPreviewRow,ExpectedManualPlan} from './statement-reconciliation.js';
 import type {BankMsiAssertion} from './bank-ledger.js';
 import type {JsonObject} from '../http/response.js';
@@ -17,7 +17,7 @@ export const manualPlanSnapshotForStatement = (line: EvidenceLine, event: JsonOb
     || amount?.currency !== 'MXN' || event.personalAmountMinor !== undefined || !plan || plan.needsScheduleCompletion
     || plan.months !== line.installmentMonths || plan.installments.length !== plan.months
     || !['active','completed'].includes(plan.status)
-    || plan.installments.some((item,index)=>item.index !== index+1 || item.status === 'cancelled'
+    || plan.installments.some((item,index)=>item.index !== index+1 || item.status === 'cancelled' || hasManualInstallmentEvidence(item)
       || item.month !== addCalendarMonths(plan.installments[0]!.month,index))
     || ((event.bankMsiAssertions ?? []) as BankMsiAssertion[]).length > 0
     || event.hasUnresolvedBankMsiEvidence === true
@@ -85,7 +85,8 @@ export const classifyMsiEvidenceRow = (
       originalOn: line.originalOn,
       merchantReference: line.merchantReference,
       status: 'needs_decision',
-      reason: match.reason === 'ambiguous_msi_match' ? 'ambiguous_msi_match' : 'incomplete_msi_schedule',
+      reason: match.reason === 'ambiguous_msi_match' ? 'ambiguous_msi_match'
+        : match.reason === 'conflicting_manual_evidence' ? 'conflicting_msi_plan' : 'incomplete_msi_schedule',
       candidateEventIds: candidates.map((candidate) => candidate.id),
       candidates,
     };
@@ -111,10 +112,14 @@ export const statementMsiEvents = (events: readonly JsonObject[], scope: { reado
   events.flatMap(event => {
     if (event.institution !== scope.institution || (event.amount as JsonObject | undefined)?.currency !== 'MXN') return [];
     const assertions = (Array.isArray(event.bankMsiAssertions) ? event.bankMsiAssertions : []) as BankMsiAssertion[];
+    const manual = (Array.isArray(event.manualMsiAssertions) ? event.manualMsiAssertions : []) as BankMsiAssertion[];
     const matching = assertions.filter(assertion => assertion.institution === scope.institution && assertion.accountLastFour === scope.accountLastFour);
     const card = (event.account as JsonObject | undefined)?.lastFour;
-    if (card && card !== scope.accountLastFour || !card && matching.length === 0) return [];
-    return [{...event, msiMerchantAliases: matching.map(assertion => assertion.merchantRaw),
+    const manualMatch = manual.filter(assertion => assertion.institution === scope.institution && assertion.accountLastFour === scope.accountLastFour);
+    const conflictingCard = !card && !matching.length && [...assertions, ...manual].some(assertion =>
+      assertion.accountLastFour !== scope.accountLastFour);
+    if (card && card !== scope.accountLastFour || !card && (!matching.length && !manualMatch.length || conflictingCard)) return [];
+    return [{...event, msiMerchantAliases: [...matching, ...manualMatch].map(assertion => assertion.merchantRaw),
       msiCommercialReferences: matching.flatMap(assertion => assertion.merchantReference ? [assertion.merchantReference] : [])}];
   });
 
@@ -137,7 +142,8 @@ const statementMsiConflicts = (line: EvidenceLine, events: readonly JsonObject[]
     const account = event.account as JsonObject | undefined;
     if (account?.lastFour && account.lastFour !== scope.accountLastFour) return false;
     const plan = event.msi as MsiPlan | undefined;
-    const hasBankRelationship = ((event.bankMsiAssertions ?? []) as BankMsiAssertion[]).some(assertion =>
+    const assertions = [...((event.bankMsiAssertions ?? []) as BankMsiAssertion[]), ...((event.manualMsiAssertions ?? []) as BankMsiAssertion[])];
+    const hasBankRelationship = assertions.some(assertion =>
       assertion.institution === scope.institution && assertion.accountLastFour === scope.accountLastFour);
     const bankReferences = ((event.bankMsiAssertions ?? []) as BankMsiAssertion[]).filter(assertion =>
       assertion.institution === scope.institution && assertion.accountLastFour === scope.accountLastFour)

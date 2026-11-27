@@ -15,8 +15,11 @@ export const parseManualCredit = (input: Record<string, unknown>, now: Date): Cr
   const incomeType = input.incomeType ?? null;
   if (input.confirmedPosted !== true) throw new FinancialPlanError('Confirma que el banco ya acreditó el abono.');
   if (input.currency !== undefined && input.currency !== 'MXN') throw new FinancialPlanError('El abono debe estar en MXN.');
-  if (creditType !== 'income' && creditType !== 'refund' && creditType !== 'fund_release') {
-    throw new FinancialPlanError('creditType debe ser income, refund o fund_release.');
+  if (creditType === 'card_payment' && accountKind !== 'credit_card') {
+    throw new FinancialPlanError('El pago debe estar acreditado a la tarjeta de crédito.');
+  }
+  if (creditType !== 'income' && creditType !== 'refund' && creditType !== 'fund_release' && creditType !== 'card_payment') {
+    throw new FinancialPlanError('creditType debe ser income, refund, fund_release o card_payment.');
   }
   if (institution !== 'santander_mx' && institution !== 'nu_mx' && institution !== 'american_express_mx') {
     throw new FinancialPlanError('Indica una institución de abono soportada.');

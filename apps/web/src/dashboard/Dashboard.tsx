@@ -747,14 +747,16 @@ export function Dashboard({
           demoMode={demoMode}
           now={now}
           onClose={() => setManualOpen(false)}
+          onCredit={() => { setManualOpen(false); void dashboardQuery.refetch(); setTab("summary"); }}
           onCreated={(created) => {
             setManualOpen(false);
             const createdMonth = monthKey(eventDate(created));
             queryClient.setQueryData<EventFeed>(eventsQueryKey(createdMonth), (current) => ({
-              events: [created, ...(current?.events ?? [])],
+              events: [created, ...(current?.events ?? []).filter(event => event.id !== created.id)],
               msiRelated: current?.msiRelated ?? [],
             }));
             void queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot });
+            if (!demoMode) void queryClient.invalidateQueries({ queryKey: eventsQueryRoot });
             refreshPlanningEvidence();
             void queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot });
             void queryClient.invalidateQueries({ queryKey: analyticsQueryRoot });

@@ -1,3 +1,4 @@
+import { NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS, NATIVE_FINANCIAL_PLAN_TABLES } from '../../../ledger/src/dsql/financial-plan-schema.js';
 import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { SCHEMA_STATEMENTS } from '../../../ledger/test/helpers/migration-schema.js';
@@ -32,16 +33,17 @@ export const seedNativeMovement = async (pool: TransactionPool, changes: Partial
   return event.id;
 };
 
-export const nativeFixture = async () => {
+export const nativeFixture = async (includeFinancialWrites = false) => {
   const sql = new PGlite();
   for (const statement of SCHEMA_STATEMENTS) await sql.query(statement);
   await prepareNativeLedgerFixture(sql);
+  if (includeFinancialWrites) for (const statement of NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS) await sql.query(statement);
   await sql.query('INSERT INTO olbia.schema_migrations VALUES (14,CURRENT_TIMESTAMP)');
   const pool: SqlClient & TransactionPool = { query: (s, v) => sql.query<Record<string, unknown>>(s, v),
     transaction: fn => sql.transaction(client => fn(client as unknown as SqlClient)) };
   const run = <T>(fn: () => Promise<T>): Promise<T> => runSqlTransaction(pool, fn);
   const reset = async (additionalTables: readonly string[] = []) => {
-    await sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES,...NATIVE_PLANNING_TABLES,'ingestion_retry_attempts', 'projection_state', 'command_receipts', 'merchant_rules',
+    await sql.exec(`TRUNCATE ${[...NATIVE_LEDGER_TABLES,...NATIVE_PLANNING_TABLES,...(includeFinancialWrites ? NATIVE_FINANCIAL_PLAN_TABLES : []),'ingestion_retry_attempts', 'projection_state', 'command_receipts', 'merchant_rules',
       'bank_imports', 'bank_import_rows', 'bank_import_candidates', 'category_lifecycle', 'category_catalog_changes',
       ...additionalTables].map(t => `olbia.${t}`).join(',')}`);
     await sql.query("UPDATE olbia.runtime_state SET mode='sql' WHERE id='storage'");

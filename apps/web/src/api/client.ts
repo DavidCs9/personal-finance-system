@@ -6,6 +6,8 @@ import type {
   AmexImportResult,
   EventFeed,
   IngestionException,
+  ManualReconciliationInput,
+  ManualReconciliationPreview,
   PurchaseEvent,
   SantanderImportDecision,
   SantanderImportPreview,
@@ -309,6 +311,26 @@ export const ledgerApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "clear_personal_amount" }),
     });
+  },
+  applyManualCredit(operationId: string, idToken: string) {
+    return request(`/financial-writes/${encodeURIComponent(operationId)}/apply`, idToken, { method: "POST" });
+  },
+  previewManualCredit(input: Record<string, unknown>, idToken: string) {
+    return request<{ operationId: string }>("/events/credit/preview", idToken, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+    });
+  },
+  previewManualReconciliation(input: ManualReconciliationInput | { action: "undo"; movementId: string; originalOperationId: string }, idToken: string) {
+    return request<ManualReconciliationPreview>("/events/reconciliation/preview", idToken, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+    });
+  },
+  async applyManualReconciliation(operationId: string, idToken: string) {
+    const result = await request<{ movement: { id: string } }>(`/financial-writes/${encodeURIComponent(operationId)}/apply`, idToken, { method: "POST" });
+    return ledgerApi.event(result.movement.id, idToken);
+  },
+  manualReconciliationAttachment(eventId: string, operationId: string, idToken: string) {
+    return request<{ url: string }>(`/events/${encodeURIComponent(eventId)}/reconciliation/${encodeURIComponent(operationId)}/attachment`, idToken);
   },
   async createManualEvent(
     input: {

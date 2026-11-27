@@ -1,3 +1,4 @@
+import { bankCreditCandidates, hasManualMovementEvidence, isBankCredit, movementAmountMatches } from './credit-verification.js';
 import { merchantsMatch as santanderMerchantsMatch } from "./santander-csv.js";
 import { amexMerchantsMatch, hasCompleteMsiPlanEvidence } from "./msi-reconciliation.js";
 import type { StatementProvider } from "./textract-document.js";
@@ -121,18 +122,23 @@ export const classifyPurchaseCharge = (input: {
   if (input.claimed.has(input.charge.identity)) {
     return { ...base, status: "duplicate" };
   }
-  if (input.charge.credit || input.charge.amountMinor <= 0) {
+  const credit = isBankCredit(input.charge);
+  if (!credit && input.charge.amountMinor <= 0) {
     return { ...base, status: "excluded" };
   }
 
-  const candidates = input.events.filter((event) => {
-    if (event.institution !== input.institution) return false;
+  const creditSource = input.provider === 'amex' ? 'amex_statement' : 'santander_statement';
+  const candidates = credit ? bankCreditCandidates({ ...input, row: input.charge,
+    merchantsMatch: (left, right) => statementMerchantsMatch(input.provider, left, right) })
+    .filter(event => !(event.captureSources as string[] | undefined)?.includes(creditSource)) : input.events.filter((event) => {
+    if (event.institution !== input.institution || event.eventType === "bank_credit") return false;
     if (event.status === "rejected") return false;
     const account = event.account as Record<string, unknown> | undefined;
     const amount = event.amount as Record<string, unknown> | undefined;
-    return account?.lastFour === input.accountLastFour
+    const manual = hasManualMovementEvidence(event);
+    return (account?.lastFour === input.accountLastFour || !account?.lastFour && manual)
       && amount?.currency === "MXN"
-      && amount.amountMinor === input.charge.amountMinor
+      && (!event.msi && manual || movementAmountMatches(event, input.charge))
       && input.localDate(event.occurredAt ?? event.receivedAt) === input.charge.occurredOn
       && typeof event.merchantRaw === "string"
       && statementMerchantsMatch(input.provider, event.merchantRaw, input.charge.merchantRaw);
@@ -142,7 +148,8 @@ export const classifyPurchaseCharge = (input: {
     merchantRaw: String(candidate.merchantRaw),
     ...(typeof candidate.occurredAt === "string" ? { occurredAt: candidate.occurredAt } : {}),
   }));
-  if (candidates.length === 1) {
+  if (candidates.length === 1 && movementAmountMatches(candidates[0], input.charge)
+    && (candidates[0].account as Record<string, unknown> | undefined)?.lastFour === input.accountLastFour) {
     return {
       ...base,
       status: "matched",
@@ -151,7 +158,7 @@ export const classifyPurchaseCharge = (input: {
       candidates: summaries,
     };
   }
-  if (candidates.length > 1) {
+  if (candidates.length) {
     return {
       ...base,
       status: "ambiguous",
@@ -159,7 +166,7 @@ export const classifyPurchaseCharge = (input: {
       candidates: summaries,
     };
   }
-  return { ...base, status: "new" };
+  return { ...base, status: credit ? "excluded" : "new" };
 };
 
 export const statementPurchaseApplyAction = (
@@ -179,7 +186,7 @@ export const statementPurchaseApplyAction = (
     return { kind: "link", eventId: current.candidateEventIds[0] };
   }
   if (current.status === "ambiguous" && preview?.status === "ambiguous") {
-    if (decision?.action === "create") return { kind: "create" };
+    if (decision?.action === "create" && !isBankCredit(current)) return { kind: "create" };
     if (decision?.action === "link" && current.candidateEventIds.includes(decision.eventId)) {
       return { kind: "link", eventId: decision.eventId };
     }

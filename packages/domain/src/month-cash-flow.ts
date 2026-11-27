@@ -110,6 +110,7 @@ export const summarizePostedCredits = (credits: readonly BankCredit[]) => {
     cardRefundsMinor: financialSum(refunds.filter(credit => credit.accountKind === 'credit_card').map(credit => credit.amountMinor)),
     recordedOperatingCashInflowsMinor: financialSum([incomeMinor, cashRefundsMinor]),
     snapshotCoverage: 'unverified',
-    credits: credits.filter(credit => credit.creditType !== 'fund_release'),
+    credits: credits.filter(credit => credit.creditType !== 'fund_release' && credit.creditType !== 'card_payment'),
+    cardPayments: credits.filter(credit => credit.creditType === 'card_payment'),
   } as const;
 };

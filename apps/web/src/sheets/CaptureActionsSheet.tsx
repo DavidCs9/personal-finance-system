@@ -28,8 +28,8 @@ export function CaptureActionsSheet({
           onClick={onRegisterCharge}
         >
           <span>
-            <strong>Registrar cobro</strong>
-            <small>Cuando no llegó por correo ni por CSV</small>
+            <strong>Registrar movimiento</strong>
+            <small>Compra, cuota, pago o abono</small>
           </span>
           <span aria-hidden="true">›</span>
         </button>

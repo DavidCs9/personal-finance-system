@@ -237,12 +237,12 @@ export const insertLedgerRevision=async(client:SqlClient,input:NativeRevisionInp
   [input.id,input.movementId,input.createdAt,input.changedBy,optional(input.reason),optional(input.operationId),optional(input.source),JSON.stringify(input.changes)]);
 };
 
-export const replaceInstallmentPlan=async(client:SqlClient,id:string,plan:MsiPlan|undefined,evidence:readonly BankRowEvidence[]=[]):Promise<void>=>{
-  const parent=(await client.query(`SELECT personal_amount_minor,status,
+export const replaceInstallmentPlan=async(client:SqlClient,id:string,plan:MsiPlan|undefined,evidence:readonly BankRowEvidence[]=[], manualObservationId?:string):Promise<void>=>{
+  const parent=(await client.query(`SELECT personal_amount_minor,status,event_type,
     EXISTS(SELECT 1 FROM olbia.installment_plans WHERE movement_id=$1) AS has_plan
     FROM olbia.ledger_movements WHERE id=$1`,[id])).rows[0];
   if(!parent)throw new LedgerPreconditionError('Movement no longer exists');
-  if(plan && (parent.personal_amount_minor!==null || parent.status==='pending_foreign'))throw new LedgerPreconditionError('Movement is not available for MSI');
+  if(plan && (parent.personal_amount_minor!==null || parent.status==='pending_foreign' || parent.event_type==='bank_credit'))throw new LedgerPreconditionError('Movement is not available for MSI');
   const previous=(await client.query('SELECT * FROM olbia.installment_entries WHERE movement_id=$1',[id])).rows;
   const candidates=(await client.query('SELECT * FROM olbia.installment_evidence_candidates WHERE movement_id=$1',[id])).rows;
   const confirmations=new Map<number,BankRowEvidence>();
@@ -253,20 +253,23 @@ export const replaceInstallmentPlan=async(client:SqlClient,id:string,plan:MsiPla
     if(plan.installments.length!==plan.months || plan.installments.some((item,n)=>item.index!==n+1))invalid();
     for(const item of plan.installments)known(item,['index','month','amountMinor','status','occurredOn','confirmedAt','evidenceObservationId']);
   }
+  if(manualObservationId && !plan?.installments.some(item=>item.evidenceObservationId===`manual:${manualObservationId}`))invalid();
   const entries:Row[]=[];const retainedCandidates:Row[]=[];
   for(const item of plan?.installments??[]){
     const reference=confirmations.get(item.index);let provenance:Row={evidence_origin:null,evidence_import_kind:null,
-      evidence_content_sha256:null,evidence_row_position:null};
+      evidence_content_sha256:null,evidence_row_position:null,manual_observation_id:null};
     if(reference){
       const row=(await client.query('SELECT identity FROM olbia.bank_import_rows WHERE kind=$1 AND content_sha256=$2 AND position=$3',
         [reference.kind,reference.contentSha256,reference.rowPosition])).rows[0];
       if(!row || row.identity!==item.evidenceObservationId)invalid();
-      provenance={evidence_origin:'bank_row',evidence_import_kind:reference.kind,evidence_content_sha256:reference.contentSha256,evidence_row_position:reference.rowPosition};
+      provenance={manual_observation_id:null,evidence_origin:'bank_row',evidence_import_kind:reference.kind,evidence_content_sha256:reference.contentSha256,evidence_row_position:reference.rowPosition};
+    }else if(manualObservationId && item.evidenceObservationId===`manual:${manualObservationId}`){
+      provenance={...provenance,evidence_origin:'manual_observation',manual_observation_id:manualObservationId};
     }else if(item.evidenceObservationId!==undefined){
       const matches=previous.filter(row=>row.evidence_identity===item.evidenceObservationId &&
         millis(row.confirmed_at)===millis(item.confirmedAt));
       if(matches.length!==1)invalid();const old=matches[0];
-      provenance={evidence_origin:old.evidence_origin,evidence_import_kind:old.evidence_import_kind,
+      provenance={manual_observation_id:old.manual_observation_id,evidence_origin:old.evidence_origin,evidence_import_kind:old.evidence_import_kind,
         evidence_content_sha256:old.evidence_content_sha256,evidence_row_position:old.evidence_row_position};
       for(const candidate of candidates.filter(row=>row.installment_index===old.installment_index))
         retainedCandidates.push({...candidate,installment_index:item.index});
@@ -286,9 +289,9 @@ export const replaceInstallmentPlan=async(client:SqlClient,id:string,plan:MsiPla
     const item=entry.item as MsiPlan['installments'][number],p=entry.provenance as Row;assertMoney(item.amountMinor);
     await client.query(`INSERT INTO olbia.installment_entries
       (movement_id,installment_index,month,amount_minor,status,occurred_on,confirmed_at,evidence_identity,evidence_origin,
-        evidence_import_kind,evidence_content_sha256,evidence_row_position) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        evidence_import_kind,evidence_content_sha256,evidence_row_position,manual_observation_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
     [id,item.index,item.month,item.amountMinor,item.status,optional(item.occurredOn),optional(item.confirmedAt),optional(item.evidenceObservationId),
-      p.evidence_origin,p.evidence_import_kind,p.evidence_content_sha256,p.evidence_row_position]);
+      p.evidence_origin,p.evidence_import_kind,p.evidence_content_sha256,p.evidence_row_position,p.manual_observation_id]);
   }
   for(const row of retainedCandidates)await client.query('INSERT INTO olbia.installment_evidence_candidates VALUES ($1,$2,$3,$4,$5)',
     [id,row.installment_index,row.import_kind,row.content_sha256,row.row_position]);

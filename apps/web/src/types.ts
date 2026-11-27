@@ -17,6 +17,7 @@ export interface PurchaseEvent {
   readonly paymentMethodLastFour?: string;
   readonly status: ReviewStatus;
   readonly accountName: string;
+  readonly accountLastFour?: string;
   readonly amount: Money;
   readonly personalAmountMinor?: number;
   readonly merchantRaw: string;
@@ -32,7 +33,14 @@ export interface PurchaseEvent {
   readonly hasRawEmail?: boolean;
   readonly parseWarnings: readonly string[];
   readonly rawEmail?: string;
-  readonly observations?: readonly { readonly captureSource?: CaptureSource; readonly source: ObservedSourcePointer }[];
+  readonly observations?: readonly {
+    readonly id?: string;
+    readonly captureSource?: CaptureSource;
+    readonly source: ObservedSourcePointer & { readonly evidenceKind?: string; readonly evidenceReference?: string;
+      readonly occurredOn?: string; readonly attachment?: { readonly sha256: string } };
+    readonly note?: string;
+    readonly amount?: Money;
+  }[];
   readonly revisions: readonly EventRevision[];
   readonly msi?: MsiPlan;
 }
@@ -44,6 +52,29 @@ export interface ManualEventInput {
   readonly occurredOn: string;
   readonly accountLastFour?: string;
   readonly note?: string;
+}
+
+export interface ManualReconciliationInput extends ManualEventInput {
+  readonly action: "create" | "link" | "installment";
+  readonly movementType: "card_purchase" | "outgoing_transfer" | "card_charge";
+  readonly movementId?: string;
+  readonly installmentIndex?: number;
+  readonly evidenceKind: "confirmation" | "screenshot" | "bank_app" | "receipt";
+  readonly evidenceReference?: string;
+  readonly attachmentBase64?: string;
+  readonly distinct?: boolean;
+  readonly newPlan?: { readonly months: number; readonly principalMinor: number };
+  readonly fixedPayment?: { readonly paymentId: string;
+    readonly expectedPayment: { readonly name: string; readonly amountMinor: number; readonly dueDay: number } };
+}
+
+export interface ManualReconciliationPreview {
+  readonly operationId: string;
+  readonly canApply: boolean;
+  readonly candidates: readonly { readonly id: string; readonly status: ReviewStatus; readonly merchantRaw: string;
+    readonly amount: Money; readonly movementType: "card_purchase" | "outgoing_transfer" | "card_charge"; readonly accountLastFour?: string }[];
+  readonly expectedAmountMinor?: number;
+  readonly fixedPayment?: { readonly name: string; readonly amountMinor: number };
 }
 
 export interface EventFeed {

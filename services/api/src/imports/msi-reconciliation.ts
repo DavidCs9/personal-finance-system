@@ -71,7 +71,7 @@ export const evidenceCandidatesFromEvents = (
     // Incomplete stubs must not receive automatic confirms.
     if (plan.needsScheduleCompletion) continue;
     for (const installment of plan.installments) {
-      if (installment.status !== "committed") continue;
+      if (installment.status !== "committed" && !hasManualInstallmentEvidence(installment)) continue;
       candidates.push({
         eventId: String(event.id),
         merchantRaw: String(event.merchantRaw ?? ""),
@@ -149,6 +149,23 @@ export const amexMerchantsMatch = (left: string, right: string): boolean => {
   return santanderMerchantsMatch(left, right);
 };
 
+export const hasManualInstallmentEvidence = (item: MsiInstallment): boolean =>
+  item.evidenceObservationId?.startsWith('manual:') === true;
+
+export const compatibleManualInstallmentEvidence = (item: MsiInstallment, line: EvidenceLine): boolean =>
+  !hasManualInstallmentEvidence(item) || (item.month === line.occurredOn.slice(0, 7)
+    && amountsWithinTolerance(item.amountMinor, line.amountMinor));
+
+export const verifyInstallmentWithBankEvidence = (plan: MsiPlan, item: MsiInstallment, line: EvidenceLine, confirmedAt = new Date().toISOString()): MsiPlan => {
+  const next = markInstallmentSpent(plan, item.index, {
+    amountMinor: line.amountMinor,
+    occurredOn: line.occurredOn,
+    confirmedAt,
+    evidenceObservationId: line.identity,
+  });
+  return hasManualInstallmentEvidence(item) ? { ...next, cuotaMinor: plan.cuotaMinor } : next;
+};
+
 const confirmMatch = (
   match: MsiEvidenceCandidate,
   line: EvidenceLine,
@@ -156,12 +173,7 @@ const confirmMatch = (
   kind: "confirm",
   eventId: match.eventId,
   previous: match.plan,
-  next: markInstallmentSpent(match.plan, match.installment.index, {
-    amountMinor: line.amountMinor,
-    occurredOn: line.occurredOn,
-    confirmedAt: new Date().toISOString(),
-    evidenceObservationId: line.identity,
-  }),
+  next: verifyInstallmentWithBankEvidence(match.plan, match.installment, line),
   installmentIndex: match.installment.index,
 });
 
@@ -249,6 +261,17 @@ export const matchEvidenceLine = (
     return event ? eventMerchantsMatch(event, line.merchantRaw) : false;
   });
 
+  const conflictingManual = candidates.filter(candidate => hasManualInstallmentEvidence(candidate.installment)
+    && candidate.installment.month === month
+    && (line.installmentIndex === undefined || line.installmentIndex === candidate.installment.index)
+    && (line.installmentMonths === undefined || line.installmentMonths === candidate.plan.months)
+    && (isAutomaticAmexLabel(line.merchantRaw)
+      ? line.originalAmountMinor !== undefined && amountsWithinTolerance(candidate.plan.principalMinor, line.originalAmountMinor)
+      : events.some(event => event.id === candidate.eventId && eventMerchantsMatch(event, line.merchantRaw)))
+    && !compatibleManualInstallmentEvidence(candidate.installment, line));
+  if (conflictingManual.length) return { kind: 'needs_decision', reason: 'conflicting_manual_evidence',
+    candidates: [...conflictingManual, ...indexed] };
+
   if (indexed.length === 1) return confirmMatch(indexed[0], line);
   if (indexed.length > 1) {
     return { kind: "needs_decision", reason: "ambiguous_msi_match", candidates: indexed };
@@ -272,7 +295,7 @@ export const matchEvidenceLine = (
     if (!installment) {
       return { kind: "needs_decision", reason: "no_matching_plan", candidates: [] };
     }
-    if (installment.status === "cancelled") {
+    if (installment.status === "cancelled" || !compatibleManualInstallmentEvidence(installment, line)) {
       return { kind: "needs_decision", reason: "no_matching_plan", candidates: [] };
     }
     // Spent without this evidence still confirms so we attach the observation id

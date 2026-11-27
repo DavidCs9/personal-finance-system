@@ -25,6 +25,7 @@ export interface SantanderStatementDocument {
   readonly product: string;
   readonly period: { readonly from: string; readonly to: string };
   readonly charges: readonly SantanderStatementCharge[];
+  readonly credits?: readonly SantanderStatementCharge[];
   readonly msiCharges: readonly SantanderStatementCharge[];
 }
 
@@ -298,14 +299,13 @@ const chargesFromLines = (
   accountLastFour: string,
 ): readonly SantanderStatementCharge[] => {
   const charges: SantanderStatementCharge[] = [];
+  let parsedPayments = 0;
   const rowPattern =
     /(\d{1,2}[-\/.][A-Za-z0-9]{2,3}[-\/.]\d{2,4})\s*[\[|_]?\s*(\d{1,2}[-\/.][A-Za-z0-9]{2,3}[-\/.]\d{2,4})?\s*[\[|_]?\s*(.+?)\s+(-?\s*[\$S]?\s*[\d,]+\.\d{2})\s*$/i;
 
   for (const line of lines) {
-    if (/PAGO POR TRANSFERENCIA|Total de cargos|Total de abonos|NOTAS ACLARATORIAS/i.test(line)) {
-      if (/PAGO POR TRANSFERENCIA/i.test(line)) continue;
-      if (/Total de/i.test(line)) continue;
-    }
+    if (/Total de cargos|Total de abonos|NOTAS ACLARATORIAS/i.test(line)) continue;
+    const cardPayment = /PAGO POR TRANSFERENCIA/i.test(line);
     const match = rowPattern.exec(line);
     if (!match) continue;
     const occurredOn = parseDayMonthYear(match[1]);
@@ -332,8 +332,8 @@ const chargesFromLines = (
         occurredOn,
         merchantRaw.toUpperCase(),
         String(absolute),
-        msi ? "msi" : "full",
-        String(charges.length + 1),
+        msi ? "msi" : cardPayment ? "payment" : "full",
+        String(cardPayment ? ++parsedPayments : charges.length - parsedPayments + 1),
       ].join(":"),
     });
   }
@@ -357,31 +357,32 @@ export const parseSantanderStatementExtraction = (
 
   const remaining = new Map<string, number>();
   const chargeKey = (charge: SantanderStatementCharge): string =>
-    [charge.occurredOn, charge.merchantRaw.toUpperCase(), charge.amountMinor, charge.msi].join("|");
+    [charge.occurredOn, charge.merchantRaw.toUpperCase(), charge.amountMinor, charge.credit, charge.msi].join("|");
 
   const charges: SantanderStatementCharge[] = [];
+  const credits: SantanderStatementCharge[] = [];
   // Prefer TABLES and keep duplicate table rows (same-day identical compras are valid).
   for (const charge of chargesFromTables(extraction.tables, accountLastFour)) {
-    if (charge.credit) continue;
-    charges.push(charge);
+    if (charge.credit && charge.msi) continue;
+    (charge.credit ? credits : charges).push(charge);
     const key = chargeKey(charge);
     remaining.set(key, (remaining.get(key) ?? 0) + 1);
   }
   for (const charge of chargesFromLines(extraction.lines, accountLastFour)) {
-    if (charge.credit) continue;
+    if (charge.credit && charge.msi) continue;
     const key = chargeKey(charge);
     const left = remaining.get(key) ?? 0;
     if (left > 0) {
       remaining.set(key, left - 1);
       continue;
     }
-    charges.push(charge);
+    (charge.credit ? credits : charges).push(charge);
   }
 
   const msiPlans = plansFromTables(extraction.tables);
   const enrichedCharges = enrichMsiCharges(charges, msiPlans);
   const msiCharges = enrichedCharges.filter((charge) => charge.msi);
-  if (enrichedCharges.length === 0) {
+  if (enrichedCharges.length === 0 && credits.length === 0) {
     throw new InvalidSantanderStatementError(
       `Textract no encontró movimientos Santander (answers=${Object.keys(extraction.answers).join(",") || "∅"}, tables=${extraction.tables.length}, lines=${extraction.lines.length}).`,
     );
@@ -392,6 +393,7 @@ export const parseSantanderStatementExtraction = (
     product,
     period,
     charges: enrichedCharges,
+    credits,
     msiCharges,
   };
 };

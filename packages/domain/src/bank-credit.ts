@@ -1,7 +1,7 @@
 /** Posted bank evidence. A credit never changes a recorded balance or a purchase. */
 export interface BankCredit {
   readonly movementId: string;
-  readonly creditType: 'income' | 'refund' | 'fund_release';
+  readonly creditType: 'income' | 'refund' | 'fund_release' | 'card_payment';
   readonly incomeType: 'finiquito' | 'nomina' | 'otro' | null;
   readonly accountKind: 'cash' | 'credit_card';
   readonly institution: 'santander_mx' | 'nu_mx' | 'american_express_mx';

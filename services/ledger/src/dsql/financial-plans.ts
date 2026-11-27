@@ -1,7 +1,7 @@
 import { FinancialPlanError, type ActualIncomeReceipt, type ExpectedIncome, type FinancialGoalState,
   type FinancialGoal, type GoalAllocation, type GoalPayment, type IncomeTermination, type IncomeMonthOverride, type IncomePaymentRule, type MonthlyReceivedTotal } from '@finance/domain';
 import type { SqlClient } from './projection.js';
-export type FinancialWriteKind = 'income' | 'goal' | 'manual_charge' | 'manual_credit' | 'budget' | 'fixed_reconciliation' | 'msi_reconciliation' | 'monthly_received';
+export type FinancialWriteKind = 'income' | 'goal' | 'manual_charge' | 'manual_credit' | 'manual_reconciliation' | 'budget' | 'fixed_reconciliation' | 'msi_reconciliation' | 'monthly_received';
 export interface FinancialWriteOperation {
   readonly operationId: string; readonly owner: string; readonly kind: FinancialWriteKind; readonly action: string;
   readonly entityId: string; readonly createdAt: string; readonly expiresAt: string;

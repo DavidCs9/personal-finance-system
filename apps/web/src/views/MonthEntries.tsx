@@ -12,7 +12,7 @@ const shortDay = new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "shor
 const dayLabel = (day: string) => shortDay.format(new Date(`${day}T12:00:00Z`));
 const amount = (value: number) => value % 100 === 0 ? money(value) : exactMxn(value);
 type Entry = { kind: "posted"; credit: BankCredit } | { kind: "expected"; occurrence: IncomeOccurrence };
-const creditType = (credit: BankCredit) => credit.creditType === "refund"
+const creditType = (credit: BankCredit) => credit.creditType === "card_payment" ? "Pago de tarjeta" : credit.creditType === "refund"
   ? credit.accountKind === "credit_card" ? "Devolución a tarjeta" : "Devolución a cuenta"
   : credit.incomeType === "finiquito" ? "Finiquito" : credit.incomeType === "nomina" ? "Nómina" : "Otro ingreso";
 
@@ -61,6 +61,7 @@ export function MonthEntries({ month, dashboard, editor }: { month: string; dash
   const credits = dashboard.postedCredits;
   const future = dashboard.futureIncome;
   const cashCredits = credits.credits.filter(item => item.accountKind === "cash");
+  const cardPayments = credits.cardPayments ?? [];
   const cardCredits = credits.credits.filter(item => item.accountKind === "credit_card");
   const expected = (future.occurrences ?? []).filter(item => item.amountMxnMinor !== 0);
   const today = dayKeyInZone(new Date(dashboard.generatedAt));
@@ -72,7 +73,7 @@ export function MonthEntries({ month, dashboard, editor }: { month: string; dash
   const postedRow = (credit: BankCredit) => <li key={credit.movementId}>
     <button type="button" className="month-entry-row" onClick={() => setSelected({ kind: "posted", credit })}>
       <span className="month-entry-copy"><strong className="plan-sensitive">{credit.description}</strong>
-        <small>{credit.creditType === "refund" ? creditType(credit) : "Recibido"} · {dayLabel(credit.postedOn)}</small></span>
+        <small>{credit.creditType === "income" ? "Recibido" : creditType(credit)} · {dayLabel(credit.postedOn)}</small></span>
       <strong className="month-entry-amount"><Amt>{amount(credit.amountMinor)}</Amt></strong>
       <span className="chevron" aria-hidden="true">›</span>
     </button>
@@ -118,6 +119,9 @@ export function MonthEntries({ month, dashboard, editor }: { month: string; dash
       </li>)}
     </ul>
     {!declared && credits.credits.length === 0 && expected.length === 0 && <p className="month-entry-empty">Sin entradas registradas para este mes.</p>}
+    {cardPayments.length > 0 && <div className="month-entry-card-refunds">
+      <h3>Pagos de tarjeta</h3><ul className="month-entries-list">{cardPayments.map(postedRow)}</ul>
+    </div>}
     {cardCredits.length > 0 && <div className="month-entry-card-refunds">
       <h3>Devoluciones a tarjeta</h3><p>Fuera del efectivo recibido.</p>
       <ul className="month-entries-list">{cardCredits.map(postedRow)}</ul>

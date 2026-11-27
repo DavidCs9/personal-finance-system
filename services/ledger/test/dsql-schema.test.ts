@@ -173,7 +173,7 @@ it('grants the bounded financial writer typed reconciliation, evidence and appen
   expect(statements).toContain("AWS IAM GRANT olbia_financial_plans_writer TO 'arn:aws:iam::225989371926:role/financial-writes'");
   expect(statements).toContain('GRANT UPDATE (status,failure_code) ON olbia.financial_write_operations TO olbia_financial_plans_writer');
   expect(statements).toContain('GRANT INSERT,DELETE ON olbia.planned_payments,olbia.planned_payment_charges TO olbia_financial_plans_writer');
-  expect(statements).toContain('GRANT UPDATE (reconciled_at,bank_transaction_id) ON olbia.ledger_movements TO olbia_financial_plans_writer');
+  expect(statements).toContain('GRANT UPDATE (reconciled_at,bank_transaction_id,status) ON olbia.ledger_movements TO olbia_financial_plans_writer');
   expect(query.mock.calls.map(([statement]) => statement)).toContain('INSERT INTO olbia.schema_migrations VALUES (29,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   expect(statements.join()).toContain('financial_change_receipts');
   expect(statements.join()).not.toMatch(/GRANT (?:UPDATE|DELETE)(?: \([^)]*\))? ON olbia.financial_change_receipts/);

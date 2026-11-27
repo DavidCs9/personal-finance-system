@@ -1,3 +1,5 @@
+import { manualReconciliationProposal, normalizeManualReconciliation, prepareManualReconciliationApply,
+  type ManualReconciliation } from '../events/manual-reconciliation.js';
 import { proposeBudgetChange, readBudgetEntity, budgetEvidence, assertBudgetSlotAvailable } from './budgets.js';
 import { applyFixedReconciliation, applyMsiReconciliation, fixedReconciliationProposal, msiReconciliationProposal } from './reconciliation.js';
 import { type BudgetEntity } from '@finance/domain';
@@ -172,6 +174,7 @@ export const previewFinancialChange = async (owner: string, kind: FinancialWrite
   const at = now.toISOString(), today = dayKeyInZone(now);
   let entityId = kind === 'budget' && input.entityId !== undefined ? financialId(input.entityId) : kind === 'income' && input.action !== 'create'
     ? financialId(input.incomeId) : kind === 'goal' && input.action !== 'create_goal' ? financialId(input.goalId) : randomUUID();
+  const manual = kind === 'manual_reconciliation' ? await normalizeManualReconciliation(owner, input, now) : undefined;
   // Writes only an authentic preview record. Current domain records are unchanged.
   return withSqlTransaction(async client => {
     let before: Record<string, unknown> | null = null, after: Record<string, unknown>, preview: Record<string, unknown>, evidencePreconditions: Record<string, unknown> = {};
@@ -239,6 +242,12 @@ export const previewFinancialChange = async (owner: string, kind: FinancialWrite
       evidencePreconditions = await linkedPreconditions(client, prior, proposed);
       preview = { before: prior ? await goalFacts(client, prior) : null, after: await goalFacts(client, proposed),
         reason: typeof input.reason === 'string' ? input.reason.trim() : null };
+    } else if (manual) {
+      const { token, ...proposal } = await manualReconciliationProposal(client, owner, manual);
+      entityId = manual.movementId ?? entityId;
+      after = jsonObject(manual);
+      evidencePreconditions = { token };
+      preview = jsonObject(proposal);
     } else if (kind === 'manual_credit') {
       const parsed = parseManualCredit(input, now);
       const prior = await previousManualCredit(client, owner, parsed);
@@ -274,6 +283,10 @@ export const applyFinancialChange = async (owner: string, operationId: unknown, 
   const manualApply = initial.kind === 'manual_charge'
     ? await prepareManualEvent(JSON.stringify(initial.after), owner, { movementId: initial.entityId, observationId: initial.operationId }) : undefined;
   try {
+    const reconciliationApply = initial.kind === 'manual_reconciliation'
+      ? await prepareManualReconciliationApply(owner, initial.after as ManualReconciliation,
+        { movementId: initial.entityId, operationId: id }, initial.evidencePreconditions.token)
+      : undefined;
     const creditApply = initial.kind === 'manual_credit'
       ? await prepareManualCredit(parseManualCredit(initial.after, now), owner, { movementId: initial.entityId, observationId: initial.operationId })
       : undefined;
@@ -344,6 +357,12 @@ export const applyFinancialChange = async (owner: string, operationId: unknown, 
         await writeFinancialGoal(client, owner, before, after);
         result = { ok: true, operationId: id, kind: operation.kind, status: 'applied', appliedAt,
           goal: await goalFacts(client, (await readFinancialGoal(client, owner, operation.entityId))!) };
+      } else if (operation.kind === 'manual_reconciliation') {
+        const movement = await reconciliationApply!(client, appliedAt);
+        movementId = String(movement.id);
+        result = { ok: true, operationId: id, kind: operation.kind, status: 'applied', appliedAt,
+          movement: movement.credit ? { id: movementId, status: movement.status } : { ...manualFacts(movement), accountLastFour: (movement as Record<string, unknown>).accountLastFour },
+          ...(movement.credit ? { credit: movement.credit } : {}) };
       } else if (operation.kind === 'manual_credit') {
         const captured = await creditApply!(client, appliedAt);
         movementId = captured.credit.movementId;
