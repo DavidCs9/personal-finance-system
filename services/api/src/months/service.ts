@@ -49,6 +49,9 @@ export const saveMonthlyPlan = async (owner: string, month: string, input: Month
   if (!isValidMonth(month)) throw new InvalidMonthlyPlanError('month is invalid.');
   const validated = parseMonthlyPlan(JSON.stringify(input));
   return withSqlTransaction(async client => {
+    if ((await client.query(`SELECT 1 FROM olbia.fixed_expense_versions WHERE owner=$1
+      AND ((scope='recurring' AND effective_month<=$2) OR (scope='month' AND effective_month=$2)) LIMIT 1`, [owner, month])).rows.length)
+      throw new InvalidMonthlyPlanError('Usa los cambios individuales para guardar gastos fijos con versiones.');
     await writeMonthlyPayments(client, owner, month, validated, new Date().toISOString());
     return getMonthlyPlan(owner, month);
   });
@@ -59,7 +62,7 @@ export const writeMonthlyPayments = async (client: ReadSqlClient, owner: string,
   const links = await readPaymentCharges(client,month);
   assertPaymentChargeMembership(links,plan.upcomingPayments);
   const parent = (await client.query(`INSERT INTO olbia.month_plans (month,owner,updated_at) VALUES ($1,$2,$3)
-    ON CONFLICT (month) DO UPDATE SET updated_at=EXCLUDED.updated_at
+    ON CONFLICT (month) DO UPDATE SET updated_at=EXCLUDED.updated_at,occurrence_only=false
     WHERE olbia.month_plans.owner=EXCLUDED.owner RETURNING month`, [month, owner, at])).rows[0];
   if (!parent) throw new InvalidMonthlyPlanError('month is invalid.');
   await replaceMonthlyPaymentRows(client,owner,month,plan.upcomingPayments,at,links);

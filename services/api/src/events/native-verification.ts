@@ -1,3 +1,4 @@
+import { effectiveFixedExpenses } from '../months/effective-fixed-expenses.js';
 import type { ReadSqlClient } from './sql-reads.js';
 import type { JsonObject } from '../http/response.js';
 import { samePublicResult } from './read-selection.js';
@@ -140,7 +141,7 @@ export const verifyNativeLedgerState = async (client: ReadSqlClient, movements: 
 
 /** Financial sums use SQL facts directly, including incomplete schedules and personal zero. */
 export const verifyNativeMonthSummary = async (client: ReadSqlClient, month: string, feed: EventFeed, summary: MonthSummary, owner: string) => {
-  const row = (await client.query(`WITH active AS (
+  const row = (await client.query(`WITH requested AS (SELECT $1::text AS month), ${effectiveFixedExpenses('$2')}, active AS (
     SELECT m.*,p.movement_id AS plan_id,p.needs_schedule_completion,
       to_char(COALESCE(m.occurred_at,m.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM') AS financial_month
     FROM olbia.ledger_movements m LEFT JOIN olbia.installment_plans p ON p.movement_id=m.id
@@ -154,17 +155,16 @@ export const verifyNativeMonthSummary = async (client: ReadSqlClient, month: str
       COALESCE(sum(CASE WHEN i.status='committed' AND a.needs_schedule_completion IS NOT TRUE THEN i.amount_minor ELSE 0 END),0) AS committed,
       COALESCE(sum(CASE WHEN i.status='spent' AND a.status='needs_review' THEN i.amount_minor ELSE 0 END),0) AS uncertain
     FROM active a JOIN olbia.installment_entries i ON i.movement_id=a.id WHERE i.month=$1
-  ), effective_plan AS (
-    SELECT month FROM olbia.month_plans WHERE owner=$2 AND month<=$1 ORDER BY month DESC LIMIT 1
   ), fixed_entries AS (
     SELECT payment.amount_mxn_minor,
       (charge.event_type<>'bank_credit' AND charge.status IN ('accepted','needs_review') AND charge.currency='MXN' AND charge.amount_minor>0 AND charge_plan.movement_id IS NULL
         AND to_char(COALESCE(charge.occurred_at,charge.received_at) AT TIME ZONE 'America/Chihuahua','YYYY-MM')=$1) IS TRUE AS covered,
       COALESCE(charge.personal_amount_minor,charge.amount_minor,0) AS personal_minor
-    FROM effective_plan plan JOIN olbia.planned_payments payment ON payment.month=plan.month
+    FROM effective_fixed payment
     LEFT JOIN olbia.planned_payment_charges linked ON linked.month=$1 AND linked.payment_id=payment.id
     LEFT JOIN olbia.ledger_movements charge ON charge.id=linked.movement_id
     LEFT JOIN olbia.installment_plans charge_plan ON charge_plan.movement_id=charge.id
+    WHERE payment.status='active'
   ), fixed_totals AS (
     SELECT COALESCE(SUM(amount_mxn_minor),0) AS scheduled,
       COALESCE(SUM(CASE WHEN covered THEN 0 ELSE amount_mxn_minor END),0) AS upcoming,

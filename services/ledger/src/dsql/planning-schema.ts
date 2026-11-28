@@ -1,3 +1,5 @@
+import { FIXED_EXPENSE_OCCURRENCE_CHECK } from './fixed-expense-schema.js';
+
 /** Current monthly links and append-only financial decisions; no inferred matches. */
 export const NATIVE_PLANNING_TABLES = ['planned_payment_charges', 'planned_payment_charge_revisions'] as const;
 
@@ -6,6 +8,8 @@ export const NATIVE_PLANNING_SCHEMA_STATEMENTS = [
     month text NOT NULL, payment_id text NOT NULL,
     movement_id uuid NOT NULL REFERENCES olbia.ledger_movements(id),
     linked_at timestamptz NOT NULL, linked_by text NOT NULL CHECK (length(linked_by)>0),
+    scheduled_name text, scheduled_amount_minor bigint, scheduled_due_day integer,
+    CONSTRAINT planned_payment_charges_schedule_check ${FIXED_EXPENSE_OCCURRENCE_CHECK},
     PRIMARY KEY (month,payment_id),
     CONSTRAINT planned_payment_charges_movement_key UNIQUE (movement_id),
     CONSTRAINT planned_payment_charges_payment_fk FOREIGN KEY (month,payment_id)

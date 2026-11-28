@@ -1,5 +1,6 @@
 import { manualReconciliationProposal, normalizeManualReconciliation, prepareManualReconciliationApply,
   type ManualReconciliation } from '../events/manual-reconciliation.js';
+import { proposeFixedExpense } from './fixed-expenses.js';
 import { proposeBudgetChange, readBudgetEntity, budgetEvidence, assertBudgetSlotAvailable } from './budgets.js';
 import { applyFixedReconciliation, applyMsiReconciliation, fixedReconciliationProposal, msiReconciliationProposal } from './reconciliation.js';
 import { type BudgetEntity } from '@finance/domain';
@@ -13,7 +14,7 @@ import { addCalendarMonths, dayKeyInZone, monthKeyInZone, FINANCE_TIME_ZONE, isV
 import { applicationSqlClient, withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { readExpectedIncome, listExpectedIncomeRows, readIncomeEvidence, writeExpectedIncome, readFinancialGoal,
   readMonthlyReceived, writeMonthlyReceived, listFinancialGoalIds, writeFinancialGoal, readGoalMovement, readGoalMovements, paymentMovementUsed, insertFinancialOperation,
-  readFinancialOperation, readFinancialReceipt, appendFinancialReceipt, failFinancialOperation, financialHistory,
+  readFinancialOperation, readFinancialReceipt, appendFinancialReceipt, appendFixedExpenseVersion, failFinancialOperation, financialHistory,
   type FinancialWriteOperation, type FinancialWriteKind } from '@finance/ledger/native-financial-plans';
 import { readerPool, withLedgerReadSnapshot } from '../events/sql-reads.js';
 import { parseManualEntry, manualEntryFingerprint, type ManualEntryInput } from '../events/manual-entry-input.js';
@@ -199,6 +200,13 @@ export const previewFinancialChange = async (owner: string, kind: FinancialWrite
       before = proposed.prior ? jsonObject(proposed.prior) : null; after = jsonObject(proposed.after);
       evidencePreconditions = jsonObject(proposed.evidence);
       preview = { before, after, inheritedSourceBudget: proposed.evidence.sourceBudget ?? null, effect: 'budget_configuration_only; ledger_actuals_unchanged' };
+    } else if (kind === 'fixed_expense') {
+      const proposed = await proposeFixedExpense(client, owner, input, entityId, now);
+      before = proposed.before ? jsonObject(proposed.before) : null;
+      after = jsonObject(proposed.after);
+      evidencePreconditions = { request: proposed.request, nextEffectiveMonth: proposed.nextEffectiveMonth };
+      preview = { before, after, nextEffectiveMonth: proposed.nextEffectiveMonth, reason: proposed.request.reason,
+        linkedOccurrenceRetained: Boolean(proposed.before?.linkedMovementId) };
     } else if (kind === 'fixed_reconciliation') {
       const proposed = await fixedReconciliationProposal(client, owner, input);
       entityId = proposed.movementId;
@@ -318,6 +326,16 @@ export const applyFinancialChange = async (owner: string, operationId: unknown, 
         if (!before) await assertBudgetSlotAvailable(client, owner, after);
         await writeBudgetEntity(client, owner, before, after);
         result = { ok: true, operationId: id, kind: 'budget', status: 'applied', appliedAt, budgetEntity: await readBudgetEntity(client, owner, operation.entityId) };
+      } else if (operation.kind === 'fixed_expense') {
+        const proposed = await proposeFixedExpense(client, owner, financialObject(operation.evidencePreconditions.request),
+          operation.entityId, new Date(appliedAt));
+        if (!same(proposed.before, operation.before) || !same(proposed.after, operation.after)
+          || proposed.nextEffectiveMonth !== operation.evidencePreconditions.nextEffectiveMonth)
+          throw new FinancialPlanError('La programación cambió después del preview.', 'conflict');
+        await appendFixedExpenseVersion(client, owner, id, proposed.after);
+        result = { ok: true, operationId: id, kind: operation.kind, status: 'applied', appliedAt,
+          before: operation.before, fixedExpense: proposed.after, reason: proposed.request.reason, nextEffectiveMonth: proposed.nextEffectiveMonth,
+          linkedOccurrenceRetained: Boolean(proposed.before?.linkedMovementId) };
       } else if (operation.kind === 'fixed_reconciliation') {
         const proposed = await fixedReconciliationProposal(client, owner, operation.after);
         if (!same(proposed.before, operation.before) || !same(proposed.evidence, operation.evidencePreconditions))

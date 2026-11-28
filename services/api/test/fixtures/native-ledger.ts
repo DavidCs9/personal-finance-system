@@ -1,3 +1,4 @@
+import { ensureFixedExpenseSchema } from '../../../ledger/src/dsql/schema.js';
 import { NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS, NATIVE_FINANCIAL_PLAN_TABLES } from '../../../ledger/src/dsql/financial-plan-schema.js';
 import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
@@ -13,6 +14,17 @@ export const prepareNativeLedgerFixture = async (client: SqlClient) => {
   for (const statement of NATIVE_LEDGER_SCHEMA_STATEMENTS) await client.query(statement);
   await client.query(`ALTER TABLE olbia.ledger_movements ADD CONSTRAINT ledger_movements_primary_observation_fk ${LEDGER_PRIMARY_OBSERVATION_CONSTRAINT}`);
   for (const statement of NATIVE_PLANNING_SCHEMA_STATEMENTS) await client.query(statement);
+  for (const statement of NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS) {
+    if (statement.startsWith('CREATE TABLE IF NOT EXISTS olbia.financial_write_operations') ||
+        statement.startsWith('CREATE TABLE IF NOT EXISTS olbia.fixed_expense_versions')) await client.query(statement);
+  }
+  await ensureFixedExpenseSchema({
+    query: async (statement, values) => {
+      if (!statement.startsWith('ALTER TABLE ASYNC')) return client.query(statement, values);
+      await client.query(statement.replace('ALTER TABLE ASYNC', 'ALTER TABLE'), values);
+      return { rows: [{ job_id: 'test-validation' }] };
+    },
+  });
 };
 
 export const seedNativeMovement = async (pool: TransactionPool, changes: Partial<ObservedEventInput> = {}) => {

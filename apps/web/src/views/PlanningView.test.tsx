@@ -81,7 +81,7 @@ describe("Planificación's independent data sources", () => {
     expect(html.indexOf('class="payment-list card-cycle-list"')).toBeLessThan(html.indexOf('class="card-calendar-disclosure"'));
     expect(html).toContain('<details class="card-calendar-disclosure"><summary>Ver calendario de oct 2026');
     expect(html).toContain("Agregar tarjeta");
-    expect(html).toContain("Agregar gasto fijo");
+    expect(html).toContain("Configurar gastos fijos");
     expect(html.match(/Planes con fin/g)).toHaveLength(1);
     expect(html.match(/Fechas de corte/g)).toHaveLength(1);
   });
@@ -96,7 +96,7 @@ describe("Planificación's independent data sources", () => {
     expect(html).toContain("OpenAI");
     expect(html).toContain("Según tus gastos fijos de sep 2026");
     expect(html).toContain("Los vínculos se confirman por separado para cada fijo de este mes.");
-    expect(html).toContain("Programado · cada mes");
+    expect(html).toContain("<small>Programado</small>");
     expect(html).toContain('aria-label="Calendario de corte y pago"');
     expect(html).not.toContain("Te quedan");
     expect(html).not.toContain("Falta tu nómina");

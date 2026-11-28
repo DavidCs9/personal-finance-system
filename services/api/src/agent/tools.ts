@@ -1,3 +1,4 @@
+import { listFixedExpenses } from '../financial-plans/fixed-expenses.js';
 import { listBudgets, getBudgetStatus, getBudgetHistory, simulateBudgetPurchase } from '../financial-plans/budgets.js';
 import { listExpectedIncome, getExpectedIncome, listFinancialGoals, getFinancialGoal, getFinancialWriteStatus } from '../financial-plans/service.js';
 import { getMsiReconciliation } from '../financial-plans/reconciliation.js';
@@ -27,6 +28,7 @@ export const runAgentTool = async (
   input: Record<string, unknown>,
 ): Promise<unknown> => {
   switch (name as AgentToolName | string) {
+    case 'list_fixed_expenses': return listFixedExpenses(owner, input);
     case 'list_budgets': return listBudgets(owner, input);
     case 'get_budget_status': return getBudgetStatus(owner, input);
     case 'get_budget_history': return getBudgetHistory(owner, input);

@@ -1,3 +1,4 @@
+import { FIXED_EXPENSE_OCCURRENCE_CHECK, FIXED_EXPENSE_PAYMENT_ORDER_CHECK } from './fixed-expense-schema.js';
 import { FINANCIAL_RECEIPT_ENTITY_CHECK, FINANCIAL_WRITE_KIND_CHECK, INCOME_SCHEDULE_CHECK,
   NATIVE_FINANCIAL_PLAN_SCHEMA_STATEMENTS, nativeFinancialPlanReadGrant, nativeFinancialPlanWriteGrants } from './financial-plan-schema.js';
 import { NATIVE_EXCEPTION_SCHEMA_STATEMENTS,nativeExceptionReadGrant,nativeExceptionWriteGrants } from './exception-schema.js';
@@ -47,14 +48,15 @@ export const SCHEMA_STATEMENTS = [
     created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz)`,
   `CREATE TABLE IF NOT EXISTS olbia.month_plans (
     month text PRIMARY KEY CHECK (month ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
-    owner text NOT NULL CHECK (length(owner) > 0), updated_at timestamptz NOT NULL)`,
+    owner text NOT NULL CHECK (length(owner) > 0), updated_at timestamptz NOT NULL, occurrence_only boolean)`,
   `CREATE TABLE IF NOT EXISTS olbia.planned_payments (
     month text NOT NULL CONSTRAINT planned_payments_month_fk REFERENCES olbia.month_plans(month),
     id text NOT NULL CHECK (length(id) BETWEEN 1 AND 128),
     name text NOT NULL CHECK (length(trim(name)) > 0 AND length(name) <= 100),
     amount_mxn_minor bigint NOT NULL CHECK (amount_mxn_minor BETWEEN 1 AND 9007199254740991),
     due_day integer NOT NULL CHECK (due_day BETWEEN 1 AND 31),
-    sort_order integer NOT NULL CHECK (sort_order BETWEEN 0 AND 99),
+    sort_order integer NOT NULL, occurrence_only boolean,
+    CONSTRAINT planned_payments_occurrence_order_check ${FIXED_EXPENSE_PAYMENT_ORDER_CHECK},
     PRIMARY KEY (month,id), CONSTRAINT planned_payments_order_key UNIQUE (month,sort_order))`,
   `CREATE TABLE IF NOT EXISTS olbia.payslips (
     uuid uuid PRIMARY KEY, owner text NOT NULL CHECK (length(owner)>0),
@@ -163,6 +165,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await ensureIncomeScheduleSchema({ query: (statement, params) => query('income-schedule-schema', statement, params) }, migrationOptions);
   await ensureBudgetSchema({ query: (statement, params) => query('budget-schema', statement, params) }, migrationOptions);
   await ensureManualReconciliationSchema({ query: (statement, params) => query('manual-reconciliation-schema', statement, params) }, migrationOptions);
+  await ensureFixedExpenseSchema({ query: (statement, params) => query('fixed-expense-schema', statement, params) }, migrationOptions);
   await ensureAmexActivitySchema({ query: (statement, params) => query('amex-activity-schema', statement, params) }, { now, pause, waitMs: options.indexWaitMs });
   await ensureSantanderAccount({ query: (statement, params) => query('santander-account', statement, params) },
     { now, pause, waitMs: options.indexWaitMs });
@@ -397,6 +400,7 @@ export const bootstrapSchema = async (client: SqlClient, roleArns: readonly stri
   await query('ledger-credits-complete','INSERT INTO olbia.schema_migrations VALUES (30,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('monthly-received-complete','INSERT INTO olbia.schema_migrations VALUES (32,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('budget-push-complete','INSERT INTO olbia.schema_migrations VALUES (31,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
+  await query('fixed-expense-complete','INSERT INTO olbia.schema_migrations VALUES (34,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
   await query('cash-and-payroll-closure-complete','INSERT INTO olbia.schema_migrations VALUES (25,CURRENT_TIMESTAMP) ON CONFLICT (version) DO NOTHING');
 };
 
@@ -531,18 +535,22 @@ export const ensureBudgetSchema = async (client: SqlClient, options: Parameters<
   await client.query('ALTER TABLE olbia.financial_change_receipts ADD COLUMN IF NOT EXISTS monthly_received_id uuid');
   await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_monthly_received_fk',
     'FOREIGN KEY (monthly_received_id) REFERENCES olbia.monthly_received_totals(id)', 'monthly-received-fk', options);
+  await client.query('ALTER TABLE olbia.financial_change_receipts ADD COLUMN IF NOT EXISTS fixed_version_id uuid');
+  await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_fixed_version_fk',
+    'FOREIGN KEY (fixed_version_id) REFERENCES olbia.fixed_expense_versions(operation_id)', 'fixed-expense-receipt-fk', options);
   for (const table of ['financial_write_operations', 'financial_change_receipts']) {
-    await ensureValidatedConstraint(client, table, `${table}_manual_reconciliation_kind_check`, FINANCIAL_WRITE_KIND_CHECK, 'financial-write-kind', options);
+    await ensureValidatedConstraint(client, table, `${table}_fixed_kind_check`, FINANCIAL_WRITE_KIND_CHECK, 'financial-write-kind', options);
     await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_received_kind_check`);
+    await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_manual_reconciliation_kind_check`);
     await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_credit_kind_check`);
     await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_kind_check`);
     await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_budget_kind_check`);
     await client.query(`ALTER TABLE olbia.${table} DROP CONSTRAINT IF EXISTS ${table}_reconciliation_kind_check`);
   }
-
-  await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_manual_reconciliation_entity_check',
+  await ensureValidatedConstraint(client, 'financial_change_receipts', 'financial_receipts_fixed_entity_check',
     FINANCIAL_RECEIPT_ENTITY_CHECK, 'financial-receipt-entity', options);
   await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_receipts_received_entity_check');
+  await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_receipts_manual_reconciliation_entity_check');
   await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_receipts_credit_entity_check');
   await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_change_receipts_check');
   await client.query('ALTER TABLE olbia.financial_change_receipts DROP CONSTRAINT IF EXISTS financial_receipts_budget_entity_check');
@@ -555,4 +563,17 @@ export const ensureIncomeScheduleSchema = async (client: SqlClient, options: Par
   await client.query('ALTER TABLE olbia.expected_income ADD COLUMN IF NOT EXISTS payment_rule_2 text');
   await client.query('ALTER TABLE olbia.expected_income ADD COLUMN IF NOT EXISTS withhold_partial_months boolean');
   await ensureValidatedConstraint(client, 'expected_income', 'expected_income_payment_rules_check', INCOME_SCHEDULE_CHECK, 'income-schedule', options);
+};
+
+export const ensureFixedExpenseSchema = async (client: SqlClient, options: Parameters<typeof ensureValidatedConstraint>[5] = {}) => {
+  await client.query('ALTER TABLE olbia.month_plans ADD COLUMN IF NOT EXISTS occurrence_only boolean');
+  await client.query('ALTER TABLE olbia.planned_payments ADD COLUMN IF NOT EXISTS occurrence_only boolean');
+  for (const [column, type] of [['scheduled_name', 'text'], ['scheduled_amount_minor', 'bigint'], ['scheduled_due_day', 'integer']]) {
+    await client.query(`ALTER TABLE olbia.planned_payment_charges ADD COLUMN IF NOT EXISTS ${column} ${type}`);
+  }
+  await ensureValidatedConstraint(client, 'planned_payments', 'planned_payments_occurrence_order_check',
+    FIXED_EXPENSE_PAYMENT_ORDER_CHECK, 'fixed-expense-occurrence-order', options);
+  await client.query('ALTER TABLE olbia.planned_payments DROP CONSTRAINT IF EXISTS planned_payments_sort_order_check');
+  await ensureValidatedConstraint(client, 'planned_payment_charges', 'planned_payment_charges_schedule_check',
+    FIXED_EXPENSE_OCCURRENCE_CHECK, 'fixed-expense-occurrence', options);
 };

@@ -33,12 +33,13 @@ it('upgrades old receipt and ledger checks resumably while retaining the origina
         .replace(`    CONSTRAINT installment_manual_observation_check ${installmentManualObservationCheck},\n`, '')
         .replace(`    CONSTRAINT installment_manual_observation_fk ${installmentManualObservationFk},\n`, '');
       if (ddl.includes('CREATE TABLE IF NOT EXISTS olbia.financial_write_operations')) ddl = ddl
-        .replace(`CONSTRAINT financial_write_operations_manual_reconciliation_kind_check ${FINANCIAL_WRITE_KIND_CHECK}`, oldKindCheck);
+        .replace(`CONSTRAINT financial_write_operations_fixed_kind_check ${FINANCIAL_WRITE_KIND_CHECK}`, oldKindCheck);
       if (ddl.includes('CREATE TABLE IF NOT EXISTS olbia.financial_change_receipts')) ddl = ddl
-        .replace(`CONSTRAINT financial_change_receipts_manual_reconciliation_kind_check ${FINANCIAL_WRITE_KIND_CHECK}`, oldKindCheck)
+        .replace(`CONSTRAINT financial_change_receipts_fixed_kind_check ${FINANCIAL_WRITE_KIND_CHECK}`, oldKindCheck)
         .replace(' budget_id uuid CONSTRAINT financial_receipts_budget_fk REFERENCES olbia.spending_budgets(id),\n    budget_exclusion_id uuid CONSTRAINT financial_receipts_budget_exclusion_fk REFERENCES olbia.budget_exclusions(id),', '')
         .replace('    monthly_received_id uuid CONSTRAINT financial_receipts_monthly_received_fk REFERENCES olbia.monthly_received_totals(id),\n', '')
-        .replace(`CONSTRAINT financial_receipts_manual_reconciliation_entity_check ${FINANCIAL_RECEIPT_ENTITY_CHECK}`, oldEntityCheck);
+        .replace('    fixed_version_id uuid CONSTRAINT financial_receipts_fixed_version_fk REFERENCES olbia.fixed_expense_versions(operation_id),\n', '')
+        .replace(`CONSTRAINT financial_receipts_fixed_entity_check ${FINANCIAL_RECEIPT_ENTITY_CHECK}`, oldEntityCheck);
       await sql.query(ddl);
     }
     const oldChecks = (await sql.query<{ conname: string; definition: string }>(`SELECT conname,pg_get_constraintdef(oid) AS definition FROM pg_constraint
@@ -65,7 +66,7 @@ it('upgrades old receipt and ledger checks resumably while retaining the origina
       'installment_entries_evidence_origin_check'].includes(c.conname))).toBe(false);
     const currentChecks = (await sql.query<{ conname: string; convalidated: boolean }>(`SELECT conname,convalidated FROM pg_constraint
       WHERE conrelid='olbia.financial_change_receipts'::regclass AND contype='c'`)).rows;
-    expect(currentChecks).toContainEqual({ conname: 'financial_receipts_manual_reconciliation_entity_check', convalidated: true });
+    expect(currentChecks).toContainEqual({ conname: 'financial_receipts_fixed_entity_check', convalidated: true });
     expect(currentChecks.some(c => c.conname === 'financial_change_receipts_check')).toBe(false);
     const ledgerChecks = (await sql.query<{ conname: string; definition: string; convalidated: boolean }>(`SELECT conname,pg_get_constraintdef(oid) AS definition,convalidated
       FROM pg_constraint WHERE conrelid IN ('olbia.ledger_movements'::regclass,'olbia.ledger_observations'::regclass)

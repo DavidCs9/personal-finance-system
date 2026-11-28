@@ -1,6 +1,7 @@
 import { getManualReconciliationAttachment } from '../events/manual-reconciliation.js';
+import { listFixedExpenses } from '../financial-plans/fixed-expenses.js';
 import { listBudgets, getBudgetStatus, getBudgetHistory, simulateBudgetPurchase } from '../financial-plans/budgets.js';
-import { FinancialPlanError } from '@finance/domain';
+import { FinancialPlanError, monthKeyInZone } from '@finance/domain';
 import { listExpectedIncome, getExpectedIncome, listFinancialGoals, getFinancialGoal, previewFinancialChange, applyFinancialChange, getFinancialWriteStatus } from '../financial-plans/service.js';
 import { getStatementCatalog, getStatementSource } from '../imports/statement-catalog.js';
 import { createStatementUpload } from '../imports/statement-upload.js';
@@ -194,9 +195,13 @@ app.get('/financial-goals', async ({ event }) => {
 });
 app.get('/financial-goals/:goalId', async ({ event, params }) =>
   json(200, await getFinancialGoal(ownerOf(asHttpEvent(event)), params.goalId)));
+app.get('/fixed-expenses', async ({ event }) => {
+  const e = asHttpEvent(event);
+  return json(200, await listFixedExpenses(ownerOf(e), e.queryStringParameters ?? {}));
+});
 app.get('/financial-writes/:operationId', async ({ event, params }) =>
   json(200, await getFinancialWriteStatus(ownerOf(asHttpEvent(event)), params.operationId)));
-for (const [path, kind] of [['/expected-income/preview', 'income'], ['/financial-goals/preview', 'goal'], ['/budgets/preview', 'budget'], ['/monthly-received/preview', 'monthly_received'], ['/events/reconciliation/preview', 'manual_reconciliation'], ['/events/credit/preview', 'manual_credit']] as const) {
+for (const [path, kind] of [['/fixed-expenses/preview', 'fixed_expense'], ['/expected-income/preview', 'income'], ['/financial-goals/preview', 'goal'], ['/budgets/preview', 'budget'], ['/monthly-received/preview', 'monthly_received'], ['/events/reconciliation/preview', 'manual_reconciliation'], ['/events/credit/preview', 'manual_credit']] as const) {
   app.post(path, async ({ event }) => {
     const e = asHttpEvent(event);
     let input: unknown;
@@ -382,6 +387,9 @@ app.get('/months/:month/summary', async ({ event, params }) => {
 app.put('/months/:month', async ({ event, params }) => {
   if (!isValidMonth(params.month)) {
     return json(HttpStatusCodes.BAD_REQUEST, { message: 'Month must use YYYY-MM format.' });
+  }
+  if (params.month < monthKeyInZone(new Date())) {
+    return json(HttpStatusCodes.CONFLICT, { message: 'El mes ya está cerrado.' });
   }
   const gatewayEvent = asHttpEvent(event);
   const input = parseMonthlyPlan(requestBody(gatewayEvent));

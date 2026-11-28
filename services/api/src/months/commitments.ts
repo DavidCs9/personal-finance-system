@@ -1,3 +1,4 @@
+import { effectiveFixedExpenses } from './effective-fixed-expenses.js';
 import { addCalendarMonths, BUDGET_EXCLUSION_TAG, clampDayInMonth, isValidMonth, monthKeyInZone,
   type CommitmentItem, type CommitmentMonth, type FutureCommitments } from '@finance/domain';
 import { readerPool, withLedgerReadSnapshot, type ReadSqlClient } from '../events/sql-reads.js';
@@ -6,10 +7,7 @@ import { InvalidMonthlyPlanError } from './monthly-plan.js';
 /** Totals and detail share one relation, avoiding multiplication of MSI by fixed payments. */
 export const commitmentsReadStatement = `WITH requested AS (
   SELECT unnest($1::text[]) AS month
-), effective_plans AS (
-  SELECT r.month, MAX(p.month) AS source_month FROM requested r
-  LEFT JOIN olbia.month_plans p ON p.owner=$2 AND p.month<=r.month GROUP BY r.month
-), entries AS (
+), ${effectiveFixedExpenses('$2')}, entries AS (
   SELECT i.month,'msi'::text AS kind,m.id::text AS id,m.merchant_raw AS name,i.amount_minor,
     m.status='needs_review' AS needs_review,NULL::integer AS due_day,
     i.installment_index,p.months AS installments,
@@ -24,8 +22,8 @@ export const commitmentsReadStatement = `WITH requested AS (
   UNION ALL
   SELECT e.month,'fixed',p.id,p.name,p.amount_mxn_minor,false,p.due_day,
     NULL::integer,NULL::integer,NULL::text,p.sort_order
-  FROM effective_plans e JOIN olbia.planned_payments p ON p.month=e.source_month
-  WHERE NOT EXISTS (
+  FROM effective_fixed p JOIN effective_plans e ON e.month=p.month
+  WHERE p.status='active' AND NOT EXISTS (
     SELECT 1 FROM olbia.planned_payment_charges linked
     JOIN olbia.ledger_movements charge ON charge.id=linked.movement_id AND charge.event_type<>'bank_credit'
     WHERE linked.month=e.month AND linked.payment_id=p.id
@@ -46,7 +44,7 @@ export const commitmentsReadStatement = `WITH requested AS (
 )
 SELECT t.*,p.source_month,e.kind,e.id,e.name,e.amount_minor,e.needs_review,e.due_day,
   e.installment_index,e.installments,e.end_month
-FROM changes t JOIN effective_plans p ON p.month=t.month
+FROM changes t JOIN fixed_plan_metadata p ON p.month=t.month
 LEFT JOIN entries e ON e.month=t.month ORDER BY t.month,e.kind,e.sort_order,e.name,e.id`;
 
 export const incompletePlansReadStatement = `SELECT m.id AS event_id,m.merchant_raw AS name,
