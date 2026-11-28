@@ -106,19 +106,22 @@ describe('explicit monthly fixed-charge relationships', () => {
     expect(await journal()).toEqual([]);
     await link(openai.id,id,null,month,'owner',{...openai,amountMinor:45000});
     expect((await fixture.sql.query('SELECT id FROM olbia.planned_payments WHERE month=$1 ORDER BY sort_order',[month])).rows)
-      .toEqual([{id:openai.id},{id:cloud.id}]);
+      .toEqual([{id:openai.id}]);
   });
 
-  it('materializes the full inherited list only on a real link and never carries its relationship forward', async () => {
+  it('materializes only the linked occurrence and preserves the original inheritance source', async () => {
     await plan('2026-09');
     await getMonthlyPlan('owner',month);
     expect((await fixture.sql.query('SELECT month FROM olbia.month_plans')).rows).toEqual([{month:'2026-09'}]);
     const id=await fixture.create();
     await link(openai.id,id,null);
     expect((await fixture.sql.query('SELECT id FROM olbia.planned_payments WHERE month=$1 ORDER BY sort_order',[month])).rows)
-      .toEqual([{id:openai.id},{id:cloud.id}]);
+      .toEqual([{id:openai.id}]);
+    expect((await getMonthlyPlan('owner',month)).upcomingPayments).toMatchObject([
+      { ...openai, reconciliation: { eventId: id, valid: true } }, cloud,
+    ]);
     const future=await getMonthlyPlan('owner','2026-11');
-    expect(future.inheritedFromMonth).toBe(month);
+    expect(future.inheritedFromMonth).toBe('2026-09');
     expect(future.upcomingPayments).toEqual([openai,cloud]);
     expect((await getMonthlyPlan('owner','2026-09')).upcomingPayments).toEqual([openai,cloud]);
   });

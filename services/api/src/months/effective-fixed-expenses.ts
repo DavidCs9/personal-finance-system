@@ -20,10 +20,12 @@ effective_plans AS (
   FROM current_fixed_versions WHERE status<>'inherit'
   UNION ALL
   SELECT r.month,p.id,COALESCE(c.scheduled_name,p.name),COALESCE(c.scheduled_amount_minor,p.amount_mxn_minor),
-    COALESCE(c.scheduled_due_day,p.due_day),p.sort_order,'active','linked',r.month,NULL::uuid,4
+    COALESCE(c.scheduled_due_day,p.due_day),COALESCE(base.sort_order,100),'active','linked',r.month,NULL::uuid,4
   FROM requested r JOIN olbia.month_plans plan ON plan.month=r.month AND plan.owner=${owner}
   JOIN olbia.planned_payment_charges c ON c.month=r.month
   JOIN olbia.planned_payments p ON p.month=c.month AND p.id=c.payment_id
+  JOIN effective_plans e ON e.month=r.month
+  LEFT JOIN olbia.planned_payments base ON base.month=e.source_month AND base.id=p.id AND base.occurrence_only IS NOT TRUE
 ), fixed_configurations AS (
   SELECT DISTINCT ON (month,id) * FROM fixed_candidates WHERE source IN ('legacy','recurring')
   ORDER BY month,id,priority DESC

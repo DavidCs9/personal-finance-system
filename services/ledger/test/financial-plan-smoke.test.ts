@@ -38,7 +38,13 @@ it('exercises native financial plan writes and receipts while leaving every fina
       expect((await client.query('SELECT id FROM olbia.expected_income')).rows).toHaveLength(2);
       expect((await client.query('SELECT id FROM olbia.financial_goals')).rows).toHaveLength(1);
       expect((await client.query('SELECT id FROM olbia.spending_budgets')).rows).toHaveLength(1);
-      expect((await client.query('SELECT operation_id FROM olbia.financial_change_receipts')).rows).toHaveLength(2);
+      const versions = (await client.query('SELECT operation_id FROM olbia.fixed_expense_versions')).rows;
+      expect(versions).toHaveLength(1);
+      expect((await client.query('SELECT kind,fixed_version_id FROM olbia.financial_change_receipts ORDER BY kind')).rows).toEqual([
+        { kind: 'budget', fixed_version_id: null },
+        { kind: 'fixed_expense', fixed_version_id: versions[0]!.operation_id },
+        { kind: 'goal', fixed_version_id: null },
+      ]);
       throw rollback;
     })).rejects.toBe(rollback);
     for (const table of NATIVE_FINANCIAL_PLAN_TABLES.filter(table => table !== 'expected_income')) {
