@@ -44,7 +44,7 @@ it('removes exactly the 26 explicit migration tables, keeps every native row, an
   await bootstrapSchema(client, []);
   expect((await inspectNativeCatalog(sql)).frozen).toEqual([]);
   expect(await snapshot()).toEqual({ ...before,
-    month_plans: before.month_plans.map(plan => ({ ...plan, occurrence_only: null })),
+    month_plans: before.month_plans.map((plan: Record<string, unknown>) => ({ ...plan, occurrence_only: null })),
   });
   expect(SCHEMA_STATEMENTS.join('\n')).not.toMatch(/source_pk|source_sk|source_item|projection_state|command_receipts/);
 });
