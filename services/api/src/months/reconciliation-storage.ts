@@ -5,10 +5,11 @@ import { InvalidMonthlyPlanError, type PlannedPaymentRecord } from './monthly-pl
 export interface StoredPaymentCharge {
   readonly month: string; readonly payment_id: string; readonly movement_id: string;
   readonly linked_at: string | Date; readonly linked_by: string;
+  readonly scheduled_name?: string | null; readonly scheduled_amount_minor?: string | number | null; readonly scheduled_due_day?: number | null;
 }
 
 export const readPaymentCharges = async (client: SqlClient, month: string): Promise<readonly StoredPaymentCharge[]> =>
-  (await client.query('SELECT month,payment_id,movement_id,linked_at,linked_by FROM olbia.planned_payment_charges WHERE month=$1', [month])).rows as unknown as StoredPaymentCharge[];
+  (await client.query('SELECT month,payment_id,movement_id,linked_at,linked_by,scheduled_name,scheduled_amount_minor,scheduled_due_day FROM olbia.planned_payment_charges WHERE month=$1', [month])).rows as unknown as StoredPaymentCharge[];
 
 export const assertPaymentChargeMembership = (links: readonly StoredPaymentCharge[], payments: readonly PlannedPaymentRecord[]): void => {
   if (links.some(link => !payments.some(payment => payment.id===link.payment_id)))
@@ -41,13 +42,14 @@ export const replaceMonthlyPaymentRows = async (client: SqlClient, owner: string
   for (const link of links) {
     const old = previous.find(payment => payment.id===link.payment_id)!;
     const next = payments.find(payment => payment.id===link.payment_id);
-    if (next && next.name===old.name && next.amountMinor===Number(old.amount_mxn_minor) && next.dueDay===old.due_day) {
+    const scheduled = { id: link.payment_id, name: link.scheduled_name ?? String(old.name),
+      amountMinor: Number(link.scheduled_amount_minor ?? old.amount_mxn_minor), dueDay: link.scheduled_due_day ?? Number(old.due_day) };
+    if (next && next.name===scheduled.name && next.amountMinor===scheduled.amountMinor && next.dueDay===scheduled.dueDay) {
       await client.query(`INSERT INTO olbia.planned_payment_charges
-        (month,payment_id,movement_id,linked_at,linked_by) VALUES ($1,$2,$3,$4,$5)`,
-        [month,link.payment_id,link.movement_id,link.linked_at,link.linked_by]);
+        (month,payment_id,movement_id,linked_at,linked_by,scheduled_name,scheduled_amount_minor,scheduled_due_day) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [month,link.payment_id,link.movement_id,link.linked_at,link.linked_by,link.scheduled_name ?? null,link.scheduled_amount_minor ?? null,link.scheduled_due_day ?? null]);
     } else {
-      await appendPaymentChargeRevision(client,{ month, payment:{ id:String(old.id),name:String(old.name),
-        amountMinor:Number(old.amount_mxn_minor),dueDay:Number(old.due_day) },changedBy:owner,createdAt:at,
+      await appendPaymentChargeRevision(client,{ month, payment:scheduled,changedBy:owner,createdAt:at,
         reason: next ? 'payment_changed' : 'payment_removed',previous:link.movement_id,next:null });
     }
   }

@@ -3,7 +3,7 @@ import { proposeBudget, monthKeyInZone, type SpendingBudget } from '@finance/dom
 import { randomUUID } from 'node:crypto';
 import { financialGoalFacts, incomeOccurrences, proposeExpectedIncome, proposeFinancialGoal } from '@finance/domain';
 import { readExpectedIncome, writeExpectedIncome, readFinancialGoal, writeFinancialGoal,
-  insertFinancialOperation, appendFinancialReceipt, readFinancialReceipt, type FinancialWriteOperation } from './financial-plans.js';
+  insertFinancialOperation, appendFinancialReceipt, appendFixedExpenseVersion, readFinancialReceipt, type FinancialWriteOperation } from './financial-plans.js';
 import type { SqlClient } from './projection.js';
 
 /** Deployment-owned, fully rolled back by the caller. Never seed personal examples or persist test plans. */
@@ -20,6 +20,15 @@ export const smokeNativeFinancialPlans = async (client: SqlClient, owner: string
   await insertFinancialOperation(client, budgetOperation);
   await appendFinancialReceipt(client, budgetOperation, { verified: true }, now);
   if (!(await readFinancialReceipt(client, budgetOwner, budgetOperation.operationId))?.verified) throw new Error('Native budget audit receipt failed');
+  const fixed = { id: randomUUID(), effectiveMonth: budget.effectiveMonth, scope: 'recurring', status: 'active',
+    name: 'SQL verification', amountMinor: 101, dueDay: 31 } as const;
+  const fixedOperation: FinancialWriteOperation = { ...budgetOperation, entityId: fixed.id, operationId: randomUUID(),
+    kind: 'fixed_expense', action: 'create', after: fixed };
+  await insertFinancialOperation(client, fixedOperation);
+  await appendFixedExpenseVersion(client, budgetOwner, fixedOperation.operationId, fixed);
+  await appendFinancialReceipt(client, fixedOperation, { verified: true }, now);
+  if (!(await readFinancialReceipt(client, budgetOwner, fixedOperation.operationId))?.verified)
+    throw new Error('Native fixed expense version and receipt failed');
   const income = proposeExpectedIncome({ action: 'create', name: 'SQL verification', amountMxnMinor: 101,
     frequency: 'semimonthly', paymentDays: [15, 31], startDate: '2026-01-01', confidence: 'estimated' }, null, incomeId, now);
   await writeExpectedIncome(client, owner, null, income);

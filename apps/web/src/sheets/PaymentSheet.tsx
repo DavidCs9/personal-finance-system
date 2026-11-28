@@ -15,6 +15,7 @@ export function PaymentSheet({
   onOpenEvent,
   onClose,
   onSave,
+  onConfigure,
   onDelete,
 }: {
   payment?: PlannedPayment;
@@ -27,6 +28,7 @@ export function PaymentSheet({
   onOpenEvent?: (eventId: string, signal: AbortSignal) => Promise<void>;
   onClose(): void;
   onSave(value: PlannedPayment): Promise<void>;
+  onConfigure?: () => void;
   onDelete?: () => Promise<void>;
 }) {
   const [name, setName] = useState(payment?.name ?? "");
@@ -64,9 +66,10 @@ export function PaymentSheet({
   return (
     <Sheet
       eyebrow="GASTOS FIJOS"
-      title={payment ? "Editar gasto fijo" : "Nuevo gasto fijo"}
+      title={onConfigure ? payment?.name ?? "Gasto fijo" : payment ? "Editar gasto fijo" : "Nuevo gasto fijo"}
       onClose={() => { if (!busy) onClose(); }}
     >
+      {onConfigure ? <button type="button" className="text-button" disabled={busy} onClick={onConfigure}>Configurar gasto fijo</button> : <>
       <p className="sheet-lede">
         Servicios, suscripciones y otros cargos que se repiten cada mes, sin fecha de fin. Los MSI
         se gestionan desde el plan de la compra.
@@ -138,7 +141,7 @@ export function PaymentSheet({
         {onDelete && payment?.reconciliation ? <p className="payment-reconciliation-warning">
           Desvincula el cobro antes de eliminar este gasto fijo, también si el vínculo requiere revisión.
         </p> : null}
-      </form>
+      </form></>}
       {payment ? <PaymentReconciliation key={`${month}:${payment.id}:${payment.reconciliation?.eventId ?? "none"}:${payment.reconciliation?.valid ?? "none"}`}
         payment={payment} month={month} candidates={candidates} candidatesLoading={candidatesLoading}
         candidatesError={candidatesError} onRetryCandidates={onRetryCandidates} onReconcile={onReconcile}

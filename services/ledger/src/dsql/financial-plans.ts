@@ -1,7 +1,7 @@
 import { FinancialPlanError, type ActualIncomeReceipt, type ExpectedIncome, type FinancialGoalState,
   type FinancialGoal, type GoalAllocation, type GoalPayment, type IncomeTermination, type IncomeMonthOverride, type IncomePaymentRule, type MonthlyReceivedTotal } from '@finance/domain';
 import type { SqlClient } from './projection.js';
-export type FinancialWriteKind = 'income' | 'goal' | 'manual_charge' | 'manual_credit' | 'manual_reconciliation' | 'budget' | 'fixed_reconciliation' | 'msi_reconciliation' | 'monthly_received';
+export type FinancialWriteKind = 'income' | 'goal' | 'manual_charge' | 'manual_credit' | 'manual_reconciliation' | 'budget' | 'fixed_reconciliation' | 'msi_reconciliation' | 'monthly_received' | 'fixed_expense';
 export interface FinancialWriteOperation {
   readonly operationId: string; readonly owner: string; readonly kind: FinancialWriteKind; readonly action: string;
   readonly entityId: string; readonly createdAt: string; readonly expiresAt: string;
@@ -186,12 +186,12 @@ export const readFinancialReceipt = async (client: SqlClient, owner: string, id:
   ((await client.query('SELECT result FROM olbia.financial_change_receipts WHERE operation_id=$1::uuid AND owner=$2', [id, owner])).rows[0]?.result as Record<string, unknown>) ?? null;
 export const appendFinancialReceipt = async (client: SqlClient, operation: FinancialWriteOperation, result: Record<string, unknown>, appliedAt: string,
   movementId?: string): Promise<void> => {
-  await client.query(`INSERT INTO olbia.financial_change_receipts (operation_id,owner,kind,income_id,goal_id,movement_id,budget_id,budget_exclusion_id,applied_at,before_state,after_state,result,monthly_received_id)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13)`, [operation.operationId, operation.owner, operation.kind,
+  await client.query(`INSERT INTO olbia.financial_change_receipts (operation_id,owner,kind,income_id,goal_id,movement_id,budget_id,budget_exclusion_id,applied_at,before_state,after_state,result,monthly_received_id,fixed_version_id)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13,$14)`, [operation.operationId, operation.owner, operation.kind,
     operation.kind === 'income' ? operation.entityId : null, operation.kind === 'goal' ? operation.entityId : null, movementId ?? null, operation.kind === 'budget' && operation.after.entityType === 'budget' ? operation.entityId : null,
     operation.kind === 'budget' && operation.after.entityType === 'exclusion' ? operation.entityId : null, appliedAt,
     operation.before === null ? null : JSON.stringify(operation.before), JSON.stringify(operation.after), JSON.stringify(result),
-    operation.kind === 'monthly_received' ? operation.entityId : null]);
+    operation.kind === 'monthly_received' ? operation.entityId : null, operation.kind === 'fixed_expense' ? operation.operationId : null]);
   if (!(await client.query("UPDATE olbia.financial_write_operations SET status='applied' WHERE operation_id=$1 AND owner=$2 AND status='pending' RETURNING operation_id",
     [operation.operationId, operation.owner])).rows.length) throw new FinancialPlanError('La operación cambió; consulta su estado.', 'conflict');
 };
@@ -203,3 +203,16 @@ export const financialHistory = async (client: SqlClient, owner: string, kind: '
     JOIN olbia.financial_write_operations o ON o.operation_id=r.operation_id
     WHERE r.owner=$1 AND r.${kind === 'income' ? 'income_id' : 'goal_id'}=$2::uuid ORDER BY r.applied_at DESC,r.operation_id LIMIT 50`, [owner, id])).rows
     .map(row => ({ operationId: String(row.operation_id), action: String(row.action), appliedAt: instant(row.applied_at) }));
+
+export const appendFixedExpenseVersion = async (
+  client: SqlClient, owner: string, operationId: string, version: {
+    id: string; effectiveMonth: string; scope: 'recurring' | 'month'; status: 'active' | 'archived' | 'inherit';
+    name: string; amountMinor: number; dueDay: number;
+  },
+) => {
+  await client.query(`INSERT INTO olbia.fixed_expense_versions
+    (operation_id,owner,payment_id,effective_month,scope,status,name,amount_mxn_minor,due_day,revision)
+    SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE(MAX(revision),0)+1
+    FROM olbia.fixed_expense_versions WHERE owner=$2 AND payment_id=$3 AND effective_month=$4 AND scope=$5`,
+    [operationId, owner, version.id, version.effectiveMonth, version.scope, version.status, version.name, version.amountMinor, version.dueDay]);
+};

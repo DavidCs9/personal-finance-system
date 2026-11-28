@@ -1,3 +1,4 @@
+import type { FixedExpenseChange, FixedExpenseEntry, FixedExpensePreview } from "./fixed-expense-types";
 import type { BudgetHistory, BudgetStatus, GoalDetail, GoalPage, IncomeSchedule, MonthDashboard } from "./planning-types";
 import { MAX_STATEMENT_PDF_BYTES, type StatementUploadTarget, type StatementCatalog, type StatementProvider,
   type MovementClassificationSuggestionResult } from '@finance/domain';
@@ -388,7 +389,18 @@ export const ledgerApi = {
       body: JSON.stringify({ month, amountMinor, expectedRevision }),
     });
   },
-  monthlyReceivedOperationStatus(operationId: string, idToken: string): Promise<{ status: string }> {
+  fixedExpenses(month: string, idToken: string): Promise<{ currentMonth: string; expenses: FixedExpenseEntry[] }> {
+    return request(`/fixed-expenses?${new URLSearchParams({ month })}`, idToken, { cache: "no-store" });
+  },
+  previewFixedExpense(change: FixedExpenseChange, idToken: string): Promise<FixedExpensePreview> {
+    return request("/fixed-expenses/preview", idToken, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(change),
+    });
+  },
+  applyFixedExpense(operationId: string, idToken: string): Promise<unknown> {
+    return request(`/financial-writes/${encodeURIComponent(operationId)}/apply`, idToken, { method: "POST" });
+  },
+  financialWriteStatus(operationId: string, idToken: string): Promise<{ status: string }> {
     return request(`/financial-writes/${encodeURIComponent(operationId)}`, idToken, { cache: "no-store" });
   },
   applyMonthlyReceived(operationId: string, idToken: string): Promise<{ monthlyReceived: NonNullable<MonthDashboard["monthlyReceived"]> }> {

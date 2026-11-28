@@ -10,6 +10,8 @@ const allocation = { type: 'object', properties: { name: { type: 'string' }, all
 const payment = { type: 'object', properties: { allocationId: uuid, amountMxnMinor: minor, paymentDate: day,
   source: { type: 'string', enum: ['manual_attestation', 'linked_ledger_movement'] }, ledgerMovementId: uuid } } as const;
 export const FINANCIAL_READ_TOOL_DEFINITIONS = [
+  { name: 'list_fixed_expenses', description: 'Consulta gastos fijos MXN para el mes indicado: configuración recurrente, archivados, ajuste mensual, ocurrencia y cobro vinculado. Copia el ID y expectedRevision del mes de vigencia antes de cambiar. Omite el mes sólo para consultar el actual.',
+    inputSchema: { type: 'object', properties: { month } } },
   { name: 'list_budgets', description: 'Configuraciones de presupuesto mensual MXN, versiones recurrentes y overrides con ID/revisión/asignaciones; incluye archivados y nextCursor. Un nuevo mes de vigencia conserva historia. Leer antes de editar. Sin ejemplo ni importe por defecto.',
     inputSchema: { type: 'object', properties: { cursor: uuid, limit: { type: 'integer', minimum: 1, maximum: 50 } } } },
   { name: 'get_budget_status', description: 'Presupuesto efectivo del mes, gasto bruto real y contado tras exclusiones manuales y el tag presupuesto:excluir, categorías, no asignado, restante, compromisos fijos/MSI sin duplicar, ritmo, porcentaje transcurrido, avisos 70/90/100 y cantidad diaria basada en presupuesto (no saldo bancario). Declara incertidumbre y datos faltantes. Devuelve exclusiones manuales con IDs/revisiones y tagExcludedMovementIds para movimientos excluidos sólo por el tag. Categorías sin límite explícito tienen cero asignado; no se aumenta el presupuesto automáticamente.',
@@ -61,6 +63,14 @@ export const FINANCIAL_WRITE_TOOL_DEFINITIONS = [
     inputSchema: { type: 'object', properties: evidenceProperties, required: ['action'] } },
   { name: 'apply_manual_reconciliation', description: 'Aplica la operación autorizada del preview_manual_reconciliation. Ante una interrupción consulta get_financial_write_status con el mismo ID.',
     inputSchema: { type: 'object', properties: { operationId: uuid }, required: ['operationId'] } },
+  { name: 'preview_fixed_expense_change', description: 'Prepara alta, edición, archivo, restauración o quitar ajuste de un gasto fijo. Requiere mes de vigencia actual o futuro, motivo y alcance explícito: recurring desde el mes indicado, month sólo ese mes. En create indica nombre, centavos MXN y día 1–31. En otras acciones usa paymentId y expectedRevision de list_fixed_expenses para el mes indicado. Update admite campos parciales. clear_override quita el ajuste mensual. Conserva cobros, conciliaciones, meses cerrados y versiones posteriores. Revisa before, after y nextEffectiveMonth antes de aplicar.',
+    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['create','update','archive','restore','clear_override'] },
+      scope: { type: 'string', enum: ['recurring','month'] }, month, paymentId: { type: 'string' }, expectedRevision: { type: 'string' },
+      name: { type: 'string' }, amountMinor: minor, dueDay: { type: 'integer', minimum: 1, maximum: 31 }, reason: { type: 'string' } },
+      required: ['action','scope','month','reason'] } },
+  { name: 'apply_fixed_expense_change', description: 'Aplica el preview vigente de gasto fijo con recibo idempotente. Una instrucción explícita y completa autoriza preview y apply. Tras interrupción consulta get_financial_write_status con el mismo ID. Verifica programación con list_fixed_expenses y totales con get_budget_status.',
+    inputSchema: { type: 'object', properties: { operationId: uuid }, required: ['operationId'] } },
+
   { name: 'preview_fixed_reconciliation', description: 'Prepara link/unlink para una ocurrencia mensual de gasto fijo. Lee get_month_details y list_movements para copiar IDs y programación exacta. Link requiere cargo MXN real del mismo mes, sin MSI. expectedEventId es el vínculo actual; omítelo sólo si no hay vínculo. Unlink requiere expectedEventId. El cargo conserva su importe y estado, y un vínculo válido retira la ocurrencia programada. Presenta el preview al dueño antes de aplicar.',
     inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['link','unlink'] }, month, paymentId: { type: 'string' },
       eventId: uuid, expectedEventId: uuid, expectedPayment: { type: 'object', properties: { name: { type: 'string' }, amountMinor: minor,

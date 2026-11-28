@@ -1471,6 +1471,8 @@ export class PersonalFinanceV1Stack extends Stack {
     const applePayCaptureIntegration = new HttpLambdaIntegration('ApplePayCaptureIntegration', applePayCaptureFunction);
     const agentChatIntegration = new HttpLambdaIntegration('AgentChatBufferedIntegration', agentChatBufferedFunction);
     for (const route of [
+      'GET /fixed-expenses',
+      'POST /fixed-expenses/preview',
       'GET /budgets',
       'GET /budgets/status',
       'GET /budgets/history',

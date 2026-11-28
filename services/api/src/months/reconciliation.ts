@@ -1,6 +1,6 @@
 import { withSqlTransaction } from '@finance/ledger/sql-runtime';
 import { isLedgerMovementId } from '@finance/ledger/native-ledger';
-import { getMonthlyPlan, writeMonthlyPayments } from './service.js';
+import { getMonthlyPlan } from './service.js';
 import { isValidMonth, InvalidMonthlyPlanError, type PlannedPaymentRecord } from './monthly-plan.js';
 import { readSqlPlanRecord, reconciliationFromRow, reconciliationMovementColumns } from './sql-reads.js';
 import { appendPaymentChargeRevision, readPaymentCharges } from './reconciliation-storage.js';
@@ -62,13 +62,28 @@ export const validatePaymentReconciliation = async (client: ReadSqlClient, owner
 
 export const writePaymentReconciliation = async (client: ReadSqlClient, owner: string, month: string,
   validated: Awaited<ReturnType<typeof validatePaymentReconciliation>>, at: string): Promise<void> => {
-  const { plan, payment, previous, next } = validated;
+  const { payment, previous, next } = validated;
   if (previous === next) return;
-  // A confirmed relationship belongs only to this month, never to an inherited source month.
-  if (plan.month !== month) await writeMonthlyPayments(client, owner, month, { currency: 'MXN', upcomingPayments: plan.upcomingPayments }, at);
+  // Keep the FK row local to this occurrence. It must never start a new recurring plan.
+  if (next !== null) {
+    await client.query(`INSERT INTO olbia.month_plans (month,owner,updated_at,occurrence_only) VALUES ($1,$2,$3,true)
+      ON CONFLICT (month) DO NOTHING`, [month, owner, at]);
+    const existing = (await client.query('SELECT id FROM olbia.planned_payments WHERE month=$1 AND id=$2', [month, payment.id])).rows[0];
+    if (!existing) {
+      const last = (await client.query('SELECT MAX(sort_order) AS last FROM olbia.planned_payments WHERE month=$1', [month])).rows[0]?.last;
+      const slot = Math.max(99, Number(last ?? 99)) + 1;
+      await client.query(`INSERT INTO olbia.planned_payments (month,id,name,amount_mxn_minor,due_day,sort_order,occurrence_only)
+        VALUES ($1,$2,$3,$4,$5,$6,true)`, [month, payment.id, payment.name, payment.amountMinor, payment.dueDay, slot]);
+    }
+  }
   await client.query('DELETE FROM olbia.planned_payment_charges WHERE month=$1 AND payment_id=$2', [month, payment.id]);
-  if (next !== null) await client.query(`INSERT INTO olbia.planned_payment_charges
-    (month,payment_id,movement_id,linked_at,linked_by) VALUES ($1,$2,$3,$4,$5)`, [month, payment.id, next, at, owner]);
+  if (next !== null) {
+    await client.query(`INSERT INTO olbia.planned_payment_charges
+      (month,payment_id,movement_id,linked_at,linked_by,scheduled_name,scheduled_amount_minor,scheduled_due_day)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [month, payment.id, next, at, owner, payment.name, payment.amountMinor, payment.dueDay]);
+  } else {
+    await client.query('DELETE FROM olbia.planned_payments WHERE month=$1 AND id=$2 AND occurrence_only', [month, payment.id]);
+  }
   await appendPaymentChargeRevision(client, { month, payment, changedBy: owner, createdAt: at,
     reason: next === null ? 'unlink' : 'link', previous, next });
   await client.query('UPDATE olbia.month_plans SET updated_at=$2 WHERE month=$1', [month, at]);

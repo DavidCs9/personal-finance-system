@@ -1,3 +1,4 @@
+import { effectiveFixedExpenses } from './effective-fixed-expenses.js';
 import { isValidMonth, InvalidMonthlyPlanError, type MonthlyPlanRecord, type PaymentReconciliationRecord } from './monthly-plan.js';
 import { readerPool, type ReadSqlClient } from '../events/sql-reads.js';
 import type { JsonObject } from '../http/response.js';
@@ -25,10 +26,13 @@ export const reconciliationFromRow = (row: JsonObject, month: string): PaymentRe
     occurredAt: new Date(row.reconciliation_occurred_at as string | Date).toISOString(), valid: invalidReason === undefined,
     ...(invalidReason ? { invalidReason } : {}) };
 };
-export const planReadStatement = `WITH plan AS (
-    SELECT month,updated_at FROM olbia.month_plans WHERE owner=$1 AND month <= $2 ORDER BY month DESC LIMIT 1
-  ) SELECT ${planColumns} FROM plan LEFT JOIN olbia.planned_payments payment ON payment.month=plan.month
-  ${chargeJoins('$2')} ORDER BY payment.sort_order`;
+export const planReadStatement = `WITH requested AS (SELECT $2::text AS month), ${effectiveFixedExpenses('$1')}
+  SELECT e.source_month AS month,e.updated_at,
+    payment.id,payment.name,payment.amount_mxn_minor,payment.due_day,payment.sort_order,${reconciliationMovementColumns}
+  FROM fixed_plan_metadata e
+  LEFT JOIN effective_fixed payment ON payment.month=e.month AND payment.status='active'
+  ${chargeJoins('$2')} WHERE e.source_month IS NOT NULL
+  ORDER BY payment.sort_order,payment.due_day,payment.id`;
 export const planFromRows = (rows: readonly JsonObject[], targetMonth = String(rows[0]?.month)): MonthlyPlanRecord | undefined => rows.length ? ({
   month: rows[0]!.month as string, updatedAt: new Date(rows[0]!.updated_at as string | Date).toISOString(),
   upcomingPayments: rows.filter(row => row.id !== null).map(row => ({ id: row.id as string, name: row.name as string,

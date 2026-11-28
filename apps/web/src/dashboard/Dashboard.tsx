@@ -29,6 +29,7 @@ import { CashBalanceSheet } from "../sheets/CashBalanceSheet";
 import { PayrollClosureSheet } from "../sheets/PayrollClosureSheet";
 import { CardLiabilitySheet } from "../sheets/CardLiabilitySheet";
 import { ManualEntrySheet } from "../sheets/ManualEntrySheet";
+import { FixedExpenseSheet } from "../sheets/FixedExpenseSheet";
 import { PaymentSheet } from "../sheets/PaymentSheet";
 import { CardSheet } from "../sheets/CardSheet";
 import { SantanderImportSheet } from "../sheets/SantanderImportSheet";
@@ -90,11 +91,13 @@ export function Dashboard({
   );
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("summary");
-  const [selectedMonth, setSelectedMonth] = useState(monthKey(now));
+  const currentMonth = monthKey(now);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [planningPane, setPlanningPane] = useState<PlanningPane>();
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [activePayslip, setActivePayslip] = useState<Payslip>();
   const [uploadingNomina, setUploadingNomina] = useState(false);
+  const [fixedExpenseEditor, setFixedExpenseEditor] = useState<{ month: string; id?: string }>();
   const [editingPayment, setEditingPayment] = useState<PlannedPayment | null | undefined>();
   useEffect(() => { setEditingPayment(undefined); }, [selectedMonth]);
   const [editingCard, setEditingCard] = useState<CardCycle | null | undefined>();
@@ -345,7 +348,7 @@ export function Dashboard({
         try {
           ({ monthlyReceived } = await ledgerApi.applyMonthlyReceived(operationId, idToken));
         } catch (error) {
-          const status = await ledgerApi.monthlyReceivedOperationStatus(operationId, idToken).catch(() => undefined);
+          const status = await ledgerApi.financialWriteStatus(operationId, idToken).catch(() => undefined);
           if (status?.status !== "applied") throw error;
           ({ monthlyReceived } = await ledgerApi.applyMonthlyReceived(operationId, idToken));
         }
@@ -466,7 +469,7 @@ export function Dashboard({
             fixedPaymentsLoadError={planLoadError}
             onRetryFixedPayments={() => { void monthlyPlanQuery.refetch(); }}
             billUpcomingMinor={summary && !summaryLoadError ? summary.billScheduledMinor : undefined}
-            onAddPayment={() => setEditingPayment(null)}
+            onAddPayment={() => demoMode ? setEditingPayment(null) : setFixedExpenseEditor({ month: selectedMonth < currentMonth ? currentMonth : selectedMonth })}
             onEditPayment={setEditingPayment}
             cards={cards}
             cardsLoading={cardsLoading}
@@ -585,6 +588,17 @@ export function Dashboard({
       {activePayslip && (
         <PayslipSheet payslip={activePayslip} onClose={() => setActivePayslip(undefined)} />
       )}
+      {fixedExpenseEditor && <FixedExpenseSheet initialMonth={fixedExpenseEditor.month} initialId={fixedExpenseEditor.id} idToken={idToken}
+        onClose={() => setFixedExpenseEditor(undefined)} onApplied={async () => {
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ["fixed-expenses"] }),
+            queryClient.invalidateQueries({ queryKey: monthlyPlanQueryRoot }),
+            queryClient.invalidateQueries({ queryKey: monthlySummaryQueryRoot }),
+            queryClient.invalidateQueries({ queryKey: commitmentsQueryRoot }),
+            queryClient.invalidateQueries({ queryKey: budgetQueryRoot }),
+          ]);
+          setFixedExpenseEditor(undefined);
+        }} />}
       {editingPayment !== undefined && (
         <PaymentSheet
           key={`${selectedMonth}/${editingPayment?.id ?? "new"}`}
@@ -607,6 +621,10 @@ export function Dashboard({
             setEditingPayment(current => current === paymentContext ? saved.upcomingPayments.find(p => p.id === paymentContext.id) : current);
           } : undefined}
           payment={editingPayment ?? undefined}
+          onConfigure={!demoMode && editingPayment ? () => {
+            setFixedExpenseEditor({ month: selectedMonth < currentMonth ? currentMonth : selectedMonth, id: editingPayment.id });
+            setEditingPayment(undefined);
+          } : undefined}
           onClose={() => setEditingPayment(undefined)}
           onSave={async (payment) => {
             const existing = plan.upcomingPayments.filter((item) => item.id !== payment.id);

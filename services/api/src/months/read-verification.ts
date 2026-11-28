@@ -25,11 +25,11 @@ export const verifyPlanningReads = async (owner: string, movementPayloads: JsonO
   const parents = (await client.query('SELECT month,owner,updated_at FROM olbia.month_plans WHERE owner=$1 ORDER BY month', [owner])).rows;
   mismatches += Number(!samePublicResult(parents.map(row => ({ ...row, updated_at: new Date(row.updated_at as string | Date).toISOString() })),
     nativePlans.map(plan => ({ month: plan.month, owner, updated_at: plan.updatedAt }))));
-  const children = (await client.query(`SELECT payment.* FROM olbia.planned_payments payment JOIN olbia.month_plans plan ON plan.month=payment.month
+  const children = (await client.query(`SELECT payment.month,payment.id,payment.name,payment.amount_mxn_minor,payment.due_day FROM olbia.planned_payments payment JOIN olbia.month_plans plan ON plan.month=payment.month
     WHERE plan.owner=$1 ORDER BY payment.month,payment.sort_order`, [owner])).rows;
   mismatches += Number(!samePublicResult(children.map(row => ({ ...row, amount_mxn_minor: Number(row.amount_mxn_minor) })),
-    nativePlans.flatMap(plan => plan.upcomingPayments.map((payment, sort_order) => ({ month: plan.month, id: payment.id,
-      name: payment.name, amount_mxn_minor: payment.amountMinor, due_day: payment.dueDay, sort_order })))));
+    nativePlans.flatMap(plan => plan.upcomingPayments.map(payment => ({ month: plan.month, id: payment.id,
+      name: payment.name, amount_mxn_minor: payment.amountMinor, due_day: payment.dueDay })))));
   const invalidPlanReferences = Number((await client.query(`SELECT count(*) AS count FROM olbia.planned_payments payment
     LEFT JOIN olbia.month_plans plan ON plan.month=payment.month WHERE plan.month IS NULL`)).rows[0]?.count);
   mismatches += Number(invalidPlanReferences !== 0);

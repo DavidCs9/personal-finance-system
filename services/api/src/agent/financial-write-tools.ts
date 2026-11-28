@@ -7,6 +7,7 @@ export { FINANCIAL_WRITE_TOOL_DEFINITIONS };
 const operations = {
   preview_manual_reconciliation: { kind: 'manual_reconciliation', phase: 'preview' },
   apply_manual_reconciliation: { kind: 'manual_reconciliation', phase: 'apply' },
+  preview_fixed_expense_change: { kind: 'fixed_expense', phase: 'preview' }, apply_fixed_expense_change: { kind: 'fixed_expense', phase: 'apply' },
   preview_fixed_reconciliation: { kind: 'fixed_reconciliation', phase: 'preview' }, apply_fixed_reconciliation: { kind: 'fixed_reconciliation', phase: 'apply' },
   preview_msi_reconciliation: { kind: 'msi_reconciliation', phase: 'preview' }, apply_msi_reconciliation: { kind: 'msi_reconciliation', phase: 'apply' },
   preview_budget_change: { kind: 'budget', phase: 'preview' }, apply_budget_change: { kind: 'budget', phase: 'apply' },

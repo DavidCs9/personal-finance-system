@@ -83,7 +83,7 @@ export function CommitmentsSheet({ idToken, demoMode, now, onClose, onOpenEvent 
                 : month.fixedSourceMonth===month.month ? "Según la configuración de este mes."
                   : `Según tus gastos fijos de ${monthKeyLabel(month.fixedSourceMonth)}; se repiten mientras no los cambies.`}</p>
               {month.items.filter(item=>item.kind==="fixed").map(itemRow)}
-              {month.fixedSourceMonth!==null && !month.items.some(item=>item.kind==="fixed") ? <p>La lista configurada está vacía.</p> : null}
+              {month.fixedSourceMonth!==null && !month.items.some(item=>item.kind==="fixed") ? <p>No hay gastos fijos pendientes de vincular en este mes.</p> : null}
               {month.totalMinor===0 ? <p>No hay compromisos conocidos para este mes.</p> : null}
             </div>
           </details>)}

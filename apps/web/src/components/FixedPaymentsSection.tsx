@@ -41,7 +41,7 @@ export function FixedPaymentsSection(props: FixedPaymentsSectionProps) {
         </summary>
         {!props.loading && !props.loadError ? <div className="planning-section-content">
           {props.payments.length > 0 ? <div className="planning-section-actions">
-            <button type="button" className="text-button" onClick={props.onAdd}>Agregar gasto fijo</button>
+            <button type="button" className="text-button" onClick={props.onAdd}>Configurar gastos fijos</button>
           </div> : null}
           <p className="section-lede">
             {props.inheritedFromMonth
@@ -59,7 +59,7 @@ export function FixedPaymentsSection(props: FixedPaymentsSectionProps) {
                   </span>
                   <span className="payment-name">
                     <strong>{payment.name}</strong>
-                    <small>Programado · cada mes · sin fecha de fin</small>
+                    <small>Programado</small>
                     <small className={`fixed-payment-reconciliation${payment.reconciliation && !payment.reconciliation.valid ? " is-invalid" : ""}`}>
                       {payment.reconciliation ? payment.reconciliation.valid ? "Cobro vinculado" : "Revisar vínculo" : "Por conciliar"}
                     </small>
@@ -79,7 +79,7 @@ export function FixedPaymentsSection(props: FixedPaymentsSectionProps) {
             <button type="button" className="empty-action" onClick={props.onAdd}>
               <span>+</span>
               <div>
-                <strong>Agrega tus gastos fijos</strong>
+                <strong>Configura tus gastos fijos</strong>
                 <small>No hay gastos fijos programados para este mes.</small>
               </div>
             </button>

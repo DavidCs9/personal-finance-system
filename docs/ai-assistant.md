@@ -128,6 +128,12 @@ Monthly-close analysis reads only private profile/voice from that same version, 
 
 Authenticated REST exposes GET /budgets, /budgets/status and /budgets/history, POST /budgets/simulate and /budgets/preview, plus the existing financial-writes apply/status routes. Web budgeting controls are deferred; every operation is available through the single ChatGPT connection. Refresh tools after deployment to discover the new tools; existing write authorization remains required. Deployment verification rolls back all test budgets and receipts without seeding personal budgets.
 
+### Configuración de gastos fijos
+
+`list_fixed_expenses({month})` devuelve los IDs, revisiones, configuración recurrente, ajustes mensuales, ocurrencias y vínculos del mes. Usa el mes de vigencia exacto para obtener `expectedRevision`. `preview_fixed_expense_change` requiere `action`, `scope`, `month` y `reason`. Usa `create`, `update`, `archive`, `restore` o `clear_override`. El alcance es `recurring` o `month`. El alta requiere nombre, importe en centavos MXN y día de pago. Para cambios usa `paymentId` y la revisión de la lectura. `nextEffectiveMonth` identifica una versión recurrente posterior que conserva su vigencia.
+
+`apply_fixed_expense_change` usa el ID auténtico del preview y el permiso de escritura vigente. Ante interrupción consulta `get_financial_write_status` con el mismo ID. Confirma programación con `list_fixed_expenses` y presupuesto con `get_budget_status`. La web usa los mismos servicios por `GET /fixed-expenses`, `POST /fixed-expenses/preview` y las rutas compartidas de aplicación y estado. [Reglas financieras de gastos fijos](financial-rules.md#nómina-y-gastos-fijos).
+
 ### Conciliación desde MCP
 
 - `preview_fixed_reconciliation` / `apply_fixed_reconciliation` vinculan o desvinculan una ocurrencia mensual. Lee `get_month_details` para el ID, vínculo actual y programación original, incluido `configuredDueDay`. Identifica el cargo con `list_movements`. Conserva el importe observado, la programación y sus decisiones inmutables.

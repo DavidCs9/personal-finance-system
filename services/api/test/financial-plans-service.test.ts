@@ -564,3 +564,135 @@ describe('MCP reconciliation uses the shared SQL and dashboard authority', () =>
     });
   });
 });
+
+describe('effective fixed expense management', () => {
+  const month = '2026-11';
+  const expense = { id: 'subscription', name: 'Cloud storage', amountMinor: 17_00, dueDay: 31 };
+  const reason = 'Confirmed subscription price';
+  const read = async (month: string) => {
+    const { listFixedExpenses } = await import('../src/financial-plans/fixed-expenses.js');
+    return await runAgentTool('owner', 'list_fixed_expenses', { month }) as Awaited<ReturnType<typeof listFixedExpenses>>;
+  };
+  const draft = async (input: Record<string, unknown>) => await writeHandler({
+    toolName: 'preview_fixed_expense_change', arguments: { month, scope: 'recurring', reason, ...input },
+  }, {} as never) as Awaited<ReturnType<typeof service.previewFinancialChange>>;
+  const confirm = async (operationId: string) => await writeHandler({
+    toolName: 'apply_fixed_expense_change', arguments: { operationId },
+  }, {} as never);
+  const change = async (month: string, paymentId: string, action: string, input: Record<string, unknown> = {}) => {
+    const entry = (await read(month)).expenses.find(item => item.id === paymentId);
+    return draft({ month, paymentId, expectedRevision: entry?.expectedRevision, action, ...input });
+  };
+
+  beforeEach(async () => {
+    await fixture.sql.exec('TRUNCATE olbia.month_plans,olbia.planned_payments,olbia.planned_payment_charges,olbia.planned_payment_charge_revisions');
+  });
+
+  it('updates future months without rewriting a linked occurrence, closed history, or actual spending', async () => {
+    const { saveMonthlyPlan } = await import('../src/months/service.js');
+    const { readFutureCommitments } = await import('../src/months/commitments.js');
+    const { monthSnapshot } = await import('../src/agent/aggregates.js');
+    await saveMonthlyPlan('owner', '2026-10', { currency: 'MXN', upcomingPayments: [expense] });
+    const budget = await service.previewFinancialChange('owner', 'budget', { action: 'set_recurring', month, totalMxnMinor: 100_00 });
+    await apply(budget.operationId);
+    const movementId = await fixture.create({ merchantRaw: expense.name, occurredAt: '2026-11-10T18:00:00Z',
+      amount: { amountMinor: 17_00, currency: 'MXN' } });
+    const linked = await service.previewFinancialChange('owner', 'fixed_reconciliation', {
+      action: 'link', month, paymentId: expense.id, expectedPayment: expense, eventId: movementId, reason,
+    });
+    await apply(linked.operationId);
+    const actualHistory = await fixture.snapshot();
+    const october = await monthSnapshot('owner', '2026-10');
+    const proposed = await change(month, expense.id, 'update', { amountMinor: 49_00 });
+    const stale = await change(month, expense.id, 'update', { amountMinor: 50_00 });
+    expect(proposed).toMatchObject({ before: { recurring: expense, occurrence: expense }, linkedOccurrenceRetained: true });
+    expect((await fixture.sql.query('SELECT * FROM olbia.fixed_expense_versions')).rows).toEqual([]);
+    expect((await monthSnapshot('owner', '2026-12')).budget.upcomingFixedMxnMinor).toBe(17_00);
+    const receipt = await confirm(proposed.operationId);
+    expect(await confirm(proposed.operationId)).toEqual(receipt);
+    await expect(service.applyFinancialChange('owner', stale.operationId, 'fixed_expense')).rejects.toThrow(/cambió/);
+    expect(await change('2026-10', expense.id, 'update', { amountMinor: 49_00 })).toMatchObject({ ok: false, message: expect.stringMatching(/cerrado/) });
+    expect(await fixture.snapshot()).toEqual(actualHistory);
+    expect(await monthSnapshot('owner', '2026-10')).toEqual(october);
+    expect(await monthSnapshot('owner', month)).toMatchObject({ budget: {
+      countedSpentMxnMinor: 17_00, upcomingFixedMxnMinor: 0, reconciledFixedProgrammingMxnMinor: 17_00,
+    } });
+    expect(await monthSnapshot('owner', '2026-12')).toMatchObject({
+      budget: { upcomingFixedMxnMinor: 49_00, remainingDiscretionaryMxnMinor: 51_00 },
+      summary: { billScheduledMinor: 49_00 },
+    });
+    expect((await readFutureCommitments('owner', undefined, now, fixture.pool)).months.slice(0, 2)).toMatchObject([
+      { fixedMinor: 0 }, { fixedMinor: 49_00, items: [{ id: expense.id, dueDay: 31 }] },
+    ]);
+    expect((await fixture.sql.query('SELECT kind,fixed_version_id,before_state FROM olbia.financial_change_receipts WHERE operation_id=$1',
+      [proposed.operationId])).rows).toMatchObject([{ kind: 'fixed_expense', fixed_version_id: proposed.operationId, before_state: { recurring: expense } }]);
+  });
+
+  it('keeps one-month adjustments local and supports auditable archive, restore, and later versions', async () => {
+    const create = await draft({ action: 'create', name: expense.name, amountMinor: 17_00, dueDay: 31 });
+    await confirm(create.operationId);
+    const id = (await read(month)).expenses[0]!.id;
+    expect(await draft({ action: 'create', name: ' cloud STORAGE ', amountMinor: 60_00, dueDay: 1 })).toMatchObject({ ok: false, message: expect.stringMatching(/Ya existe/) });
+    const january = await change('2027-01', id, 'update', { name: 'Storage Plus', dueDay: 30 });
+    await confirm(january.operationId);
+    const december = await change('2026-12', id, 'update', { amountMinor: 49_00 });
+    expect(december).toMatchObject({ nextEffectiveMonth: '2027-01' });
+    await confirm(december.operationId);
+    const override = await change('2026-12', id, 'update', { scope: 'month', amountMinor: 25_00 });
+    await confirm(override.operationId);
+    expect((await read('2026-12')).expenses).toMatchObject([{ recurring: { amountMinor: 49_00 }, occurrence: { amountMinor: 25_00 } }]);
+    expect((await read('2027-01')).expenses).toMatchObject([{ occurrence: { name: 'Storage Plus', amountMinor: 17_00, dueDay: 30 } }]);
+    await confirm((await change('2026-12', id, 'clear_override', { scope: 'month' })).operationId);
+    expect((await read('2026-12')).expenses).toMatchObject([{ occurrence: { amountMinor: 49_00 } }]);
+    await confirm((await change('2027-02', id, 'archive')).operationId);
+    const { readSqlPlanRecord } = await import('../src/months/sql-reads.js');
+    expect(await readSqlPlanRecord('owner', '2027-02', fixture.pool)).toMatchObject({ upcomingPayments: [] });
+    expect((await read('2027-02')).expenses).toMatchObject([{ recurring: { status: 'archived' } }]);
+    await confirm((await change('2027-03', id, 'restore')).operationId);
+    expect((await read('2027-03')).expenses).toMatchObject([{ occurrence: { status: 'active', dueDay: 30 } }]);
+    expect((await fixture.sql.query('SELECT status FROM olbia.fixed_expense_versions WHERE payment_id=$1', [id])).rows).toHaveLength(7);
+    expect(await runAgentTool('other', 'list_fixed_expenses', { month })).toMatchObject({ expenses: [] });
+  });
+
+  it('uses the same version and receipt when the web previews and MCP applies', async () => {
+    const { handler } = await import('../src/http/ledger-api.js');
+    const request = async (method: 'GET' | 'POST', path: string, input?: Record<string, unknown>) => {
+      const routeKey = `${method} ${path}`;
+      const event = { version: '2.0', routeKey, rawPath: path, rawQueryString: '', headers: {}, isBase64Encoded: false,
+        body: input ? JSON.stringify(input) : undefined, queryStringParameters: { month },
+        requestContext: { accountId: 'test', apiId: 'test', domainName: 'example.test', domainPrefix: 'example',
+          requestId: 'fixed-web-test', routeKey, stage: '$default', time: now.toISOString(), timeEpoch: +now,
+          http: { method, path, protocol: 'HTTP/1.1', sourceIp: '127.0.0.1', userAgent: 'vitest' },
+          authorizer: { jwt: { claims: { sub: 'owner' }, scopes: [] } },
+        } };
+      const response = await handler(event, { awsRequestId: 'fixed-web-test' } as never);
+      expect(response.statusCode).toBe(200);
+      return JSON.parse(String(response.body));
+    };
+    const input = { action: 'create', month, scope: 'recurring', name: expense.name, amountMinor: 17_00, dueDay: 31, reason };
+    const proposed = await request('POST', '/fixed-expenses/preview', input);
+    const duplicate = await draft(input);
+    await confirm(proposed.operationId);
+    expect(await confirm(duplicate.operationId)).toMatchObject({ ok: false, reasonCode: 'conflict' });
+    expect(await request('GET', '/fixed-expenses')).toEqual(await read(month));
+  });
+
+  it('does not turn a reconciled one-month expense into recurring programming', async () => {
+    const create = await draft({ action: 'create', scope: 'month', name: expense.name, amountMinor: 17_00, dueDay: 9 });
+    await confirm(create.operationId);
+    const item = (await read(month)).expenses[0]!;
+    const movementId = await fixture.create({ merchantRaw: expense.name, occurredAt: '2026-11-10T18:00:00Z' });
+    const linked = await service.previewFinancialChange('owner', 'fixed_reconciliation', {
+      action: 'link', month, paymentId: item.id, expectedPayment: item.occurrence, eventId: movementId, reason,
+    });
+    await apply(linked.operationId);
+    expect(await change(month, item.id, 'archive', { scope: 'month' })).toMatchObject({ ok: false, message: expect.stringMatching(/vinculado/) });
+    expect((await read('2026-12')).expenses).toEqual([]);
+    const unlink = await service.previewFinancialChange('owner', 'fixed_reconciliation', {
+      action: 'unlink', month, paymentId: item.id, expectedPayment: item.occurrence, expectedEventId: movementId, reason,
+    });
+    await apply(unlink.operationId);
+    expect((await read(month)).expenses).toMatchObject([{ occurrence: { amountMinor: 17_00 }, linkedMovementId: null }]);
+    expect((await read('2026-12')).expenses).toEqual([]);
+  });
+});
